@@ -13,8 +13,8 @@ use typenum::{
 };
 
 use crate::{
-  Int, TryNewError, Uint, bigint, i192, i256, i320, i384, i448, i512, i768, i1024, i2048, i4096,
-  int::DIGIT_BUF_LEN, u192, u256, u320, u384, u448, u512, u768, u1024, u2048, u4096,
+  BitCount, Int, TryNewError, Uint, bigint, i192, i256, i320, i384, i448, i512, i768, i1024, i2048,
+  i4096, int::DIGIT_BUF_LEN, u192, u256, u320, u384, u448, u512, u768, u1024, u2048, u4096,
 };
 
 /// Records the calls that a `Hash` implementation makes.
@@ -198,6 +198,22 @@ fn trait_surface_and_layout() {
   // No value is invalid, so `None` takes a byte of its own.
   assert_eq!(size_of::<Option<Uint<U7, u8>>>(), 2);
   assert_eq!(size_of::<Option<Int<U1, i8>>>(), 2);
+
+  // Generic code with the bound `B: BitCount` gets the traits of the default storages, though not
+  // the auto traits, which no bound of the storages states.
+  fn default_storages<B: BitCount>() {
+    fn assert_generic<T: Copy + Eq + Ord + Hash + Debug + Display + Default>() {}
+    assert_generic::<Uint<B>>();
+    assert_generic::<Int<B>>();
+  }
+  default_storages::<U7>();
+  default_storages::<U200>();
+  // The default storage of the width alone.
+  assert_traits::<Uint<U7>>();
+  assert_traits::<Int<U200>>();
+  assert_eq!(size_of::<Uint<U7>>(), 1);
+  assert_eq!(size_of::<Int<U24>>(), 4);
+  assert_eq!(size_of::<Uint<U200>>(), 32);
 }
 
 macro_rules! integer_tests {

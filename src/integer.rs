@@ -12,7 +12,7 @@ pub use error::TryNewError;
 use crate::{
   int,
   layout::Token,
-  width::{FillsRepr, FitsBits, IntRepr, UintRepr},
+  width::{BitCount, FillsRepr, FitsBits, IntRepr, UintRepr},
 };
 
 mod error;
@@ -25,7 +25,10 @@ mod tables;
 /// `Repr` holds at least `Bits` bits: a native unsigned integer, `u8`, `u16`, `u32`, `u64` or
 /// `u128`, which holds the value itself, or an array of limbs, least significant first, `[u8; N]`,
 /// `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, of `8 * N`, `16 * N`, `32 * N`, `64 * N` or
-/// `128 * N` bits. The bits above `Bits`, if any, are zero. `[u64; N]` is the storage of the module
+/// `128 * N` bits. The bits above `Bits`, if any, are zero. Without `Repr`, the storage is the
+/// default that [`BitCount`] gives for 1 to 65536 bits: the smallest native integer that holds
+/// `Bits` bits, and above 128 bits `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>` and
+/// `Uint<U200>` is `Uint<U200, [u64; 4]>`. `[u64; N]` is the storage of the module
 /// [`aliases`](crate::aliases), which names common widths, such as [`u256`](crate::u256) for
 /// `Uint<U256, [u64; 4]>`; `[u32; N]` computes with native 64-bit intermediates, and `[u8; N]` has
 /// alignment 1 and holds the little-endian bytes of the value on every target. `[u128; N]` has the
@@ -78,18 +81,19 @@ mod tables;
 /// assert_eq!(bytes.to_string(), "197121");
 /// assert_eq!(Uint::<U24, [u8; 3]>::MAX.to_limbs(), [u8::MAX; 3]);
 ///
-/// // 7 bits in a `u8`, from zero to 127.
-/// type U7x8 = Uint<U7, u8>;
-/// assert_eq!(U7x8::new(100).value(), 100);
+/// // 7 bits in the default storage, a `u8`, from zero to 127.
+/// type U7x8 = Uint<U7>;
+/// assert_eq!(U7x8::new(100).value(), 100u8);
 /// assert_eq!(U7x8::MAX.value(), 127);
 /// assert!(U7x8::try_new(128).is_err());
 /// ```
 ///
 /// The width cannot be inferred from the limbs, nor the storage from the expected type, so
-/// construction names the alias or the full type, for example `u256::from_limbs(limbs)`,
-/// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)` or `Uint::<U7, u8>::new(100)`.
+/// construction names the alias, the width for the default storage, or the full type, for example
+/// `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)` or
+/// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
 #[repr(transparent)]
-pub struct Uint<Bits, Repr> {
+pub struct Uint<Bits, Repr = <Bits as BitCount>::Unsigned> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits` or above is zero, so the
   // storage, read as an unsigned integer, equals the value. Every constructor establishes this, and
   // equality, comparison, hashing and formatting rely on it. It is a logical invariant, not a
@@ -105,7 +109,9 @@ pub struct Uint<Bits, Repr> {
 /// `i64` or `i128`, which holds the value itself, or an array of limbs, least significant first, as
 /// for [`Uint`]: `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`. The bits above
 /// `Bits`, if any, are copies of the sign bit, so the storage holds the value in two's complement.
-/// The module [`aliases`](crate::aliases) names common widths, such as [`i256`](crate::i256) for
+/// Without `Repr`, the storage is the default that [`BitCount`] gives, as for [`Uint`]: `Int<U24>`
+/// is `Int<U24, i32>` and `Int<U200>` is `Int<U200, [u64; 4]>`. The module
+/// [`aliases`](crate::aliases) names common widths, such as [`i256`](crate::i256) for
 /// `Int<U256, [u64; 4]>`. The type has the size, alignment and ABI of `Repr`, and as for [`Uint`],
 /// each storage gives a distinct type.
 ///
@@ -151,18 +157,19 @@ pub struct Uint<Bits, Repr> {
 /// assert_eq!(bytes.to_string(), "-197121");
 /// assert!(Int::<U24, [u8; 3]>::MIN < bytes);
 ///
-/// // 7 bits in an `i8`, from -64 to 63.
-/// type I7x8 = Int<U7, i8>;
-/// assert_eq!(I7x8::new(-5).value(), -5);
+/// // 7 bits in the default storage, an `i8`, from -64 to 63.
+/// type I7x8 = Int<U7>;
+/// assert_eq!(I7x8::new(-5).value(), -5i8);
 /// assert_eq!(I7x8::MIN.value(), -64);
 /// assert!(I7x8::try_new(64).is_err());
 /// ```
 ///
 /// The width cannot be inferred from the limbs, nor the storage from the expected type, so
-/// construction names the alias or the full type, for example `i256::from_limbs(limbs)`,
-/// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)` or `Int::<U7, i8>::new(-5)`.
+/// construction names the alias, the width for the default storage, or the full type, for example
+/// `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)` or
+/// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
 #[repr(transparent)]
-pub struct Int<Bits, Repr> {
+pub struct Int<Bits, Repr = <Bits as BitCount>::Signed> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits - 1` or above equals bit
   // `Bits - 1`, the sign bit, so the storage, read as a two's complement integer, equals the value.
   // Every constructor establishes this, and equality, comparison, the sign queries, hashing and

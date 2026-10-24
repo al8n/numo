@@ -253,7 +253,10 @@ pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,
 };
 pub use rounding::RoundingMode;
-pub use width::{ArraySize, FillsRepr, FitsBits, IntRepr, LimbArray, Limbs, UintRepr};
+pub use width::{
+  ArraySize, BitCount, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, LimbArray,
+  Limbs, UintRepr,
+};
 
 pub mod aliases;
 #[cfg(feature = "arbitrary")]

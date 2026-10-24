@@ -1,5 +1,5 @@
-//! The width relation between a type-level number of bits and an integer storage, and the storages
-//! of [`Uint`](crate::Uint) and [`Int`](crate::Int).
+//! The width relation between a type-level number of bits and an integer storage, the storages of
+//! [`Uint`](crate::Uint) and [`Int`](crate::Int), and their default storage.
 
 use core::{
   cmp::Ordering,
@@ -9,15 +9,17 @@ use core::{
 };
 
 use typenum::{
-  Const, IsEqual, IsLess, IsLessOrEqual, Le, LeEq, NonZero, Shleft, Shright, Sum, ToUInt, U, U3,
-  U4, U5, U6, U7, U8, U15, U16, U31, U32, U63, U64, U127, U128, U4294967296, Unsigned,
+  B0, B1, Const, IsEqual, IsLess, IsLessOrEqual, Le, LeEq, NonZero, Shleft, Shright, Sum, ToUInt,
+  U, U3, U4, U5, U6, U7, U8, U15, U16, U31, U32, U63, U64, U127, U128, U65536, U4294967296, UInt,
+  Unsigned,
 };
 
 pub use array_size::ArraySize;
 
 use sealed::{
-  ArrayLimb, BitsBelow2Pow32, BitsFit, NativeBitsFit, NativeReprFilled, ReprFilled,
-  SealedFillsRepr, SealedFitsBits, SealedIntRepr, SealedLimbArray, SealedUintRepr,
+  ArrayLimb, BitsBelow2Pow32, BitsFit, DefaultArray, DefaultRepr, NativeBitsFit, NativeReprFilled,
+  ReprFilled, SealedBitCount, SealedFillsRepr, SealedFitsBits, SealedInlineIntRepr,
+  SealedInlineUintRepr, SealedIntRepr, SealedLimbArray, SealedUintRepr,
 };
 
 use crate::{
@@ -33,6 +35,7 @@ mod array_size;
 mod sealed {
   use core::{cmp::Ordering, fmt, hash::Hasher};
 
+  use super::{FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, UintRepr};
   use crate::layout::Token;
 
   /// Seals [`FitsBits`](super::FitsBits).
@@ -108,6 +111,43 @@ mod sealed {
   /// seals, so that no other crate can implement `LimbArray` for a limb type with a width of its
   /// own type.
   pub trait SealedLimbArray<Bits> {}
+
+  /// Seals [`InlineUintRepr`](super::InlineUintRepr).
+  pub trait SealedInlineUintRepr: UintRepr + Copy {}
+
+  /// Seals [`InlineIntRepr`](super::InlineIntRepr).
+  pub trait SealedInlineIntRepr: IntRepr + Copy {}
+
+  /// Seals [`BitCount`](super::BitCount).
+  pub trait SealedBitCount {}
+
+  /// The default storages of `Self` bits, chosen by `Small`, the result of `Self <= 128`: `B1` reads
+  /// the native table and `B0` takes `Limbs<Self>`. The supertraits make the compiler check each
+  /// row of the table.
+  pub trait DefaultRepr<Small>:
+    FitsBits<<Self as DefaultRepr<Small>>::Unsigned>
+    + FitsBits<<Self as DefaultRepr<Small>>::Signed>
+  {
+    /// The default storage of `Uint<Self>`.
+    type Unsigned: InlineUintRepr;
+
+    /// The default storage of `Int<Self>`.
+    type Signed: InlineIntRepr + IntRepr<Unsigned = <Self as DefaultRepr<Small>>::Unsigned>;
+  }
+
+  /// Implemented only for `B1`, the result of `Bits <= 65536`, with the array of 64-bit limbs that
+  /// holds `Bits` bits.
+  // A check of its own keeps a wider width from looking up the array, which would report a second
+  // error, and keeps the range of the default from following the lengths that `ArraySize` covers.
+  #[diagnostic::on_unimplemented(
+    message = "`Uint` and `Int` have a default storage only for 1 to 65536 bits",
+    label = "`Bits` is greater than 65536",
+    note = "a wider integer names its storage, as in `Uint<U100000, [u64; 2048]>`"
+  )]
+  pub trait DefaultArray<Bits> {
+    /// `Limbs<Bits>`.
+    type Array: InlineUintRepr + InlineIntRepr + IntRepr<Unsigned = Self::Array>;
+  }
 
   /// A limb type of the array storages: `[L; N]` holds `N << L::BitsLog2` bits.
   pub trait ArrayLimb {
@@ -286,9 +326,21 @@ pub trait IntRepr: Eq + SealedIntRepr {
   type Unsigned: UintRepr;
 }
 
-/// Implements [`ArrayLimb`], [`UintRepr`] and [`IntRepr`] for the arrays of each limb type,
-/// written `limb: BitsLog2, lower, upper`, where `lower` and `upper` are the modules of its limb
-/// layers.
+/// A storage of [`Uint`](crate::Uint) that holds the value inline, so that the integer is `Copy`: a
+/// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`. The default
+/// storages of [`BitCount`] are inline. This trait is sealed and cannot be implemented outside this
+/// crate.
+pub trait InlineUintRepr: UintRepr + Copy + SealedInlineUintRepr {}
+
+/// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
+/// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`. The default
+/// storages of [`BitCount`] are inline. This trait is sealed and cannot be implemented outside this
+/// crate.
+pub trait InlineIntRepr: IntRepr + Copy + SealedInlineIntRepr {}
+
+/// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`InlineUintRepr`] and [`InlineIntRepr`]
+/// for the arrays of each limb type, written `limb: BitsLog2, lower, upper`, where `lower` and
+/// `upper` are the modules of its limb layers.
 macro_rules! array_storage {
   ($($limb:ident: $bits_log2:ident, $lower:ident, $upper:ident);+ $(;)?) => {$(
     impl ArrayLimb for $limb {
@@ -383,6 +435,14 @@ macro_rules! array_storage {
         $upper::is_positive(self)
       }
     }
+
+    impl<const N: usize> InlineUintRepr for [$limb; N] {}
+
+    impl<const N: usize> SealedInlineUintRepr for [$limb; N] {}
+
+    impl<const N: usize> InlineIntRepr for [$limb; N] {}
+
+    impl<const N: usize> SealedInlineIntRepr for [$limb; N] {}
   )+};
 }
 
@@ -394,8 +454,9 @@ array_storage!(
   u128: U7, limbs128, signed_limbs128;
 );
 
-/// Implements [`UintRepr`] and [`IntRepr`] for the native integers, and their width relations,
-/// written `unsigned, signed: Bits`, where `Bits` is the number of bits of both.
+/// Implements [`UintRepr`], [`IntRepr`], [`InlineUintRepr`] and [`InlineIntRepr`] for the native
+/// integers, and their width relations, written `unsigned, signed: Bits`, where `Bits` is the
+/// number of bits of both.
 // Each native type has width impls of its own, as each array type constructor has: one impl over
 // every storage, bounded by a trait of the storages, would degrade the diagnostics of the arrays.
 macro_rules! native_storage {
@@ -484,6 +545,14 @@ macro_rules! native_storage {
         int::$int::is_positive(*self)
       }
     }
+
+    impl InlineUintRepr for $uint {}
+
+    impl SealedInlineUintRepr for $uint {}
+
+    impl InlineIntRepr for $int {}
+
+    impl SealedInlineIntRepr for $int {}
   )+};
   (@width $native:ident, $bits:ident) => {
     impl<B> SealedFitsBits<$native> for B
@@ -562,6 +631,243 @@ limb_arrays!(
   u64: U6, U63;
   u128: U7, U127;
 );
+
+/// Maps a [`typenum`] number of bits to the default storages of [`Uint`](crate::Uint) and
+/// [`Int`](crate::Int): the smallest native integer that holds that many bits, and above 128 bits
+/// an array of 64-bit limbs.
+///
+/// | Bits | `Unsigned` | `Signed` |
+/// |---|---|---|
+/// | 1-8 | `u8` | `i8` |
+/// | 9-16 | `u16` | `i16` |
+/// | 17-32 | `u32` | `i32` |
+/// | 33-64 | `u64` | `i64` |
+/// | 65-128 | `u128` | `i128` |
+/// | 129-65536 | [`Limbs<Bits>`](Limbs), `[u64; ceil(Bits / 64)]` | the same array |
+///
+/// Implemented for every number from 1 to 65536, written as a constant such as `U200`, as `U<200>`,
+/// or as an expression such as `Sum<U1024, U1>`; `typenum` names each number up to 1024 and some
+/// larger ones. `Uint<U7>` is `Uint<U7, u8>` and `Uint<U200>` is `Uint<U200, [u64; 4]>`. The default
+/// is stored inline, so `Uint<U65536>` takes 8 KiB. Zero bits and more than 65536 bits have no
+/// default; such a type names its storage.
+///
+/// Generic code with the bound `B: BitCount` gets `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Debug`,
+/// `Display` and `Default` on `Uint<B>` and `Int<B>`. The constants and `const fn`s belong to each
+/// storage, so generic code that uses them names the storage, as in `Uint<B, u8>` with
+/// `B: FitsBits<u8>`. This trait is sealed and cannot be implemented outside this crate.
+///
+/// ```
+/// use numo::{
+///   BitCount, Int, Uint,
+///   typenum::{Sum, U1, U7, U24, U200, U1024},
+/// };
+///
+/// assert_eq!(Uint::<U7>::MAX, Uint::<U7, u8>::MAX);
+/// assert_eq!(size_of::<Int<U24>>(), 4);
+/// assert_eq!(Uint::<U200>::MAX.to_limbs(), [u64::MAX, u64::MAX, u64::MAX, 0xff]);
+/// assert_eq!(size_of::<Uint<Sum<U1024, U1>>>(), 17 * 8);
+///
+/// fn largest<B: BitCount>(values: &[Uint<B>]) -> Option<Uint<B>> {
+///   values.iter().copied().max()
+/// }
+///
+/// let values = [Uint::<U200>::MAX, Uint::<U200>::default()];
+/// assert_eq!(largest(&values), Some(Uint::<U200>::MAX));
+/// ```
+#[diagnostic::on_unimplemented(
+  message = "`Uint` and `Int` have a default storage only for 1 to 65536 bits",
+  label = "`Bits` is zero, or is not known to be from 1 to 65536",
+  note = "generic code adds the bound `B: BitCount`, as in `fn f<B: BitCount>(x: Uint<B>)`, or names the storage, as in `Uint<B, [u64; 4]>`"
+)]
+pub trait BitCount:
+  SealedBitCount + FitsBits<<Self as BitCount>::Unsigned> + FitsBits<<Self as BitCount>::Signed>
+{
+  /// The default storage of `Uint<Self>`.
+  type Unsigned: InlineUintRepr;
+
+  /// The default storage of `Int<Self>`, of the same size as `Unsigned`.
+  type Signed: InlineIntRepr + IntRepr<Unsigned = <Self as BitCount>::Unsigned>;
+}
+
+// Both impls are on the nonzero numbers, rather than over every type, so that a generic width
+// without the bound reports the diagnostic of this trait and the suggestion to add it, not an
+// unsatisfied comparison.
+impl<U, X> SealedBitCount for UInt<U, X> {}
+
+impl<U, X> BitCount for UInt<U, X>
+where
+  Self: IsLessOrEqual<U128> + DefaultRepr<LeEq<Self, U128>>,
+{
+  type Unsigned = <Self as DefaultRepr<LeEq<Self, U128>>>::Unsigned;
+  type Signed = <Self as DefaultRepr<LeEq<Self, U128>>>::Signed;
+}
+
+impl<B> DefaultRepr<B0> for B
+where
+  B: IsLessOrEqual<U65536>,
+  LeEq<B, U65536>: DefaultArray<B>,
+  B: FitsBits<<LeEq<B, U65536> as DefaultArray<B>>::Array>,
+{
+  type Unsigned = <LeEq<B, U65536> as DefaultArray<B>>::Array;
+  type Signed = <LeEq<B, U65536> as DefaultArray<B>>::Array;
+}
+
+impl<B> DefaultArray<B> for B1
+where
+  u64: LimbArray<B>,
+  Limbs<B>: InlineUintRepr + InlineIntRepr + IntRepr<Unsigned = Limbs<B>>,
+{
+  type Array = Limbs<B>;
+}
+
+/// Passes the native rows of the default storages to `$callback`, written
+/// `Bits = value => unsigned, signed`, where `unsigned` and `signed` are the smallest native
+/// integers that hold `Bits` bits.
+macro_rules! bit_table {
+  ($callback:ident) => {
+    $callback! {
+      U1 = 1 => u8, i8,
+      U2 = 2 => u8, i8,
+      U3 = 3 => u8, i8,
+      U4 = 4 => u8, i8,
+      U5 = 5 => u8, i8,
+      U6 = 6 => u8, i8,
+      U7 = 7 => u8, i8,
+      U8 = 8 => u8, i8,
+      U9 = 9 => u16, i16,
+      U10 = 10 => u16, i16,
+      U11 = 11 => u16, i16,
+      U12 = 12 => u16, i16,
+      U13 = 13 => u16, i16,
+      U14 = 14 => u16, i16,
+      U15 = 15 => u16, i16,
+      U16 = 16 => u16, i16,
+      U17 = 17 => u32, i32,
+      U18 = 18 => u32, i32,
+      U19 = 19 => u32, i32,
+      U20 = 20 => u32, i32,
+      U21 = 21 => u32, i32,
+      U22 = 22 => u32, i32,
+      U23 = 23 => u32, i32,
+      U24 = 24 => u32, i32,
+      U25 = 25 => u32, i32,
+      U26 = 26 => u32, i32,
+      U27 = 27 => u32, i32,
+      U28 = 28 => u32, i32,
+      U29 = 29 => u32, i32,
+      U30 = 30 => u32, i32,
+      U31 = 31 => u32, i32,
+      U32 = 32 => u32, i32,
+      U33 = 33 => u64, i64,
+      U34 = 34 => u64, i64,
+      U35 = 35 => u64, i64,
+      U36 = 36 => u64, i64,
+      U37 = 37 => u64, i64,
+      U38 = 38 => u64, i64,
+      U39 = 39 => u64, i64,
+      U40 = 40 => u64, i64,
+      U41 = 41 => u64, i64,
+      U42 = 42 => u64, i64,
+      U43 = 43 => u64, i64,
+      U44 = 44 => u64, i64,
+      U45 = 45 => u64, i64,
+      U46 = 46 => u64, i64,
+      U47 = 47 => u64, i64,
+      U48 = 48 => u64, i64,
+      U49 = 49 => u64, i64,
+      U50 = 50 => u64, i64,
+      U51 = 51 => u64, i64,
+      U52 = 52 => u64, i64,
+      U53 = 53 => u64, i64,
+      U54 = 54 => u64, i64,
+      U55 = 55 => u64, i64,
+      U56 = 56 => u64, i64,
+      U57 = 57 => u64, i64,
+      U58 = 58 => u64, i64,
+      U59 = 59 => u64, i64,
+      U60 = 60 => u64, i64,
+      U61 = 61 => u64, i64,
+      U62 = 62 => u64, i64,
+      U63 = 63 => u64, i64,
+      U64 = 64 => u64, i64,
+      U65 = 65 => u128, i128,
+      U66 = 66 => u128, i128,
+      U67 = 67 => u128, i128,
+      U68 = 68 => u128, i128,
+      U69 = 69 => u128, i128,
+      U70 = 70 => u128, i128,
+      U71 = 71 => u128, i128,
+      U72 = 72 => u128, i128,
+      U73 = 73 => u128, i128,
+      U74 = 74 => u128, i128,
+      U75 = 75 => u128, i128,
+      U76 = 76 => u128, i128,
+      U77 = 77 => u128, i128,
+      U78 = 78 => u128, i128,
+      U79 = 79 => u128, i128,
+      U80 = 80 => u128, i128,
+      U81 = 81 => u128, i128,
+      U82 = 82 => u128, i128,
+      U83 = 83 => u128, i128,
+      U84 = 84 => u128, i128,
+      U85 = 85 => u128, i128,
+      U86 = 86 => u128, i128,
+      U87 = 87 => u128, i128,
+      U88 = 88 => u128, i128,
+      U89 = 89 => u128, i128,
+      U90 = 90 => u128, i128,
+      U91 = 91 => u128, i128,
+      U92 = 92 => u128, i128,
+      U93 = 93 => u128, i128,
+      U94 = 94 => u128, i128,
+      U95 = 95 => u128, i128,
+      U96 = 96 => u128, i128,
+      U97 = 97 => u128, i128,
+      U98 = 98 => u128, i128,
+      U99 = 99 => u128, i128,
+      U100 = 100 => u128, i128,
+      U101 = 101 => u128, i128,
+      U102 = 102 => u128, i128,
+      U103 = 103 => u128, i128,
+      U104 = 104 => u128, i128,
+      U105 = 105 => u128, i128,
+      U106 = 106 => u128, i128,
+      U107 = 107 => u128, i128,
+      U108 = 108 => u128, i128,
+      U109 = 109 => u128, i128,
+      U110 = 110 => u128, i128,
+      U111 = 111 => u128, i128,
+      U112 = 112 => u128, i128,
+      U113 = 113 => u128, i128,
+      U114 = 114 => u128, i128,
+      U115 = 115 => u128, i128,
+      U116 = 116 => u128, i128,
+      U117 = 117 => u128, i128,
+      U118 = 118 => u128, i128,
+      U119 = 119 => u128, i128,
+      U120 = 120 => u128, i128,
+      U121 = 121 => u128, i128,
+      U122 = 122 => u128, i128,
+      U123 = 123 => u128, i128,
+      U124 = 124 => u128, i128,
+      U125 = 125 => u128, i128,
+      U126 = 126 => u128, i128,
+      U127 = 127 => u128, i128,
+      U128 = 128 => u128, i128,
+    }
+  };
+}
+
+macro_rules! impl_bits {
+  ($($bits:ident = $value:literal => $uint:ident, $int:ident),+ $(,)?) => {$(
+    impl DefaultRepr<B1> for typenum::consts::$bits {
+      type Unsigned = $uint;
+      type Signed = $int;
+    }
+  )+};
+}
+
+bit_table!(impl_bits);
 
 /// Writes the lowest `ceil(bits / 64)` 64-bit words of the integer in `limbs` to `state`, least
 /// significant first, without the length prefix of a slice. For limbs of `B <= 64` bits, each word
