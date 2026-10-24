@@ -1,0 +1,23 @@
+error[E0277]: `u8` is not a storage of `Int`
+ --> tests/ui/native_sign_mismatch.rs:5:24
+  |
+5 |   let _: Int<U7, u8> = Default::default();
+  |                        ^^^^^^^^^^^^^^^^^^ the trait `IntRepr` is not implemented for `u8`
+  |
+  = note: `Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement
+  = help: the following other types implement trait `IntRepr`:
+            i128
+            i16
+            i32
+            i64
+            i8
+  = note: required for `numo::Int<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` to implement `Default`
+
+error[E0599]: the associated function or constant `MAX` exists for struct `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, i8>`, but its trait bounds were not satisfied
+ --> tests/ui/native_sign_mismatch.rs:6:30
+  |
+6 |   let _max = Uint::<U7, i8>::MAX;
+  |                              ^^^ associated function or constant cannot be called on `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, i8>` due to unsatisfied trait bounds
+  |
+  = note: the following trait bounds were not satisfied:
+          `i8: InlineUintRepr`

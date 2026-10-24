@@ -1,0 +1,11 @@
+error[E0080]: evaluation panicked: the value does not fit in `Bits` bits
+ --> tests/ui/native_new_out_of_range.rs:4:23
+  |
+4 | const TOO_LARGE: u7 = u7::new(128);
+  |                       ^^^^^^^^^^^^ evaluation of `TOO_LARGE` failed here
+
+error[E0080]: evaluation panicked: the value does not fit in `Bits` bits
+ --> tests/ui/native_new_out_of_range.rs:5:23
+  |
+5 | const TOO_SMALL: i7 = i7::new(-65);
+  |                       ^^^^^^^^^^^^ evaluation of `TOO_SMALL` failed here
