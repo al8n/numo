@@ -35,16 +35,17 @@ mod traits;
 /// `128 * N` bits. The bits above `Bits`, if any, are zero. Without `Repr`, the storage is the
 /// default that [`BitCount`] gives for 1 to 65536 bits: the smallest native integer that holds
 /// `Bits` bits, and above 128 bits `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>` and
-/// `Uint<U200>` is `Uint<U200, [u64; 4]>`. `[u64; N]` is the storage of the module
-/// [`aliases`](crate::aliases), which names common widths, such as [`u256`](crate::u256) for
-/// `Uint<U256, [u64; 4]>`; `[u32; N]` computes with native 64-bit intermediates, and `[u8; N]` has
-/// alignment 1 and holds the little-endian bytes of the value on every target. `[u128; N]` has the
-/// layout of an array of `u128`, for memory shared with code that stores 128-bit words. Its
-/// arithmetic works on the 64-bit halves of each limb, as no wider native integer exists; its speed
-/// relative to `[u64; N]` depends on the operation, the width and the target (formatting a value of
-/// a few limbs is several times slower), so choose it for layout, not for speed. The type has the
-/// size, alignment and ABI of `Repr`. Each storage gives a distinct type: `Uint<U8, u8>` and
-/// `Uint<U8, [u8; 1]>` have the same layout, order, text and hash, but are not the same type.
+/// `Uint<U200>` is `Uint<U200, [u64; 4]>`. The module [`aliases`](crate::aliases) names common
+/// widths in their default storages, such as [`u7`](crate::u7) for `Uint<U7, u8>` and
+/// [`u256`](crate::u256) for `Uint<U256, [u64; 4]>`. `[u32; N]` computes with native 64-bit
+/// intermediates, and `[u8; N]` has alignment 1 and holds the little-endian bytes of the value on
+/// every target. `[u128; N]` has the layout of an array of `u128`, for memory shared with code that
+/// stores 128-bit words. Its arithmetic works on the 64-bit halves of each limb, as no wider native
+/// integer exists; its speed relative to `[u64; N]` depends on the operation, the width and the
+/// target (formatting a value of a few limbs is several times slower), so choose it for layout, not
+/// for speed. The type has the size, alignment and ABI of `Repr`. Each storage gives a distinct
+/// type: `Uint<U8, u8>` and `Uint<U8, [u8; 1]>` have the same layout, order, text and hash, but are
+/// not the same type.
 ///
 /// In a native integer, [`new`](Self::new) creates a value, panicking if it does not fit in `Bits`
 /// bits, [`try_new`](Self::try_new) returns an error instead, and [`value`](Self::value) returns
@@ -60,7 +61,7 @@ mod traits;
 /// use numo::{
 ///   Decimal, Uint,
 ///   typenum::{U7, U18, U24, U59, U200},
-///   u256,
+///   u7, u256,
 /// };
 ///
 /// // 2^64 + 5, least significant limb first.
@@ -88,16 +89,16 @@ mod traits;
 /// assert_eq!(bytes.to_string(), "197121");
 /// assert_eq!(Uint::<U24, [u8; 3]>::MAX.to_limbs(), [u8::MAX; 3]);
 ///
-/// // 7 bits in the default storage, a `u8`, from zero to 127.
-/// type U7x8 = Uint<U7>;
-/// assert_eq!(U7x8::new(100).value(), 100u8);
-/// assert_eq!(U7x8::MAX.value(), 127);
-/// assert!(U7x8::try_new(128).is_err());
+/// // 7 bits in the default storage, a `u8`, from zero to 127, which the alias `u7` names.
+/// assert_eq!(u7::new(100).value(), 100u8);
+/// assert_eq!(u7::MAX.value(), 127);
+/// assert!(u7::try_new(128).is_err());
+/// assert_eq!(Uint::<U7>::MAX, u7::MAX);
 /// ```
 ///
 /// The width cannot be inferred from the limbs, nor the storage from the expected type, so
 /// construction names the alias, the width for the default storage, or the full type, for example
-/// `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)` or
+/// `u7::new(100)`, `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)` or
 /// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
 #[repr(transparent)]
 pub struct Uint<Bits, Repr = <Bits as BitCount>::Unsigned> {
@@ -118,9 +119,9 @@ pub struct Uint<Bits, Repr = <Bits as BitCount>::Unsigned> {
 /// `Bits`, if any, are copies of the sign bit, so the storage holds the value in two's complement.
 /// Without `Repr`, the storage is the default that [`BitCount`] gives, as for [`Uint`]: `Int<U24>`
 /// is `Int<U24, i32>` and `Int<U200>` is `Int<U200, [u64; 4]>`. The module
-/// [`aliases`](crate::aliases) names common widths, such as [`i256`](crate::i256) for
-/// `Int<U256, [u64; 4]>`. The type has the size, alignment and ABI of `Repr`, and as for [`Uint`],
-/// each storage gives a distinct type.
+/// [`aliases`](crate::aliases) names common widths, such as [`i7`](crate::i7) for `Int<U7, i8>`
+/// and [`i256`](crate::i256) for `Int<U256, [u64; 4]>`. The type has the size, alignment and ABI of
+/// `Repr`, and as for [`Uint`], each storage gives a distinct type.
 ///
 /// As for [`Uint`], in a native integer [`new`](Self::new) and [`try_new`](Self::try_new) create a
 /// value and [`value`](Self::value) returns it, and in an array [`from_limbs`](Self::from_limbs)
@@ -131,7 +132,7 @@ pub struct Uint<Bits, Repr = <Bits as BitCount>::Unsigned> {
 ///
 /// ```
 /// use numo::{
-///   Int, i256,
+///   Int, i7, i256,
 ///   typenum::{U7, U24, U100},
 /// };
 ///
@@ -164,16 +165,16 @@ pub struct Uint<Bits, Repr = <Bits as BitCount>::Unsigned> {
 /// assert_eq!(bytes.to_string(), "-197121");
 /// assert!(Int::<U24, [u8; 3]>::MIN < bytes);
 ///
-/// // 7 bits in the default storage, an `i8`, from -64 to 63.
-/// type I7x8 = Int<U7>;
-/// assert_eq!(I7x8::new(-5).value(), -5i8);
-/// assert_eq!(I7x8::MIN.value(), -64);
-/// assert!(I7x8::try_new(64).is_err());
+/// // 7 bits in the default storage, an `i8`, from -64 to 63, which the alias `i7` names.
+/// assert_eq!(i7::new(-5).value(), -5i8);
+/// assert_eq!(i7::MIN.value(), -64);
+/// assert!(i7::try_new(64).is_err());
+/// assert_eq!(Int::<U7>::MIN, i7::MIN);
 /// ```
 ///
 /// The width cannot be inferred from the limbs, nor the storage from the expected type, so
 /// construction names the alias, the width for the default storage, or the full type, for example
-/// `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)` or
+/// `i7::new(-5)`, `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)` or
 /// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
 #[repr(transparent)]
 pub struct Int<Bits, Repr = <Bits as BitCount>::Signed> {
