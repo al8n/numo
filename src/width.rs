@@ -15,11 +15,12 @@ use typenum::{
 };
 
 pub use array_size::ArraySize;
+pub(crate) use sealed::{IntWidth, SealedIntRepr, SealedUintRepr, UintWidth};
 
 use sealed::{
   ArrayLimb, BitsBelow2Pow32, BitsFit, DefaultArray, DefaultRepr, NativeBitsFit, NativeReprFilled,
   ReprFilled, SealedBitCount, SealedFillsRepr, SealedFitsBits, SealedInlineIntRepr,
-  SealedInlineUintRepr, SealedIntRepr, SealedLimbArray, SealedUintRepr,
+  SealedInlineUintRepr, SealedLimbArray, Width,
 };
 
 use crate::{
@@ -33,7 +34,7 @@ use crate::{
 mod array_size;
 
 mod sealed {
-  use core::{cmp::Ordering, fmt, hash::Hasher};
+  use core::{cmp::Ordering, fmt, hash::Hasher, marker::PhantomData};
 
   use super::{FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, UintRepr};
   use crate::layout::Token;
@@ -112,11 +113,43 @@ mod sealed {
   /// own type.
   pub trait SealedLimbArray<Bits> {}
 
-  /// Seals [`InlineUintRepr`](super::InlineUintRepr).
-  pub trait SealedInlineUintRepr: UintRepr + Copy {}
+  /// Seals [`InlineUintRepr`](super::InlineUintRepr) and carries the constants of `Uint`.
+  pub trait SealedInlineUintRepr: UintRepr + Copy {
+    /// Zero.
+    const ZERO: Self;
 
-  /// Seals [`InlineIntRepr`](super::InlineIntRepr).
-  pub trait SealedInlineIntRepr: IntRepr + Copy {}
+    /// The constants of `Uint<B, Self>` that depend on the width `B`.
+    type Width<B: FitsBits<Self>>: UintWidth<Self>;
+  }
+
+  /// Seals [`InlineIntRepr`](super::InlineIntRepr) and carries the constants of `Int`.
+  pub trait SealedInlineIntRepr: IntRepr + Copy {
+    /// Zero.
+    const ZERO: Self;
+
+    /// The constants of `Int<B, Self>` that depend on the width `B`.
+    type Width<B: FitsBits<Self>>: IntWidth<Self>;
+  }
+
+  /// The constants of `Uint<B, R>` that depend on the width `B`.
+  pub trait UintWidth<R> {
+    /// The largest value, `2^B - 1`.
+    const MAX: R;
+  }
+
+  /// The constants of `Int<B, R>` that depend on the width `B`.
+  pub trait IntWidth<R> {
+    /// The smallest value, `-2^(B - 1)`.
+    const MIN: R;
+
+    /// The largest value, `2^(B - 1) - 1`.
+    const MAX: R;
+  }
+
+  /// Carries the constants of the width `B` in the inline storage `R`, as its impls of
+  /// [`UintWidth`] and [`IntWidth`]. A generic constant cannot call a trait method, but it can read
+  /// the constants of an associated type, which each storage computes with its own `const fn`s.
+  pub struct Width<B, R>(PhantomData<(B, R)>);
 
   /// Seals [`BitCount`](super::BitCount).
   pub trait SealedBitCount {}
@@ -327,15 +360,21 @@ pub trait IntRepr: Eq + SealedIntRepr {
 }
 
 /// A storage of [`Uint`](crate::Uint) that holds the value inline, so that the integer is `Copy`: a
-/// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`. The default
-/// storages of [`BitCount`] are inline. This trait is sealed and cannot be implemented outside this
-/// crate.
+/// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`.
+///
+/// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
+/// [`FixedInteger`](crate::FixedInteger) and [`UnsignedFixedInteger`](crate::UnsignedFixedInteger),
+/// for every `Repr` that implements this trait. The default storages of [`BitCount`] are inline.
+/// This trait is sealed and cannot be implemented outside this crate.
 pub trait InlineUintRepr: UintRepr + Copy + SealedInlineUintRepr {}
 
 /// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
-/// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`. The default
-/// storages of [`BitCount`] are inline. This trait is sealed and cannot be implemented outside this
-/// crate.
+/// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`.
+///
+/// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
+/// [`FixedInteger`](crate::FixedInteger) and [`SignedFixedInteger`](crate::SignedFixedInteger),
+/// for every `Repr` that implements this trait. The default storages of [`BitCount`] are inline.
+/// This trait is sealed and cannot be implemented outside this crate.
 pub trait InlineIntRepr: IntRepr + Copy + SealedInlineIntRepr {}
 
 /// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`InlineUintRepr`] and [`InlineIntRepr`]
@@ -438,11 +477,28 @@ macro_rules! array_storage {
 
     impl<const N: usize> InlineUintRepr for [$limb; N] {}
 
-    impl<const N: usize> SealedInlineUintRepr for [$limb; N] {}
+    impl<const N: usize> SealedInlineUintRepr for [$limb; N] {
+      const ZERO: Self = [0; N];
+
+      type Width<B: FitsBits<Self>> = Width<B, Self>;
+    }
+
+    impl<B: FitsBits<[$limb; N]>, const N: usize> UintWidth<[$limb; N]> for Width<B, [$limb; N]> {
+      const MAX: [$limb; N] = $lower::max_of_bits(B::U32);
+    }
 
     impl<const N: usize> InlineIntRepr for [$limb; N] {}
 
-    impl<const N: usize> SealedInlineIntRepr for [$limb; N] {}
+    impl<const N: usize> SealedInlineIntRepr for [$limb; N] {
+      const ZERO: Self = [0; N];
+
+      type Width<B: FitsBits<Self>> = Width<B, Self>;
+    }
+
+    impl<B: FitsBits<[$limb; N]>, const N: usize> IntWidth<[$limb; N]> for Width<B, [$limb; N]> {
+      const MIN: [$limb; N] = $upper::min_of_bits(B::U32);
+      const MAX: [$limb; N] = $upper::max_of_bits(B::U32);
+    }
   )+};
 }
 
@@ -548,11 +604,28 @@ macro_rules! native_storage {
 
     impl InlineUintRepr for $uint {}
 
-    impl SealedInlineUintRepr for $uint {}
+    impl SealedInlineUintRepr for $uint {
+      const ZERO: Self = 0;
+
+      type Width<B: FitsBits<Self>> = Width<B, Self>;
+    }
+
+    impl<B: FitsBits<$uint>> UintWidth<$uint> for Width<B, $uint> {
+      const MAX: $uint = int::$uint::max_of_bits(B::U32);
+    }
 
     impl InlineIntRepr for $int {}
 
-    impl SealedInlineIntRepr for $int {}
+    impl SealedInlineIntRepr for $int {
+      const ZERO: Self = 0;
+
+      type Width<B: FitsBits<Self>> = Width<B, Self>;
+    }
+
+    impl<B: FitsBits<$int>> IntWidth<$int> for Width<B, $int> {
+      const MIN: $int = int::$int::min_of_bits(B::U32);
+      const MAX: $int = int::$int::max_of_bits(B::U32);
+    }
   )+};
   (@width $native:ident, $bits:ident) => {
     impl<B> SealedFitsBits<$native> for B
@@ -652,9 +725,12 @@ limb_arrays!(
 /// default; such a type names its storage.
 ///
 /// Generic code with the bound `B: BitCount` gets `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Debug`,
-/// `Display` and `Default` on `Uint<B>` and `Int<B>`. The constants and `const fn`s belong to each
-/// storage, so generic code that uses them names the storage, as in `Uint<B, u8>` with
-/// `B: FitsBits<u8>`. This trait is sealed and cannot be implemented outside this crate.
+/// `Display` and `Default` on `Uint<B>` and `Int<B>`, their constants `BITS`, `ZERO`, `MIN` and
+/// `MAX`, as in `Uint::<B>::MAX`, and the integer traits, such as
+/// [`FixedInteger`](crate::FixedInteger), whose methods it calls with the trait in scope. The
+/// methods of the traits are not `const`, and the inherent `const fn`s belong to each storage, so a
+/// constant context calls them on a concrete type, such as `Uint<U7>`, or an alias. This trait is
+/// sealed and cannot be implemented outside this crate.
 ///
 /// ```
 /// use numo::{
@@ -667,12 +743,12 @@ limb_arrays!(
 /// assert_eq!(Uint::<U200>::MAX.to_limbs(), [u64::MAX, u64::MAX, u64::MAX, 0xff]);
 /// assert_eq!(size_of::<Uint<Sum<U1024, U1>>>(), 17 * 8);
 ///
-/// fn largest<B: BitCount>(values: &[Uint<B>]) -> Option<Uint<B>> {
-///   values.iter().copied().max()
+/// fn largest<B: BitCount>(values: &[Uint<B>]) -> Uint<B> {
+///   values.iter().copied().fold(Uint::<B>::MIN, Ord::max)
 /// }
 ///
 /// let values = [Uint::<U200>::MAX, Uint::<U200>::default()];
-/// assert_eq!(largest(&values), Some(Uint::<U200>::MAX));
+/// assert_eq!(largest(&values), Uint::<U200>::MAX);
 /// ```
 #[diagnostic::on_unimplemented(
   message = "`Uint` and `Int` have a default storage only for 1 to 65536 bits",

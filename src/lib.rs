@@ -75,28 +75,42 @@
 //! # Integers
 //!
 //! [`Uint<Bits, Repr>`](Uint) and [`Int<Bits, Repr>`](Int) are integers of `Bits` bits, unsigned
-//! and in two's complement, stored in an array of limbs, least significant first, that holds at
-//! least `Bits` bits: `[u64; N]`, `[u32; N]`, `[u16; N]`, `[u8; N]` or `[u128; N]`. `[u64; N]` is
-//! the storage of the aliases, `[u32; N]` computes with native 64-bit intermediates, and `[u8; N]`
-//! has alignment 1 and holds the little-endian bytes of the value on every target. `[u128; N]` has
-//! the layout of an array of `u128`, for memory shared with code that stores 128-bit words. Its
-//! arithmetic works on the 64-bit halves of each limb, as no wider native integer exists; its speed
-//! relative to `[u64; N]` depends on the operation, the width and the target (formatting a value of
-//! a few limbs is several times slower), so choose it for layout, not for speed. The module
-//! [`aliases`] names the widths of the wide storages above and 768, 1024, 2048 and 4096 bits in
-//! 64-bit limbs, each of which fills its limbs; any other width or limb type is written out, such
-//! as `Uint<U200, [u64; 4]>` or `Uint<U24, [u8; 3]>`. [`FitsBits`] relates a width to the storages
-//! that hold it, and [`FillsRepr`] to the storages that it fills.
+//! and in two's complement, stored in `Repr`, which holds at least `Bits` bits: a native integer,
+//! `u8` to `u128` for `Uint` and `i8` to `i128` for `Int`, which holds the value itself, or an
+//! array of limbs, least significant first, `[u64; N]`, `[u32; N]`, `[u16; N]`, `[u8; N]` or
+//! `[u128; N]`. Without `Repr`, the storage is the default that [`BitCount`] gives for 1 to 65536
+//! bits: the smallest native integer that holds `Bits` bits, and above 128 bits
+//! [`Limbs<Bits>`](Limbs), `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>` and
+//! `Uint<U200>` is `Uint<U200, [u64; 4]>`. `[u64; N]` is the storage of the aliases, `[u32; N]`
+//! computes with native 64-bit intermediates, and `[u8; N]` has alignment 1 and holds the
+//! little-endian bytes of the value on every target. `[u128; N]` has the layout of an array of
+//! `u128`, for memory shared with code that stores 128-bit words. Its arithmetic works on the
+//! 64-bit halves of each limb, as no wider native integer exists; its speed relative to `[u64; N]`
+//! depends on the operation, the width and the target (formatting a value of a few limbs is several
+//! times slower), so choose it for layout, not for speed. The module [`aliases`] names the widths of
+//! the wide storages above and 768, 1024, 2048 and 4096 bits in 64-bit limbs, each of which fills
+//! its limbs; any other width or limb type is written out, such as `Uint<U24, [u8; 3]>`.
+//! [`FitsBits`] relates a width to the storages that hold it, [`FillsRepr`] to the storages that it
+//! fills, and [`Limbs<Bits, L>`](Limbs) names the array of limbs of type `L` that holds it.
 //!
-//! Each type has the constants `BITS`, `ZERO`, `MIN` and `MAX`. Its `const fn` constructors are
+//! Each type has the constants `BITS`, `ZERO`, `MIN` and `MAX`. In a native integer, its `const fn`
+//! constructors are `new`, which panics if the value does not fit in `Bits` bits, and `try_new`,
+//! which returns [`TryNewError`] instead, and `value` returns the value. In an array, they are
 //! `from_limbs`, for a width that fills its limbs, and `checked_from_limbs`, which checks that the
-//! limbs hold a value of `Bits` bits; its `const fn` methods are `to_limbs`, `as_limbs` and
-//! `is_zero`, and for `Int` also `is_negative` and `is_positive`. Values compare, hash and format
-//! by their numeric value, alike in every storage. There is no integer arithmetic yet.
+//! limbs hold a value of `Bits` bits, and `to_limbs` and `as_limbs` return the limbs. Its `const fn`
+//! queries are `is_zero`, and for `Int` also `is_negative` and `is_positive`. Values compare, hash
+//! and format by their numeric value, alike in every storage. There is no integer arithmetic yet.
+//!
+//! Generic code reaches the same items through traits, each with one implementation for every
+//! storage of a kind: [`FixedInteger`], with the constants and `is_zero`, [`UnsignedFixedInteger`]
+//! and [`SignedFixedInteger`], and for the construction of each kind [`NativeInteger`],
+//! [`ArrayInteger`] and [`FromLimbs`]. The bound `B: BitCount` gives `Uint<B>` and `Int<B>` the
+//! traits of their default storages. The traits are not `const`, so constant contexts use the
+//! inherent `const fn`s, which a concrete type reaches without importing a trait.
 //!
 //! ```
 //! use numo::{
-//!   Int, Uint, i256,
+//!   BitCount, FixedInteger, Int, Uint, i256,
 //!   typenum::{U7, U24, U200},
 //! };
 //!
@@ -114,6 +128,19 @@
 //! let bytes = Uint::<U24, [u8; 3]>::from_limbs([1, 2, 3]);
 //! let word = Uint::<U24, [u64; 1]>::checked_from_limbs([0x03_02_01]).unwrap();
 //! assert_eq!(bytes.to_string(), word.to_string());
+//!
+//! // 7 bits in the default storage, a `u8`, and 200 bits in four 64-bit limbs.
+//! const SMALL: Uint<U7> = Uint::<U7>::new(100);
+//! assert_eq!(SMALL.value(), 100);
+//! assert!(Uint::<U7>::try_new(128).is_err());
+//! assert_eq!(Uint::<U200>::MAX, U200x4::MAX);
+//!
+//! // Generic code over the width alone.
+//! fn count_zeros<B: BitCount>(values: &[Int<B>]) -> usize {
+//!   values.iter().filter(|value| value.is_zero()).count()
+//! }
+//! assert_eq!(count_zeros(&[Int::<U7>::ZERO, Int::<U7>::MIN]), 1);
+//! assert_eq!(count_zeros(&[Int::<U200>::ZERO; 3]), 3);
 //! ```
 //!
 //! # `typenum`
@@ -248,7 +275,10 @@ pub use typenum;
 
 pub use aliases::*;
 pub use decimal::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
-pub use integer::{Int, TryNewError, Uint};
+pub use integer::{
+  ArrayInteger, FixedInteger, FromLimbs, Int, NativeInteger, SignedFixedInteger, TryNewError, Uint,
+  UnsignedFixedInteger,
+};
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,
 };

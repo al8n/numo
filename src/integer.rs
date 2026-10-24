@@ -8,16 +8,23 @@ use core::{
 };
 
 pub use error::TryNewError;
+pub use traits::{
+  ArrayInteger, FixedInteger, FromLimbs, NativeInteger, SignedFixedInteger, UnsignedFixedInteger,
+};
 
 use crate::{
   int,
   layout::Token,
-  width::{BitCount, FillsRepr, FitsBits, IntRepr, UintRepr},
+  width::{
+    BitCount, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntWidth, UintRepr,
+    UintWidth,
+  },
 };
 
 mod error;
 #[macro_use]
 mod tables;
+mod traits;
 
 /// An unsigned integer of `Bits` bits, stored in `Repr`.
 ///
@@ -201,9 +208,44 @@ impl<B, R> Int<B, R> {
   }
 }
 
-/// Generates the constants and the `const fn`s of [`Uint`] and [`Int`] over the arrays of each limb
-/// type, written `limb, bits, lower, upper;`, where `bits` is the number of bits of a limb and
-/// `lower` and `upper` are the modules of its limb layers, and followed by the examples of
+// The constants are generic over the storage. `BITS` needs only the width relation, so every
+// storage has it; the values need a storage that holds them inline, and come from the storage's
+// own constants for each width, which its sealed trait carries.
+impl<B: FitsBits<R>, R: UintRepr> Uint<B, R> {
+  /// The number of bits, `Bits`.
+  pub const BITS: u32 = B::U32;
+}
+
+impl<B: FitsBits<R>, R: InlineUintRepr> Uint<B, R> {
+  /// Zero.
+  pub const ZERO: Self = Self::wrap(R::ZERO);
+
+  /// The smallest value, zero.
+  pub const MIN: Self = Self::ZERO;
+
+  /// The largest value, `2^Bits - 1`.
+  pub const MAX: Self = Self::wrap(<R::Width<B> as UintWidth<R>>::MAX);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> Int<B, R> {
+  /// The number of bits, `Bits`, including the sign bit.
+  pub const BITS: u32 = B::U32;
+}
+
+impl<B: FitsBits<R>, R: InlineIntRepr> Int<B, R> {
+  /// Zero.
+  pub const ZERO: Self = Self::wrap(R::ZERO);
+
+  /// The smallest value, `-2^(Bits - 1)`.
+  pub const MIN: Self = Self::wrap(<R::Width<B> as IntWidth<R>>::MIN);
+
+  /// The largest value, `2^(Bits - 1) - 1`.
+  pub const MAX: Self = Self::wrap(<R::Width<B> as IntWidth<R>>::MAX);
+}
+
+/// Generates the `const fn`s of [`Uint`] and [`Int`] over the arrays of each limb type, written
+/// `limb, bits, lower, upper;`, where `bits` is the number of bits of a limb and `lower` and
+/// `upper` are the modules of its limb layers, and followed by the examples of
 /// `checked_from_limbs` for `Uint` and for `Int`.
 // Trait methods cannot be `const`, so each limb type has inherent impls of its own. Each limb type
 // also has an invocation of its own, which a diagnostic that points into the macro shows.
@@ -217,18 +259,6 @@ macro_rules! array_integers {
     where
       B: FitsBits<[$limb; N]>,
     {
-      /// The number of bits, `Bits`.
-      pub const BITS: u32 = B::U32;
-
-      /// Zero.
-      pub const ZERO: Self = Self::wrap([0; N]);
-
-      /// The smallest value, zero.
-      pub const MIN: Self = Self::ZERO;
-
-      /// The largest value, `2^Bits - 1`.
-      pub const MAX: Self = Self::wrap(int::$lower::max_of_bits(Self::BITS));
-
       #[doc = concat!(
         "Creates an integer from its ",
         stringify!($bits),
@@ -301,18 +331,6 @@ macro_rules! array_integers {
     where
       B: FitsBits<[$limb; N]>,
     {
-      /// The number of bits, `Bits`, including the sign bit.
-      pub const BITS: u32 = B::U32;
-
-      /// Zero.
-      pub const ZERO: Self = Self::wrap([0; N]);
-
-      /// The smallest value, `-2^(Bits - 1)`.
-      pub const MIN: Self = Self::wrap(int::$upper::min_of_bits(Self::BITS));
-
-      /// The largest value, `2^(Bits - 1) - 1`.
-      pub const MAX: Self = Self::wrap(int::$upper::max_of_bits(Self::BITS));
-
       #[doc = concat!(
         "Creates an integer from its ",
         stringify!($bits),
@@ -542,26 +560,14 @@ array_integers! {
   }
 }
 
-/// Generates the constants and the `const fn`s of [`Uint`] and [`Int`] over the native integers,
-/// written `unsigned, signed;`.
+/// Generates the `const fn`s of [`Uint`] and [`Int`] over the native integers, and their
+/// [`NativeInteger`] implementations, written `unsigned, signed;`.
 macro_rules! native_integers {
   ($($uint:ident, $int:ident);+ $(;)?) => {$(
     impl<B> Uint<B, $uint>
     where
       B: FitsBits<$uint>,
     {
-      /// The number of bits, `Bits`.
-      pub const BITS: u32 = B::U32;
-
-      /// Zero.
-      pub const ZERO: Self = Self::wrap(0);
-
-      /// The smallest value, zero.
-      pub const MIN: Self = Self::ZERO;
-
-      /// The largest value, `2^Bits - 1`.
-      pub const MAX: Self = Self::wrap(int::$uint::max_of_bits(Self::BITS));
-
       /// Creates an integer of the value `value`.
       ///
       /// # Panics
@@ -578,8 +584,11 @@ macro_rules! native_integers {
         }
       }
 
-      /// Creates an integer of the value `value`, or returns [`TryNewError`] if it is `2^Bits` or
-      /// more.
+      /// Creates an integer of the value `value`.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`TryNewError`] if `value` is `2^Bits` or more.
       #[inline]
       pub const fn try_new(value: $uint) -> Result<Self, TryNewError> {
         if int::$uint::fits_bits(value, Self::BITS) {
@@ -605,18 +614,6 @@ macro_rules! native_integers {
     where
       B: FitsBits<$int>,
     {
-      /// The number of bits, `Bits`, including the sign bit.
-      pub const BITS: u32 = B::U32;
-
-      /// Zero.
-      pub const ZERO: Self = Self::wrap(0);
-
-      /// The smallest value, `-2^(Bits - 1)`.
-      pub const MIN: Self = Self::wrap(int::$int::min_of_bits(Self::BITS));
-
-      /// The largest value, `2^(Bits - 1) - 1`.
-      pub const MAX: Self = Self::wrap(int::$int::max_of_bits(Self::BITS));
-
       /// Creates an integer of the value `value`.
       ///
       /// # Panics
@@ -633,8 +630,11 @@ macro_rules! native_integers {
         }
       }
 
-      /// Creates an integer of the value `value`, or returns [`TryNewError`] if it is below
-      /// `-2^(Bits - 1)` or above `2^(Bits - 1) - 1`.
+      /// Creates an integer of the value `value`.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`TryNewError`] if `value` is below `-2^(Bits - 1)` or above `2^(Bits - 1) - 1`.
       #[inline]
       pub const fn try_new(value: $int) -> Result<Self, TryNewError> {
         if int::$int::fits_bits(value, Self::BITS) {
@@ -656,7 +656,32 @@ macro_rules! native_integers {
       integer_query_table!(inherent_items![$int]);
       signed_query_table!(inherent_items![$int]);
     }
+
+    native_integers!(@trait Uint, $uint);
+    native_integers!(@trait Int, $int);
   )+};
+  // The methods call the inherent `const fn`s, which `Self::` names first.
+  (@trait $integer:ident, $native:ident) => {
+    impl<B: FitsBits<$native>> NativeInteger for $integer<B, $native> {
+      type Native = $native;
+
+      #[inline]
+      #[track_caller]
+      fn new(value: $native) -> Self {
+        Self::new(value)
+      }
+
+      #[inline]
+      fn try_new(value: $native) -> Result<Self, TryNewError> {
+        Self::try_new(value)
+      }
+
+      #[inline]
+      fn value(self) -> $native {
+        Self::value(self)
+      }
+    }
+  };
 }
 
 native_integers!(

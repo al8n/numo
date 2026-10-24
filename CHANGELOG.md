@@ -74,9 +74,20 @@ FEATURES
   - `FitsBits` and `FillsRepr`, which relate a width to the storages that hold it and to the
     storages that it fills, with compile-time diagnostics, and the sealed storage traits `UintRepr`
     and `IntRepr`.
-  - Each limb type has constants and constructors of its own, so a path that leaves the storage to
-    inference is ambiguous (E0034): `Uint::MAX` with an expected type or passed as an argument,
-    `Uint::from_limbs(..)` with an expected type, and `Uint::<U256, _>::MAX`. Naming the storage,
-    as in `Uint::<U256, [u64; 4]>::MAX` or `Uint::<_, [u64; 4]>::MAX`, or an alias resolves it.
+  - The constants `BITS`, `ZERO`, `MIN` and `MAX` are defined once for every storage, so a constant
+    whose storage the expected type names resolves: `let x: Uint<U7> = Uint::MAX;`,
+    `let y: u256 = Uint::MAX;` and `Uint::MAX` passed for a parameter of a concrete type compile,
+    while `Uint::<U7, _>::MAX` with no expected type needs a type annotation (E0283). Each storage
+    has constructors of its own, so a constructor that leaves the storage to inference is ambiguous
+    (E0034): `Uint::new(5)`, `Uint::from_limbs(..)` and `Uint::checked_from_limbs(..)` with only an
+    expected type. Naming the width for the default storage, as in `Uint::<U7>::new(5)` or
+    `Uint::<U200>::MAX`, the full type, or an alias resolves it.
+  - The sealed traits `FixedInteger`, with the constants and `is_zero`, `UnsignedFixedInteger`,
+    `SignedFixedInteger`, with `is_negative`, `is_positive` and the unsigned integer of the same
+    width, `NativeInteger`, with `new`, `try_new` and `value`, `ArrayInteger`, with
+    `checked_from_limbs`, `to_limbs` and `as_limbs`, and `FromLimbs`, with `from_limbs`. Each has
+    one implementation for every storage of a kind and mirrors the inherent items for generic
+    code, so the bound `B: BitCount` gives `Uint<B>` and `Int<B>` every trait of their default
+    storages. The traits are not `const`; constant contexts use the inherent `const fn`s.
 - `Storage`, `DigitCount`, `FitsDigits`, `Layout`, `Widen`, `WidenRepr` and `Pick`: the type-level
   capacity and sign checks, with compile-time diagnostics for invalid digit counts and storages.
