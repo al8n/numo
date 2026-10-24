@@ -27,7 +27,7 @@ error[E0277]: `Bits` must be below 2^32
    = help: the trait `numo::width::sealed::BitsBelow2Pow32` is not implemented for `B0`
    = note: the number of bits is a `u32`, as the constant `BITS` is
 help: the trait `numo::width::sealed::BitsBelow2Pow32` is implemented for `B1`
-  --> src/width.rs
+  --> src/width/mod.rs
    |
    |   impl BitsBelow2Pow32 for typenum::B1 {}
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
