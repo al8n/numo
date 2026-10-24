@@ -13,7 +13,7 @@ use typenum::{
 };
 
 use crate::{
-  Int, Uint, bigint, i192, i256, i320, i384, i448, i512, i768, i1024, i2048, i4096,
+  Int, TryNewError, Uint, bigint, i192, i256, i320, i384, i448, i512, i768, i1024, i2048, i4096,
   int::DIGIT_BUF_LEN, u192, u256, u320, u384, u448, u512, u768, u1024, u2048, u4096,
 };
 
@@ -172,6 +172,32 @@ fn trait_surface_and_layout() {
   assert_eq!(size_of::<Int<U100, [u128; 1]>>(), 16);
   assert_eq!(align_of::<Uint<U256, [u128; 2]>>(), align_of::<u128>());
   assert_eq!(align_of::<Int<U100, [u128; 1]>>(), align_of::<u128>());
+
+  // The native integers, which give the size and the alignment, the smallest that holds the width
+  // and wider ones.
+  assert_traits::<Uint<U7, u8>>();
+  assert_traits::<Int<U7, i8>>();
+  assert_traits::<Uint<U24, u32>>();
+  assert_traits::<Int<U24, i32>>();
+  assert_traits::<Uint<U100, u128>>();
+  assert_traits::<Int<U127, i128>>();
+  assert_traits::<Uint<U8, u8>>();
+  assert_traits::<Int<U1, i8>>();
+  assert_traits::<Uint<U7, u64>>();
+  assert_eq!(size_of::<Uint<U7, u8>>(), 1);
+  assert_eq!(size_of::<Int<U7, i8>>(), 1);
+  assert_eq!(size_of::<Uint<U24, u32>>(), 4);
+  assert_eq!(size_of::<Int<U24, i32>>(), 4);
+  assert_eq!(size_of::<Uint<U100, u128>>(), 16);
+  assert_eq!(size_of::<Int<U127, i128>>(), 16);
+  assert_eq!(size_of::<Uint<U7, u64>>(), 8);
+  assert_eq!(align_of::<Uint<U7, u8>>(), 1);
+  assert_eq!(align_of::<Int<U24, i32>>(), align_of::<i32>());
+  assert_eq!(align_of::<Uint<U100, u128>>(), align_of::<u128>());
+  assert_eq!(align_of::<Int<U127, i128>>(), align_of::<i128>());
+  // No value is invalid, so `None` takes a byte of its own.
+  assert_eq!(size_of::<Option<Uint<U7, u8>>>(), 2);
+  assert_eq!(size_of::<Option<Int<U1, i8>>>(), 2);
 }
 
 macro_rules! integer_tests {
@@ -447,6 +473,28 @@ fn constants_in_const_context() {
       false, false, false, false, false, true, true, true, true, true
     ]
   );
+
+  // The native integers.
+  const SEVEN: Uint<U7, u8> = Uint::<U7, u8>::new(100);
+  const REJECTED_NATIVE: Result<Int<U7, i8>, TryNewError> = Int::<U7, i8>::try_new(-65);
+  const ACCEPTED_NATIVE: Result<Int<U7, i8>, TryNewError> = Int::<U7, i8>::try_new(-64);
+  const LARGEST: u128 = Uint::<U100, u128>::MAX.value();
+  const SIGN: i8 = Int::<U1, i8>::MIN.value();
+  const NATIVE_BITS: [u32; 2] = [Uint::<U24, u32>::BITS, Int::<U127, i128>::BITS];
+  const NATIVE_QUERIES: [bool; 4] = [
+    SEVEN.is_zero(),
+    Uint::<U7, u8>::ZERO.is_zero(),
+    Int::<U1, i8>::MIN.is_negative(),
+    Int::<U1, i8>::MAX.is_positive(),
+  ];
+
+  assert_eq!(SEVEN.value(), 100);
+  assert_eq!(REJECTED_NATIVE, Err(TryNewError), "-65 needs 8 bits");
+  assert_eq!(ACCEPTED_NATIVE.map(|value| value.value()), Ok(-64));
+  assert_eq!(LARGEST, (1 << 100) - 1);
+  assert_eq!(SIGN, -1, "one signed bit holds -1 and 0");
+  assert_eq!(NATIVE_BITS, [24, 127]);
+  assert_eq!(NATIVE_QUERIES, [false, true, true, false]);
 }
 
 #[test]

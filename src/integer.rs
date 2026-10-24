@@ -7,39 +7,49 @@ use core::{
   marker::PhantomData,
 };
 
+pub use error::TryNewError;
+
 use crate::{
   int,
   layout::Token,
   width::{FillsRepr, FitsBits, IntRepr, UintRepr},
 };
 
+mod error;
+#[macro_use]
+mod tables;
+
 /// An unsigned integer of `Bits` bits, stored in `Repr`.
 ///
 /// The value runs from zero to `2^Bits - 1`. `Bits` is a [`typenum`] number of at least 1, and
-/// `Repr` is an array of limbs, least significant first, that holds at least `Bits` bits:
-/// `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, of `8 * N`, `16 * N`, `32 * N`,
-/// `64 * N` or `128 * N` bits. The bits above `Bits`, if any, are zero. `[u64; N]` is the storage
-/// of the module [`aliases`](crate::aliases), which names common widths, such as
-/// [`u256`](crate::u256) for `Uint<U256, [u64; 4]>`; `[u32; N]` computes with native 64-bit
-/// intermediates, and `[u8; N]` has alignment 1 and holds the little-endian bytes of the value on
-/// every target. `[u128; N]` has the layout of an array of `u128`, for memory shared with code that
-/// stores 128-bit words. Its arithmetic works on the 64-bit halves of each limb, as no wider native
-/// integer exists; its speed relative to `[u64; N]` depends on the operation, the width and the
-/// target (formatting a value of a few limbs is several times slower), so choose it for layout, not
-/// for speed. The type has the size, alignment and ABI of `Repr`.
+/// `Repr` holds at least `Bits` bits: a native unsigned integer, `u8`, `u16`, `u32`, `u64` or
+/// `u128`, which holds the value itself, or an array of limbs, least significant first, `[u8; N]`,
+/// `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, of `8 * N`, `16 * N`, `32 * N`, `64 * N` or
+/// `128 * N` bits. The bits above `Bits`, if any, are zero. `[u64; N]` is the storage of the module
+/// [`aliases`](crate::aliases), which names common widths, such as [`u256`](crate::u256) for
+/// `Uint<U256, [u64; 4]>`; `[u32; N]` computes with native 64-bit intermediates, and `[u8; N]` has
+/// alignment 1 and holds the little-endian bytes of the value on every target. `[u128; N]` has the
+/// layout of an array of `u128`, for memory shared with code that stores 128-bit words. Its
+/// arithmetic works on the 64-bit halves of each limb, as no wider native integer exists; its speed
+/// relative to `[u64; N]` depends on the operation, the width and the target (formatting a value of
+/// a few limbs is several times slower), so choose it for layout, not for speed. The type has the
+/// size, alignment and ABI of `Repr`. Each storage gives a distinct type: `Uint<U8, u8>` and
+/// `Uint<U8, [u8; 1]>` have the same layout, order, text and hash, but are not the same type.
 ///
-/// [`from_limbs`](Self::from_limbs) creates a value from any bit pattern of a width that fills its
-/// limbs, and [`checked_from_limbs`](Self::checked_from_limbs) from the limbs of any width, checking
-/// that they hold a value of `Bits` bits. Values compare, hash and format by their numeric value:
-/// `Ord` is numeric, `Hash` depends only on the value and `Bits`, whatever the storage, and
-/// `Display` and `Debug` write decimal. There is no arithmetic.
+/// In a native integer, [`new`](Self::new) creates a value, panicking if it does not fit in `Bits`
+/// bits, [`try_new`](Self::try_new) returns an error instead, and [`value`](Self::value) returns
+/// the value. In an array, [`from_limbs`](Self::from_limbs) creates a value from any bit pattern of
+/// a width that fills its limbs, and [`checked_from_limbs`](Self::checked_from_limbs) from the
+/// limbs of any width, checking that they hold a value of `Bits` bits. Values compare, hash and
+/// format by their numeric value: `Ord` is numeric, `Hash` depends only on the value and `Bits`,
+/// whatever the storage, and `Display` and `Debug` write decimal. There is no arithmetic.
 ///
 /// The aliases from 192 to 512 bits are the wide storages of [`Decimal`](crate::Decimal):
 ///
 /// ```
 /// use numo::{
 ///   Decimal, Uint,
-///   typenum::{U18, U24, U59, U200},
+///   typenum::{U7, U18, U24, U59, U200},
 ///   u256,
 /// };
 ///
@@ -67,15 +77,21 @@ use crate::{
 /// let bytes = Uint::<U24, [u8; 3]>::from_limbs([1, 2, 3]);
 /// assert_eq!(bytes.to_string(), "197121");
 /// assert_eq!(Uint::<U24, [u8; 3]>::MAX.to_limbs(), [u8::MAX; 3]);
+///
+/// // 7 bits in a `u8`, from zero to 127.
+/// type U7x8 = Uint<U7, u8>;
+/// assert_eq!(U7x8::new(100).value(), 100);
+/// assert_eq!(U7x8::MAX.value(), 127);
+/// assert!(U7x8::try_new(128).is_err());
 /// ```
 ///
 /// The width cannot be inferred from the limbs, nor the storage from the expected type, so
-/// construction names the alias or the full type, for example `u256::from_limbs(limbs)` or
-/// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+/// construction names the alias or the full type, for example `u256::from_limbs(limbs)`,
+/// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)` or `Uint::<U7, u8>::new(100)`.
 #[repr(transparent)]
 pub struct Uint<Bits, Repr> {
-  // Holds a value of `Bits` bits: every bit of the limbs at index `Bits` or above is zero, so the
-  // limbs, read as an unsigned integer, equal the value. Every constructor establishes this, and
+  // Holds a value of `Bits` bits: every bit of the storage at index `Bits` or above is zero, so the
+  // storage, read as an unsigned integer, equals the value. Every constructor establishes this, and
   // equality, comparison, hashing and formatting rely on it. It is a logical invariant, not a
   // safety invariant: no `unsafe` code may rely on it.
   repr: Repr,
@@ -85,17 +101,20 @@ pub struct Uint<Bits, Repr> {
 /// A signed integer of `Bits` bits in two's complement, stored in `Repr`.
 ///
 /// The value runs from `-2^(Bits - 1)` to `2^(Bits - 1) - 1`. `Bits` is a [`typenum`] number of at
-/// least 1, and `Repr` is an array of limbs, least significant first, that holds at least `Bits`
-/// bits, as for [`Uint`]: `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`. The bits
-/// above `Bits`, if any, are copies of the sign bit, so the limbs hold the value in two's
-/// complement. The module [`aliases`](crate::aliases) names common widths in `[u64; N]`, such as
-/// [`i256`](crate::i256) for `Int<U256, [u64; 4]>`. The type has the size, alignment and ABI of
-/// `Repr`.
+/// least 1, and `Repr` holds at least `Bits` bits: a native signed integer, `i8`, `i16`, `i32`,
+/// `i64` or `i128`, which holds the value itself, or an array of limbs, least significant first, as
+/// for [`Uint`]: `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`. The bits above
+/// `Bits`, if any, are copies of the sign bit, so the storage holds the value in two's complement.
+/// The module [`aliases`](crate::aliases) names common widths, such as [`i256`](crate::i256) for
+/// `Int<U256, [u64; 4]>`. The type has the size, alignment and ABI of `Repr`, and as for [`Uint`],
+/// each storage gives a distinct type.
 ///
-/// As for [`Uint`], [`from_limbs`](Self::from_limbs) creates a value from any bit pattern of a width
-/// that fills its limbs, and [`checked_from_limbs`](Self::checked_from_limbs) from the limbs of any
-/// width, checking that they hold a value of `Bits` bits. Values compare, hash and format by their
-/// numeric value, and there is no arithmetic.
+/// As for [`Uint`], in a native integer [`new`](Self::new) and [`try_new`](Self::try_new) create a
+/// value and [`value`](Self::value) returns it, and in an array [`from_limbs`](Self::from_limbs)
+/// creates a value from any bit pattern of a width that fills its limbs, and
+/// [`checked_from_limbs`](Self::checked_from_limbs) from the limbs of any width, checking that
+/// they hold a value of `Bits` bits. Values compare, hash and format by their numeric value, and
+/// there is no arithmetic.
 ///
 /// ```
 /// use numo::{
@@ -131,15 +150,21 @@ pub struct Uint<Bits, Repr> {
 /// let bytes = Int::<U24, [u8; 3]>::from_limbs([0xff, 0xfd, 0xfc]);
 /// assert_eq!(bytes.to_string(), "-197121");
 /// assert!(Int::<U24, [u8; 3]>::MIN < bytes);
+///
+/// // 7 bits in an `i8`, from -64 to 63.
+/// type I7x8 = Int<U7, i8>;
+/// assert_eq!(I7x8::new(-5).value(), -5);
+/// assert_eq!(I7x8::MIN.value(), -64);
+/// assert!(I7x8::try_new(64).is_err());
 /// ```
 ///
 /// The width cannot be inferred from the limbs, nor the storage from the expected type, so
-/// construction names the alias or the full type, for example `i256::from_limbs(limbs)` or
-/// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+/// construction names the alias or the full type, for example `i256::from_limbs(limbs)`,
+/// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)` or `Int::<U7, i8>::new(-5)`.
 #[repr(transparent)]
 pub struct Int<Bits, Repr> {
-  // Holds a value of `Bits` bits: every bit of the limbs at index `Bits - 1` or above equals bit
-  // `Bits - 1`, the sign bit, so the limbs, read as a two's complement integer, equal the value.
+  // Holds a value of `Bits` bits: every bit of the storage at index `Bits - 1` or above equals bit
+  // `Bits - 1`, the sign bit, so the storage, read as a two's complement integer, equals the value.
   // Every constructor establishes this, and equality, comparison, the sign queries, hashing and
   // formatting rely on it. It is a logical invariant, not a safety invariant: no `unsafe` code may
   // rely on it.
@@ -262,12 +287,7 @@ macro_rules! array_integers {
         &self.repr
       }
 
-      /// Returns `true` if the value is zero.
-      #[must_use]
-      #[inline]
-      pub const fn is_zero(&self) -> bool {
-        int::$lower::is_zero(&self.repr)
-      }
+      integer_query_table!(inherent_items![$lower, &]);
     }
 
     impl<B, const N: usize> Int<B, [$limb; N]>
@@ -355,26 +375,8 @@ macro_rules! array_integers {
         &self.repr
       }
 
-      /// Returns `true` if the value is zero.
-      #[must_use]
-      #[inline]
-      pub const fn is_zero(&self) -> bool {
-        int::$upper::is_zero(&self.repr)
-      }
-
-      /// Returns `true` if the value is negative.
-      #[must_use]
-      #[inline]
-      pub const fn is_negative(&self) -> bool {
-        int::$upper::is_negative(&self.repr)
-      }
-
-      /// Returns `true` if the value is positive.
-      #[must_use]
-      #[inline]
-      pub const fn is_positive(&self) -> bool {
-        int::$upper::is_positive(&self.repr)
-      }
+      integer_query_table!(inherent_items![$upper, &]);
+      signed_query_table!(inherent_items![$upper, &]);
     }
   )+};
 }
@@ -533,6 +535,131 @@ array_integers! {
   }
 }
 
+/// Generates the constants and the `const fn`s of [`Uint`] and [`Int`] over the native integers,
+/// written `unsigned, signed;`.
+macro_rules! native_integers {
+  ($($uint:ident, $int:ident);+ $(;)?) => {$(
+    impl<B> Uint<B, $uint>
+    where
+      B: FitsBits<$uint>,
+    {
+      /// The number of bits, `Bits`.
+      pub const BITS: u32 = B::U32;
+
+      /// Zero.
+      pub const ZERO: Self = Self::wrap(0);
+
+      /// The smallest value, zero.
+      pub const MIN: Self = Self::ZERO;
+
+      /// The largest value, `2^Bits - 1`.
+      pub const MAX: Self = Self::wrap(int::$uint::max_of_bits(Self::BITS));
+
+      /// Creates an integer of the value `value`.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `value` is `2^Bits` or more, so in a constant such a value fails to compile.
+      /// [`try_new`](Self::try_new) returns an error instead.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const fn new(value: $uint) -> Self {
+        match Self::try_new(value) {
+          Ok(integer) => integer,
+          Err(_) => panic!("the value does not fit in `Bits` bits"),
+        }
+      }
+
+      /// Creates an integer of the value `value`, or returns [`TryNewError`] if it is `2^Bits` or
+      /// more.
+      #[inline]
+      pub const fn try_new(value: $uint) -> Result<Self, TryNewError> {
+        if int::$uint::fits_bits(value, Self::BITS) {
+          Ok(Self::wrap(value))
+        } else {
+          Err(TryNewError)
+        }
+      }
+    }
+
+    impl<B> Uint<B, $uint> {
+      /// Returns the value.
+      #[must_use]
+      #[inline]
+      pub const fn value(self) -> $uint {
+        self.repr
+      }
+
+      integer_query_table!(inherent_items![$uint]);
+    }
+
+    impl<B> Int<B, $int>
+    where
+      B: FitsBits<$int>,
+    {
+      /// The number of bits, `Bits`, including the sign bit.
+      pub const BITS: u32 = B::U32;
+
+      /// Zero.
+      pub const ZERO: Self = Self::wrap(0);
+
+      /// The smallest value, `-2^(Bits - 1)`.
+      pub const MIN: Self = Self::wrap(int::$int::min_of_bits(Self::BITS));
+
+      /// The largest value, `2^(Bits - 1) - 1`.
+      pub const MAX: Self = Self::wrap(int::$int::max_of_bits(Self::BITS));
+
+      /// Creates an integer of the value `value`.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `value` is below `-2^(Bits - 1)` or above `2^(Bits - 1) - 1`, so in a constant
+      /// such a value fails to compile. [`try_new`](Self::try_new) returns an error instead.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const fn new(value: $int) -> Self {
+        match Self::try_new(value) {
+          Ok(integer) => integer,
+          Err(_) => panic!("the value does not fit in `Bits` bits"),
+        }
+      }
+
+      /// Creates an integer of the value `value`, or returns [`TryNewError`] if it is below
+      /// `-2^(Bits - 1)` or above `2^(Bits - 1) - 1`.
+      #[inline]
+      pub const fn try_new(value: $int) -> Result<Self, TryNewError> {
+        if int::$int::fits_bits(value, Self::BITS) {
+          Ok(Self::wrap(value))
+        } else {
+          Err(TryNewError)
+        }
+      }
+    }
+
+    impl<B> Int<B, $int> {
+      /// Returns the value.
+      #[must_use]
+      #[inline]
+      pub const fn value(self) -> $int {
+        self.repr
+      }
+
+      integer_query_table!(inherent_items![$int]);
+      signed_query_table!(inherent_items![$int]);
+    }
+  )+};
+}
+
+native_integers!(
+  u8, i8;
+  u16, i16;
+  u32, i32;
+  u64, i64;
+  u128, i128;
+);
+
 // Trait methods cannot be `const`.
 macro_rules! integer_traits {
   ($name:ident, $repr:ident) => {
@@ -574,8 +701,9 @@ macro_rules! integer_traits {
     where
       R: $repr,
     {
-      /// Compares the values, from the most significant limb down. The array order would compare
-      /// the least significant limb first.
+      /// Compares the values. A native integer compares as its integer type does, and an array
+      /// from the most significant limb down, as the array order would compare the least
+      /// significant limb first.
       #[inline]
       fn cmp(&self, other: &Self) -> Ordering {
         self.repr.compare(&other.repr, Token::new())
@@ -589,7 +717,9 @@ macro_rules! integer_traits {
     {
       /// Writes the lowest `ceil(Bits / 64)` 64-bit words of the value, in two's complement for
       /// `Int`, least significant first and without the length prefix of an array, so that the hash
-      /// depends only on the value and `Bits`, whatever the limb type and the number of limbs.
+      /// depends only on the value and `Bits`, whatever the storage: a native integer writes what
+      /// an array of one limb of its width writes, so `Uint<U8, u8>` hashes as `Uint<U8, [u8; 1]>`
+      /// does.
       #[inline]
       fn hash<H: Hasher>(&self, state: &mut H) {
         self.repr.hash_limbs(B::U32, state, Token::new());
@@ -602,8 +732,9 @@ macro_rules! integer_traits {
     {
       /// Writes the value in decimal, honoring width, fill, alignment, `+` and `0` as integers do.
       ///
-      /// The digits take a stack buffer of `3 * N`, `5 * N`, `10 * N`, `20 * N` or `39 * N` bytes
-      /// for limbs of 8, 16, 32, 64 or 128 bits, and time quadratic in `N`.
+      /// A native integer writes its value as the native integer does. In an array, the digits take
+      /// a stack buffer of `3 * N`, `5 * N`, `10 * N`, `20 * N` or `39 * N` bytes for limbs of 8,
+      /// 16, 32, 64 or 128 bits, and time quadratic in `N`.
       #[inline]
       fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.repr.fmt_decimal(f, Token::new())
@@ -614,7 +745,8 @@ macro_rules! integer_traits {
     where
       R: $repr,
     {
-      /// Writes the same text as [`Display`](fmt::Display).
+      /// Writes the same text as [`Display`](fmt::Display): decimal for every storage, ignoring
+      /// the hexadecimal flags of `{:x?}` and `{:X?}`.
       #[inline]
       fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)

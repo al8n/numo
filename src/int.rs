@@ -8,8 +8,10 @@
 //! implementation in both layers.
 //!
 //! Each storage has a module of the same name. For the native storages, the modules for `u8`
-//! through `u128` form the lower layer and the modules for `i8` through `i128` the upper layer. The
-//! wide storages `u192` through `u512` and `i192` through `i512` hold arrays of 64-bit limbs, least
+//! through `u128` form the lower layer and the modules for `i8` through `i128` the upper layer.
+//! They also give `Uint` and `Int` over the native integers the limits of a width, `max_of_bits`
+//! and `min_of_bits`, and its range check, `fits_bits`, named as in the limb layers. The wide
+//! storages `u192` through `u512` and `i192` through `i512` hold arrays of 64-bit limbs, least
 //! significant first. Their modules apply `limbs`, the lower layer for `[u64; N]`, and
 //! `signed_limbs`, the upper layer, which reads the array as two's complement. `Uint` and `Int`
 //! also store arrays of the other limb types, through `limbs8`, `limbs16`, `limbs32` and `limbs128`
@@ -175,6 +177,19 @@ macro_rules! native {
           None
         }
       }
+
+      /// `2^bits - 1`, the largest value of `bits` bits. Requires `1 <= bits <= BITS`.
+      #[inline]
+      pub(crate) const fn max_of_bits(bits: u32) -> $uint {
+        $uint::MAX >> ($uint::BITS - bits)
+      }
+
+      /// Returns `true` if `value < 2^bits`: every bit at index `bits` or above is zero. Requires
+      /// `1 <= bits <= BITS`.
+      #[inline]
+      pub(crate) const fn fits_bits(value: $uint, bits: u32) -> bool {
+        value <= max_of_bits(bits)
+      }
     }
   };
   (signed $int:ident => $uint:ident) => {
@@ -286,6 +301,26 @@ macro_rules! native {
         } else {
           None
         }
+      }
+
+      /// `2^(bits - 1) - 1`, the largest value of `bits` bits. Requires `1 <= bits <= BITS`.
+      #[inline]
+      pub(crate) const fn max_of_bits(bits: u32) -> $int {
+        $int::MAX >> ($int::BITS - bits)
+      }
+
+      /// `-2^(bits - 1)`, the smallest value of `bits` bits. Requires `1 <= bits <= BITS`.
+      #[inline]
+      pub(crate) const fn min_of_bits(bits: u32) -> $int {
+        // The arithmetic shift fills the vacated bits with copies of the sign bit.
+        $int::MIN >> ($int::BITS - bits)
+      }
+
+      /// Returns `true` if `value` is within the range of `bits` bits, from `-2^(bits - 1)` to
+      /// `2^(bits - 1) - 1`. Requires `1 <= bits <= BITS`.
+      #[inline]
+      pub(crate) const fn fits_bits(value: $int, bits: u32) -> bool {
+        min_of_bits(bits) <= value && value <= max_of_bits(bits)
       }
     }
   };

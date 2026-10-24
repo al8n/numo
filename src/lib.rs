@@ -248,7 +248,7 @@ pub use typenum;
 
 pub use aliases::*;
 pub use decimal::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
-pub use integer::{Int, Uint};
+pub use integer::{Int, TryNewError, Uint};
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,
 };
