@@ -19,7 +19,7 @@ help: the following other types implement trait `Unsigned`
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `UInt<U, B>`
   = note: required for `u64` to implement `numo::width::sealed::SealedLimbArray<Local>`
 note: required by a bound in `LimbArray`
- --> src/width.rs
+ --> src/width/mod.rs
   |
   | pub trait LimbArray<Bits>: SealedLimbArray<Bits> {
   |                            ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `LimbArray`

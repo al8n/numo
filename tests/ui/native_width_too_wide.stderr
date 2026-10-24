@@ -7,7 +7,7 @@ error[E0277]: the storage cannot hold `Bits` bits
    = help: the trait `numo::width::sealed::NativeBitsFit` is not implemented for `B0`
    = note: `u8` and `i8` hold 8 bits, `u16` and `i16` 16, `u32` and `i32` 32, `u64` and `i64` 64, and `u128` and `i128` 128
 help: the trait `numo::width::sealed::NativeBitsFit` is implemented for `B1`
-  --> src/width.rs
+  --> src/width/mod.rs
    |
    |   impl NativeBitsFit for typenum::B1 {}
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -44,7 +44,7 @@ error[E0277]: `Bits` does not fill the storage
    = help: the trait `numo::width::sealed::NativeReprFilled` is not implemented for `B0`
    = note: `u8` and `i8` hold 8 bits, `u16` and `i16` 16, `u32` and `i32` 32, `u64` and `i64` 64, and `u128` and `i128` 128
 help: the trait `numo::width::sealed::NativeReprFilled` is implemented for `B1`
-  --> src/width.rs
+  --> src/width/mod.rs
    |
    |   impl NativeReprFilled for typenum::B1 {}
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

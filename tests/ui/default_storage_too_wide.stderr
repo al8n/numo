@@ -7,7 +7,7 @@ error[E0277]: `Uint` and `Int` have a default storage only for 1 to 65536 bits
   = help: the trait `numo::width::sealed::DefaultArray<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B1>, B1>, B0>, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>>` is not implemented for `B0`
   = note: a wider integer names its storage, as in `Uint<U100000, [u64; 2048]>`
 help: the trait `numo::width::sealed::DefaultArray<B>` is implemented for `B1`
- --> src/width.rs
+ --> src/width/mod.rs
   |
   | / impl<B> DefaultArray<B> for B1
   | | where
@@ -25,7 +25,7 @@ error[E0277]: `Uint` and `Int` have a default storage only for 1 to 65536 bits
   = help: the trait `BitCount` is not implemented for `UTerm`
   = note: generic code adds the bound `B: BitCount`, as in `fn f<B: BitCount>(x: Uint<B>)`, or names the storage, as in `Uint<B, [u64; 4]>`
 help: the trait `BitCount` is implemented for `UInt<U, X>`
- --> src/width.rs
+ --> src/width/mod.rs
   |
   | / impl<U, X> BitCount for UInt<U, X>
   | | where
