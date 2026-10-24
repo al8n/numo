@@ -1,16 +1,23 @@
 //! The width relation between a type-level number of bits and an integer storage, and the storages
 //! of [`Uint`](crate::Uint) and [`Int`](crate::Int).
 
-use core::{cmp::Ordering, fmt, hash::Hasher, ops::Shl};
+use core::{
+  cmp::Ordering,
+  fmt,
+  hash::Hasher,
+  ops::{Add, Shl, Shr},
+};
 
 use typenum::{
-  Const, IsEqual, IsLess, IsLessOrEqual, Le, LeEq, NonZero, Shleft, ToUInt, U, U3, U4, U5, U6, U7,
-  U8, U16, U32, U64, U128, U4294967296, Unsigned,
+  Const, IsEqual, IsLess, IsLessOrEqual, Le, LeEq, NonZero, Shleft, Shright, Sum, ToUInt, U, U3,
+  U4, U5, U6, U7, U8, U15, U16, U31, U32, U63, U64, U127, U128, U4294967296, Unsigned,
 };
+
+pub use array_size::ArraySize;
 
 use sealed::{
   ArrayLimb, BitsBelow2Pow32, BitsFit, NativeBitsFit, NativeReprFilled, ReprFilled,
-  SealedFillsRepr, SealedFitsBits, SealedIntRepr, SealedUintRepr,
+  SealedFillsRepr, SealedFitsBits, SealedIntRepr, SealedLimbArray, SealedUintRepr,
 };
 
 use crate::{
@@ -20,6 +27,8 @@ use crate::{
   },
   layout::Token,
 };
+
+mod array_size;
 
 mod sealed {
   use core::{cmp::Ordering, fmt, hash::Hasher};
@@ -88,6 +97,17 @@ mod sealed {
   pub trait NativeReprFilled {}
 
   impl NativeReprFilled for typenum::B1 {}
+
+  /// Seals [`ArraySize`](super::ArraySize). One impl seals every number: the orphan rules keep
+  /// other crates from implementing a trait of this crate for a type of `typenum`.
+  pub trait SealedArraySize {}
+
+  impl<U, B> SealedArraySize for typenum::UInt<U, B> {}
+
+  /// Seals [`LimbArray`](super::LimbArray). Each impl requires `Bits: Unsigned`, which `typenum`
+  /// seals, so that no other crate can implement `LimbArray` for a limb type with a width of its
+  /// own type.
+  pub trait SealedLimbArray<Bits> {}
 
   /// A limb type of the array storages: `[L; N]` holds `N << L::BitsLog2` bits.
   pub trait ArrayLimb {
@@ -490,6 +510,59 @@ native_storage!(
   u128, i128: U128;
 );
 
+/// The array of limbs of type `Self` that holds `Bits` bits: `ceil(Bits / Self::BITS)` limbs.
+///
+/// Implemented by `u8`, `u16`, `u32`, `u64` and `u128` for every width whose number of limbs has an
+/// [`ArraySize`]: up to 8192, 16384, 32768, 65536 and 131072 bits. [`Limbs`] names the array. This
+/// trait is sealed and cannot be implemented outside this crate.
+#[diagnostic::on_unimplemented(
+  message = "`{Self}` is not a limb type of an array storage",
+  label = "not a limb type",
+  note = "the limb types are `u8`, `u16`, `u32`, `u64` and `u128`"
+)]
+pub trait LimbArray<Bits>: SealedLimbArray<Bits> {
+  /// The number of limbs, `ceil(Bits / Self::BITS)`.
+  type Count: ArraySize;
+
+  /// The array, `[Self; Count]`.
+  type Array;
+}
+
+/// The array of limbs of type `L` that holds `Bits` bits, `[L; ceil(Bits / L::BITS)]`:
+/// `Limbs<U200>` is `[u64; 4]` and `Limbs<U24, u8>` is `[u8; 3]`.
+pub type Limbs<Bits, L = u64> = <L as LimbArray<Bits>>::Array;
+
+/// Implements [`LimbArray`] for each limb type, written `limb: BitsLog2, mask`, where `mask` is
+/// `2^BitsLog2 - 1`: the number of limbs is `(Bits + mask) >> BitsLog2`.
+// Each limb type has an impl of its own. One impl over `ArrayLimb` would compute with `BitsLog2`,
+// which for a type that is not a limb reaches the recursive `Shl` impls of `typenum` and overflows
+// the trait solver, instead of failing with the diagnostic of this trait. The masks are written
+// out, because rustc does not match a where-clause such as `Bits: Add<Sub1<Shleft<U1, U6>>>`
+// against the normalized `Bits: Add<U63>`.
+macro_rules! limb_arrays {
+  ($($limb:ident: $bits_log2:ident, $mask:ident);+ $(;)?) => {$(
+    impl<Bits: Unsigned> SealedLimbArray<Bits> for $limb {}
+
+    impl<Bits> LimbArray<Bits> for $limb
+    where
+      Bits: Unsigned + Add<$mask>,
+      Sum<Bits, $mask>: Shr<$bits_log2>,
+      Shright<Sum<Bits, $mask>, $bits_log2>: ArraySize,
+    {
+      type Count = Shright<Sum<Bits, $mask>, $bits_log2>;
+      type Array = <Shright<Sum<Bits, $mask>, $bits_log2> as ArraySize>::ArrayType<$limb>;
+    }
+  )+};
+}
+
+limb_arrays!(
+  u8: U3, U7;
+  u16: U4, U15;
+  u32: U5, U31;
+  u64: U6, U63;
+  u128: U7, U127;
+);
+
 /// Writes the lowest `ceil(bits / 64)` 64-bit words of the integer in `limbs` to `state`, least
 /// significant first, without the length prefix of a slice. For limbs of `B <= 64` bits, each word
 /// joins `64 / B` limbs, the least significant first, and a limb at index `limbs.len()` or above
@@ -540,3 +613,6 @@ const fn ascii(digits: &[u8]) -> Result<&str, fmt::Error> {
     Err(_) => Err(fmt::Error),
   }
 }
+
+#[cfg(test)]
+mod tests;

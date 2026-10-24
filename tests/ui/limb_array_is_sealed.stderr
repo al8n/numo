@@ -1,0 +1,32 @@
+error[E0277]: the trait bound `Local: Unsigned` is not satisfied
+ --> tests/ui/limb_array_is_sealed.rs:6:27
+  |
+6 | impl LimbArray<Local> for u64 {
+  |                           ^^^ unsatisfied trait bound
+  |
+help: the trait `Unsigned` is not implemented for `Local`
+ --> tests/ui/limb_array_is_sealed.rs:4:1
+  |
+4 | struct Local;
+  | ^^^^^^^^^^^^
+help: the following other types implement trait `Unsigned`
+ --> $CARGO/typenum-$VERSION/src/uint.rs
+  |
+  | impl Unsigned for UTerm {
+  | ^^^^^^^^^^^^^^^^^^^^^^^ `UTerm`
+...
+  | impl<U: Unsigned, B: Bit> Unsigned for UInt<U, B> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `UInt<U, B>`
+  = note: required for `u64` to implement `numo::width::sealed::SealedLimbArray<Local>`
+note: required by a bound in `LimbArray`
+ --> src/width.rs
+  |
+  | pub trait LimbArray<Bits>: SealedLimbArray<Bits> {
+  |                            ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `LimbArray`
+  = note: `LimbArray` is a "sealed trait", because to implement it you also need to implement `numo::width::sealed::SealedLimbArray`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+  = help: the following types implement the trait:
+            u8
+            u16
+            u32
+            u64
+            u128
