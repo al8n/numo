@@ -272,6 +272,7 @@
 
 #[cfg(feature = "quickcheck")]
 extern crate alloc;
+
 #[cfg(test)]
 extern crate std;
 
@@ -297,6 +298,7 @@ pub use width::{
 
 pub mod aliases;
 #[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
 mod arbitrary;
 mod decimal;
 mod int;
@@ -311,5 +313,6 @@ mod rounding;
 #[cfg(any(feature = "arbitrary", feature = "proptest", feature = "quickcheck"))]
 mod sample;
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 mod serde;
 mod width;
