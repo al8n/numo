@@ -642,7 +642,7 @@ macro_rules! limb_layer {
   (signed limb: $limb:ident, signed: $signed:ident, unsigned: $unsigned:ident) => {
     use ::core::cmp::Ordering;
 
-    use super::$unsigned;
+    use $crate::int::unsigned::$unsigned;
     use $crate::{int::DigitBuf, rounding::RoundingMode};
 
     /// The type of a limb: an unsigned integer of `B` bits.

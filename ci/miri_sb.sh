@@ -31,16 +31,16 @@ if rustc --print cfg --target "$TARGET" | grep -qx 'target_pointer_width="32"'; 
     decimal::
     int::tests::
     int::half_limbs::
-    int::limbs::
-    int::limbs8::
-    int::limbs16::
-    int::limbs32::
-    int::limbs128::
-    int::signed_limbs::
-    int::signed_limbs8::
-    int::signed_limbs16::
-    int::signed_limbs32::
-    int::signed_limbs128::
+    int::unsigned::b64::
+    int::unsigned::b8::
+    int::unsigned::b16::
+    int::unsigned::b32::
+    int::unsigned::b128::
+    int::signed::b64::
+    int::signed::b8::
+    int::signed::b16::
+    int::signed::b32::
+    int::signed::b128::
     integer::
   )
   skips=()

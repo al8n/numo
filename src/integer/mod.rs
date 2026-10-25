@@ -292,7 +292,7 @@ macro_rules! array_integers {
       #[must_use]
       #[inline]
       pub const fn checked_from_limbs(limbs: [$limb; N]) -> Option<Self> {
-        if int::$lower::fits_bits(&limbs, Self::BITS) {
+        if int::unsigned::$lower::fits_bits(&limbs, Self::BITS) {
           Some(Self::wrap(limbs))
         } else {
           None
@@ -325,7 +325,7 @@ macro_rules! array_integers {
         &self.repr
       }
 
-      integer_query_table!(inherent_items![$lower, &]);
+      integer_query_table!(inherent_items![unsigned, $lower, &]);
     }
 
     impl<B, const N: usize> Int<B, [$limb; N]>
@@ -368,7 +368,7 @@ macro_rules! array_integers {
       #[must_use]
       #[inline]
       pub const fn checked_from_limbs(limbs: [$limb; N]) -> Option<Self> {
-        if int::$upper::fits_bits(&limbs, Self::BITS) {
+        if int::signed::$upper::fits_bits(&limbs, Self::BITS) {
           Some(Self::wrap(limbs))
         } else {
           None
@@ -401,14 +401,14 @@ macro_rules! array_integers {
         &self.repr
       }
 
-      integer_query_table!(inherent_items![$upper, &]);
-      signed_query_table!(inherent_items![$upper, &]);
+      integer_query_table!(inherent_items![signed, $upper, &]);
+      signed_query_table!(inherent_items![signed, $upper, &]);
     }
   )+};
 }
 
 array_integers! {
-  u64, 64, limbs, signed_limbs;
+  u64, 64, b64, b64;
   Uint: {
     /// ```
     /// use numo::{Uint, typenum::U65};
@@ -441,7 +441,7 @@ array_integers! {
 }
 
 array_integers! {
-  u8, 8, limbs8, signed_limbs8;
+  u8, 8, b8, b8;
   Uint: {
     /// ```
     /// use numo::{Uint, typenum::U12};
@@ -471,7 +471,7 @@ array_integers! {
 }
 
 array_integers! {
-  u16, 16, limbs16, signed_limbs16;
+  u16, 16, b16, b16;
   Uint: {
     /// ```
     /// use numo::{Uint, typenum::U20};
@@ -500,7 +500,7 @@ array_integers! {
 }
 
 array_integers! {
-  u32, 32, limbs32, signed_limbs32;
+  u32, 32, b32, b32;
   Uint: {
     /// ```
     /// use numo::{Uint, typenum::U33};
@@ -529,7 +529,7 @@ array_integers! {
 }
 
 array_integers! {
-  u128, 128, limbs128, signed_limbs128;
+  u128, 128, b128, b128;
   Uint: {
     /// ```
     /// use numo::{Uint, typenum::U129};

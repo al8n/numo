@@ -12,13 +12,13 @@
 //! They also give `Uint` and `Int` over the native integers the limits of a width, `max_of_bits`
 //! and `min_of_bits`, and its range check, `fits_bits`, named as in the limb layers. The wide
 //! storages `u192` through `u512` and `i192` through `i512` hold arrays of 64-bit limbs, least
-//! significant first. Their modules apply `limbs`, the lower layer for `[u64; N]`, and
-//! `signed_limbs`, the upper layer, which reads the array as two's complement. `Uint` and `Int`
-//! also store arrays of the other limb types, through `limbs8`, `limbs16`, `limbs32` and `limbs128`
-//! and the upper layers over them, `signed_limbs8`, `signed_limbs16`, `signed_limbs32` and
-//! `signed_limbs128`, which `limb_layer!` generates from the same code as `limbs` and
-//! `signed_limbs`. No native integer has 256 bits, so `half_limbs!` computes the two primitives of
-//! the layer for `u128` from the 64-bit halves of each limb.
+//! significant first. Their modules apply `unsigned::b64`, the lower layer for `[u64; N]`, and
+//! `signed::b64`, the upper layer, which reads the array as two's complement. `Uint` and `Int`
+//! also store arrays of the other limb types, through `unsigned::b8`, `unsigned::b16`,
+//! `unsigned::b32` and `unsigned::b128` and the upper layers over them, `signed::b8`,
+//! `signed::b16`, `signed::b32` and `signed::b128`, which `limb_layer!` generates from the same
+//! code as `unsigned::b64` and `signed::b64`. No native integer has 256 bits, so `half_limbs!`
+//! computes the two primitives of the layer for `u128` from the 64-bit halves of each limb.
 //!
 //! Every storage module provides `const fn`s with the same names and contracts, so storage-specific
 //! code calls them in constant contexts, and storage-generic code reaches them through the sealed
@@ -40,48 +40,9 @@ pub(crate) type DigitBuf = [core::primitive::u8; DIGIT_BUF_LEN];
 
 mod half_limbs;
 mod limb_layer;
-pub(crate) mod limbs;
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
-pub(crate) mod limbs128;
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
-pub(crate) mod limbs16;
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
-pub(crate) mod limbs32;
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
-pub(crate) mod limbs8;
-pub(crate) mod signed_limbs;
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
-pub(crate) mod signed_limbs128;
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
-pub(crate) mod signed_limbs16;
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
-pub(crate) mod signed_limbs32;
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
-pub(crate) mod signed_limbs8;
+
+pub(crate) mod signed;
+pub(crate) mod unsigned;
 
 macro_rules! native {
   (unsigned $uint:ident) => {
@@ -439,10 +400,10 @@ macro_rules! wide {
       "]`."
     )]
     pub(crate) mod $uint {
-      use super::{DigitBuf, limbs};
+      use super::{DigitBuf, unsigned::b64};
       use crate::{$uint, rounding::RoundingMode};
 
-      wide!(@shared $uint, limbs, $limbs);
+      wide!(@shared $uint, b64, $limbs);
     }
   };
   (signed $int:ident: $limbs:literal) => {
@@ -454,26 +415,26 @@ macro_rules! wide {
       "]` in two's complement."
     )]
     pub(crate) mod $int {
-      use super::{DigitBuf, signed_limbs};
+      use super::{DigitBuf, signed::b64};
       use crate::{$int, rounding::RoundingMode};
 
-      wide!(@shared $int, signed_limbs, $limbs);
+      wide!(@shared $int, b64, $limbs);
 
       #[inline]
       pub(crate) const fn is_negative(value: $int) -> bool {
-        signed_limbs::is_negative(value.as_limbs())
+        b64::is_negative(value.as_limbs())
       }
 
       /// `-value`. Requires `value != MIN`.
       #[inline]
       pub(crate) const fn neg(value: $int) -> $int {
-        $int::from_limbs(signed_limbs::neg(value.as_limbs()))
+        $int::from_limbs(b64::neg(value.as_limbs()))
       }
 
       /// `|value|`. Requires `value != MIN`.
       #[inline]
       pub(crate) const fn abs(value: $int) -> $int {
-        $int::from_limbs(signed_limbs::abs(value.as_limbs()))
+        $int::from_limbs(b64::abs(value.as_limbs()))
       }
     }
   };

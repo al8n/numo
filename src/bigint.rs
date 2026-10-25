@@ -209,7 +209,7 @@ pub(crate) fn exponents_by(max_exp: u32, step: u32) -> Vec<u32> {
   exps
 }
 
-/// [`exponents_by`] with the step of `int::limbs`, 19 digits (`MAX_STEP`).
+/// [`exponents_by`] with the step of `int::unsigned::b64`, 19 digits (`MAX_STEP`).
 pub(crate) fn exponents(max_exp: u32) -> Vec<u32> {
   exponents_by(max_exp, 19)
 }

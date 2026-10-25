@@ -2,8 +2,8 @@
 //!
 //! A limb of `B` bits is split into two digits of `H = B / 2` bits, each held in the limb type, so
 //! that every product of two digits and every quotient by a digit is an operation of the limb type.
-//! `limbs128` uses it for `u128`; the tests instantiate it for `u8` to `u64` and check it against
-//! native integers of twice the width.
+//! `unsigned::b128` uses it for `u128`; the tests instantiate it for `u8` to `u64` and check it
+//! against native integers of twice the width.
 
 /// Defines, in the module that invokes it, the primitives `carrying_mul_add` and `div_rem_wide` of
 /// `limb_layer!` for limbs of type `$limb`, with the contracts that `limb_layer!` states, and the

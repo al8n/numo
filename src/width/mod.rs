@@ -24,10 +24,7 @@ use sealed::{
 };
 
 use crate::{
-  int::{
-    self, limbs, limbs8, limbs16, limbs32, limbs128, signed_limbs, signed_limbs8, signed_limbs16,
-    signed_limbs32, signed_limbs128,
-  },
+  int::{self, signed, unsigned},
   layout::Token,
 };
 
@@ -396,7 +393,7 @@ macro_rules! array_storage {
 
       #[inline]
       fn compare(&self, other: &Self, _: Token) -> Ordering {
-        $lower::cmp(self, other)
+        unsigned::$lower::cmp(self, other)
       }
 
       #[inline]
@@ -406,17 +403,17 @@ macro_rules! array_storage {
 
       #[inline]
       fn fmt_decimal(&self, f: &mut fmt::Formatter<'_>, _: Token) -> fmt::Result {
-        fmt_magnitude::<_, N, { $lower::DIGITS_PER_LIMB }>(self, $lower::write_digits_into, true, f)
+        fmt_magnitude::<_, N, { unsigned::$lower::DIGITS_PER_LIMB }>(self, unsigned::$lower::write_digits_into, true, f)
       }
 
       #[inline]
       fn is_zero(&self, _: Token) -> bool {
-        $lower::is_zero(self)
+        unsigned::$lower::is_zero(self)
       }
 
       #[inline]
       fn fits_bits(&self, bits: u32, _: Token) -> bool {
-        $lower::fits_bits(self, bits)
+        unsigned::$lower::fits_bits(self, bits)
       }
     }
 
@@ -432,7 +429,7 @@ macro_rules! array_storage {
 
       #[inline]
       fn compare(&self, other: &Self, _: Token) -> Ordering {
-        $upper::cmp(self, other)
+        signed::$upper::cmp(self, other)
       }
 
       #[inline]
@@ -440,38 +437,38 @@ macro_rules! array_storage {
         // The limbs above the sign bit hold its copies, so the lowest limbs hold the two's
         // complement of the value, and the limbs beyond a storage narrower than the words read as
         // further copies.
-        let fill = if $upper::is_negative(self) { $limb::MAX } else { 0 };
+        let fill = if signed::$upper::is_negative(self) { $limb::MAX } else { 0 };
         hash_words(self, bits, fill, state);
       }
 
       #[inline]
       fn fmt_decimal(&self, f: &mut fmt::Formatter<'_>, _: Token) -> fmt::Result {
-        fmt_magnitude::<_, N, { $lower::DIGITS_PER_LIMB }>(
-          &$upper::unsigned_abs(self),
-          $lower::write_digits_into,
-          !$upper::is_negative(self),
+        fmt_magnitude::<_, N, { unsigned::$lower::DIGITS_PER_LIMB }>(
+          &signed::$upper::unsigned_abs(self),
+          unsigned::$lower::write_digits_into,
+          !signed::$upper::is_negative(self),
           f,
         )
       }
 
       #[inline]
       fn is_zero(&self, _: Token) -> bool {
-        $upper::is_zero(self)
+        signed::$upper::is_zero(self)
       }
 
       #[inline]
       fn fits_bits(&self, bits: u32, _: Token) -> bool {
-        $upper::fits_bits(self, bits)
+        signed::$upper::fits_bits(self, bits)
       }
 
       #[inline]
       fn is_negative(&self, _: Token) -> bool {
-        $upper::is_negative(self)
+        signed::$upper::is_negative(self)
       }
 
       #[inline]
       fn is_positive(&self, _: Token) -> bool {
-        $upper::is_positive(self)
+        signed::$upper::is_positive(self)
       }
     }
 
@@ -484,7 +481,7 @@ macro_rules! array_storage {
     }
 
     impl<B: FitsBits<[$limb; N]>, const N: usize> UintWidth<[$limb; N]> for Width<B, [$limb; N]> {
-      const MAX: [$limb; N] = $lower::max_of_bits(B::U32);
+      const MAX: [$limb; N] = unsigned::$lower::max_of_bits(B::U32);
     }
 
     impl<const N: usize> InlineIntRepr for [$limb; N] {}
@@ -496,18 +493,18 @@ macro_rules! array_storage {
     }
 
     impl<B: FitsBits<[$limb; N]>, const N: usize> IntWidth<[$limb; N]> for Width<B, [$limb; N]> {
-      const MIN: [$limb; N] = $upper::min_of_bits(B::U32);
-      const MAX: [$limb; N] = $upper::max_of_bits(B::U32);
+      const MIN: [$limb; N] = signed::$upper::min_of_bits(B::U32);
+      const MAX: [$limb; N] = signed::$upper::max_of_bits(B::U32);
     }
   )+};
 }
 
 array_storage!(
-  u64: U6, limbs, signed_limbs;
-  u8: U3, limbs8, signed_limbs8;
-  u16: U4, limbs16, signed_limbs16;
-  u32: U5, limbs32, signed_limbs32;
-  u128: U7, limbs128, signed_limbs128;
+  u64: U6, b64, b64;
+  u8: U3, b8, b8;
+  u16: U4, b16, b16;
+  u32: U5, b32, b32;
+  u128: U7, b128, b128;
 );
 
 /// Implements [`UintRepr`], [`IntRepr`], [`InlineUintRepr`] and [`InlineIntRepr`] for the native

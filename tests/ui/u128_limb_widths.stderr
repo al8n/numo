@@ -41,7 +41,7 @@ note: required by a bound in `Uint::<B, [u128; N]>::from_limbs`
    |              ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Uint::<B, [u128; N]>::from_limbs`
 ...
    | / array_integers! {
-   | |   u128, 128, limbs128, signed_limbs128;
+   | |   u128, 128, b128, b128;
    | |   Uint: {
    | |     /// ```
 ...  |

@@ -31,8 +31,8 @@ macro_rules! signed_query_table {
 }
 
 /// Emits the rows of a method table as inherent `const fn`s of one storage. `$args` is `[layer]`
-/// for a native integer, which its layer in `int` takes by value, or `[layer, &]` for an array,
-/// which its layer takes by reference.
+/// for a native integer, which its layer in `int` takes by value, or `[group, layer, &]` for an
+/// array, which its layer in `int::group` takes by reference.
 // The parameters and the receiver both come from the table: macro hygiene would keep a `self`
 // written in this macro apart from the `self` parameter of a signature written in the table.
 macro_rules! inherent_items {
@@ -50,8 +50,8 @@ macro_rules! inherent_items {
   (@prim [$layer:ident] $prim:ident($receiver:ident)) => {
     int::$layer::$prim($receiver.repr)
   };
-  (@prim [$layer:ident, &] $prim:ident($receiver:ident)) => {
-    int::$layer::$prim(&$receiver.repr)
+  (@prim [$group:ident, $layer:ident, &] $prim:ident($receiver:ident)) => {
+    int::$group::$layer::$prim(&$receiver.repr)
   };
 }
 

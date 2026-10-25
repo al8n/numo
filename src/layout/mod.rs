@@ -584,22 +584,22 @@ macro_rules! impl_convert {
     }
   };
   (@resize unsigned $limbs:expr) => {
-    int::limbs::resize($limbs)
+    int::unsigned::b64::resize($limbs)
   };
   (@resize signed $limbs:expr) => {
-    int::signed_limbs::resize($limbs)
+    int::signed::b64::resize($limbs)
   };
   (@checked_resize unsigned unsigned $limbs:expr) => {
-    int::limbs::checked_resize($limbs)
+    int::unsigned::b64::checked_resize($limbs)
   };
   (@checked_resize signed signed $limbs:expr) => {
-    int::signed_limbs::checked_resize($limbs)
+    int::signed::b64::checked_resize($limbs)
   };
   (@checked_resize signed unsigned $limbs:expr) => {
-    int::signed_limbs::checked_to_unsigned($limbs)
+    int::signed::b64::checked_to_unsigned($limbs)
   };
   (@checked_resize unsigned signed $limbs:expr) => {
-    int::signed_limbs::checked_from_unsigned($limbs)
+    int::signed::b64::checked_from_unsigned($limbs)
   };
 }
 

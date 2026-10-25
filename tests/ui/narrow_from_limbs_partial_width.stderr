@@ -24,7 +24,7 @@ note: required by a bound in `Uint::<B, [u8; N]>::from_limbs`
   |              ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Uint::<B, [u8; N]>::from_limbs`
 ...
   | / array_integers! {
-  | |   u8, 8, limbs8, signed_limbs8;
+  | |   u8, 8, b8, b8;
   | |   Uint: {
   | |     /// ```
 ... |
@@ -58,7 +58,7 @@ note: required by a bound in `numo::Int::<B, [u16; N]>::from_limbs`
   |              ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Int::<B, [u16; N]>::from_limbs`
 ...
   | / array_integers! {
-  | |   u16, 16, limbs16, signed_limbs16;
+  | |   u16, 16, b16, b16;
   | |   Uint: {
   | |     /// ```
 ... |

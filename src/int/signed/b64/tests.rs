@@ -2,7 +2,7 @@ use crate::int::limb_layer::tests::limb_layer_tests;
 
 // The tests that every instance shares, with their helpers and the imports that the tests below
 // use as well.
-limb_layer_tests!(signed unsigned: limbs);
+limb_layer_tests!(signed unsigned: b64);
 
 fn from_i128(value: i128) -> [u64; 2] {
   [value as u64, (value >> 64) as u64]

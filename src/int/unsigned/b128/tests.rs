@@ -73,7 +73,7 @@ mod half_limbs {
   /// two for `div_rem_wide`. It allocates nothing, so that it also runs on 32-bit Miri.
   #[test]
   fn primitives_match_the_u64_layer() {
-    use crate::int::limbs;
+    use crate::int::unsigned::b64;
 
     /// `value` in four limbs of 64 bits, the top two zero.
     fn split(value: u128) -> [u64; 4] {
@@ -88,8 +88,8 @@ mod half_limbs {
         let (low, high) = carrying_mul_add(a, b, carry, add);
         let ([low0, low1, ..], [high0, high1, ..]) = (split(low), split(high));
         // The sum is below `2^256`, so neither addition carries out of four limbs.
-        let sum = limbs::checked_add(&limbs::mul(&split(a), &split(b)), &split(carry))
-          .and_then(|sum| limbs::checked_add(&sum, &split(add)));
+        let sum = b64::checked_add(&b64::mul(&split(a), &split(b)), &split(carry))
+          .and_then(|sum| b64::checked_add(&sum, &split(add)));
         assert_eq!(
           sum,
           Some([low0, low1, high0, high1]),
@@ -101,7 +101,7 @@ mod half_limbs {
         let (quotient, remainder) = div_rem_wide(high, low, divisor);
         let ([low0, low1, ..], [high0, high1, ..]) = (split(low), split(high));
         assert_eq!(
-          limbs::div_rem(&[low0, low1, high0, high1], &split(divisor)),
+          b64::div_rem(&[low0, low1, high0, high1], &split(divisor)),
           (split(quotient), split(remainder)),
           "{high:#x}:{low:#x} / {divisor:#x}"
         );
