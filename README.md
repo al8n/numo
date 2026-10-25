@@ -28,7 +28,7 @@ checked during type checking, so no value can be created for a type that cannot 
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u1`–`u127` and `i1`–`i127`, constants, checked construction, comparison, hashing, formatting and generic traits; arithmetic planned |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u1`–`u1024` and `i1`–`i1024`, constants, checked construction, comparison, hashing, formatting and generic traits; arithmetic planned |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
 
@@ -149,11 +149,13 @@ alignment 1 and holds the little-endian bytes of the value on every target. `[u1
 layout of an array of `u128`, for memory shared with code that stores 128-bit words. Its arithmetic
 works on the 64-bit halves of each limb, as no wider native integer exists; its speed relative to
 `[u64; N]` depends on the operation, the width and the target (formatting a value of a few limbs is
-several times slower), so choose it for layout, not for speed. The aliases name `u1` to `u127` and
-`i1` to `i127`, except the native widths, in the smallest native integer, such as `u7` for
-`Uint<U7, u8>`, and the widths that fill 64-bit limbs: the wide storages above, and `u768`,
-`u1024`, `u2048` and `u4096` with their signed counterparts. Any other width or storage is
-written out, such as `Uint<U200>` or `Uint<U24, [u8; 3]>`.
+several times slower), so choose it for layout, not for speed. The aliases name `u1` to `u1024` and
+`i1` to `i1024`, except the native widths 8, 16, 32, 64 and 128, in the default storage: the
+smallest native integer for 1 to 127 bits, such as `u7` for `Uint<U7, u8>`, and
+`[u64; ceil(N / 64)]` for 129 to 1024 bits, such as `u144` for `Uint<U144, [u64; 3]>`. They also
+name `u2048`, `u4096`, `i2048` and `i4096`. Any other width or storage is written out, such as
+`Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that `typenum` has no constant for is computed,
+as in `Uint<Sum<U1024, U476>>` for 1500 bits.
 
 - `const` items and methods: `BITS`, `ZERO`, `MIN` and `MAX`; for a native integer, `new`, which
   panics if the value does not fit, `try_new`, which returns an error instead, and `value`; for an

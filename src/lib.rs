@@ -88,10 +88,12 @@
 //! 64-bit halves of each limb, as no wider native integer exists; its speed relative to `[u64; N]`
 //! depends on the operation, the width and the target (formatting a value of a few limbs is several
 //! times slower), so choose it for layout, not for speed. The module [`aliases`] names `u1` to
-//! `u127` and `i1` to `i127`, but for the native widths, in the smallest native integer that holds
-//! them, such as [`u7`] for `Uint<U7, u8>`, and the widths of the wide storages above and 768,
-//! 1024, 2048 and 4096 bits in 64-bit limbs, each of which fills its limbs; any other width or
-//! storage is written out, such as `Uint<U200>` or `Uint<U24, [u8; 3]>`.
+//! `u1024` and `i1` to `i1024`, but for the native widths 8, 16, 32, 64 and 128, in the default
+//! storage: the smallest native integer that holds 1 to 127 bits, such as [`u7`] for `Uint<U7, u8>`,
+//! and `[u64; ceil(N / 64)]` for 129 to 1024 bits, such as [`u144`] for `Uint<U144, [u64; 3]>`. It
+//! also names `u2048`, `u4096`, `i2048` and `i4096`, which fill their limbs. Any other width or
+//! storage is written out, such as `Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that
+//! `typenum` has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
 //! [`FitsBits`] relates a width to the storages that hold it, [`FillsRepr`] to the storages that it
 //! fills, and [`Limbs<Bits, L>`](Limbs) names the array of limbs of type `L` that holds it.
 //!

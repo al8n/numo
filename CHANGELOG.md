@@ -68,10 +68,10 @@ FEATURES
     `[u64; ceil(Bits / 64)]` above. `BitCount` names the mapping, and generic code adds
     `B: BitCount`. Zero bits and more than 65536 bits have no default; such a type names its
     storage.
-  - The module `aliases`, re-exported at the crate root: `u1` to `u127` and `i1` to `i127`, but for
-    the native widths, in the smallest native integer that holds them, as the default storage is,
-    and the widths that fill 64-bit limbs, `u192`, `u256`, `u320`, `u384`, `u448`, `u512`, `u768`,
-    `u1024`, `u2048` and `u4096`, and `i192` to `i4096`.
+  - The module `aliases`, re-exported at the crate root: `u1` to `u1024` and `i1` to `i1024`, but
+    for the native widths 8, 16, 32, 64 and 128, in the default storage: the smallest native
+    integer that holds 1 to 127 bits, and `[u64; ceil(N / 64)]` for 129 to 1024 bits, such as
+    `u144` for `Uint<U144, [u64; 3]>`; and `u2048`, `u4096`, `i2048` and `i4096`.
   - `ArraySize` maps a `typenum` number of limbs, from 1 to 1024, to an array. `LimbArray` and
     `Limbs<Bits, L = u64>` name the array of limbs `L` that holds `Bits` bits, such as
     `Limbs<U200>` for `[u64; 4]` or `Limbs<U24, u8>` for `[u8; 3]`.
