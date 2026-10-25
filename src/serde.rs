@@ -147,6 +147,7 @@ impl Visitor<'_> for ModeVisitor {
   where
     E: de::Error,
   {
+    let name = name.trim();
     Ok(match () {
       () if name.eq_ignore_ascii_case("up") => RoundingMode::Up,
       () if name.eq_ignore_ascii_case("down") => RoundingMode::Down,
