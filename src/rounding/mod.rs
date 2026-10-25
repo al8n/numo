@@ -38,7 +38,8 @@ use core::cmp::Ordering;
 /// assert_eq!(rounded.to_string(), "-2");
 /// # Ok::<(), Box<dyn core::error::Error>>(())
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::IsVariant, derive_more::Display)]
+#[display("{}", self.as_str())]
 pub enum RoundingMode {
   /// Away from zero.
   Up,
@@ -57,6 +58,22 @@ pub enum RoundingMode {
   /// and the multiple with the even quotient for [`quantize`](crate::Decimal::quantize). Also known
   /// as banker's rounding.
   HalfEven,
+}
+
+impl RoundingMode {
+  /// Returns the string representation of the rounding mode.
+  #[inline(always)]
+  pub const fn as_str(&self) -> &'static str {
+    match self {
+      Self::Up => "up",
+      Self::Down => "down",
+      Self::Ceiling => "ceiling",
+      Self::Floor => "floor",
+      Self::HalfUp => "halfup",
+      Self::HalfDown => "halfdown",
+      Self::HalfEven => "halfeven",
+    }
+  }
 }
 
 /// Returns `true` if `mode` rounds a quotient one step away from zero.
