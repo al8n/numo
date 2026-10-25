@@ -576,7 +576,7 @@ macro_rules! native_integers {
       /// Panics if `value` is `2^Bits` or more, so in a constant such a value fails to compile.
       /// [`try_new`](Self::try_new) returns an error instead.
       #[must_use]
-      #[inline]
+      #[inline(always)]
       #[track_caller]
       pub const fn new(value: $uint) -> Self {
         match Self::try_new(value) {
@@ -590,12 +590,12 @@ macro_rules! native_integers {
       /// # Errors
       ///
       /// Returns [`TryNewError`] if `value` is `2^Bits` or more.
-      #[inline]
+      #[inline(always)]
       pub const fn try_new(value: $uint) -> Result<Self, TryNewError> {
         if int::$uint::fits_bits(value, Self::BITS) {
           Ok(Self::wrap(value))
         } else {
-          Err(TryNewError)
+          Err(TryNewError::new(Self::BITS))
         }
       }
     }
@@ -603,7 +603,7 @@ macro_rules! native_integers {
     impl<B> Uint<B, $uint> {
       /// Returns the value.
       #[must_use]
-      #[inline]
+      #[inline(always)]
       pub const fn value(self) -> $uint {
         self.repr
       }
@@ -622,7 +622,7 @@ macro_rules! native_integers {
       /// Panics if `value` is below `-2^(Bits - 1)` or above `2^(Bits - 1) - 1`, so in a constant
       /// such a value fails to compile. [`try_new`](Self::try_new) returns an error instead.
       #[must_use]
-      #[inline]
+      #[inline(always)]
       #[track_caller]
       pub const fn new(value: $int) -> Self {
         match Self::try_new(value) {
@@ -636,12 +636,12 @@ macro_rules! native_integers {
       /// # Errors
       ///
       /// Returns [`TryNewError`] if `value` is below `-2^(Bits - 1)` or above `2^(Bits - 1) - 1`.
-      #[inline]
+      #[inline(always)]
       pub const fn try_new(value: $int) -> Result<Self, TryNewError> {
         if int::$int::fits_bits(value, Self::BITS) {
           Ok(Self::wrap(value))
         } else {
-          Err(TryNewError)
+          Err(TryNewError::new(Self::BITS))
         }
       }
     }
@@ -666,18 +666,18 @@ macro_rules! native_integers {
     impl<B: FitsBits<$native>> NativeInteger for $integer<B, $native> {
       type Native = $native;
 
-      #[inline]
+      #[inline(always)]
       #[track_caller]
       fn new(value: $native) -> Self {
         Self::new(value)
       }
 
-      #[inline]
+      #[inline(always)]
       fn try_new(value: $native) -> Result<Self, TryNewError> {
         Self::try_new(value)
       }
 
-      #[inline]
+      #[inline(always)]
       fn value(self) -> $native {
         Self::value(self)
       }

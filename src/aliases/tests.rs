@@ -48,7 +48,7 @@ fn native_aliases_are_const_and_native_sized() {
   ];
 
   assert_eq!(SEVEN.value(), 100);
-  assert_eq!(REJECTED, Err(TryNewError), "-65 needs 8 bits");
+  assert_eq!(REJECTED, Err(TryNewError::new(8)), "-65 needs 8 bits");
   assert_eq!(LARGEST, (1 << 100) - 1);
   assert_eq!(SIGN, -1);
   assert_eq!(QUERIES, [false, true, true]);

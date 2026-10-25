@@ -506,7 +506,11 @@ fn constants_in_const_context() {
   ];
 
   assert_eq!(SEVEN.value(), 100);
-  assert_eq!(REJECTED_NATIVE, Err(TryNewError), "-65 needs 8 bits");
+  assert_eq!(
+    REJECTED_NATIVE,
+    Err(TryNewError::new(8)),
+    "-65 needs 8 bits"
+  );
   assert_eq!(ACCEPTED_NATIVE.map(|value| value.value()), Ok(-64));
   assert_eq!(LARGEST, (1 << 100) - 1);
   assert_eq!(SIGN, -1, "one signed bit holds -1 and 0");
@@ -1468,7 +1472,7 @@ macro_rules! native_tests {
           }
           Err(error) => {
             assert!(!in_range(value), "{value}");
-            assert_eq!(error, TryNewError);
+            assert_eq!(error, TryNewError::new(T::BITS));
           }
         };
         candidates().into_iter().for_each(check);
