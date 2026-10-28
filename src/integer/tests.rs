@@ -508,8 +508,8 @@ fn constants_in_const_context() {
   assert_eq!(SEVEN.value(), 100);
   assert_eq!(
     REJECTED_NATIVE,
-    Err(TryNewError::new(8)),
-    "-65 needs 8 bits"
+    Err(TryNewError::new(7)),
+    "-65 needs 8 bits, more than 7"
   );
   assert_eq!(ACCEPTED_NATIVE.map(|value| value.value()), Ok(-64));
   assert_eq!(LARGEST, (1 << 100) - 1);

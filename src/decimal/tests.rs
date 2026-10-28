@@ -4389,22 +4389,113 @@ mod with_serde {
   #[test]
   fn rounding_modes_are_their_names() {
     let names = [
-      "Up", "Down", "Ceiling", "Floor", "HalfUp", "HalfDown", "HalfEven",
+      "up", "down", "ceiling", "floor", "halfup", "halfdown", "halfeven",
     ];
     for (mode, name) in bigint::MODES.into_iter().zip(names) {
+      assert_eq!(mode.as_str(), name);
       assert_tokens(&mode.readable(), &[Token::Str(name)]);
       assert_tokens(&mode.compact(), &[Token::Str(name)]);
       let json = format!("\"{name}\"");
       assert_eq!(serde_json::to_string(&mode).unwrap(), json);
       assert_eq!(serde_json::from_str::<RoundingMode>(&json).unwrap(), mode);
     }
-    assert_de_tokens_error::<RoundingMode>(
-      &[Token::Str("halfEven")],
-      concat!(
-        "unknown variant `halfEven`, expected one of `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, ",
-        "`HalfDown`, `HalfEven`",
+
+    // Reading ignores the case and the whitespace around the name, and a half mode may separate
+    // its two words with one space, `-` or `_`.
+    let accepted: [(RoundingMode, &[&str]); 7] = [
+      (
+        RoundingMode::Up,
+        &["up", "Up", "UP", " up", "up ", "\t\nUp\r "],
       ),
-    );
+      (RoundingMode::Down, &["down", "Down", "DOWN", " down "]),
+      (
+        RoundingMode::Ceiling,
+        &["ceiling", "Ceiling", "CEILING", " ceiling "],
+      ),
+      (RoundingMode::Floor, &["floor", "Floor", "FLOOR", " floor "]),
+      (
+        RoundingMode::HalfUp,
+        &[
+          "halfup",
+          "HalfUp",
+          "HALFUP",
+          "half up",
+          "Half Up",
+          "half-up",
+          "HALF-UP",
+          "half_up",
+          "Half_Up",
+          " half up ",
+        ],
+      ),
+      (
+        RoundingMode::HalfDown,
+        &[
+          "halfdown",
+          "HalfDown",
+          "HALFDOWN",
+          "half down",
+          "Half Down",
+          "half-down",
+          "HALF-DOWN",
+          "half_down",
+          "Half_Down",
+          " half down ",
+        ],
+      ),
+      (
+        RoundingMode::HalfEven,
+        &[
+          "halfeven",
+          "HalfEven",
+          "halfEven",
+          "HALFEVEN",
+          "half even",
+          "Half Even",
+          "half-even",
+          "HALF-EVEN",
+          "half_even",
+          "Half_Even",
+          " half even ",
+          "\thalf-even\n",
+        ],
+      ),
+    ];
+    for (mode, inputs) in accepted {
+      for input in inputs {
+        assert_de_tokens(&mode, &[Token::Str(input)]);
+        let json = format!("\"{}\"", input.escape_default());
+        assert_eq!(
+          serde_json::from_str::<RoundingMode>(&json).unwrap(),
+          mode,
+          "{input:?} reads as {mode:?}"
+        );
+      }
+    }
+
+    // Anything else is rejected, and the error names the trimmed input and the written names.
+    let expected = "`up`, `down`, `ceiling`, `floor`, `halfup`, `halfdown`, `halfeven`";
+    for rejected in [
+      "half",
+      "halfeven2",
+      "half  even",
+      "half--even",
+      "half-_even",
+      "half\teven",
+      "round_half_even",
+      "ROUND_HALF_EVEN",
+      "ups",
+      "",
+      " ",
+    ] {
+      assert_de_tokens_error::<RoundingMode>(
+        &[Token::Str(rejected)],
+        &format!(
+          "unknown variant `{}`, expected one of {expected}",
+          rejected.trim()
+        ),
+      );
+    }
     assert_de_tokens_error::<RoundingMode>(
       &[Token::U8(6)],
       "invalid type: integer `6`, expected the name of a rounding mode as a string",

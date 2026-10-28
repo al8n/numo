@@ -104,7 +104,8 @@ const MODE_NAMES: &[&str] = &[
 
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 impl Serialize for RoundingMode {
-  /// Writes the name of the variant, such as `"HalfEven"`, as a string in every format.
+  /// Writes the lowercase name of the mode, such as `"halfeven"`, as a string in every format. The
+  /// name is the one that [`as_str`](RoundingMode::as_str) returns.
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
     S: Serializer,
@@ -123,8 +124,10 @@ impl Serialize for RoundingMode {
 
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 impl<'de> Deserialize<'de> for RoundingMode {
-  /// Reads the name of a variant, such as `"HalfEven"`, from a string. Names are case-sensitive,
-  /// and any other input is rejected.
+  /// Reads the name of a mode from a string. Surrounding whitespace is ignored and the case does
+  /// not matter, so `"halfeven"`, `"HalfEven"` and `" HALFEVEN "` all read as `HalfEven`. The names
+  /// of the half modes may also separate their two words with one space, `-` or `_`, as in
+  /// `"half even"`, `"half-even"` and `"half_even"`. Any other input is rejected.
   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
   where
     D: Deserializer<'de>,
@@ -133,7 +136,7 @@ impl<'de> Deserialize<'de> for RoundingMode {
   }
 }
 
-/// Reads a rounding mode from the name of its variant.
+/// Reads a rounding mode from its name, ignoring surrounding whitespace and case.
 struct ModeVisitor;
 
 impl Visitor<'_> for ModeVisitor {

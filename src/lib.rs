@@ -175,7 +175,8 @@
 //! rejects a number, so a decimal never passes through a binary floating-point value, which would
 //! change `16.7` to the nearest `f64`. Nor is the coefficient written alone: it depends on the
 //! number of fraction digits, and read back into a type with another number it would be off by a
-//! power of ten. A rounding mode is written as the name of its variant, such as `"HalfEven"`.
+//! power of ten. A rounding mode is written as its lowercase name, such as `"halfeven"`, and
+//! read from a name of any case, with the words of a half mode optionally separated.
 //!
 //! # `arbitrary`, `proptest` and `quickcheck`
 //!

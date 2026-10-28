@@ -45,9 +45,9 @@ FEATURES
     only when both storages are unsigned.
   - `const fn` `is_multiple_of` checks a value against a step without rounding it.
 - The `serde` feature: `Decimal` is written as its text and read from a string, never from a number,
-  in every format, and `RoundingMode` as the name of its variant, without allocation. The impls use
-  `serde_core`, so they need `serde` 1.0.220 or later in the build; the feature enables no feature
-  of any other crate.
+  in every format, and `RoundingMode` as its lowercase name, read leniently, without allocation. The
+  impls use `serde_core`, so they need `serde` 1.0.220 or later in the build; the feature enables no
+  feature of any other crate.
 - The `arbitrary`, `proptest` and `quickcheck` features: the `Arbitrary` trait of each crate for
   `Decimal` and `RoundingMode`, for fuzzing and property tests on a target with `std`. One generator
   serves all three: an edge value one time in eight (zero, one unit in the last place, one, `MAX`,
