@@ -5,7 +5,7 @@ use typenum::{U1, U7, U8, U9, U12, U24, U64, U65, U100, U127, U128, U129, U200, 
 use super::{
   ArrayInteger, FixedInteger, FromLimbs, NativeInteger, SignedFixedInteger, UnsignedFixedInteger,
 };
-use crate::{BitCount, Int, Uint, bigint, i256, u256};
+use crate::{BitWidth, Int, Uint, bigint, i256, u256};
 
 /// Asserts that the constants and the queries of [`FixedInteger`] are the inherent ones for each
 /// type, at zero and the limits.
@@ -152,9 +152,9 @@ fn construction_is_the_inherent_one() {
   }
 }
 
-/// Uses only what the bound `B: BitCount` gives `Uint<B>` and `Int<B>`: the constants, the traits
+/// Uses only what the bound `B: BitWidth` gives `Uint<B>` and `Int<B>`: the constants, the traits
 /// and the implementations of the default storages.
-fn check_width<B: BitCount>(bits: u32) {
+fn check_width<B: BitWidth>(bits: u32) {
   assert_eq!(Uint::<B>::BITS, bits);
   assert_eq!(Int::<B>::BITS, bits);
   assert_eq!(<Uint<B> as FixedInteger>::BITS, bits);
@@ -190,7 +190,7 @@ fn check_width<B: BitCount>(bits: u32) {
   all(miri, target_pointer_width = "32"),
   ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
 )]
-fn bit_count_gives_the_constants_and_the_traits() {
+fn bit_width_gives_the_constants_and_the_traits() {
   check_width::<U1>(1);
   check_width::<U7>(7);
   check_width::<U8>(8);
@@ -203,10 +203,10 @@ fn bit_count_gives_the_constants_and_the_traits() {
 }
 
 #[test]
-fn bit_count_implies_every_trait() {
+fn bit_width_implies_every_trait() {
   fn unsigned<T: FixedInteger + UnsignedFixedInteger>() {}
   fn signed<T: FixedInteger + SignedFixedInteger<Unsigned = U>, U: UnsignedFixedInteger>() {}
-  fn implied<B: BitCount>() {
+  fn implied<B: BitWidth>() {
     unsigned::<Uint<B>>();
     signed::<Int<B>, Uint<B>>();
   }

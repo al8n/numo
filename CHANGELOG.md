@@ -65,8 +65,8 @@ FEATURES
   the layout of an array of `u128` and works on the 64-bit halves of each limb.
   - A default storage for 0 to 65536 bits, so that `Uint<U7>` is `Uint<U7, u8>` and `Uint<U200>` is
     `Uint<U200, [u64; 4]>`: the zero-sized `[u64; 0]` for 0 bits, the smallest native integer from 1
-    to 128 bits and `[u64; ceil(Bits / 64)]` above. `BitCount` names the mapping, and generic code
-    adds `B: BitCount`. More than 65536 bits have no default; such a type names its storage.
+    to 128 bits and `[u64; ceil(Bits / 64)]` above. `BitWidth` names the mapping, and generic code
+    adds `B: BitWidth`. More than 65536 bits have no default; such a type names its storage.
   - The module `aliases`, re-exported at the crate root: `u0` to `u1024` and `i0` to `i1024`, but
     for the native widths 8, 16, 32, 64 and 128, in the default storage: `[u64; 0]` for `u0` and
     `i0`, which hold only 0 and take no space, the smallest native integer that holds 1 to 127 bits,
@@ -108,7 +108,7 @@ FEATURES
     width, `NativeInteger`, with `new`, `try_new` and `value`, `ArrayInteger`, with
     `checked_from_limbs`, `to_limbs` and `as_limbs`, and `FromLimbs`, with `from_limbs`. Each has
     one implementation for every storage of a kind and mirrors the inherent items for generic
-    code; the bound `B: BitCount` gives `Uint<B>` and `Int<B>` `FixedInteger` and the sign traits.
+    code; the bound `B: BitWidth` gives `Uint<B>` and `Int<B>` `FixedInteger` and the sign traits.
     The traits are not `const`; constant contexts use the inherent `const fn`s.
 - `Storage`, `DigitCount`, `FitsDigits`, `Layout`, `Widen`, `WidenRepr` and `Pick`: the type-level
   capacity and sign checks, with compile-time diagnostics for invalid digit counts and storages.

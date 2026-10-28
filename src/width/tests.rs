@@ -9,7 +9,7 @@ use typenum::{
   U8191, U8192, U10000, U16383, U16384, U32767, U32768, U65535, U65536, U131072, Unsigned,
 };
 
-use super::{BitCount, FitsBits, LimbArray, Limbs};
+use super::{BitWidth, FitsBits, LimbArray, Limbs};
 use crate::{
   Int, Uint, i192, i256, i320, i384, i448, i512, i768, i1024, i2048, i4096, u192, u256, u320, u384,
   u448, u512, u768, u1024, u2048, u4096,
@@ -71,8 +71,8 @@ macro_rules! test_bits {
     fn $bits() {
       type Bits = typenum::consts::$bits;
       assert_eq!(<Bits as Unsigned>::U32, $value);
-      assert_eq!(TypeId::of::<<Bits as BitCount>::Unsigned>(), TypeId::of::<$uint>());
-      assert_eq!(TypeId::of::<<Bits as BitCount>::Signed>(), TypeId::of::<$int>());
+      assert_eq!(TypeId::of::<<Bits as BitWidth>::Unsigned>(), TypeId::of::<$uint>());
+      assert_eq!(TypeId::of::<<Bits as BitWidth>::Signed>(), TypeId::of::<$int>());
       assert_fits::<Bits, $uint>();
       assert_fits::<Bits, $int>();
       // The native of half the bits, if any, would not hold the width.
@@ -82,7 +82,7 @@ macro_rules! test_bits {
   )+};
 }
 
-mod bit_count {
+mod bit_width {
   use super::*;
 
   bit_table!(test_bits);
@@ -94,11 +94,11 @@ mod bit_count {
     type Bits = typenum::consts::U0;
     assert_eq!(<Bits as Unsigned>::U32, 0);
     assert_eq!(
-      TypeId::of::<<Bits as BitCount>::Unsigned>(),
+      TypeId::of::<<Bits as BitWidth>::Unsigned>(),
       TypeId::of::<[u64; 0]>()
     );
     assert_eq!(
-      TypeId::of::<<Bits as BitCount>::Signed>(),
+      TypeId::of::<<Bits as BitWidth>::Signed>(),
       TypeId::of::<[u64; 0]>()
     );
     assert_fits::<Bits, [u64; 0]>();
@@ -107,7 +107,7 @@ mod bit_count {
 
 /// Asserts that the default storages of `Bits` bits are both `[u64; N]`, the fewest 64-bit limbs
 /// that hold the width.
-fn assert_default_array<Bits: BitCount + 'static, const N: usize>() {
+fn assert_default_array<Bits: BitWidth + 'static, const N: usize>() {
   assert_eq!(TypeId::of::<Bits::Unsigned>(), TypeId::of::<[u64; N]>());
   assert_eq!(TypeId::of::<Bits::Signed>(), TypeId::of::<[u64; N]>());
   let (bits, limbs) = (Bits::U32, N as u32);

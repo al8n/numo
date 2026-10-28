@@ -22,8 +22,8 @@ error[E0277]: `Uint` and `Int` have a default storage only for 0 to 65536 bits
 7 | fn generic<B>(_: Uint<B>) {}
   |                  ^^^^^^^ `Bits` is not known to be from 0 to 65536
   |
-  = note: generic code adds the bound `B: BitCount`, as in `fn f<B: BitCount>(x: Uint<B>)`, or names the storage, as in `Uint<B, [u64; 4]>`
-help: consider restricting type parameter `B` with trait `BitCount`
+  = note: generic code adds the bound `B: BitWidth`, as in `fn f<B: BitWidth>(x: Uint<B>)`, or names the storage, as in `Uint<B, [u64; 4]>`
+help: consider restricting type parameter `B` with trait `BitWidth`
   |
-7 | fn generic<B: numo::BitCount>(_: Uint<B>) {}
+7 | fn generic<B: numo::BitWidth>(_: Uint<B>) {}
   |             ++++++++++++++++

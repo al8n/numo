@@ -16,7 +16,7 @@ use crate::{
   int,
   layout::Token,
   width::{
-    BitCount, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntWidth, UintRepr,
+    BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntWidth, UintRepr,
     UintWidth,
   },
 };
@@ -33,7 +33,7 @@ mod traits;
 /// `u64` or `u128`, which holds the value itself, or an array of limbs, least significant first,
 /// `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, of `8 * N`, `16 * N`, `32 * N`,
 /// `64 * N` or `128 * N` bits. The bits above `Bits`, if any, are zero. Without `Repr`, the storage
-/// is the default that [`BitCount`] gives for 0 to 65536 bits: the zero-sized `[u64; 0]` for zero
+/// is the default that [`BitWidth`] gives for 0 to 65536 bits: the zero-sized `[u64; 0]` for zero
 /// bits, the smallest native integer that holds 1 to 128 bits, and above 128 bits
 /// `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>`
 /// and `Uint<U200>` is `Uint<U200, [u64; 4]>`. The module [`aliases`](crate::aliases) names common
@@ -102,7 +102,7 @@ mod traits;
 /// `u7::new(100)`, `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)` or
 /// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
 #[repr(transparent)]
-pub struct Uint<Bits, Repr = <Bits as BitCount>::Unsigned> {
+pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits` or above is zero, so the
   // storage, read as an unsigned integer, equals the value. Every constructor establishes this, and
   // equality, comparison, hashing and formatting rely on it. It is a logical invariant, not a
@@ -118,7 +118,7 @@ pub struct Uint<Bits, Repr = <Bits as BitCount>::Unsigned> {
 /// `i16`, `i32`, `i64` or `i128`, which holds the value itself, or an array of limbs, least
 /// significant first, as for [`Uint`]: `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
 /// `[u128; N]`. The bits above `Bits`, if any, are copies of the sign bit, so the storage holds the
-/// value in two's complement. Without `Repr`, the storage is the default that [`BitCount`] gives,
+/// value in two's complement. Without `Repr`, the storage is the default that [`BitWidth`] gives,
 /// as for [`Uint`]: `Int<U24>` is `Int<U24, i32>` and `Int<U200>` is `Int<U200, [u64; 4]>`. The
 /// module [`aliases`](crate::aliases) names common widths, such as [`i7`](crate::i7) for
 /// `Int<U7, i8>` and [`i256`](crate::i256) for `Int<U256, [u64; 4]>`. The type has the size,
@@ -178,7 +178,7 @@ pub struct Uint<Bits, Repr = <Bits as BitCount>::Unsigned> {
 /// `i7::new(-5)`, `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)` or
 /// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
 #[repr(transparent)]
-pub struct Int<Bits, Repr = <Bits as BitCount>::Signed> {
+pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits - 1` or above equals bit
   // `Bits - 1`, the sign bit, so the storage, read as a two's complement integer, equals the value.
   // Zero bits have no sign bit, and every bit of the storage is zero. Every constructor establishes

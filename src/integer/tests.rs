@@ -13,7 +13,7 @@ use typenum::{
 };
 
 use crate::{
-  ArrayInteger, BitCount, FixedInteger, Int, Limbs, TryNewError, Uint, bigint, i7, i192, i256,
+  ArrayInteger, BitWidth, FixedInteger, Int, Limbs, TryNewError, Uint, bigint, i7, i192, i256,
   i320, i384, i448, i512, i768, i1024, i2048, i4096, int::DIGIT_BUF_LEN, u7, u192, u256, u320,
   u384, u448, u512, u768, u1024, u2048, u4096,
 };
@@ -200,9 +200,9 @@ fn trait_surface_and_layout() {
   assert_eq!(size_of::<Option<Uint<U7, u8>>>(), 2);
   assert_eq!(size_of::<Option<Int<U1, i8>>>(), 2);
 
-  // Generic code with the bound `B: BitCount` gets the traits of the default storages, though not
+  // Generic code with the bound `B: BitWidth` gets the traits of the default storages, though not
   // the auto traits, which no bound of the storages states.
-  fn default_storages<B: BitCount>() {
+  fn default_storages<B: BitWidth>() {
     fn assert_generic<T: Copy + Eq + Ord + Hash + Debug + Display + Default>() {}
     assert_generic::<Uint<B>>();
     assert_generic::<Int<B>>();
@@ -1845,13 +1845,13 @@ fn native_and_array_storages_agree() {
       let unsigned: Vec<Uint<B>> = (0..count)
         .map(|_| {
           let value = random() >> (128 - bits);
-          Uint::<B>::new(value as <B as BitCount>::Unsigned)
+          Uint::<B>::new(value as <B as BitWidth>::Unsigned)
         })
         .collect();
       let signed: Vec<Int<B>> = (0..count)
         .map(|_| {
           let value = ((random() << (128 - bits)) as i128) >> (128 - bits);
-          Int::<B>::new(value as <B as BitCount>::Signed)
+          Int::<B>::new(value as <B as BitWidth>::Signed)
         })
         .collect();
 
@@ -2145,11 +2145,11 @@ mod zero_bits {
     fits::<U0, [u128; 3]>();
   }
 
-  /// Generic code over `B: BitCount` reaches zero bits in their default storage, `[u64; 0]`, as it
+  /// Generic code over `B: BitWidth` reaches zero bits in their default storage, `[u64; 0]`, as it
   /// does any other width, and the unsigned integer of `i0` is `u0`.
   #[test]
   fn default_storage() {
-    fn constants<B: BitCount>() -> [bool; 4] {
+    fn constants<B: BitWidth>() -> [bool; 4] {
       [
         Uint::<B>::MAX.is_zero(),
         Int::<B>::MIN.is_zero(),

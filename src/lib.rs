@@ -79,7 +79,7 @@
 //! `u8` to `u128` for `Uint` and `i8` to `i128` for `Int`, which holds the value itself, or an
 //! array of limbs, least significant first, `[u64; N]`, `[u32; N]`, `[u16; N]`, `[u8; N]` or
 //! `[u128; N]`. Zero bits hold only zero, in every storage. Without `Repr`, the storage is the
-//! default that [`BitCount`] gives for 0 to 65536 bits: the zero-sized `[u64; 0]` for zero bits,
+//! default that [`BitWidth`] gives for 0 to 65536 bits: the zero-sized `[u64; 0]` for zero bits,
 //! the smallest native integer that holds 1 to 128 bits, and above 128 bits
 //! [`Limbs<Bits>`](Limbs), `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>` and
 //! `Uint<U200>` is `Uint<U200, [u64; 4]>`. `[u64; N]` is the storage of the wide aliases,
@@ -111,13 +111,13 @@
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind: [`FixedInteger`], with the constants and `is_zero`, [`UnsignedFixedInteger`]
 //! and [`SignedFixedInteger`], and for the construction of each kind [`NativeInteger`],
-//! [`ArrayInteger`] and [`FromLimbs`]. The bound `B: BitCount` gives `Uint<B>` and `Int<B>`
+//! [`ArrayInteger`] and [`FromLimbs`]. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
 //! [`FixedInteger`] and the sign traits. The traits are not `const`, so constant contexts use the
 //! inherent `const fn`s, which a concrete type reaches without importing a trait.
 //!
 //! ```
 //! use numo::{
-//!   BitCount, FixedInteger, Int, Uint, i256,
+//!   BitWidth, FixedInteger, Int, Uint, i256,
 //!   typenum::{U7, U24, U200},
 //!   u7,
 //! };
@@ -145,7 +145,7 @@
 //! assert_eq!(Uint::<U200>::MAX, U200x4::MAX);
 //!
 //! // Generic code over the width alone.
-//! fn count_zeros<B: BitCount>(values: &[Int<B>]) -> usize {
+//! fn count_zeros<B: BitWidth>(values: &[Int<B>]) -> usize {
 //!   values.iter().filter(|value| value.is_zero()).count()
 //! }
 //! assert_eq!(count_zeros(&[Int::<U7>::ZERO, Int::<U7>::MIN]), 1);
@@ -295,7 +295,7 @@ pub use layout::{
 };
 pub use rounding::RoundingMode;
 pub use width::{
-  ArraySize, BitCount, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, LimbArray,
+  ArraySize, BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, LimbArray,
   Limbs, UintRepr,
 };
 

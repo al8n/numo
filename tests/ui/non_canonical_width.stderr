@@ -16,7 +16,7 @@ error[E0277]: `UInt<UTerm, B0>` is not a `typenum` number
              UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B1>, B0>, B1>
              UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B1>, B1>, B0>
            and $N others
-   = note: required for `UInt<UTerm, B0>` to implement `BitCount`
+   = note: required for `UInt<UTerm, B0>` to implement `BitWidth`
 
 error[E0277]: `UInt<UInt<UTerm, B0>, B1>` is not a `typenum` number
   --> tests/ui/non_canonical_width.rs:13:39
@@ -36,7 +36,7 @@ error[E0277]: `UInt<UInt<UTerm, B0>, B1>` is not a `typenum` number
              UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B1>, B0>, B1>
              UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B1>, B1>, B0>
            and $N others
-   = note: required for `UInt<UInt<UTerm, B0>, B1>` to implement `BitCount`
+   = note: required for `UInt<UInt<UTerm, B0>, B1>` to implement `BitWidth`
 
 error[E0277]: `UInt<UTerm, B0>` is not a `typenum` number
   --> tests/ui/non_canonical_width.rs:15:13

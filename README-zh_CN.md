@@ -149,7 +149,7 @@ fn main() -> Result<(), ParseError> {
   `is_zero`，`Int` 还有 `is_negative` 与 `is_positive`。
 - 按数值的相等、比较与哈希，哈希只取决于值与 `Bits`，与存储无关；十进制格式化；`Default` 为零。
 - 供泛型代码使用的 trait，每类存储各只有一个实现：`FixedInteger`、`UnsignedFixedInteger`、
-  `SignedFixedInteger`、`NativeInteger`、`ArrayInteger` 与 `FromLimbs`；加上 `B: BitCount` 约束后，
+  `SignedFixedInteger`、`NativeInteger`、`ArrayInteger` 与 `FromLimbs`；加上 `B: BitWidth` 约束后，
   泛型代码可以对 0 到 65536 位的任意位宽使用 `Uint<B>` 与 `Int<B>`。
 - 存储放不下的位宽、`2^32` 位及以上的位宽，以及带前导零位的位宽写法（`typenum` 的常量与运算结果都不会这样写），在类型检查阶段就会报错；没有写出存储且超过 65536 位的位宽也一样。
 

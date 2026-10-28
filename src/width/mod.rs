@@ -53,7 +53,7 @@ mod sealed {
 
   impl<U, B, X> Canonical for UInt<UInt<U, B>, X> where UInt<U, B>: Canonical {}
 
-  /// Seals [`ArraySize`](super::ArraySize), [`BitCount`](super::BitCount) and
+  /// Seals [`ArraySize`](super::ArraySize), [`BitWidth`](super::BitWidth) and
   /// [`DigitCount`](crate::DigitCount), the traits that only `typenum` numbers implement. Two impls,
   /// for `UTerm` and for every `UInt`, cover every number, and the orphan rules keep other crates
   /// from implementing a trait of this crate for a type of `typenum`, so no other crate can
@@ -173,7 +173,7 @@ mod sealed {
   /// The default storages of `Self` bits, chosen by `Small`, the result of `Self <= 128`: `B1` reads
   /// the native table and `B0` takes `Limbs<Self>`. The supertraits make the compiler check each
   /// row of the table.
-  // Only `BitCount` asks for this trait, for a `UInt`. The table has every number from 1 to 128 and
+  // Only `BitWidth` asks for this trait, for a `UInt`. The table has every number from 1 to 128 and
   // one impl covers `B0`, so a width finds no impl only when it compares as at most 128 without
   // being in the table: when it has leading zero bits.
   #[diagnostic::on_unimplemented(
@@ -390,7 +390,7 @@ pub trait IntRepr: Eq + IntCore {
 ///
 /// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
 /// [`FixedInteger`](crate::FixedInteger) and [`UnsignedFixedInteger`](crate::UnsignedFixedInteger),
-/// for every `Repr` that implements this trait. The default storages of [`BitCount`] are inline.
+/// for every `Repr` that implements this trait. The default storages of [`BitWidth`] are inline.
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait InlineUintRepr: UintRepr + Copy + InlineUintConsts {}
 
@@ -399,7 +399,7 @@ pub trait InlineUintRepr: UintRepr + Copy + InlineUintConsts {}
 ///
 /// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
 /// [`FixedInteger`](crate::FixedInteger) and [`SignedFixedInteger`](crate::SignedFixedInteger),
-/// for every `Repr` that implements this trait. The default storages of [`BitCount`] are inline.
+/// for every `Repr` that implements this trait. The default storages of [`BitWidth`] are inline.
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait InlineIntRepr: IntRepr + Copy + InlineIntConsts {}
 
@@ -751,7 +751,7 @@ limb_arrays!(
 /// default is stored inline, so `Uint<U65536>` takes 8 KiB and `Uint<U0>` takes no space. More than
 /// 65536 bits have no default; such a type names its storage.
 ///
-/// Generic code with the bound `B: BitCount` gets `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Debug`,
+/// Generic code with the bound `B: BitWidth` gets `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Debug`,
 /// `Display` and `Default` on `Uint<B>` and `Int<B>`, their constants `BITS`, `ZERO`, `MIN` and
 /// `MAX`, as in `Uint::<B>::MAX`, and the integer traits, such as
 /// [`FixedInteger`](crate::FixedInteger), whose methods it calls with the trait in scope. The
@@ -761,7 +761,7 @@ limb_arrays!(
 ///
 /// ```
 /// use numo::{
-///   BitCount, Int, Uint,
+///   BitWidth, Int, Uint,
 ///   typenum::{Sum, U0, U1, U7, U24, U200, U1024},
 /// };
 ///
@@ -771,7 +771,7 @@ limb_arrays!(
 /// assert_eq!(Uint::<U200>::MAX.to_limbs(), [u64::MAX, u64::MAX, u64::MAX, 0xff]);
 /// assert_eq!(size_of::<Uint<Sum<U1024, U1>>>(), 17 * 8);
 ///
-/// fn largest<B: BitCount>(values: &[Uint<B>]) -> Uint<B> {
+/// fn largest<B: BitWidth>(values: &[Uint<B>]) -> Uint<B> {
 ///   values.iter().copied().fold(Uint::<B>::MIN, Ord::max)
 /// }
 ///
@@ -781,27 +781,27 @@ limb_arrays!(
 #[diagnostic::on_unimplemented(
   message = "`Uint` and `Int` have a default storage only for 0 to 65536 bits",
   label = "`Bits` is not known to be from 0 to 65536",
-  note = "generic code adds the bound `B: BitCount`, as in `fn f<B: BitCount>(x: Uint<B>)`, or names the storage, as in `Uint<B, [u64; 4]>`"
+  note = "generic code adds the bound `B: BitWidth`, as in `fn f<B: BitWidth>(x: Uint<B>)`, or names the storage, as in `Uint<B, [u64; 4]>`"
 )]
-pub trait BitCount:
-  TypenumNumber + FitsBits<<Self as BitCount>::Unsigned> + FitsBits<<Self as BitCount>::Signed>
+pub trait BitWidth:
+  TypenumNumber + FitsBits<<Self as BitWidth>::Unsigned> + FitsBits<<Self as BitWidth>::Signed>
 {
   /// The default storage of `Uint<Self>`.
   type Unsigned: InlineUintRepr;
 
   /// The default storage of `Int<Self>`, of the same size as `Unsigned`.
-  type Signed: InlineIntRepr + IntRepr<Unsigned = <Self as BitCount>::Unsigned>;
+  type Signed: InlineIntRepr + IntRepr<Unsigned = <Self as BitWidth>::Unsigned>;
 }
 
 // The impls are on the numbers of `typenum`, `UTerm` and `UInt`, rather than over every type, so
 // that a generic width without the bound reports the diagnostic of this trait and the suggestion to
 // add it, not an unsatisfied comparison.
-impl BitCount for UTerm {
+impl BitWidth for UTerm {
   type Unsigned = [u64; 0];
   type Signed = [u64; 0];
 }
 
-impl<U, X> BitCount for UInt<U, X>
+impl<U, X> BitWidth for UInt<U, X>
 where
   Self: Canonical + IsLessOrEqual<U128> + DefaultRepr<LeEq<Self, U128>>,
 {

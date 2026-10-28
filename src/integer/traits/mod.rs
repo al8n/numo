@@ -2,7 +2,7 @@
 //!
 //! Each trait mirrors inherent items of the same names, which concrete types reach without the
 //! trait, also in constant contexts. Generic code reaches them through the traits, which have one
-//! implementation for every storage of a kind: the bound `B: BitCount` gives `Uint<B>` and `Int<B>`
+//! implementation for every storage of a kind: the bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
 //! every trait that their default storages implement.
 
 use core::{
@@ -32,12 +32,12 @@ mod sealed {
 ///
 /// The constants and methods are the inherent items of the same names, which a concrete type
 /// reaches without this trait, also in constant contexts. Generic code reaches them through this
-/// trait, which the bound `B: BitCount` provides on `Uint<B>` and `Int<B>`; a method call needs the
+/// trait, which the bound `B: BitWidth` provides on `Uint<B>` and `Int<B>`; a method call needs the
 /// trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`.
 ///
 /// ```
 /// use numo::{
-///   BitCount, FixedInteger, Int, Uint, u256,
+///   BitWidth, FixedInteger, Int, Uint, u256,
 ///   typenum::{U7, U200},
 /// };
 ///
@@ -45,7 +45,7 @@ mod sealed {
 ///   value == T::MAX
 /// }
 ///
-/// fn zeros<B: BitCount>(values: &[Uint<B>]) -> usize {
+/// fn zeros<B: BitWidth>(values: &[Uint<B>]) -> usize {
 ///   values.iter().filter(|value| value.is_zero()).count()
 /// }
 ///
@@ -75,7 +75,7 @@ pub trait FixedInteger: Sealed + Copy + Eq + Ord + Hash + Debug + Display + Defa
 ///
 /// ```
 /// use numo::{
-///   BitCount, FixedInteger, Uint, UnsignedFixedInteger,
+///   BitWidth, FixedInteger, Uint, UnsignedFixedInteger,
 ///   typenum::{U7, U200},
 /// };
 ///
@@ -84,7 +84,7 @@ pub trait FixedInteger: Sealed + Copy + Eq + Ord + Hash + Debug + Display + Defa
 ///   value.is_zero()
 /// }
 ///
-/// fn smallest<B: BitCount>() -> Uint<B> {
+/// fn smallest<B: BitWidth>() -> Uint<B> {
 ///   Uint::<B>::MIN
 /// }
 ///
@@ -99,7 +99,7 @@ pub trait UnsignedFixedInteger: Sealed + Sized {}
 ///
 /// ```
 /// use numo::{
-///   BitCount, Int, SignedFixedInteger, Uint, i256,
+///   BitWidth, Int, SignedFixedInteger, Uint, i256,
 ///   typenum::U7,
 /// };
 ///
@@ -108,7 +108,7 @@ pub trait UnsignedFixedInteger: Sealed + Sized {}
 /// }
 ///
 /// // The unsigned integer of `Int<B>` is `Uint<B>`.
-/// fn unsigned_max<B: BitCount>(_: Int<B>) -> <Int<B> as SignedFixedInteger>::Unsigned {
+/// fn unsigned_max<B: BitWidth>(_: Int<B>) -> <Int<B> as SignedFixedInteger>::Unsigned {
 ///   Uint::<B>::MAX
 /// }
 ///

@@ -167,7 +167,7 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   whatever the storage, decimal formatting, and `Default`, which is zero.
 - Traits with one implementation for every storage of a kind, `FixedInteger`,
   `UnsignedFixedInteger`, `SignedFixedInteger`, `NativeInteger`, `ArrayInteger` and `FromLimbs`,
-  for generic code; with the bound `B: BitCount`, such code uses `Uint<B>` and `Int<B>` for any
+  for generic code; with the bound `B: BitWidth`, such code uses `Uint<B>` and `Int<B>` for any
   width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
