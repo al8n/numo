@@ -29,8 +29,8 @@ help: the trait `BitCount` is implemented for `UInt<U, X>`
   |
   | / impl<U, X> BitCount for UInt<U, X>
   | | where
-  | |   Self: IsLessOrEqual<U128> + DefaultRepr<LeEq<Self, U128>>,
-  | |____________________________________________________________^
+  | |   Self: Canonical + IsLessOrEqual<U128> + DefaultRepr<LeEq<Self, U128>>,
+  | |________________________________________________________________________^
 
 error[E0277]: `Uint` and `Int` have a default storage only for 1 to 65536 bits
   --> tests/ui/default_storage_too_wide.rs:12:18

@@ -18,9 +18,9 @@ pub use array_size::ArraySize;
 pub(crate) use sealed::{IntWidth, SealedIntRepr, SealedUintRepr, UintWidth};
 
 use sealed::{
-  ArrayLimb, BitsBelow2Pow32, BitsFit, DefaultArray, DefaultRepr, NativeBitsFit, NativeReprFilled,
-  ReprFilled, SealedBitCount, SealedFillsRepr, SealedFitsBits, SealedInlineIntRepr,
-  SealedInlineUintRepr, SealedLimbArray, Width,
+  ArrayLimb, BitsBelow2Pow32, BitsFit, Canonical, DefaultArray, DefaultRepr, NativeBitsFit,
+  NativeReprFilled, ReprFilled, SealedBitCount, SealedFillsRepr, SealedFitsBits,
+  SealedInlineIntRepr, SealedInlineUintRepr, SealedLimbArray, Width,
 };
 
 use crate::{
@@ -33,8 +33,26 @@ mod array_size;
 mod sealed {
   use core::{cmp::Ordering, fmt, hash::Hasher, marker::PhantomData};
 
+  use typenum::{B1, UInt, UTerm};
+
   use super::{FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, UintRepr};
   use crate::layout::Token;
+
+  /// A `typenum` number in canonical form: `UTerm`, or a `UInt` whose most significant bit is `B1`.
+  /// `typenum` forbids leading zero bits but does not enforce the rule, and its comparisons are
+  /// structural, so a number written with leading zeros compares as longer, not as its value.
+  #[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a `typenum` number",
+    label = "the width has leading zero bits",
+    note = "a `typenum` number is `UTerm`, or a `UInt` whose most significant bit is `B1`; `UInt<UTerm, B0>` is not a number"
+  )]
+  pub trait Canonical {}
+
+  impl Canonical for UTerm {}
+
+  impl Canonical for UInt<UTerm, B1> {}
+
+  impl<U, B, X> Canonical for UInt<UInt<U, B>, X> where UInt<U, B>: Canonical {}
 
   /// Seals [`FitsBits`](super::FitsBits).
   pub trait SealedFitsBits<Repr> {}
@@ -154,6 +172,14 @@ mod sealed {
   /// The default storages of `Self` bits, chosen by `Small`, the result of `Self <= 128`: `B1` reads
   /// the native table and `B0` takes `Limbs<Self>`. The supertraits make the compiler check each
   /// row of the table.
+  // Only `BitCount` asks for this trait, for a `UInt`. The table has every number from 1 to 128 and
+  // one impl covers `B0`, so a width finds no impl only when it compares as at most 128 without
+  // being in the table: when it has leading zero bits.
+  #[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a `typenum` number",
+    label = "the width has leading zero bits",
+    note = "a `typenum` number is `UTerm`, or a `UInt` whose most significant bit is `B1`; `UInt<UTerm, B0>` is not a number"
+  )]
   pub trait DefaultRepr<Small>:
     FitsBits<<Self as DefaultRepr<Small>>::Unsigned>
     + FitsBits<<Self as DefaultRepr<Small>>::Signed>
@@ -252,16 +278,18 @@ mod sealed {
 /// Marks that `Repr` holds every value of `Self` bits.
 ///
 /// `Self` is a [`typenum`] number from 1 to `2^32 - 1`, so that the constant `BITS`, a `u32`, holds
-/// it. The native integers `u8` and `i8` hold up to 8 bits, `u16` and `i16` up to 16, `u32` and
-/// `i32` up to 32, `u64` and `i64` up to 64, and `u128` and `i128` up to 128. The arrays `[u8; N]`,
-/// `[u16; N]`, `[u32; N]`, `[u64; N]` and `[u128; N]` hold up to `8 * N`, `16 * N`, `32 * N`,
-/// `64 * N` and `128 * N` bits, for every `N` for which `typenum` implements `ToUInt` for
-/// `Const<N>`: each `N` up to 1024, and larger ones such as the powers of 2 and of 10. An array of
-/// any other length, such as `[u8; 1025]`, holds no width, so the integers stored in it have no
-/// constants, constructors or `Default`, and no value of them can be made. A storage may have more
-/// bits than needed, as `u16` has for 9 bits and `[u64; 4]` for 200. [`Uint`](crate::Uint) and
-/// [`Int`](crate::Int) require this bound on their constants, constructors and `Default`, not on
-/// the types themselves, so generic code adds it where it uses them:
+/// it, and is in canonical form: `UTerm`, or a `UInt` whose most significant bit is `B1`, as every
+/// `typenum` constant and operator result is. The native integers `u8` and `i8` hold up to 8 bits,
+/// `u16` and `i16` up to 16, `u32` and `i32` up to 32, `u64` and `i64` up to 64, and `u128` and
+/// `i128` up to 128. The arrays `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` and `[u128; N]` hold
+/// up to `8 * N`, `16 * N`, `32 * N`, `64 * N` and `128 * N` bits, for every `N` for which
+/// `typenum` implements `ToUInt` for `Const<N>`: each `N` up to 1024, and larger ones such as the
+/// powers of 2 and of 10. An array of any other length, such as `[u8; 1025]`, holds no width, so
+/// the integers stored in it have no constants, constructors or `Default`, and no value of them can
+/// be made. A storage may have more bits than needed, as `u16` has for 9 bits and `[u64; 4]` for
+/// 200. [`Uint`](crate::Uint) and [`Int`](crate::Int) require this bound on their constants,
+/// constructors and `Default`, not on the types themselves, so generic code adds it where it uses
+/// them:
 ///
 /// ```
 /// use numo::{FitsBits, Uint};
@@ -281,9 +309,9 @@ mod sealed {
   label = "`Bits` is not known to fit in the storage",
   note = "add a `FitsBits<Repr>` bound on `Bits`"
 )]
-pub trait FitsBits<Repr>: Unsigned + NonZero + SealedFitsBits<Repr> {}
+pub trait FitsBits<Repr>: Unsigned + NonZero + Canonical + SealedFitsBits<Repr> {}
 
-impl<B, R> FitsBits<R> for B where B: Unsigned + NonZero + SealedFitsBits<R> {}
+impl<B, R> FitsBits<R> for B where B: Unsigned + NonZero + Canonical + SealedFitsBits<R> {}
 
 /// Marks that `Self` bits fill `Repr` exactly, so that every bit pattern of `Repr` is a value.
 ///
@@ -684,7 +712,7 @@ macro_rules! limb_arrays {
 
     impl<Bits> LimbArray<Bits> for $limb
     where
-      Bits: Unsigned + Add<$mask>,
+      Bits: Unsigned + Canonical + Add<$mask>,
       Sum<Bits, $mask>: Shr<$bits_log2>,
       Shright<Sum<Bits, $mask>, $bits_log2>: ArraySize,
     {
@@ -769,7 +797,7 @@ impl<U, X> SealedBitCount for UInt<U, X> {}
 
 impl<U, X> BitCount for UInt<U, X>
 where
-  Self: IsLessOrEqual<U128> + DefaultRepr<LeEq<Self, U128>>,
+  Self: Canonical + IsLessOrEqual<U128> + DefaultRepr<LeEq<Self, U128>>,
 {
   type Unsigned = <Self as DefaultRepr<LeEq<Self, U128>>>::Unsigned;
   type Signed = <Self as DefaultRepr<LeEq<Self, U128>>>::Signed;
