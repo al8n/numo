@@ -107,9 +107,19 @@ jobs:
       - name: Install Rust
         run: rustup update stable && rustup default stable
       - name: cargo build --target ${{ matrix.target }}
+        shell: bash
         run: |
           rustup target add ${{ matrix.target }}
-          cargo build --target ${{ matrix.target }} 
+          case "${{ matrix.target }}" in
+            # A bare-metal target has no `std`, so it builds without the default `std` feature.
+            *-none-*)
+              cargo build --target ${{ matrix.target }} --no-default-features
+              cargo build --target ${{ matrix.target }} --no-default-features --features serde
+              ;;
+            *)
+              cargo build --target ${{ matrix.target }}
+              ;;
+          esac
 
   build:
     name: build
