@@ -43,24 +43,6 @@ note: required by a bound in `largest`
    |
  8 | fn largest<B: FitsBits<[u64; 2]>>() -> Uint<B, [u64; 2]> {
    |               ^^^^^^^^^^^^^^^^^^ required by this bound in `largest`
-help: consider further restricting type parameter `B` with trait `NonZero`
-   |
-13 | fn caller<B: Unsigned + numo::typenum::NonZero>() {
-   |                       ++++++++++++++++++++++++
-
-error[E0277]: the storage cannot hold `Bits` bits
-  --> tests/ui/generic_width_bounds.rs:14:28
-   |
-14 |   let _largest = largest::<B>();
-   |                            ^ `Bits` is not known to fit in the storage
-   |
-   = note: add a `FitsBits<Repr>` bound on `Bits`
-   = note: required for `B` to implement `FitsBits<[u64; 2]>`
-note: required by a bound in `largest`
-  --> tests/ui/generic_width_bounds.rs:8:15
-   |
- 8 | fn largest<B: FitsBits<[u64; 2]>>() -> Uint<B, [u64; 2]> {
-   |               ^^^^^^^^^^^^^^^^^^ required by this bound in `largest`
 help: consider further restricting type parameter `B` with trait `Canonical`
    |
 13 | fn caller<B: Unsigned + numo::width::sealed::Canonical>() {

@@ -653,7 +653,8 @@ macro_rules! limb_layer {
 
     #[inline]
     pub(crate) const fn is_negative<const N: usize>(value: &[Limb; N]) -> bool {
-      (value[N - 1] as SignedLimb) < 0
+      // No limbs hold only zero, and have no top limb.
+      N > 0 && (value[N - 1] as SignedLimb) < 0
     }
 
     #[inline]
@@ -669,6 +670,10 @@ macro_rules! limb_layer {
     /// Compares `lhs` and `rhs`: the top limbs as `SignedLimb`, then the others as `Limb`, most
     /// significant first.
     pub(crate) const fn cmp<const N: usize>(lhs: &[Limb; N], rhs: &[Limb; N]) -> Ordering {
+      // No limbs hold only zero, and have no top limb.
+      if N == 0 {
+        return Ordering::Equal;
+      }
       let lhs_top = lhs[N - 1] as SignedLimb;
       let rhs_top = rhs[N - 1] as SignedLimb;
       if lhs_top < rhs_top {
@@ -950,9 +955,13 @@ macro_rules! limb_layer {
     }
 
     /// `value` with every bit at index `bits - 1` or above set to bit `bits - 1`: the two's
-    /// complement integer of `bits` bits in the low bits of `value`, sign-extended to `N` limbs.
-    /// Requires `1 <= bits <= B * N`.
+    /// complement integer of `bits` bits in the low bits of `value`, sign-extended to `N` limbs, or
+    /// zero for zero bits. Requires `bits <= B * N`.
     pub(crate) const fn sign_extend<const N: usize>(value: &[Limb; N], bits: u32) -> [Limb; N] {
+      // Zero bits hold only zero, and have no sign bit to copy.
+      if bits == 0 {
+        return [0; N];
+      }
       let top = ((bits - 1) / Limb::BITS) as usize;
       // Shifting bit `bits - 1` to the top of its limb and back with an arithmetic shift copies it
       // into the bits above.
@@ -973,21 +982,31 @@ macro_rules! limb_layer {
     }
 
     /// Returns `true` if `value` is within the range of `bits` bits, from `-2^(bits - 1)` to
-    /// `2^(bits - 1) - 1`. Requires `1 <= bits <= B * N`.
+    /// `2^(bits - 1) - 1`, or is zero for zero bits. Requires `bits <= B * N`.
     #[inline]
     pub(crate) const fn fits_bits<const N: usize>(value: &[Limb; N], bits: u32) -> bool {
       // Sign-extending from bit `bits - 1` changes only a value outside the range.
       $unsigned::eq(&sign_extend(value, bits), value)
     }
 
-    /// `2^(bits - 1) - 1`, the largest value of `bits` bits. Requires `1 <= bits <= B * N`.
+    /// `2^(bits - 1) - 1`, the largest value of `bits` bits, or zero for zero bits. Requires
+    /// `bits <= B * N`.
     #[inline]
     pub(crate) const fn max_of_bits<const N: usize>(bits: u32) -> [Limb; N] {
-      $unsigned::max_of_bits(bits - 1)
+      if bits == 0 {
+        [0; N]
+      } else {
+        $unsigned::max_of_bits(bits - 1)
+      }
     }
 
-    /// `-2^(bits - 1)`, the smallest value of `bits` bits. Requires `1 <= bits <= B * N`.
+    /// `-2^(bits - 1)`, the smallest value of `bits` bits, or zero for zero bits. Requires
+    /// `bits <= B * N`.
     pub(crate) const fn min_of_bits<const N: usize>(bits: u32) -> [Limb; N] {
+      // Complementing the largest value, which is zero at zero bits, would give -1.
+      if bits == 0 {
+        return [0; N];
+      }
       // Every bit from index `bits - 1` up is set, and every bit below it is clear.
       let mut min = max_of_bits::<N>(bits);
       let mut i = 0;

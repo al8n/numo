@@ -139,14 +139,19 @@ macro_rules! native {
         }
       }
 
-      /// `2^bits - 1`, the largest value of `bits` bits. Requires `1 <= bits <= BITS`.
+      /// `2^bits - 1`, the largest value of `bits` bits. Requires `bits <= BITS`.
       #[inline]
       pub(crate) const fn max_of_bits(bits: u32) -> $uint {
-        $uint::MAX >> ($uint::BITS - bits)
+        // The shift below would be by `BITS` bits, which overflows.
+        if bits == 0 {
+          0
+        } else {
+          $uint::MAX >> ($uint::BITS - bits)
+        }
       }
 
       /// Returns `true` if `value < 2^bits`: every bit at index `bits` or above is zero. Requires
-      /// `1 <= bits <= BITS`.
+      /// `bits <= BITS`.
       #[inline]
       pub(crate) const fn fits_bits(value: $uint, bits: u32) -> bool {
         value <= max_of_bits(bits)
@@ -264,21 +269,33 @@ macro_rules! native {
         }
       }
 
-      /// `2^(bits - 1) - 1`, the largest value of `bits` bits. Requires `1 <= bits <= BITS`.
+      /// `2^(bits - 1) - 1`, the largest value of `bits` bits, or zero for zero bits. Requires
+      /// `bits <= BITS`.
       #[inline]
       pub(crate) const fn max_of_bits(bits: u32) -> $int {
-        $int::MAX >> ($int::BITS - bits)
+        // The shift below would be by `BITS` bits, which overflows.
+        if bits == 0 {
+          0
+        } else {
+          $int::MAX >> ($int::BITS - bits)
+        }
       }
 
-      /// `-2^(bits - 1)`, the smallest value of `bits` bits. Requires `1 <= bits <= BITS`.
+      /// `-2^(bits - 1)`, the smallest value of `bits` bits, or zero for zero bits. Requires
+      /// `bits <= BITS`.
       #[inline]
       pub(crate) const fn min_of_bits(bits: u32) -> $int {
-        // The arithmetic shift fills the vacated bits with copies of the sign bit.
-        $int::MIN >> ($int::BITS - bits)
+        // The arithmetic shift fills the vacated bits with copies of the sign bit. At zero bits it
+        // would be by `BITS` bits, which overflows.
+        if bits == 0 {
+          0
+        } else {
+          $int::MIN >> ($int::BITS - bits)
+        }
       }
 
       /// Returns `true` if `value` is within the range of `bits` bits, from `-2^(bits - 1)` to
-      /// `2^(bits - 1) - 1`. Requires `1 <= bits <= BITS`.
+      /// `2^(bits - 1) - 1`, or is zero for zero bits. Requires `bits <= BITS`.
       #[inline]
       pub(crate) const fn fits_bits(value: $int, bits: u32) -> bool {
         min_of_bits(bits) <= value && value <= max_of_bits(bits)

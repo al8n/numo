@@ -9,9 +9,8 @@ use core::{
 };
 
 use typenum::{
-  B0, B1, Const, IsEqual, IsLess, IsLessOrEqual, Le, LeEq, NonZero, Shleft, Shright, Sum, ToUInt,
-  U, U3, U4, U5, U6, U7, U8, U15, U16, U31, U32, U63, U64, U127, U128, U65536, U4294967296, UInt,
-  Unsigned,
+  B0, B1, Const, IsEqual, IsLess, IsLessOrEqual, Le, LeEq, Shleft, Shright, Sum, ToUInt, U, U3, U4,
+  U5, U6, U7, U8, U15, U16, U31, U32, U63, U64, U127, U128, U65536, U4294967296, UInt, Unsigned,
 };
 
 pub use array_size::ArraySize;
@@ -154,10 +153,10 @@ mod sealed {
 
   /// The constants of `Int<B, R>` that depend on the width `B`.
   pub trait IntWidth<R> {
-    /// The smallest value, `-2^(B - 1)`.
+    /// The smallest value, `-2^(B - 1)`, or zero for zero bits.
     const MIN: R;
 
-    /// The largest value, `2^(B - 1) - 1`.
+    /// The largest value, `2^(B - 1) - 1`, or zero for zero bits.
     const MAX: R;
   }
 
@@ -235,7 +234,7 @@ mod sealed {
     fn is_zero(&self, token: Token) -> bool;
 
     /// Returns `true` if the value has `bits` bits: every bit at index `bits` or above is zero.
-    /// Requires `bits` to be at least 1 and at most the bits of the storage.
+    /// Requires `bits` to be at most the bits of the storage.
     fn fits_bits(&self, bits: u32, token: Token) -> bool;
   }
 
@@ -263,8 +262,8 @@ mod sealed {
     fn is_zero(&self, token: Token) -> bool;
 
     /// Returns `true` if the value has `bits` bits, from `-2^(bits - 1)` to `2^(bits - 1) - 1`:
-    /// every bit at index `bits - 1` or above equals the top bit of the storage. Requires `bits` to
-    /// be at least 1 and at most the bits of the storage.
+    /// every bit at index `bits - 1` or above equals the top bit of the storage, and for zero bits
+    /// every bit is zero. Requires `bits` to be at most the bits of the storage.
     fn fits_bits(&self, bits: u32, token: Token) -> bool;
 
     /// Returns `true` if the value is negative.
@@ -277,7 +276,7 @@ mod sealed {
 
 /// Marks that `Repr` holds every value of `Self` bits.
 ///
-/// `Self` is a [`typenum`] number from 1 to `2^32 - 1`, so that the constant `BITS`, a `u32`, holds
+/// `Self` is a [`typenum`] number from 0 to `2^32 - 1`, so that the constant `BITS`, a `u32`, holds
 /// it, and is in canonical form: `UTerm`, or a `UInt` whose most significant bit is `B1`, as every
 /// `typenum` constant and operator result is. The native integers `u8` and `i8` hold up to 8 bits,
 /// `u16` and `i16` up to 16, `u32` and `i32` up to 32, `u64` and `i64` up to 64, and `u128` and
@@ -309,9 +308,9 @@ mod sealed {
   label = "`Bits` is not known to fit in the storage",
   note = "add a `FitsBits<Repr>` bound on `Bits`"
 )]
-pub trait FitsBits<Repr>: Unsigned + NonZero + Canonical + SealedFitsBits<Repr> {}
+pub trait FitsBits<Repr>: Unsigned + Canonical + SealedFitsBits<Repr> {}
 
-impl<B, R> FitsBits<R> for B where B: Unsigned + NonZero + Canonical + SealedFitsBits<R> {}
+impl<B, R> FitsBits<R> for B where B: Unsigned + Canonical + SealedFitsBits<R> {}
 
 /// Marks that `Self` bits fill `Repr` exactly, so that every bit pattern of `Repr` is a value.
 ///
@@ -1007,6 +1006,10 @@ fn fmt_magnitude<L, const N: usize, const DIGITS: usize>(
   is_nonnegative: bool,
   f: &mut fmt::Formatter<'_>,
 ) -> fmt::Result {
+  // No limbs hold only zero, and leave no room in the buffer for its digit.
+  if N == 0 {
+    return f.pad_integral(is_nonnegative, "", "0");
+  }
   let mut buf = [[0; DIGITS]; N];
   let buf = buf.as_flattened_mut();
   let start = write_digits_into(magnitude, buf);

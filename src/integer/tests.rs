@@ -1898,3 +1898,272 @@ fn native_and_array_storages_agree() {
     U114, U115, U116, U117, U118, U119, U120, U121, U122, U123, U124, U125, U126, U127, U128,
   );
 }
+
+/// Integers of zero bits, which hold only zero, in every native storage and in arrays of zero, one
+/// and two limbs of each limb type, through the inherent `const fn`s and through the traits.
+mod zero_bits {
+  use core::cmp::Ordering;
+
+  use typenum::U0;
+
+  use super::*;
+  use crate::{
+    FillsRepr, FitsBits, FromLimbs, NativeInteger, SignedFixedInteger, UnsignedFixedInteger,
+  };
+
+  /// Checks, through [`FixedInteger`], what every integer of zero bits shares: each constant is
+  /// zero, every value equals and compares equal to zero, the hash writes nothing, and the text is
+  /// that of zero under each flag.
+  fn check_fixed<T: FixedInteger>() {
+    assert_eq!(T::BITS, 0);
+    for value in [T::ZERO, T::MIN, T::MAX, T::default()] {
+      assert_eq!(value, T::ZERO);
+      assert!(value.is_zero());
+      assert_eq!(value.cmp(&T::ZERO), Ordering::Equal);
+      assert_eq!(value.partial_cmp(&T::ZERO), Some(Ordering::Equal));
+      assert_eq!(recorded(&value), Vec::<Call>::new());
+      assert_same_format!(
+        value, 0u8, "{}", "{:?}", "{:+}", "{:05}", "{:>4}", "{:<4}", "{:+05}", "{:x?}",
+      );
+    }
+  }
+
+  /// As [`check_fixed`], for an unsigned integer.
+  fn check_unsigned<T: FixedInteger + UnsignedFixedInteger>() {
+    check_fixed::<T>();
+  }
+
+  /// As [`check_fixed`], and the sign queries of [`SignedFixedInteger`]: zero is neither negative
+  /// nor positive.
+  fn check_signed<T: FixedInteger + SignedFixedInteger>() {
+    check_fixed::<T>();
+    for value in [T::ZERO, T::MIN, T::MAX, T::default()] {
+      assert!(!value.is_negative() && !value.is_positive());
+    }
+  }
+
+  /// Asserts that `result` is the error of a value that does not fit in zero bits.
+  fn assert_rejected<T: Debug>(result: Result<T, TryNewError>) {
+    let error = result.expect_err("only zero fits in zero bits");
+    assert_eq!(error.bits(), 0);
+    assert_eq!(error.to_string(), "the value does not fit in 0 bits");
+  }
+
+  /// Checks a native storage through [`NativeInteger`]: zero is a value and none of `rejected` is.
+  fn check_native<T>(rejected: &[T::Native])
+  where
+    T: NativeInteger,
+    T::Native: Copy + Debug + PartialEq,
+  {
+    let zero = T::ZERO.value();
+    assert_eq!(T::try_new(zero), Ok(T::ZERO));
+    assert_eq!(T::new(zero).value(), zero);
+    for &value in rejected {
+      assert_rejected(T::try_new(value));
+    }
+  }
+
+  /// Checks an array storage through [`ArrayInteger`]: `zero`, the limbs of zero, make zero, and
+  /// none of `rejected` makes a value.
+  fn check_array<T, L, const N: usize>(zero: [L; N], rejected: &[[L; N]])
+  where
+    T: FixedInteger + ArrayInteger<Array = [L; N]>,
+    L: Copy + Debug + PartialEq,
+  {
+    let value = T::checked_from_limbs(zero).expect("the limbs of zero");
+    assert_eq!(value, T::ZERO);
+    assert_eq!(value.to_limbs(), zero);
+    assert_eq!(value.as_limbs(), &zero);
+    for &limbs in rejected {
+      assert_eq!(T::checked_from_limbs(limbs), None, "{limbs:?}");
+    }
+  }
+
+  /// Checks the native storages of each width: the constants and the queries, `try_new`, which
+  /// takes only zero, `new`, which panics on any other value, the layout of the native integer,
+  /// and the traits.
+  macro_rules! natives {
+    ($($module:ident: $uint:ident, $int:ident);+ $(;)?) => {$(
+      mod $module {
+        use super::*;
+
+        type U = Uint<U0, $uint>;
+        type I = Int<U0, $int>;
+
+        #[test]
+        fn unsigned() {
+          assert_eq!(U::BITS, 0);
+          assert_eq!([U::ZERO, U::MIN, U::MAX].map(U::value), [0; 3]);
+          assert!(U::ZERO.is_zero() && U::MAX.is_zero());
+          assert_eq!(U::try_new(0), Ok(U::ZERO));
+          assert_eq!(U::new(0), U::ZERO);
+          for value in [1, $uint::MAX] {
+            assert_rejected(U::try_new(value));
+          }
+          assert_eq!(size_of::<U>(), size_of::<$uint>());
+          assert_eq!(align_of::<U>(), align_of::<$uint>());
+          check_unsigned::<U>();
+          check_native::<U>(&[1, $uint::MAX]);
+        }
+
+        #[test]
+        fn signed() {
+          assert_eq!(I::BITS, 0);
+          assert_eq!([I::ZERO, I::MIN, I::MAX].map(I::value), [0; 3]);
+          assert!(I::ZERO.is_zero() && I::MIN.is_zero() && I::MAX.is_zero());
+          assert!(!I::MIN.is_negative() && !I::ZERO.is_negative());
+          assert!(!I::MAX.is_positive() && !I::ZERO.is_positive());
+          assert_eq!(I::try_new(0), Ok(I::ZERO));
+          assert_eq!(I::new(0), I::ZERO);
+          for value in [1, -1, $int::MIN, $int::MAX] {
+            assert_rejected(I::try_new(value));
+          }
+          assert_eq!(size_of::<I>(), size_of::<$int>());
+          assert_eq!(align_of::<I>(), align_of::<$int>());
+          check_signed::<I>();
+          check_native::<I>(&[1, -1, $int::MIN, $int::MAX]);
+        }
+
+        #[test]
+        #[should_panic(expected = "the value does not fit in `Bits` bits")]
+        fn unsigned_new_panics_on_one() {
+          let _ = U::new(1);
+        }
+
+        #[test]
+        #[should_panic(expected = "the value does not fit in `Bits` bits")]
+        fn signed_new_panics_on_one() {
+          let _ = I::new(1);
+        }
+      }
+    )+};
+  }
+
+  natives!(
+    native_8: u8, i8;
+    native_16: u16, i16;
+    native_32: u32, i32;
+    native_64: u64, i64;
+    native_128: u128, i128;
+  );
+
+  /// Checks the arrays of each limb type: no limbs, which zero bits fill, so that `from_limbs` takes
+  /// the empty array and the type is zero-sized, and one and two limbs, which hold zero only when
+  /// every limb is zero. Each through the inherent `const fn`s and the traits.
+  macro_rules! arrays {
+    ($($module:ident: $limb:ident);+ $(;)?) => {$(
+      mod $module {
+        use super::*;
+
+        #[test]
+        fn no_limbs() {
+          type U = Uint<U0, [$limb; 0]>;
+          type I = Int<U0, [$limb; 0]>;
+          const NONE: [$limb; 0] = [];
+          assert_eq!([U::BITS, I::BITS], [0; 2]);
+          assert_eq!(U::from_limbs(NONE), U::ZERO);
+          assert_eq!(I::from_limbs(NONE), I::ZERO);
+          assert_eq!(U::checked_from_limbs(NONE), Some(U::ZERO));
+          assert_eq!(I::checked_from_limbs(NONE), Some(I::ZERO));
+          assert_eq!([U::MAX.to_limbs(), I::MIN.to_limbs(), I::MAX.to_limbs()], [NONE; 3]);
+          assert_eq!([U::MAX.as_limbs(), I::MIN.as_limbs()], [&NONE; 2]);
+          assert!(U::MAX.is_zero() && I::MIN.is_zero() && I::MAX.is_zero());
+          assert!(!I::MIN.is_negative() && !I::MAX.is_positive());
+          assert_eq!(<U as FromLimbs>::from_limbs(NONE), U::ZERO);
+          assert_eq!(<I as FromLimbs>::from_limbs(NONE), I::ZERO);
+          assert_eq!([size_of::<U>(), size_of::<I>()], [0; 2]);
+          assert_eq!([align_of::<U>(), align_of::<I>()], [align_of::<$limb>(); 2]);
+          check_unsigned::<U>();
+          check_signed::<I>();
+          check_array::<U, $limb, 0>(NONE, &[]);
+          check_array::<I, $limb, 0>(NONE, &[]);
+        }
+
+        #[test]
+        fn one_limb() {
+          type U = Uint<U0, [$limb; 1]>;
+          type I = Int<U0, [$limb; 1]>;
+          let rejected = [[1], [$limb::MAX]];
+          assert_eq!([U::BITS, I::BITS], [0; 2]);
+          assert_eq!(U::checked_from_limbs([0]), Some(U::ZERO));
+          assert_eq!(I::checked_from_limbs([0]), Some(I::ZERO));
+          for limbs in rejected {
+            assert_eq!(U::checked_from_limbs(limbs), None, "{limbs:?}");
+            assert_eq!(I::checked_from_limbs(limbs), None, "{limbs:?}");
+          }
+          assert_eq!([U::MAX.to_limbs(), I::MIN.to_limbs(), I::MAX.to_limbs()], [[0]; 3]);
+          assert_eq!([U::MAX.as_limbs(), I::MIN.as_limbs()], [&[0]; 2]);
+          assert!(U::MAX.is_zero() && I::MIN.is_zero() && I::MAX.is_zero());
+          assert!(!I::MIN.is_negative() && !I::MAX.is_positive());
+          check_unsigned::<U>();
+          check_signed::<I>();
+          check_array::<U, $limb, 1>([0], &rejected);
+          check_array::<I, $limb, 1>([0], &rejected);
+        }
+
+        #[test]
+        fn two_limbs() {
+          type U = Uint<U0, [$limb; 2]>;
+          type I = Int<U0, [$limb; 2]>;
+          let rejected = [[1, 0], [0, 1], [$limb::MAX; 2]];
+          assert_eq!([U::BITS, I::BITS], [0; 2]);
+          assert_eq!(U::checked_from_limbs([0, 0]), Some(U::ZERO));
+          assert_eq!(I::checked_from_limbs([0, 0]), Some(I::ZERO));
+          for limbs in rejected {
+            assert_eq!(U::checked_from_limbs(limbs), None, "{limbs:?}");
+            assert_eq!(I::checked_from_limbs(limbs), None, "{limbs:?}");
+          }
+          assert_eq!([U::MAX.to_limbs(), I::MIN.to_limbs(), I::MAX.to_limbs()], [[0; 2]; 3]);
+          assert!(U::MAX.is_zero() && I::MIN.is_zero() && I::MAX.is_zero());
+          assert!(!I::MIN.is_negative() && !I::MAX.is_positive());
+          check_unsigned::<U>();
+          check_signed::<I>();
+          check_array::<U, $limb, 2>([0; 2], &rejected);
+          check_array::<I, $limb, 2>([0; 2], &rejected);
+        }
+      }
+    )+};
+  }
+
+  arrays!(
+    limbs_8: u8;
+    limbs_16: u16;
+    limbs_32: u32;
+    limbs_64: u64;
+    limbs_128: u128;
+  );
+
+  /// Zero bits fit every storage and fill the arrays of no limbs, also for generic code.
+  #[test]
+  fn generic_bounds_hold() {
+    fn fills<B: FitsBits<R> + FillsRepr<R>, R>() {}
+    fn fits<B: FitsBits<R>, R>() {}
+    fills::<U0, [u64; 0]>();
+    fills::<U0, [u8; 0]>();
+    fits::<U0, u8>();
+    fits::<U0, i128>();
+    fits::<U0, [u128; 3]>();
+  }
+
+  /// The constants, constructors and queries at zero bits in constant contexts.
+  #[test]
+  fn const_context() {
+    const NATIVE: Uint<U0, u8> = Uint::<U0, u8>::new(0);
+    const REJECTED: Result<Int<U0, i8>, TryNewError> = Int::<U0, i8>::try_new(1);
+    const MIN: Int<U0, [u32; 2]> = Int::<U0, [u32; 2]>::MIN;
+    const EMPTY: Option<Int<U0, [u8; 0]>> = Int::<U0, [u8; 0]>::checked_from_limbs([]);
+    const FILLED: Uint<U0, [u64; 0]> = Uint::<U0, [u64; 0]>::from_limbs([]);
+    const QUERIES: [bool; 3] = [
+      Int::<U0, [u64; 0]>::ZERO.is_negative(),
+      Int::<U0, [u64; 0]>::ZERO.is_positive(),
+      Uint::<U0, [u64; 0]>::ZERO.is_zero(),
+    ];
+
+    assert_eq!(NATIVE.value(), 0);
+    assert_eq!(REJECTED, Err(TryNewError::new(0)));
+    assert_eq!(MIN.to_limbs(), [0; 2]);
+    assert_eq!(EMPTY, Some(Int::<U0, [u8; 0]>::ZERO));
+    assert_eq!(FILLED, Uint::<U0, [u64; 0]>::ZERO);
+    assert_eq!(QUERIES, [false, false, true]);
+  }
+}

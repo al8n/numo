@@ -165,7 +165,7 @@ macro_rules! core_tests {
 
       #[test]
       fn bit_functions() {
-        for bits in 1..=<$int>::BITS {
+        for bits in 0..=<$int>::BITS {
           core_tests!(@bit_functions $sign $int, bits);
         }
       }
@@ -184,7 +184,7 @@ macro_rules! core_tests {
       let fits = value as u128 <= max;
       assert_eq!(native::fits_bits(value, $bits), fits, "{value} in {} bits", $bits);
     };
-    let edges = [0, 1, max - 1, max, max.saturating_add(1), <$int>::MAX as u128];
+    let edges = [0, 1, max.saturating_sub(1), max, max.saturating_add(1), <$int>::MAX as u128];
     edges.into_iter().filter_map(|value| <$int>::try_from(value).ok()).for_each(check);
     if <$int>::BITS <= 16 {
       let step = if cfg!(miri) && <$int>::BITS == 16 { 61 } else { 1 };
@@ -192,8 +192,12 @@ macro_rules! core_tests {
     }
   }};
   (@bit_functions signed $int:ident, $bits:ident) => {{
-    let max = if $bits == 128 { i128::MAX } else { (1i128 << ($bits - 1)) - 1 };
-    let min = -max - 1;
+    // Zero bits hold only zero.
+    let (min, max) = match $bits {
+      0 => (0, 0),
+      128 => (i128::MIN, i128::MAX),
+      _ => (-(1i128 << ($bits - 1)), (1i128 << ($bits - 1)) - 1),
+    };
     assert_eq!(native::max_of_bits($bits) as i128, max, "{} bits", $bits);
     assert_eq!(native::min_of_bits($bits) as i128, min, "{} bits", $bits);
     let check = |value: $int| {

@@ -28,14 +28,14 @@ mod traits;
 
 /// An unsigned integer of `Bits` bits, stored in `Repr`.
 ///
-/// The value runs from zero to `2^Bits - 1`. `Bits` is a [`typenum`] number of at least 1, and
-/// `Repr` holds at least `Bits` bits: a native unsigned integer, `u8`, `u16`, `u32`, `u64` or
-/// `u128`, which holds the value itself, or an array of limbs, least significant first, `[u8; N]`,
-/// `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, of `8 * N`, `16 * N`, `32 * N`, `64 * N` or
-/// `128 * N` bits. The bits above `Bits`, if any, are zero. Without `Repr`, the storage is the
-/// default that [`BitCount`] gives for 1 to 65536 bits: the smallest native integer that holds
-/// `Bits` bits, and above 128 bits `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>` and
-/// `Uint<U200>` is `Uint<U200, [u64; 4]>`. The module [`aliases`](crate::aliases) names common
+/// The value runs from zero to `2^Bits - 1`, which is zero for zero bits. `Bits` is a [`typenum`]
+/// number, and `Repr` holds at least `Bits` bits: a native unsigned integer, `u8`, `u16`, `u32`,
+/// `u64` or `u128`, which holds the value itself, or an array of limbs, least significant first,
+/// `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, of `8 * N`, `16 * N`, `32 * N`,
+/// `64 * N` or `128 * N` bits. The bits above `Bits`, if any, are zero. Without `Repr`, the storage
+/// is the default that [`BitCount`] gives for 1 to 65536 bits: the smallest native integer that
+/// holds `Bits` bits, and above 128 bits `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>`
+/// and `Uint<U200>` is `Uint<U200, [u64; 4]>`. The module [`aliases`](crate::aliases) names common
 /// widths in their default storages, such as [`u7`](crate::u7) for `Uint<U7, u8>` and
 /// [`u256`](crate::u256) for `Uint<U256, [u64; 4]>`. `[u32; N]` computes with native 64-bit
 /// intermediates, and `[u8; N]` has alignment 1 and holds the little-endian bytes of the value on
@@ -112,16 +112,16 @@ pub struct Uint<Bits, Repr = <Bits as BitCount>::Unsigned> {
 
 /// A signed integer of `Bits` bits in two's complement, stored in `Repr`.
 ///
-/// The value runs from `-2^(Bits - 1)` to `2^(Bits - 1) - 1`. `Bits` is a [`typenum`] number of at
-/// least 1, and `Repr` holds at least `Bits` bits: a native signed integer, `i8`, `i16`, `i32`,
-/// `i64` or `i128`, which holds the value itself, or an array of limbs, least significant first, as
-/// for [`Uint`]: `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`. The bits above
-/// `Bits`, if any, are copies of the sign bit, so the storage holds the value in two's complement.
-/// Without `Repr`, the storage is the default that [`BitCount`] gives, as for [`Uint`]: `Int<U24>`
-/// is `Int<U24, i32>` and `Int<U200>` is `Int<U200, [u64; 4]>`. The module
-/// [`aliases`](crate::aliases) names common widths, such as [`i7`](crate::i7) for `Int<U7, i8>`
-/// and [`i256`](crate::i256) for `Int<U256, [u64; 4]>`. The type has the size, alignment and ABI of
-/// `Repr`, and as for [`Uint`], each storage gives a distinct type.
+/// The value runs from `-2^(Bits - 1)` to `2^(Bits - 1) - 1`, and is zero for zero bits. `Bits` is
+/// a [`typenum`] number, and `Repr` holds at least `Bits` bits: a native signed integer, `i8`,
+/// `i16`, `i32`, `i64` or `i128`, which holds the value itself, or an array of limbs, least
+/// significant first, as for [`Uint`]: `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
+/// `[u128; N]`. The bits above `Bits`, if any, are copies of the sign bit, so the storage holds the
+/// value in two's complement. Without `Repr`, the storage is the default that [`BitCount`] gives,
+/// as for [`Uint`]: `Int<U24>` is `Int<U24, i32>` and `Int<U200>` is `Int<U200, [u64; 4]>`. The
+/// module [`aliases`](crate::aliases) names common widths, such as [`i7`](crate::i7) for
+/// `Int<U7, i8>` and [`i256`](crate::i256) for `Int<U256, [u64; 4]>`. The type has the size,
+/// alignment and ABI of `Repr`, and as for [`Uint`], each storage gives a distinct type.
 ///
 /// As for [`Uint`], in a native integer [`new`](Self::new) and [`try_new`](Self::try_new) create a
 /// value and [`value`](Self::value) returns it, and in an array [`from_limbs`](Self::from_limbs)
@@ -180,9 +180,9 @@ pub struct Uint<Bits, Repr = <Bits as BitCount>::Unsigned> {
 pub struct Int<Bits, Repr = <Bits as BitCount>::Signed> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits - 1` or above equals bit
   // `Bits - 1`, the sign bit, so the storage, read as a two's complement integer, equals the value.
-  // Every constructor establishes this, and equality, comparison, the sign queries, hashing and
-  // formatting rely on it. It is a logical invariant, not a safety invariant: no `unsafe` code may
-  // rely on it.
+  // Zero bits have no sign bit, and every bit of the storage is zero. Every constructor establishes
+  // this, and equality, comparison, the sign queries, hashing and formatting rely on it. It is a
+  // logical invariant, not a safety invariant: no `unsafe` code may rely on it.
   repr: Repr,
   bits: PhantomData<Bits>,
 }
@@ -237,10 +237,10 @@ impl<B: FitsBits<R>, R: InlineIntRepr> Int<B, R> {
   /// Zero.
   pub const ZERO: Self = Self::wrap(R::ZERO);
 
-  /// The smallest value, `-2^(Bits - 1)`.
+  /// The smallest value, `-2^(Bits - 1)`, or zero for zero bits.
   pub const MIN: Self = Self::wrap(<R::Width<B> as IntWidth<R>>::MIN);
 
-  /// The largest value, `2^(Bits - 1) - 1`.
+  /// The largest value, `2^(Bits - 1) - 1`, or zero for zero bits.
   pub const MAX: Self = Self::wrap(<R::Width<B> as IntWidth<R>>::MAX);
 }
 

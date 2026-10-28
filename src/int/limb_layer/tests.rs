@@ -506,11 +506,11 @@ macro_rules! limb_layer_tests {
       rounding_division::<8>();
     }
 
-    /// The widths at which the functions of a width are checked: 1, `B - 1`, `B`, `B + 1`,
+    /// The widths at which the functions of a width are checked: 0, 1, `B - 1`, `B`, `B + 1`,
     /// `B * N - 1` and `B * N`, those that `N` limbs hold.
     fn widths<const N: usize>() -> Vec<u32> {
       let top = B * N as u32;
-      let mut widths: Vec<u32> = [1, B - 1, B, B + 1, top - 1, top]
+      let mut widths: Vec<u32> = [0, 1, B - 1, B, B + 1, top.saturating_sub(1), top]
         .into_iter()
         .filter(|&width| width <= top)
         .collect();
@@ -534,6 +534,10 @@ macro_rules! limb_layer_tests {
       for &bits in &widths {
         let max = bigint::max(bits, false);
         assert_eq!(bigint::from_limbs(&max_of_bits::<N>(bits), false), max);
+        assert_eq!(
+          bigint::to_limbs_of(&max, false),
+          Some(max_of_bits::<N>(bits))
+        );
         for (pattern, value) in patterns.iter().zip(&values) {
           assert_eq!(
             fits_bits(pattern, bits),
@@ -551,6 +555,7 @@ macro_rules! limb_layer_tests {
       ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
     )]
     fn widths_match_big_integers() {
+      widths_against_big_integers::<0>();
       widths_against_big_integers::<1>();
       widths_against_big_integers::<2>();
       widths_against_big_integers::<3>();
@@ -945,11 +950,11 @@ macro_rules! limb_layer_tests {
       rounding_division::<8>();
     }
 
-    /// The widths at which the functions of a width are checked: 1, `B - 1`, `B`, `B + 1`,
+    /// The widths at which the functions of a width are checked: 0, 1, `B - 1`, `B`, `B + 1`,
     /// `B * N - 1` and `B * N`, those that `N` limbs hold.
     fn widths<const N: usize>() -> Vec<u32> {
       let top = B * N as u32;
-      let mut widths: Vec<u32> = [1, B - 1, B, B + 1, top - 1, top]
+      let mut widths: Vec<u32> = [0, 1, B - 1, B, B + 1, top.saturating_sub(1), top]
         .into_iter()
         .filter(|&width| width <= top)
         .collect();
@@ -979,6 +984,14 @@ macro_rules! limb_layer_tests {
         let (min, max) = (bigint::min(bits, true), bigint::max(bits, true));
         assert_eq!(bigint::from_limbs(&max_of_bits::<N>(bits), true), max);
         assert_eq!(bigint::from_limbs(&min_of_bits::<N>(bits), true), min);
+        assert_eq!(
+          bigint::to_limbs_of(&max, true),
+          Some(max_of_bits::<N>(bits))
+        );
+        assert_eq!(
+          bigint::to_limbs_of(&min, true),
+          Some(min_of_bits::<N>(bits))
+        );
         let modulus = BigInt::from(1u8) << bits;
         for (pattern, (value, unsigned)) in patterns.iter().zip(&values) {
           assert_eq!(
@@ -1004,6 +1017,7 @@ macro_rules! limb_layer_tests {
       ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
     )]
     fn widths_match_big_integers() {
+      widths_against_big_integers::<0>();
       widths_against_big_integers::<1>();
       widths_against_big_integers::<2>();
       widths_against_big_integers::<3>();
