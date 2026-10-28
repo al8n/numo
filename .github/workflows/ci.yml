@@ -266,11 +266,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-multilib
-      - name: Install the powerpc64 C cross compiler
+      - name: Install the powerpc64 C cross compiler and libc headers
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'powerpc64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-powerpc64-linux-gnu
+          sudo apt-get install -y --no-install-recommends gcc-powerpc64-linux-gnu libc6-dev-ppc64-cross
           echo "CC_powerpc64_unknown_linux_gnu=powerpc64-linux-gnu-gcc" >> "$GITHUB_ENV"
       - name: Miri
         run: |
@@ -325,11 +325,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-multilib
-      - name: Install the powerpc64 C cross compiler
+      - name: Install the powerpc64 C cross compiler and libc headers
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'powerpc64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-powerpc64-linux-gnu
+          sudo apt-get install -y --no-install-recommends gcc-powerpc64-linux-gnu libc6-dev-ppc64-cross
           echo "CC_powerpc64_unknown_linux_gnu=powerpc64-linux-gnu-gcc" >> "$GITHUB_ENV"
       - name: Miri
         run: |
