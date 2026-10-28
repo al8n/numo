@@ -78,8 +78,9 @@
 //! and in two's complement, stored in `Repr`, which holds at least `Bits` bits: a native integer,
 //! `u8` to `u128` for `Uint` and `i8` to `i128` for `Int`, which holds the value itself, or an
 //! array of limbs, least significant first, `[u64; N]`, `[u32; N]`, `[u16; N]`, `[u8; N]` or
-//! `[u128; N]`. Without `Repr`, the storage is the default that [`BitCount`] gives for 1 to 65536
-//! bits: the smallest native integer that holds `Bits` bits, and above 128 bits
+//! `[u128; N]`. Zero bits hold only zero, in every storage. Without `Repr`, the storage is the
+//! default that [`BitCount`] gives for 0 to 65536 bits: the zero-sized `[u64; 0]` for zero bits,
+//! the smallest native integer that holds 1 to 128 bits, and above 128 bits
 //! [`Limbs<Bits>`](Limbs), `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>` and
 //! `Uint<U200>` is `Uint<U200, [u64; 4]>`. `[u64; N]` is the storage of the wide aliases,
 //! `[u32; N]` computes with native 64-bit intermediates, and `[u8; N]` has alignment 1 and holds
@@ -87,10 +88,11 @@
 //! `u128`, for memory shared with code that stores 128-bit words. Its arithmetic works on the
 //! 64-bit halves of each limb, as no wider native integer exists; its speed relative to `[u64; N]`
 //! depends on the operation, the width and the target (formatting a value of a few limbs is several
-//! times slower), so choose it for layout, not for speed. The module [`aliases`] names `u1` to
-//! `u1024` and `i1` to `i1024`, but for the native widths 8, 16, 32, 64 and 128, in the default
-//! storage: the smallest native integer that holds 1 to 127 bits, such as [`u7`] for `Uint<U7, u8>`,
-//! and `[u64; ceil(N / 64)]` for 129 to 1024 bits, such as [`u144`] for `Uint<U144, [u64; 3]>`. It
+//! times slower), so choose it for layout, not for speed. The module [`aliases`] names `u0` to
+//! `u1024` and `i0` to `i1024`, but for the native widths 8, 16, 32, 64 and 128, in the default
+//! storage: `[u64; 0]` for zero bits, so that [`u0`] and [`i0`] take no space, the smallest native
+//! integer that holds 1 to 127 bits, such as [`u7`] for `Uint<U7, u8>`, and `[u64; ceil(N / 64)]`
+//! for 129 to 1024 bits, such as [`u144`] for `Uint<U144, [u64; 3]>`. It
 //! also names `u2048`, `u4096`, `i2048` and `i4096`, which fill their limbs. Any other width or
 //! storage is written out, such as `Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that
 //! `typenum` has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.

@@ -61,6 +61,35 @@ fn native_aliases_are_const_and_native_sized() {
   assert_eq!(align_of::<u100>(), align_of::<u128>());
 }
 
+/// `u0` and `i0`, zero bits in their default storage, `[u64; 0]`: they hold only zero and take no
+/// space, in constant contexts too.
+#[test]
+fn zero_bit_aliases() {
+  const FILLED: u0 = u0::from_limbs([]);
+  const LIMBS: [u64; 0] = i0::MIN.to_limbs();
+  const QUERIES: [bool; 3] = [
+    i0::ZERO.is_negative(),
+    i0::ZERO.is_positive(),
+    u0::ZERO.is_zero(),
+  ];
+
+  assert_eq!(TypeId::of::<u0>(), TypeId::of::<Uint<U0>>());
+  assert_eq!(TypeId::of::<u0>(), TypeId::of::<Uint<U0, [u64; 0]>>());
+  assert_eq!(TypeId::of::<i0>(), TypeId::of::<Int<U0>>());
+  assert_eq!(TypeId::of::<i0>(), TypeId::of::<Int<U0, [u64; 0]>>());
+  assert_eq!([u0::BITS, i0::BITS], [0; 2]);
+  assert_eq!(FILLED, u0::MAX);
+  assert_eq!(LIMBS, i0::MAX.to_limbs());
+  assert_eq!(QUERIES, [false, false, true]);
+  assert_eq!(
+    [size_of::<u0>(), size_of::<i0>(), size_of::<[u0; 100]>()],
+    [0; 3]
+  );
+  // The alignment of `[u64; 0]`, which `None` takes as its size.
+  assert_eq!(align_of::<u0>(), align_of::<u64>());
+  assert_eq!(size_of::<Option<u0>>(), align_of::<u64>());
+}
+
 /// The most limbs of an alias in `wide_alias_table!`.
 const MOST_LIMBS: usize = 16;
 

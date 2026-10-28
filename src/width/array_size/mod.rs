@@ -1,22 +1,22 @@
-//! The numbers of limbs of the array storages, from 1 to 1024, as `typenum` numbers.
+//! The numbers of limbs of the array storages, from 0 to 1024, as `typenum` numbers.
 
 use typenum::Unsigned;
 
 use super::sealed::SealedArraySize;
 
-/// Maps a [`typenum`] number of limbs, from 1 to 1024, to the array of that many elements:
+/// Maps a [`typenum`] number of limbs, from 0 to 1024, to the array of that many elements:
 /// `<U4 as ArraySize>::ArrayType<u64>` is `[u64; 4]`.
 ///
-/// Stable Rust cannot turn a `typenum` number into an array length, so each number from `U1` to
+/// Stable Rust cannot turn a `typenum` number into an array length, so each number from `U0` to
 /// `U1024` has an implementation, written by a macro, as in the `hybrid-array` crate. The other
 /// direction, from an array length to a number, is `typenum`'s `U<N>`.
 /// [`LimbArray`](crate::LimbArray) computes the number of limbs of a width, and
 /// [`Limbs`](crate::Limbs) names the array. This trait is sealed and cannot be implemented outside
 /// this crate.
 #[diagnostic::on_unimplemented(
-  message = "an array of limbs computed from a width has 1 to 1024 limbs",
-  label = "the number of limbs is zero or greater than 1024",
-  note = "`Limbs<Bits, L>` exists for 1 to 8192 bits in `u8` limbs, 16384 in `u16`, 32768 in `u32`, 65536 in `u64` and 131072 in `u128`",
+  message = "an array of limbs computed from a width has 0 to 1024 limbs",
+  label = "the number of limbs is greater than 1024",
+  note = "`Limbs<Bits, L>` exists for 0 to 8192 bits in `u8` limbs, 16384 in `u16`, 32768 in `u32`, 65536 in `u64` and 131072 in `u128`",
   note = "a longer array is written out, as in `[u64; 2048]`"
 )]
 pub trait ArraySize: SealedArraySize + Unsigned {
@@ -31,6 +31,7 @@ pub trait ArraySize: SealedArraySize + Unsigned {
 macro_rules! array_size_table {
   ($callback:ident) => {
     $callback! {
+      U0 = 0,
       U1 = 1, U2 = 2, U3 = 3, U4 = 4, U5 = 5, U6 = 6, U7 = 7, U8 = 8, U9 = 9, U10 = 10, U11 = 11,
       U12 = 12, U13 = 13, U14 = 14, U15 = 15, U16 = 16, U17 = 17, U18 = 18, U19 = 19, U20 = 20,
       U21 = 21, U22 = 22, U23 = 23, U24 = 24, U25 = 25, U26 = 26, U27 = 27, U28 = 28, U29 = 29,

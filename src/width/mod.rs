@@ -10,7 +10,8 @@ use core::{
 
 use typenum::{
   B0, B1, Const, IsEqual, IsLess, IsLessOrEqual, Le, LeEq, Shleft, Shright, Sum, ToUInt, U, U3, U4,
-  U5, U6, U7, U8, U15, U16, U31, U32, U63, U64, U127, U128, U65536, U4294967296, UInt, Unsigned,
+  U5, U6, U7, U8, U15, U16, U31, U32, U63, U64, U127, U128, U65536, U4294967296, UInt, UTerm,
+  Unsigned,
 };
 
 pub use array_size::ArraySize;
@@ -116,9 +117,12 @@ mod sealed {
 
   impl NativeReprFilled for typenum::B1 {}
 
-  /// Seals [`ArraySize`](super::ArraySize). One impl seals every number: the orphan rules keep
-  /// other crates from implementing a trait of this crate for a type of `typenum`.
+  /// Seals [`ArraySize`](super::ArraySize). Two impls, for `UTerm` and for every `UInt`, seal every
+  /// number: the orphan rules keep other crates from implementing a trait of this crate for a type
+  /// of `typenum`.
   pub trait SealedArraySize {}
+
+  impl SealedArraySize for UTerm {}
 
   impl<U, B> SealedArraySize for typenum::UInt<U, B> {}
 
@@ -195,7 +199,7 @@ mod sealed {
   // A check of its own keeps a wider width from looking up the array, which would report a second
   // error, and keeps the range of the default from following the lengths that `ArraySize` covers.
   #[diagnostic::on_unimplemented(
-    message = "`Uint` and `Int` have a default storage only for 1 to 65536 bits",
+    message = "`Uint` and `Int` have a default storage only for 0 to 65536 bits",
     label = "`Bits` is greater than 65536",
     note = "a wider integer names its storage, as in `Uint<U100000, [u64; 2048]>`"
   )]
@@ -679,8 +683,8 @@ native_storage!(
 /// The array of limbs of type `Self` that holds `Bits` bits: `ceil(Bits / Self::BITS)` limbs.
 ///
 /// Implemented by `u8`, `u16`, `u32`, `u64` and `u128` for every width whose number of limbs has an
-/// [`ArraySize`]: up to 8192, 16384, 32768, 65536 and 131072 bits. [`Limbs`] names the array. This
-/// trait is sealed and cannot be implemented outside this crate.
+/// [`ArraySize`], from 0 bits up to 8192, 16384, 32768, 65536 and 131072 bits. [`Limbs`] names the
+/// array. This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a limb type of an array storage",
   label = "not a limb type",
@@ -730,11 +734,12 @@ limb_arrays!(
 );
 
 /// Maps a [`typenum`] number of bits to the default storages of [`Uint`](crate::Uint) and
-/// [`Int`](crate::Int): the smallest native integer that holds that many bits, and above 128 bits
-/// an array of 64-bit limbs.
+/// [`Int`](crate::Int): the zero-sized `[u64; 0]` for zero bits, the smallest native integer that
+/// holds 1 to 128 bits, and above 128 bits an array of 64-bit limbs.
 ///
 /// | Bits | `Unsigned` | `Signed` |
 /// |---|---|---|
+/// | 0 | `[u64; 0]` | `[u64; 0]` |
 /// | 1-8 | `u8` | `i8` |
 /// | 9-16 | `u16` | `i16` |
 /// | 17-32 | `u32` | `i32` |
@@ -742,11 +747,11 @@ limb_arrays!(
 /// | 65-128 | `u128` | `i128` |
 /// | 129-65536 | [`Limbs<Bits>`](Limbs), `[u64; ceil(Bits / 64)]` | the same array |
 ///
-/// Implemented for every number from 1 to 65536, written as a constant such as `U200`, as `U<200>`,
+/// Implemented for every number from 0 to 65536, written as a constant such as `U200`, as `U<200>`,
 /// or as an expression such as `Sum<U1024, U1>`; `typenum` names each number up to 1024 and some
-/// larger ones. `Uint<U7>` is `Uint<U7, u8>` and `Uint<U200>` is `Uint<U200, [u64; 4]>`. The default
-/// is stored inline, so `Uint<U65536>` takes 8 KiB. Zero bits and more than 65536 bits have no
-/// default; such a type names its storage.
+/// larger ones. `Uint<U7>` is `Uint<U7, u8>` and `Uint<U200>` is `Uint<U200, [u64; 4]>`. The
+/// default is stored inline, so `Uint<U65536>` takes 8 KiB and `Uint<U0>` takes no space. More than
+/// 65536 bits have no default; such a type names its storage.
 ///
 /// Generic code with the bound `B: BitCount` gets `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Debug`,
 /// `Display` and `Default` on `Uint<B>` and `Int<B>`, their constants `BITS`, `ZERO`, `MIN` and
@@ -759,11 +764,12 @@ limb_arrays!(
 /// ```
 /// use numo::{
 ///   BitCount, Int, Uint,
-///   typenum::{Sum, U1, U7, U24, U200, U1024},
+///   typenum::{Sum, U0, U1, U7, U24, U200, U1024},
 /// };
 ///
 /// assert_eq!(Uint::<U7>::MAX, Uint::<U7, u8>::MAX);
 /// assert_eq!(size_of::<Int<U24>>(), 4);
+/// assert_eq!(size_of::<Uint<U0>>(), 0);
 /// assert_eq!(Uint::<U200>::MAX.to_limbs(), [u64::MAX, u64::MAX, u64::MAX, 0xff]);
 /// assert_eq!(size_of::<Uint<Sum<U1024, U1>>>(), 17 * 8);
 ///
@@ -775,8 +781,8 @@ limb_arrays!(
 /// assert_eq!(largest(&values), Uint::<U200>::MAX);
 /// ```
 #[diagnostic::on_unimplemented(
-  message = "`Uint` and `Int` have a default storage only for 1 to 65536 bits",
-  label = "`Bits` is zero, or is not known to be from 1 to 65536",
+  message = "`Uint` and `Int` have a default storage only for 0 to 65536 bits",
+  label = "`Bits` is not known to be from 0 to 65536",
   note = "generic code adds the bound `B: BitCount`, as in `fn f<B: BitCount>(x: Uint<B>)`, or names the storage, as in `Uint<B, [u64; 4]>`"
 )]
 pub trait BitCount:
@@ -789,10 +795,17 @@ pub trait BitCount:
   type Signed: InlineIntRepr + IntRepr<Unsigned = <Self as BitCount>::Unsigned>;
 }
 
-// Both impls are on the nonzero numbers, rather than over every type, so that a generic width
-// without the bound reports the diagnostic of this trait and the suggestion to add it, not an
-// unsatisfied comparison.
+// The impls are on the numbers of `typenum`, `UTerm` and `UInt`, rather than over every type, so
+// that a generic width without the bound reports the diagnostic of this trait and the suggestion to
+// add it, not an unsatisfied comparison.
+impl SealedBitCount for UTerm {}
+
 impl<U, X> SealedBitCount for UInt<U, X> {}
+
+impl BitCount for UTerm {
+  type Unsigned = [u64; 0];
+  type Signed = [u64; 0];
+}
 
 impl<U, X> BitCount for UInt<U, X>
 where

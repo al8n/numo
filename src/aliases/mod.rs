@@ -1,26 +1,27 @@
 //! Aliases of [`Uint`] and [`Int`] for common widths.
 //!
 //! An alias is named after its sign and width, as the primitive integers are: `uN` is `Uint<UN>`
-//! and `iN` is `Int<UN>`, an integer of `N` bits in its default storage. `u1` to `u1024` and `i1` to
-//! `i1024` have an alias, but for the native widths 8, 16, 32, 64 and 128 bits, whose aliases would
-//! shadow the primitive types of the same name: such an integer is written `Uint<U8>`, which is
-//! `Uint<U8, u8>`. An integer of 1 to 127 bits is stored in the smallest native integer that holds
-//! it, as the default storage is: `u7` is `Uint<U7, u8>` and `i24` is `Int<U24, i32>`. An integer of
-//! 129 to 1024 bits is stored in `[u64; ceil(N / 64)]`, the limbs that the default storage takes:
-//! `u144` is `Uint<U144, [u64; 3]>` and `i256` is `Int<U256, [u64; 4]>`. The widths of the wide
-//! storages of [`Decimal`](crate::Decimal), 192, 256, 320, 384, 448 and 512 bits, are among them.
-//! Beyond 1024 bits only `u2048`, `u4096`, `i2048` and `i4096` have an alias, each of which fills
-//! `N / 64` limbs of 64 bits. Any other width is written out, such as `Uint<U8192>` for its default
-//! storage, and so is any other storage, such as `Uint<U7, u16>`, `Uint<U256, [u8; 32]>` or
-//! `Uint<U256, [u128; 2]>`. A width that `typenum` has no constant for is computed, as in
-//! `Uint<Sum<U1024, U476>>` for 1500 bits.
+//! and `iN` is `Int<UN>`, an integer of `N` bits in its default storage. `u0` to `u1024` and `i0`
+//! to `i1024` have an alias, but for the native widths 8, 16, 32, 64 and 128 bits, whose aliases
+//! would shadow the primitive types of the same name: such an integer is written `Uint<U8>`, which
+//! is `Uint<U8, u8>`. `u0` and `i0` hold only 0, in `[u64; 0]`, the default storage of zero bits,
+//! so they are zero-sized. An integer of 1 to 127 bits is stored in the smallest native integer
+//! that holds it, as the default storage is: `u7` is `Uint<U7, u8>` and `i24` is `Int<U24, i32>`.
+//! An integer of 129 to 1024 bits is stored in `[u64; ceil(N / 64)]`, the limbs that the default
+//! storage takes: `u144` is `Uint<U144, [u64; 3]>` and `i256` is `Int<U256, [u64; 4]>`. The widths
+//! of the wide storages of [`Decimal`](crate::Decimal), 192, 256, 320, 384, 448 and 512 bits, are
+//! among them. Beyond 1024 bits only `u2048`, `u4096`, `i2048` and `i4096` have an alias, each of
+//! which fills `N / 64` limbs of 64 bits. Any other width is written out, such as `Uint<U8192>` for
+//! its default storage, and so is any other storage, such as `Uint<U7, u16>`,
+//! `Uint<U256, [u8; 32]>` or `Uint<U256, [u128; 2]>`. A width that `typenum` has no constant for is
+//! computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
 //!
 //! The crate root re-exports every alias, so `numo::u7` and `numo::aliases::u7` are the same type.
 
 // The aliases follow the names of the primitive integers.
 #![allow(non_camel_case_types)]
 
-use typenum::{U, U2048, U4096};
+use typenum::{U, U0, U2048, U4096};
 
 use crate::{Int, Uint};
 
@@ -438,6 +439,12 @@ macro_rules! wide_aliases {
 }
 
 wide_alias_table!(wide_aliases);
+
+/// An unsigned 0-bit integer, stored in `[u64; 0]`: it holds only 0 and is zero-sized.
+pub type u0 = Uint<U0, [u64; 0]>;
+
+/// A signed 0-bit integer, stored in `[u64; 0]`: it holds only 0 and is zero-sized.
+pub type i0 = Int<U0, [u64; 0]>;
 
 /// A 2048-bit unsigned integer, stored in 32 64-bit limbs.
 pub type u2048 = Uint<U2048, [u64; 32]>;

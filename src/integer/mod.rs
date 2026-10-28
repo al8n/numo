@@ -33,8 +33,9 @@ mod traits;
 /// `u64` or `u128`, which holds the value itself, or an array of limbs, least significant first,
 /// `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, of `8 * N`, `16 * N`, `32 * N`,
 /// `64 * N` or `128 * N` bits. The bits above `Bits`, if any, are zero. Without `Repr`, the storage
-/// is the default that [`BitCount`] gives for 1 to 65536 bits: the smallest native integer that
-/// holds `Bits` bits, and above 128 bits `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>`
+/// is the default that [`BitCount`] gives for 0 to 65536 bits: the zero-sized `[u64; 0]` for zero
+/// bits, the smallest native integer that holds 1 to 128 bits, and above 128 bits
+/// `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>`
 /// and `Uint<U200>` is `Uint<U200, [u64; 4]>`. The module [`aliases`](crate::aliases) names common
 /// widths in their default storages, such as [`u7`](crate::u7) for `Uint<U7, u8>` and
 /// [`u256`](crate::u256) for `Uint<U256, [u64; 4]>`. `[u32; N]` computes with native 64-bit

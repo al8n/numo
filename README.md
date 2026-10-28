@@ -28,7 +28,7 @@ checked during type checking, so no value can be created for a type that cannot 
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u1`–`u1024` and `i1`–`i1024`, constants, checked construction, comparison, hashing, formatting and generic traits; arithmetic planned |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, formatting and generic traits; arithmetic planned |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
 
@@ -141,21 +141,22 @@ fn main() -> Result<(), ParseError> {
 `Uint<Bits, Repr>` and `Int<Bits, Repr>` hold any width `Bits` in a storage `Repr` of at least
 `Bits` bits: a native integer, `u8` to `u128` for `Uint` and `i8` to `i128` for `Int`, which holds
 the value itself, or an array of limbs, least significant limb first, in two's complement for
-`Int`: `[u64; N]`, `[u32; N]`, `[u16; N]`, `[u8; N]` or `[u128; N]`. Without `Repr`, the storage is
-the smallest native integer that holds the width, and from 129 to 65536 bits
+`Int`: `[u64; N]`, `[u32; N]`, `[u16; N]`, `[u8; N]` or `[u128; N]`. Zero bits hold only zero, in
+every storage. Without `Repr`, the storage is the zero-sized `[u64; 0]` for zero bits, the smallest
+native integer that holds the width from 1 to 128 bits, and from 129 to 65536 bits
 `[u64; ceil(Bits / 64)]`, so `Uint<U7>` is `Uint<U7, u8>` and `Uint<U200>` is
 `Uint<U200, [u64; 4]>`. `[u32; N]` computes with native 64-bit intermediates, and `[u8; N]` has
 alignment 1 and holds the little-endian bytes of the value on every target. `[u128; N]` has the
 layout of an array of `u128`, for memory shared with code that stores 128-bit words. Its arithmetic
 works on the 64-bit halves of each limb, as no wider native integer exists; its speed relative to
 `[u64; N]` depends on the operation, the width and the target (formatting a value of a few limbs is
-several times slower), so choose it for layout, not for speed. The aliases name `u1` to `u1024` and
-`i1` to `i1024`, except the native widths 8, 16, 32, 64 and 128, in the default storage: the
-smallest native integer for 1 to 127 bits, such as `u7` for `Uint<U7, u8>`, and
-`[u64; ceil(N / 64)]` for 129 to 1024 bits, such as `u144` for `Uint<U144, [u64; 3]>`. They also
-name `u2048`, `u4096`, `i2048` and `i4096`. Any other width or storage is written out, such as
-`Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that `typenum` has no constant for is computed,
-as in `Uint<Sum<U1024, U476>>` for 1500 bits.
+several times slower), so choose it for layout, not for speed. The aliases name `u0` to `u1024` and
+`i0` to `i1024`, except the native widths 8, 16, 32, 64 and 128, in the default storage: `[u64; 0]`
+for zero bits, so that `u0` and `i0` take no space, the smallest native integer for 1 to 127 bits,
+such as `u7` for `Uint<U7, u8>`, and `[u64; ceil(N / 64)]` for 129 to 1024 bits, such as `u144` for
+`Uint<U144, [u64; 3]>`. They also name `u2048`, `u4096`, `i2048` and `i4096`. Any other width or
+storage is written out, such as `Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that `typenum`
+has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
 
 - `const` items and methods: `BITS`, `ZERO`, `MIN` and `MAX`; for a native integer, `new`, which
   panics if the value does not fit, `try_new`, which returns an error instead, and `value`; for an
@@ -167,9 +168,10 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
 - Traits with one implementation for every storage of a kind, `FixedInteger`,
   `UnsignedFixedInteger`, `SignedFixedInteger`, `NativeInteger`, `ArrayInteger` and `FromLimbs`,
   for generic code; with the bound `B: BitCount`, such code uses `Uint<B>` and `Int<B>` for any
-  width from 1 to 65536 bits.
-- A width that its storage cannot hold, zero bits, or `2^32` bits or more is rejected during type
-  checking, and so is a width of more than 65536 bits without an explicit storage.
+  width from 0 to 65536 bits.
+- A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
+  bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
+  width of more than 65536 bits without an explicit storage.
 
 Their arithmetic is planned.
 

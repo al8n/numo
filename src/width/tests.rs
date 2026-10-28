@@ -4,9 +4,9 @@
 use core::any::TypeId;
 
 use typenum::{
-  Add1, Shleft, Sub1, U, U1, U2, U6, U8, U9, U16, U17, U24, U32, U33, U64, U65, U128, U129, U192,
-  U193, U200, U256, U320, U384, U448, U512, U768, U1024, U2047, U2048, U3600, U4095, U4096, U8191,
-  U8192, U10000, U16383, U16384, U32767, U32768, U65535, U65536, U131072, Unsigned,
+  Add1, Shleft, Sub1, U, U0, U1, U2, U6, U8, U9, U16, U17, U24, U32, U33, U64, U65, U128, U129,
+  U192, U193, U200, U256, U320, U384, U448, U512, U768, U1024, U2047, U2048, U3600, U4095, U4096,
+  U8191, U8192, U10000, U16383, U16384, U32767, U32768, U65535, U65536, U131072, Unsigned,
 };
 
 use super::{BitCount, FitsBits, LimbArray, Limbs};
@@ -26,26 +26,31 @@ macro_rules! assert_limbs {
   };
 }
 
-/// Each limb type of `b` bits holds 1 to `b` bits in one limb, `b + 1` bits in two, and `1024 * b`
-/// bits in 1024, the most that has an array.
+/// Each limb type of `b` bits holds zero bits in no limbs, 1 to `b` bits in one limb, `b + 1` bits
+/// in two, and `1024 * b` bits in 1024, the most that has an array.
 #[test]
 fn limb_array() {
+  assert_limbs!(U0, u8 => [u8; 0], U0);
   assert_limbs!(U1, u8 => [u8; 1], U1);
   assert_limbs!(U8, u8 => [u8; 1], U1);
   assert_limbs!(U9, u8 => [u8; 2], U2);
   assert_limbs!(U8192, u8 => [u8; 1024], U1024);
+  assert_limbs!(U0, u16 => [u16; 0], U0);
   assert_limbs!(U1, u16 => [u16; 1], U1);
   assert_limbs!(U16, u16 => [u16; 1], U1);
   assert_limbs!(U17, u16 => [u16; 2], U2);
   assert_limbs!(U16384, u16 => [u16; 1024], U1024);
+  assert_limbs!(U0, u32 => [u32; 0], U0);
   assert_limbs!(U1, u32 => [u32; 1], U1);
   assert_limbs!(U32, u32 => [u32; 1], U1);
   assert_limbs!(U33, u32 => [u32; 2], U2);
   assert_limbs!(U32768, u32 => [u32; 1024], U1024);
+  assert_limbs!(U0, u64 => [u64; 0], U0);
   assert_limbs!(U1, u64 => [u64; 1], U1);
   assert_limbs!(U64, u64 => [u64; 1], U1);
   assert_limbs!(U65, u64 => [u64; 2], U2);
   assert_limbs!(U65536, u64 => [u64; 1024], U1024);
+  assert_limbs!(U0, u128 => [u128; 0], U0);
   assert_limbs!(U1, u128 => [u128; 1], U1);
   assert_limbs!(U128, u128 => [u128; 1], U1);
   assert_limbs!(U129, u128 => [u128; 2], U2);
@@ -81,6 +86,23 @@ mod bit_count {
   use super::*;
 
   bit_table!(test_bits);
+
+  /// Zero bits default to `[u64; 0]`, which holds them in no space, rather than to a native
+  /// integer.
+  #[test]
+  fn U0() {
+    type Bits = typenum::consts::U0;
+    assert_eq!(<Bits as Unsigned>::U32, 0);
+    assert_eq!(
+      TypeId::of::<<Bits as BitCount>::Unsigned>(),
+      TypeId::of::<[u64; 0]>()
+    );
+    assert_eq!(
+      TypeId::of::<<Bits as BitCount>::Signed>(),
+      TypeId::of::<[u64; 0]>()
+    );
+    assert_fits::<Bits, [u64; 0]>();
+  }
 }
 
 /// Asserts that the default storages of `Bits` bits are both `[u64; N]`, the fewest 64-bit limbs

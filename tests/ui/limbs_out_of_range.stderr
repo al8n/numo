@@ -1,11 +1,11 @@
-error[E0277]: an array of limbs computed from a width has 1 to 1024 limbs
+error[E0277]: an array of limbs computed from a width has 0 to 1024 limbs
  --> tests/ui/limbs_out_of_range.rs:7:22
   |
 7 | fn too_many_limbs(_: Limbs<Sum<U65536, U1>>) {}
-  |                      ^^^^^^^^^^^^^^^^^^^^^^ the number of limbs is zero or greater than 1024
+  |                      ^^^^^^^^^^^^^^^^^^^^^^ the number of limbs is greater than 1024
   |
   = help: the trait `ArraySize` is not implemented for `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B1>`
-  = note: `Limbs<Bits, L>` exists for 1 to 8192 bits in `u8` limbs, 16384 in `u16`, 32768 in `u32`, 65536 in `u64` and 131072 in `u128`
+  = note: `Limbs<Bits, L>` exists for 0 to 8192 bits in `u8` limbs, 16384 in `u16`, 32768 in `u32`, 65536 in `u64` and 131072 in `u128`
   = note: a longer array is written out, as in `[u64; 2048]`
   = help: the following other types implement trait `ArraySize`:
             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>

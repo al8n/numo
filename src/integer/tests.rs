@@ -1902,13 +1902,13 @@ fn native_and_array_storages_agree() {
 /// Integers of zero bits, which hold only zero, in every native storage and in arrays of zero, one
 /// and two limbs of each limb type, through the inherent `const fn`s and through the traits.
 mod zero_bits {
-  use core::cmp::Ordering;
+  use core::{any::TypeId, cmp::Ordering};
 
   use typenum::U0;
 
   use super::*;
   use crate::{
-    FillsRepr, FitsBits, FromLimbs, NativeInteger, SignedFixedInteger, UnsignedFixedInteger,
+    FillsRepr, FitsBits, FromLimbs, NativeInteger, SignedFixedInteger, UnsignedFixedInteger, i0, u0,
   };
 
   /// Checks, through [`FixedInteger`], what every integer of zero bits shares: each constant is
@@ -2143,6 +2143,27 @@ mod zero_bits {
     fits::<U0, u8>();
     fits::<U0, i128>();
     fits::<U0, [u128; 3]>();
+  }
+
+  /// Generic code over `B: BitCount` reaches zero bits in their default storage, `[u64; 0]`, as it
+  /// does any other width, and the unsigned integer of `i0` is `u0`.
+  #[test]
+  fn default_storage() {
+    fn constants<B: BitCount>() -> [bool; 4] {
+      [
+        Uint::<B>::MAX.is_zero(),
+        Int::<B>::MIN.is_zero(),
+        <Uint<B> as FixedInteger>::BITS == 0,
+        Int::<B>::default() == Int::<B>::MAX,
+      ]
+    }
+    assert_eq!(constants::<U0>(), [true; 4]);
+    check_unsigned::<Uint<U0>>();
+    check_signed::<Int<U0>>();
+    assert_eq!(
+      TypeId::of::<<i0 as SignedFixedInteger>::Unsigned>(),
+      TypeId::of::<u0>()
+    );
   }
 
   /// The constants, constructors and queries at zero bits in constant contexts.
