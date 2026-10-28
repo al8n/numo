@@ -31,6 +31,6 @@ help: the trait `numo::width::sealed::BitsFit` is implemented for `B1`
   |
   |   impl BitsFit for typenum::B1 {}
   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  = note: required for `UInt<UTerm, B1>` to implement `numo::width::sealed::SealedFitsBits<[u8; 0]>`
+  = note: required for `UInt<UTerm, B1>` to implement `numo::width::sealed::BitsOf<[u8; 0]>`
   = note: required for `UInt<UTerm, B1>` to implement `FitsBits<[u8; 0]>`
   = note: required for `numo::Int<UInt<UTerm, B1>, [u8; 0]>` to implement `Default`

@@ -8,7 +8,7 @@ use ::arbitrary::{Arbitrary, Error, Result, Unstructured};
 
 use crate::{
   Decimal, RoundingMode,
-  layout::{Layout, SealedLayout, Storage},
+  layout::{Layout, LayoutDigits, Storage},
   sample::{self, Source},
 };
 
@@ -63,7 +63,7 @@ where
 
   fn size_hint(depth: usize) -> (usize, Option<usize>) {
     let _ = depth;
-    let digits = <(I, F) as SealedLayout<R>>::DIGITS as usize;
+    let digits = <(I, F) as LayoutDigits<R>>::DIGITS as usize;
     // A choice among two or more values reads one byte, and a choice among one reads none, as
     // the number of digits and the number of trailing zeros do for a single digit. The shortest
     // path is the edge value zero: the branch and the edge kind. The longest is the digit-wise

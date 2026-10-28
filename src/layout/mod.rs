@@ -5,16 +5,17 @@ use core::{hash::Hash, ops::Add};
 use typenum::{B0, B1, IsLessOrEqual, LeEq, Sum, Unsigned};
 
 use sealed::{
-  ConvertFrom, FractionNotReduced, IntegralNotReduced, SealedDigitCount, SealedDivIntermediate,
-  SealedFitsDigits, SealedPick, SealedWiden, SealedWidenRepr,
+  ConvertFrom, DigitsOf, FractionNotReduced, HasDivIntermediate, IntegralNotReduced, ReprWidensTo,
+  SignPick, WidensTo,
 };
-pub(crate) use sealed::{SealedLayout, SealedStorage, Token};
+pub(crate) use sealed::{LayoutDigits, StorageCore, Token};
 
 use crate::{
   i192, i256, i320, i384, i448, i512,
   int::{self, DigitBuf},
   rounding::RoundingMode,
   u192, u256, u320, u384, u448, u512,
+  width::TypenumNumber,
 };
 
 mod sealed {
@@ -23,7 +24,7 @@ mod sealed {
     u384, u448, u512,
   };
 
-  /// Taken by every method of [`SealedStorage`] and [`ConvertFrom`]. A bound `R: Storage` makes the
+  /// Taken by every method of [`StorageCore`] and [`ConvertFrom`]. A bound `R: Storage` makes the
   /// methods of its supertrait callable from any crate, although the trait cannot be named, and
   /// several have preconditions. Only this crate can make a `Token`, which implements no trait that
   /// could make one, such as `Default`.
@@ -42,7 +43,7 @@ mod sealed {
   /// requires for every source. Storage-generic code is not `const`, because trait methods cannot
   /// be.
   // clippy's `wrong_self_convention` requires `Copy` for `is_*` methods that take `self`.
-  pub trait SealedStorage:
+  pub trait StorageCore:
     Copy
     + ConvertFrom<i8>
     + ConvertFrom<i16>
@@ -118,10 +119,10 @@ mod sealed {
 
     /// Converts the value to `Target`. Requires it to be representable there, so not negative for
     /// an unsigned `Target`.
-    fn convert<Target: SealedStorage>(self, token: Token) -> Target;
+    fn convert<Target: StorageCore>(self, token: Token) -> Target;
 
     /// Converts the value to `Target`, or returns `None` if it is not representable there.
-    fn checked_convert<Target: SealedStorage>(self, token: Token) -> Option<Target>;
+    fn checked_convert<Target: StorageCore>(self, token: Token) -> Option<Target>;
   }
 
   /// Converts values of the storage `Source` to this storage. Implemented for every ordered pair
@@ -135,14 +136,11 @@ mod sealed {
     fn checked_convert_from(value: Source, token: Token) -> Option<Self>;
   }
 
-  /// Seals [`DigitCount`](super::DigitCount).
-  pub trait SealedDigitCount {}
-
   /// Seals [`FitsDigits`](super::FitsDigits).
-  pub trait SealedFitsDigits<Repr> {}
+  pub trait DigitsOf<Repr> {}
 
   /// Seals [`Layout`](super::Layout) and carries the digit counts as constants.
-  pub trait SealedLayout<Repr> {
+  pub trait LayoutDigits<Repr> {
     /// The number of integral digits.
     const INTEGRAL: u32;
     /// The number of fraction digits.
@@ -152,16 +150,16 @@ mod sealed {
   }
 
   /// Seals [`Pick`](super::Pick).
-  pub trait SealedPick<Digits> {}
+  pub trait SignPick<Digits> {}
 
   /// Seals [`DivIntermediate`](super::DivIntermediate).
-  pub trait SealedDivIntermediate<IsUnsigned> {}
+  pub trait HasDivIntermediate<IsUnsigned> {}
 
   /// Seals [`Widen`](super::Widen).
-  pub trait SealedWiden<Target> {}
+  pub trait WidensTo<Target> {}
 
   /// Seals [`WidenRepr`](super::WidenRepr).
-  pub trait SealedWidenRepr<Target> {}
+  pub trait ReprWidensTo<Target> {}
 
   /// Implemented only for `B1`, the result of `Integral <= I2` when widening is possible.
   #[diagnostic::on_unimplemented(
@@ -193,7 +191,7 @@ mod sealed {
 /// [`u320`](crate::u320), [`u384`](crate::u384), [`u448`](crate::u448) and [`u512`](crate::u512).
 /// A decimal with an unsigned storage is never negative. This trait is sealed and cannot be
 /// implemented outside this crate.
-pub trait Storage: SealedStorage + Copy + Ord + Hash {}
+pub trait Storage: StorageCore + Copy + Ord + Hash {}
 
 /// Maps a type-level number of decimal digits to the smallest signed and the smallest unsigned
 /// integer types that hold every value with that many digits.
@@ -225,7 +223,7 @@ pub trait Storage: SealedStorage + Copy + Ord + Hash {}
   label = "`Integral + Fraction` is zero or greater than 153",
   note = "an explicit `u512` storage holds up to 154 digits, as in `Decimal<I, F, u512>`"
 )]
-pub trait DigitCount: SealedDigitCount {
+pub trait DigitCount: TypenumNumber {
   /// The smallest signed integer type that holds every value with `Self` decimal digits.
   type Signed: Storage;
 
@@ -249,7 +247,7 @@ pub trait DigitCount: SealedDigitCount {
   note = "`Integral + Fraction` must be at least 1; `i8` and `u8` hold up to 2 digits, `i16` and `u16` up to 4, `i32` and `u32` up to 9, `i64` up to 18, `u64` up to 19, `i128` and `u128` up to 38, `i192` and `u192` up to 57, `i256` up to 76, `u256` up to 77, `i320` and `u320` up to 96, `i384` and `u384` up to 115, `i448` and `u448` up to 134, `i512` up to 153, and `u512` up to 154",
   note = "the compiler writes `u192`, `u256`, `u320`, `u384`, `u448` and `u512` as `Uint` with the limbs `[u64; 3]`, `[u64; 4]`, `[u64; 5]`, `[u64; 6]`, `[u64; 7]` and `[u64; 8]`, and `i192`, `i256`, `i320`, `i384`, `i448` and `i512` as `Int` with the same limbs"
 )]
-pub trait FitsDigits<Repr>: SealedFitsDigits<Repr> {}
+pub trait FitsDigits<Repr>: DigitsOf<Repr> {}
 
 /// Requires that `Repr` holds `Integral + Fraction` decimal digits, implemented for the pair
 /// `(Integral, Fraction)` of type-level numbers.
@@ -292,9 +290,9 @@ pub trait FitsDigits<Repr>: SealedFitsDigits<Repr> {}
 /// the diagnostic of [`FitsDigits`], or, for a constant or method whose impl requires the bound,
 /// that the impl's bounds are not satisfied. This trait is sealed and cannot be implemented
 /// outside this crate.
-pub trait Layout<Repr>: SealedLayout<Repr> {}
+pub trait Layout<Repr>: LayoutDigits<Repr> {}
 
-impl<I, F, R> SealedLayout<R> for (I, F)
+impl<I, F, R> LayoutDigits<R> for (I, F)
 where
   I: Unsigned + Add<F>,
   F: Unsigned,
@@ -319,18 +317,18 @@ where
 /// [`DigitCount::Unsigned`]. [`Decimal::exact_mul`](crate::Decimal::exact_mul) picks with `B1`
 /// when both operands have unsigned storages and with `B0` otherwise. This trait is sealed and
 /// cannot be implemented outside this crate.
-pub trait Pick<Digits>: SealedPick<Digits> {
+pub trait Pick<Digits>: SignPick<Digits> {
   /// The smallest storage of the picked sign that holds every value with `Digits` decimal digits.
   type Storage: Storage;
 }
 
-impl<D: DigitCount> SealedPick<D> for B0 {}
+impl<D: DigitCount> SignPick<D> for B0 {}
 
 impl<D: DigitCount> Pick<D> for B0 {
   type Storage = D::Signed;
 }
 
-impl<D: DigitCount> SealedPick<D> for B1 {}
+impl<D: DigitCount> SignPick<D> for B1 {}
 
 impl<D: DigitCount> Pick<D> for B1 {
   type Storage = D::Unsigned;
@@ -351,7 +349,7 @@ impl<D: DigitCount> Pick<D> for B1 {
   note = "narrow an operand with `try_convert`, or ask for fewer fraction digits",
   note = "a `u512` intermediate holds up to 154 digits, when both storages are unsigned"
 )]
-pub trait DivIntermediate<IsUnsigned>: SealedDivIntermediate<IsUnsigned> {
+pub trait DivIntermediate<IsUnsigned>: HasDivIntermediate<IsUnsigned> {
   /// The smallest storage of the picked sign that holds every value with `Self` decimal digits.
   type Storage: Storage;
 }
@@ -362,9 +360,9 @@ pub trait DivIntermediate<IsUnsigned>: SealedDivIntermediate<IsUnsigned> {
 ///
 /// Used by [`Decimal::widen`](crate::Decimal::widen). This trait is sealed and cannot be
 /// implemented outside this crate.
-pub trait Widen<Target>: SealedWiden<Target> {}
+pub trait Widen<Target>: WidensTo<Target> {}
 
-impl<I, F, I2, F2> SealedWiden<(I2, F2)> for (I, F)
+impl<I, F, I2, F2> WidensTo<(I2, F2)> for (I, F)
 where
   I: IsLessOrEqual<I2>,
   F: IsLessOrEqual<F2>,
@@ -396,12 +394,12 @@ where
   note = "use `try_convert` for a conversion that can fail",
   note = "the compiler writes `u192`, `u256`, `u320`, `u384`, `u448` and `u512` as `Uint` with the limbs `[u64; 3]`, `[u64; 4]`, `[u64; 5]`, `[u64; 6]`, `[u64; 7]` and `[u64; 8]`, and `i192`, `i256`, `i320`, `i384`, `i448` and `i512` as `Int` with the same limbs"
 )]
-pub trait WidenRepr<Target>: SealedWidenRepr<Target> {}
+pub trait WidenRepr<Target>: ReprWidensTo<Target> {}
 
 macro_rules! impl_storage {
   (signed: $($int:ident),+; unsigned: $($uint:ident),+ $(,)?) => {
     $(
-      impl SealedStorage for $int {
+      impl StorageCore for $int {
         type IsUnsigned = B0;
 
         #[inline]
@@ -438,7 +436,7 @@ macro_rules! impl_storage {
       impl Storage for $int {}
     )+
     $(
-      impl SealedStorage for $uint {
+      impl StorageCore for $uint {
         type IsUnsigned = B1;
 
         #[inline]
@@ -514,12 +512,12 @@ macro_rules! impl_storage {
     }
 
     #[inline]
-    fn convert<Target: SealedStorage>(self, token: Token) -> Target {
+    fn convert<Target: StorageCore>(self, token: Token) -> Target {
       <Target as ConvertFrom<$repr>>::convert_from(self, token)
     }
 
     #[inline]
-    fn checked_convert<Target: SealedStorage>(self, token: Token) -> Option<Target> {
+    fn checked_convert<Target: StorageCore>(self, token: Token) -> Option<Target> {
       <Target as ConvertFrom<$repr>>::checked_convert_from(self, token)
     }
   };
@@ -640,7 +638,7 @@ macro_rules! impl_widen_repr {
   };
   (@pairs $source:ident to [$($target:ident),+]) => {
     $(
-      impl SealedWidenRepr<$target> for $source {}
+      impl ReprWidensTo<$target> for $source {}
 
       impl WidenRepr<$target> for $source {}
     )+
@@ -900,20 +898,18 @@ macro_rules! impl_digits {
       [$signed:ident $(, $wider_signed:ident)*],
       [$unsigned:ident $(, $wider_unsigned:ident)*]
   ),+ $(,)?) => {$(
-    impl SealedDigitCount for typenum::consts::$digits {}
-
     impl DigitCount for typenum::consts::$digits {
       type Signed = $signed;
       type Unsigned = $unsigned;
     }
 
-    impl SealedDivIntermediate<B0> for typenum::consts::$digits {}
+    impl HasDivIntermediate<B0> for typenum::consts::$digits {}
 
     impl DivIntermediate<B0> for typenum::consts::$digits {
       type Storage = $signed;
     }
 
-    impl SealedDivIntermediate<B1> for typenum::consts::$digits {}
+    impl HasDivIntermediate<B1> for typenum::consts::$digits {}
 
     impl DivIntermediate<B1> for typenum::consts::$digits {
       type Storage = $unsigned;
@@ -922,7 +918,7 @@ macro_rules! impl_digits {
     impl_digits!(@fits $digits: $signed $(, $wider_signed)*, $unsigned $(, $wider_unsigned)*);
   )+};
   (@fits $digits:ident: $($repr:ident),+) => {$(
-    impl SealedFitsDigits<$repr> for typenum::consts::$digits {}
+    impl DigitsOf<$repr> for typenum::consts::$digits {}
 
     impl FitsDigits<$repr> for typenum::consts::$digits {}
   )+};
@@ -932,11 +928,11 @@ digit_table!(impl_digits);
 
 // Only a `u512` holds 154 digits and no signed storage does, so there is no `DigitCount`, and only
 // a division of two unsigned storages has an intermediate of 154 digits.
-impl SealedFitsDigits<u512> for typenum::consts::U154 {}
+impl DigitsOf<u512> for typenum::consts::U154 {}
 
 impl FitsDigits<u512> for typenum::consts::U154 {}
 
-impl SealedDivIntermediate<B1> for typenum::consts::U154 {}
+impl HasDivIntermediate<B1> for typenum::consts::U154 {}
 
 impl DivIntermediate<B1> for typenum::consts::U154 {
   type Storage = u512;

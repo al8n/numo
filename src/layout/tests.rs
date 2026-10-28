@@ -11,7 +11,7 @@ use typenum::{
 };
 
 use super::{
-  DigitCount, DivIntermediate, FitsDigits, Layout, Pick, SealedLayout, SealedStorage, Token,
+  DigitCount, DivIntermediate, FitsDigits, Layout, LayoutDigits, Pick, StorageCore, Token,
   WidenRepr,
 };
 use crate::{bigint, i192, i256, i320, i384, i448, i512, u192, u256, u320, u384, u448, u512};
@@ -166,9 +166,9 @@ where
   (I, F): Layout<R>,
 {
   (
-    <(I, F) as SealedLayout<R>>::INTEGRAL,
-    <(I, F) as SealedLayout<R>>::FRACTION,
-    <(I, F) as SealedLayout<R>>::DIGITS,
+    <(I, F) as LayoutDigits<R>>::INTEGRAL,
+    <(I, F) as LayoutDigits<R>>::FRACTION,
+    <(I, F) as LayoutDigits<R>>::DIGITS,
   )
 }
 
@@ -214,7 +214,7 @@ fn layout_digit_counts() {
 
 #[test]
 fn storage_signs() {
-  fn signed<R: SealedStorage>() -> bool {
+  fn signed<R: StorageCore>() -> bool {
     R::SIGNED
   }
 
@@ -227,27 +227,27 @@ fn storage_signs() {
   assert!(!signed::<u192>() && !signed::<u256>() && !signed::<u320>());
   assert!(!signed::<u384>() && !signed::<u448>() && !signed::<u512>());
   assert_eq!(
-    TypeId::of::<<i64 as SealedStorage>::IsUnsigned>(),
+    TypeId::of::<<i64 as StorageCore>::IsUnsigned>(),
     TypeId::of::<B0>()
   );
   assert_eq!(
-    TypeId::of::<<u64 as SealedStorage>::IsUnsigned>(),
+    TypeId::of::<<u64 as StorageCore>::IsUnsigned>(),
     TypeId::of::<B1>()
   );
   assert_eq!(
-    TypeId::of::<<i256 as SealedStorage>::IsUnsigned>(),
+    TypeId::of::<<i256 as StorageCore>::IsUnsigned>(),
     TypeId::of::<B0>()
   );
   assert_eq!(
-    TypeId::of::<<u256 as SealedStorage>::IsUnsigned>(),
+    TypeId::of::<<u256 as StorageCore>::IsUnsigned>(),
     TypeId::of::<B1>()
   );
   assert_eq!(
-    TypeId::of::<<i512 as SealedStorage>::IsUnsigned>(),
+    TypeId::of::<<i512 as StorageCore>::IsUnsigned>(),
     TypeId::of::<B0>()
   );
   assert_eq!(
-    TypeId::of::<<u512 as SealedStorage>::IsUnsigned>(),
+    TypeId::of::<<u512 as StorageCore>::IsUnsigned>(),
     TypeId::of::<B1>()
   );
 }
@@ -324,7 +324,7 @@ fn widen_repr_pairs() {
 }
 
 /// A storage whose values the conversion tests compare as `num-bigint` integers.
-trait Value: SealedStorage + Debug + PartialEq {
+trait Value: StorageCore + Debug + PartialEq {
   fn to_big(self) -> BigInt;
 
   /// The value of this storage equal to `value`, if the storage holds it.

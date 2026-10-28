@@ -15,9 +15,7 @@ use sealed::Sealed;
 use super::{Int, TryNewError, Uint};
 use crate::{
   layout::Token,
-  width::{
-    FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, SealedIntRepr, SealedUintRepr,
-  },
+  width::{FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, UintCore},
 };
 
 mod sealed {
@@ -258,7 +256,7 @@ where
 
   #[inline]
   fn checked_from_limbs(limbs: [L; N]) -> Option<Self> {
-    if <[L; N] as SealedUintRepr>::fits_bits(&limbs, B::U32, Token::new()) {
+    if <[L; N] as UintCore>::fits_bits(&limbs, B::U32, Token::new()) {
       Some(Self::wrap(limbs))
     } else {
       None
@@ -285,7 +283,7 @@ where
 
   #[inline]
   fn checked_from_limbs(limbs: [L; N]) -> Option<Self> {
-    if <[L; N] as SealedIntRepr>::fits_bits(&limbs, B::U32, Token::new()) {
+    if <[L; N] as IntCore>::fits_bits(&limbs, B::U32, Token::new()) {
       Some(Self::wrap(limbs))
     } else {
       None

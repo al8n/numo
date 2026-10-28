@@ -17,7 +17,7 @@ use core::marker::PhantomData;
 use crate::Decimal;
 use crate::{
   int::{DIGIT_BUF_LEN, DigitBuf},
-  layout::{Layout, SealedLayout, SealedStorage, Storage, Token},
+  layout::{Layout, LayoutDigits, Storage, StorageCore, Token},
   rounding::RoundingMode,
 };
 
@@ -54,8 +54,8 @@ where
 {
   generate(
     source,
-    <(I, F) as SealedLayout<R>>::DIGITS,
-    <(I, F) as SealedLayout<R>>::FRACTION,
+    <(I, F) as LayoutDigits<R>>::DIGITS,
+    <(I, F) as LayoutDigits<R>>::FRACTION,
   )
 }
 

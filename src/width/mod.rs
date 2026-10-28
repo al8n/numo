@@ -15,12 +15,11 @@ use typenum::{
 };
 
 pub use array_size::ArraySize;
-pub(crate) use sealed::{IntWidth, SealedIntRepr, SealedUintRepr, UintWidth};
+pub(crate) use sealed::{IntCore, IntWidth, TypenumNumber, UintCore, UintWidth};
 
 use sealed::{
-  ArrayLimb, BitsBelow2Pow32, BitsFit, Canonical, DefaultArray, DefaultRepr, NativeBitsFit,
-  NativeReprFilled, ReprFilled, SealedBitCount, SealedFillsRepr, SealedFitsBits,
-  SealedInlineIntRepr, SealedInlineUintRepr, SealedLimbArray, Width,
+  ArrayLimb, BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr,
+  InlineIntConsts, InlineUintConsts, LimbFor, NativeBitsFit, NativeReprFilled, ReprFilled, Width,
 };
 
 use crate::{
@@ -54,11 +53,22 @@ mod sealed {
 
   impl<U, B, X> Canonical for UInt<UInt<U, B>, X> where UInt<U, B>: Canonical {}
 
+  /// Seals [`ArraySize`](super::ArraySize), [`BitCount`](super::BitCount) and
+  /// [`DigitCount`](crate::DigitCount), the traits that only `typenum` numbers implement. Two impls,
+  /// for `UTerm` and for every `UInt`, cover every number, and the orphan rules keep other crates
+  /// from implementing a trait of this crate for a type of `typenum`, so no other crate can
+  /// implement this trait and none can implement the traits it seals.
+  pub trait TypenumNumber {}
+
+  impl TypenumNumber for UTerm {}
+
+  impl<U, B> TypenumNumber for UInt<U, B> {}
+
   /// Seals [`FitsBits`](super::FitsBits).
-  pub trait SealedFitsBits<Repr> {}
+  pub trait BitsOf<Repr> {}
 
   /// Seals [`FillsRepr`](super::FillsRepr).
-  pub trait SealedFillsRepr<Repr> {}
+  pub trait BitsFill<Repr> {}
 
   /// Implemented only for `B1`, the result of `Bits <= B * N` when `[L; N]`, of limbs of `B` bits,
   /// holds `Bits` bits.
@@ -117,22 +127,13 @@ mod sealed {
 
   impl NativeReprFilled for typenum::B1 {}
 
-  /// Seals [`ArraySize`](super::ArraySize). Two impls, for `UTerm` and for every `UInt`, seal every
-  /// number: the orphan rules keep other crates from implementing a trait of this crate for a type
-  /// of `typenum`.
-  pub trait SealedArraySize {}
-
-  impl SealedArraySize for UTerm {}
-
-  impl<U, B> SealedArraySize for typenum::UInt<U, B> {}
-
   /// Seals [`LimbArray`](super::LimbArray). Each impl requires `Bits: Unsigned`, which `typenum`
   /// seals, so that no other crate can implement `LimbArray` for a limb type with a width of its
   /// own type.
-  pub trait SealedLimbArray<Bits> {}
+  pub trait LimbFor<Bits> {}
 
   /// Seals [`InlineUintRepr`](super::InlineUintRepr) and carries the constants of `Uint`.
-  pub trait SealedInlineUintRepr: UintRepr + Copy {
+  pub trait InlineUintConsts: UintRepr + Copy {
     /// Zero.
     const ZERO: Self;
 
@@ -141,7 +142,7 @@ mod sealed {
   }
 
   /// Seals [`InlineIntRepr`](super::InlineIntRepr) and carries the constants of `Int`.
-  pub trait SealedInlineIntRepr: IntRepr + Copy {
+  pub trait InlineIntConsts: IntRepr + Copy {
     /// Zero.
     const ZERO: Self;
 
@@ -168,9 +169,6 @@ mod sealed {
   /// [`UintWidth`] and [`IntWidth`]. A generic constant cannot call a trait method, but it can read
   /// the constants of an associated type, which each storage computes with its own `const fn`s.
   pub struct Width<B, R>(PhantomData<(B, R)>);
-
-  /// Seals [`BitCount`](super::BitCount).
-  pub trait SealedBitCount {}
 
   /// The default storages of `Self` bits, chosen by `Small`, the result of `Self <= 128`: `B1` reads
   /// the native table and `B0` takes `Limbs<Self>`. The supertraits make the compiler check each
@@ -220,7 +218,7 @@ mod sealed {
   /// A bound `R: UintRepr` makes these methods callable from any crate, so each takes a [`Token`].
   /// They rely on the width invariant of `Uint`: the representation, read as an unsigned integer,
   /// equals the value.
-  pub trait SealedUintRepr: Sized {
+  pub trait UintCore: Sized {
     /// Zero.
     fn zero(token: Token) -> Self;
 
@@ -245,9 +243,9 @@ mod sealed {
   /// Seals [`IntRepr`](super::IntRepr) and gives the trait implementations of [`Int`](crate::Int)
   /// access to the integer core.
   ///
-  /// As for [`SealedUintRepr`], each method takes a [`Token`]. They rely on the width invariant of
+  /// As for [`UintCore`], each method takes a [`Token`]. They rely on the width invariant of
   /// `Int`: the representation, read as a two's complement integer, equals the value.
-  pub trait SealedIntRepr: Sized {
+  pub trait IntCore: Sized {
     /// Zero.
     fn zero(token: Token) -> Self;
 
@@ -312,9 +310,9 @@ mod sealed {
   label = "`Bits` is not known to fit in the storage",
   note = "add a `FitsBits<Repr>` bound on `Bits`"
 )]
-pub trait FitsBits<Repr>: Unsigned + Canonical + SealedFitsBits<Repr> {}
+pub trait FitsBits<Repr>: Unsigned + Canonical + BitsOf<Repr> {}
 
-impl<B, R> FitsBits<R> for B where B: Unsigned + Canonical + SealedFitsBits<R> {}
+impl<B, R> FitsBits<R> for B where B: Unsigned + Canonical + BitsOf<R> {}
 
 /// Marks that `Self` bits fill `Repr` exactly, so that every bit pattern of `Repr` is a value.
 ///
@@ -329,16 +327,16 @@ impl<B, R> FitsBits<R> for B where B: Unsigned + Canonical + SealedFitsBits<R> {
   label = "`Bits` is not known to fill the storage",
   note = "add a `FillsRepr<Repr>` bound on `Bits`, or use `checked_from_limbs`, which checks the value"
 )]
-pub trait FillsRepr<Repr>: FitsBits<Repr> + SealedFillsRepr<Repr> {}
+pub trait FillsRepr<Repr>: FitsBits<Repr> + BitsFill<Repr> {}
 
-impl<B, R> FillsRepr<R> for B where B: FitsBits<R> + SealedFillsRepr<R> {}
+impl<B, R> FillsRepr<R> for B where B: FitsBits<R> + BitsFill<R> {}
 
 /// `N * B` for limbs of `B` bits, the number of bits of `[L; N]`.
 type LimbBits<L, const N: usize> = Shleft<U<N>, <L as ArrayLimb>::BitsLog2>;
 
 // The bound below 2^32 is a comparison of types, because `typenum`'s `U32` and `U64` wrap: for
 // `64 * 2^58` bits, both are zero.
-impl<B, L: ArrayLimb, const N: usize> SealedFitsBits<[L; N]> for B
+impl<B, L: ArrayLimb, const N: usize> BitsOf<[L; N]> for B
 where
   B: IsLessOrEqual<LimbBits<L, N>> + IsLess<U4294967296>,
   Const<N>: ToUInt,
@@ -349,7 +347,7 @@ where
 }
 
 // `typenum`'s alias for `IsEqual::Output` is named `Eq`, as the trait of `core` is.
-impl<B, L: ArrayLimb, const N: usize> SealedFillsRepr<[L; N]> for B
+impl<B, L: ArrayLimb, const N: usize> BitsFill<[L; N]> for B
 where
   B: IsEqual<LimbBits<L, N>>,
   Const<N>: ToUInt,
@@ -368,7 +366,7 @@ where
   message = "`{Self}` is not a storage of `Uint`",
   note = "`Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`"
 )]
-pub trait UintRepr: Eq + SealedUintRepr {}
+pub trait UintRepr: Eq + UintCore {}
 
 /// A storage of [`Int`](crate::Int): a native signed integer, `i8`, `i16`, `i32`, `i64` or `i128`,
 /// holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
@@ -381,7 +379,7 @@ pub trait UintRepr: Eq + SealedUintRepr {}
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
 )]
-pub trait IntRepr: Eq + SealedIntRepr {
+pub trait IntRepr: Eq + IntCore {
   /// The storage of [`Uint`](crate::Uint) of the same size: `u8` for `i8`, `u16` for `i16`, and so
   /// on, and the same array for an array of limbs.
   type Unsigned: UintRepr;
@@ -394,7 +392,7 @@ pub trait IntRepr: Eq + SealedIntRepr {
 /// [`FixedInteger`](crate::FixedInteger) and [`UnsignedFixedInteger`](crate::UnsignedFixedInteger),
 /// for every `Repr` that implements this trait. The default storages of [`BitCount`] are inline.
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait InlineUintRepr: UintRepr + Copy + SealedInlineUintRepr {}
+pub trait InlineUintRepr: UintRepr + Copy + InlineUintConsts {}
 
 /// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
 /// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`.
@@ -403,7 +401,7 @@ pub trait InlineUintRepr: UintRepr + Copy + SealedInlineUintRepr {}
 /// [`FixedInteger`](crate::FixedInteger) and [`SignedFixedInteger`](crate::SignedFixedInteger),
 /// for every `Repr` that implements this trait. The default storages of [`BitCount`] are inline.
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait InlineIntRepr: IntRepr + Copy + SealedInlineIntRepr {}
+pub trait InlineIntRepr: IntRepr + Copy + InlineIntConsts {}
 
 /// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`InlineUintRepr`] and [`InlineIntRepr`]
 /// for the arrays of each limb type, written `limb: BitsLog2, lower, upper`, where `lower` and
@@ -416,7 +414,7 @@ macro_rules! array_storage {
 
     impl<const N: usize> UintRepr for [$limb; N] {}
 
-    impl<const N: usize> SealedUintRepr for [$limb; N] {
+    impl<const N: usize> UintCore for [$limb; N] {
       #[inline]
       fn zero(_: Token) -> Self {
         [0; N]
@@ -452,7 +450,7 @@ macro_rules! array_storage {
       type Unsigned = Self;
     }
 
-    impl<const N: usize> SealedIntRepr for [$limb; N] {
+    impl<const N: usize> IntCore for [$limb; N] {
       #[inline]
       fn zero(_: Token) -> Self {
         [0; N]
@@ -505,7 +503,7 @@ macro_rules! array_storage {
 
     impl<const N: usize> InlineUintRepr for [$limb; N] {}
 
-    impl<const N: usize> SealedInlineUintRepr for [$limb; N] {
+    impl<const N: usize> InlineUintConsts for [$limb; N] {
       const ZERO: Self = [0; N];
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
@@ -517,7 +515,7 @@ macro_rules! array_storage {
 
     impl<const N: usize> InlineIntRepr for [$limb; N] {}
 
-    impl<const N: usize> SealedInlineIntRepr for [$limb; N] {
+    impl<const N: usize> InlineIntConsts for [$limb; N] {
       const ZERO: Self = [0; N];
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
@@ -550,7 +548,7 @@ macro_rules! native_storage {
 
     impl UintRepr for $uint {}
 
-    impl SealedUintRepr for $uint {
+    impl UintCore for $uint {
       #[inline]
       fn zero(_: Token) -> Self {
         0
@@ -586,7 +584,7 @@ macro_rules! native_storage {
       type Unsigned = $uint;
     }
 
-    impl SealedIntRepr for $int {
+    impl IntCore for $int {
       #[inline]
       fn zero(_: Token) -> Self {
         0
@@ -632,7 +630,7 @@ macro_rules! native_storage {
 
     impl InlineUintRepr for $uint {}
 
-    impl SealedInlineUintRepr for $uint {
+    impl InlineUintConsts for $uint {
       const ZERO: Self = 0;
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
@@ -644,7 +642,7 @@ macro_rules! native_storage {
 
     impl InlineIntRepr for $int {}
 
-    impl SealedInlineIntRepr for $int {
+    impl InlineIntConsts for $int {
       const ZERO: Self = 0;
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
@@ -656,14 +654,14 @@ macro_rules! native_storage {
     }
   )+};
   (@width $native:ident, $bits:ident) => {
-    impl<B> SealedFitsBits<$native> for B
+    impl<B> BitsOf<$native> for B
     where
       B: IsLessOrEqual<$bits>,
       LeEq<B, $bits>: NativeBitsFit,
     {
     }
 
-    impl<B> SealedFillsRepr<$native> for B
+    impl<B> BitsFill<$native> for B
     where
       B: IsEqual<$bits>,
       <B as IsEqual<$bits>>::Output: NativeReprFilled,
@@ -690,7 +688,7 @@ native_storage!(
   label = "not a limb type",
   note = "the limb types are `u8`, `u16`, `u32`, `u64` and `u128`"
 )]
-pub trait LimbArray<Bits>: SealedLimbArray<Bits> {
+pub trait LimbArray<Bits>: LimbFor<Bits> {
   /// The number of limbs, `ceil(Bits / Self::BITS)`.
   type Count: ArraySize;
 
@@ -711,7 +709,7 @@ pub type Limbs<Bits, L = u64> = <L as LimbArray<Bits>>::Array;
 // against the normalized `Bits: Add<U63>`.
 macro_rules! limb_arrays {
   ($($limb:ident: $bits_log2:ident, $mask:ident);+ $(;)?) => {$(
-    impl<Bits: Unsigned> SealedLimbArray<Bits> for $limb {}
+    impl<Bits: Unsigned> LimbFor<Bits> for $limb {}
 
     impl<Bits> LimbArray<Bits> for $limb
     where
@@ -786,7 +784,7 @@ limb_arrays!(
   note = "generic code adds the bound `B: BitCount`, as in `fn f<B: BitCount>(x: Uint<B>)`, or names the storage, as in `Uint<B, [u64; 4]>`"
 )]
 pub trait BitCount:
-  SealedBitCount + FitsBits<<Self as BitCount>::Unsigned> + FitsBits<<Self as BitCount>::Signed>
+  TypenumNumber + FitsBits<<Self as BitCount>::Unsigned> + FitsBits<<Self as BitCount>::Signed>
 {
   /// The default storage of `Uint<Self>`.
   type Unsigned: InlineUintRepr;
@@ -798,10 +796,6 @@ pub trait BitCount:
 // The impls are on the numbers of `typenum`, `UTerm` and `UInt`, rather than over every type, so
 // that a generic width without the bound reports the diagnostic of this trait and the suggestion to
 // add it, not an unsatisfied comparison.
-impl SealedBitCount for UTerm {}
-
-impl<U, X> SealedBitCount for UInt<U, X> {}
-
 impl BitCount for UTerm {
   type Unsigned = [u64; 0];
   type Signed = [u64; 0];

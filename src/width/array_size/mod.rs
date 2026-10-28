@@ -2,7 +2,7 @@
 
 use typenum::Unsigned;
 
-use super::sealed::SealedArraySize;
+use super::TypenumNumber;
 
 /// Maps a [`typenum`] number of limbs, from 0 to 1024, to the array of that many elements:
 /// `<U4 as ArraySize>::ArrayType<u64>` is `[u64; 4]`.
@@ -19,7 +19,7 @@ use super::sealed::SealedArraySize;
   note = "`Limbs<Bits, L>` exists for 0 to 8192 bits in `u8` limbs, 16384 in `u16`, 32768 in `u32`, 65536 in `u64` and 131072 in `u128`",
   note = "a longer array is written out, as in `[u64; 2048]`"
 )]
-pub trait ArraySize: SealedArraySize + Unsigned {
+pub trait ArraySize: TypenumNumber + Unsigned {
   /// `[T; Self]`.
   type ArrayType<T>;
 }

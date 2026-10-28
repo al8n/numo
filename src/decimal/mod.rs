@@ -15,7 +15,7 @@ pub use error::{ConvertError, DivideError, ParseError, ParseErrorKind, QuantizeE
 use crate::{
   int,
   layout::{
-    DigitCount, DivIntermediate, Layout, Pick, SealedLayout, SealedStorage, Storage, Token, Widen,
+    DigitCount, DivIntermediate, Layout, LayoutDigits, Pick, Storage, StorageCore, Token, Widen,
     WidenRepr,
   },
   rounding::RoundingMode,
@@ -275,9 +275,9 @@ impl<I, F, R> Decimal<I, F, R>
 where
   (I, F): Layout<R>,
 {
-  const INTEGRAL: u32 = <(I, F) as SealedLayout<R>>::INTEGRAL;
-  const FRACTION: u32 = <(I, F) as SealedLayout<R>>::FRACTION;
-  const DIGITS: u32 = <(I, F) as SealedLayout<R>>::DIGITS;
+  const INTEGRAL: u32 = <(I, F) as LayoutDigits<R>>::INTEGRAL;
+  const FRACTION: u32 = <(I, F) as LayoutDigits<R>>::FRACTION;
+  const DIGITS: u32 = <(I, F) as LayoutDigits<R>>::DIGITS;
 }
 
 // Not `const`: storage-generic code calls trait methods, which cannot be `const` (E0015).
@@ -346,7 +346,7 @@ where
     // Between native storages, the conversions are casts and the multiplication is native.
     let lhs = self.repr.convert(Token::new());
     let rhs = rhs.repr.convert(Token::new());
-    Decimal::from_coeff(SealedStorage::mul(lhs, rhs, Token::new()))
+    Decimal::from_coeff(StorageCore::mul(lhs, rhs, Token::new()))
   }
 }
 
@@ -681,13 +681,13 @@ where
     let denominator = rhs.repr.convert(Token::new());
     let (numerator, denominator) = if to + by >= from {
       (
-        SealedStorage::mul_pow10(numerator, to + by - from, Token::new()),
+        StorageCore::mul_pow10(numerator, to + by - from, Token::new()),
         denominator,
       )
     } else {
       (
         numerator,
-        SealedStorage::mul_pow10(denominator, from - to - by, Token::new()),
+        StorageCore::mul_pow10(denominator, from - to - by, Token::new()),
       )
     };
     // `|N|, |D| <= 10^W - 1 <= MAX < |MIN|` in the intermediate, so neither operand is `MIN`. The
