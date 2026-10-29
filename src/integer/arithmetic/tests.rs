@@ -9,6 +9,7 @@ use std::{
   cell::RefCell,
   format,
   panic::{self, AssertUnwindSafe},
+  path::PathBuf,
   string::{String, ToString},
   sync::Once,
   thread_local, vec,
@@ -972,9 +973,10 @@ fn overflow_panics_report_the_caller() {
   }
   let (sum, _) = location!([u7::MAX, u7::ONE].into_iter().sum::<u7>());
   let (product, _) = location!([u7::MAX, u7::MAX].iter().product::<u7>());
+  // The location names the file with the separator of the host, and paths compare by component.
   for location in [sum, product] {
-    let file = location.map(|(file, _)| file);
-    let expected = checks.then(|| "src/integer/arithmetic/mod.rs".to_string());
+    let file = location.map(|(file, _)| PathBuf::from(file));
+    let expected = checks.then(|| PathBuf::from("src/integer/arithmetic/mod.rs"));
     assert_eq!(file, expected);
   }
 }
