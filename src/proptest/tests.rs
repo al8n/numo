@@ -20,7 +20,7 @@ use typenum::{U0, U8, U10, U18};
 use super::{DecimalStrategy, DecimalValueTree};
 use crate::{
   Decimal, RoundingMode,
-  layout::{Layout, SealedLayout, Storage},
+  layout::{Layout, LayoutDigits, Storage},
   sample::{
     Chain, MODES,
     tests::{SAMPLES, big, candidates, check_values, for_each_type},
@@ -63,7 +63,7 @@ fn max_tests<I, F, R>() -> usize
 where
   (I, F): Layout<R>,
 {
-  let digits = <(I, F) as SealedLayout<R>>::DIGITS as usize;
+  let digits = <(I, F) as LayoutDigits<R>>::DIGITS as usize;
   (digits + 2).pow(2)
 }
 

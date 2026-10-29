@@ -1,10 +1,10 @@
 //! The tests of `half_limbs!`.
 //!
-//! `half_limbs_tests!` writes the tests that every instance shares, which `limbs128` runs for
+//! `half_limbs_tests!` writes the tests that every instance shares, which `unsigned::b128` runs for
 //! `u128`. Here `half_limbs!` is also instantiated for `u8` to `u64`, and native integers of twice
 //! the width check the results: on every input for `u8`, and on inputs weighted to the boundaries
 //! for the wider types. The instances differ only in the limb type, so these tests check the text
-//! that `limbs128` runs.
+//! that `unsigned::b128` runs.
 
 /// Defines, in a module that invokes `half_limbs!($limb)`, the tests that every instance shares.
 macro_rules! half_limbs_tests {

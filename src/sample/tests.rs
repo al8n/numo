@@ -21,7 +21,7 @@ use super::Chain;
 use super::{MODES, Source, coefficient, generate};
 use crate::{
   Decimal, RoundingMode, bigint, i256, i512,
-  layout::{Layout, SealedLayout, Storage, Token},
+  layout::{Layout, LayoutDigits, Storage, Token},
   u256, u512,
 };
 
@@ -223,8 +223,8 @@ pub(crate) fn check_values<I, F, R>(
   R: Storage,
   (I, F): Layout<R>,
 {
-  let digits = <(I, F) as SealedLayout<R>>::DIGITS;
-  let fraction = <(I, F) as SealedLayout<R>>::FRACTION;
+  let digits = <(I, F) as LayoutDigits<R>>::DIGITS;
+  let fraction = <(I, F) as LayoutDigits<R>>::FRACTION;
   assert_eq!(values.len(), SAMPLES, "{name}");
   let mut lengths = vec![0usize; digits as usize + 1];
   let mut seen = BTreeSet::new();

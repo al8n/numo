@@ -122,23 +122,27 @@ pub(crate) fn from_limbs<L: Limb>(limbs: &[L], signed: bool) -> BigInt {
   }
 }
 
-/// The smallest integer of `bits` bits, signed or unsigned.
+/// The smallest integer of `bits` bits, signed or unsigned: zero for zero bits.
 pub(crate) fn min(bits: u32, signed: bool) -> BigInt {
-  if signed {
+  if signed && bits > 0 {
     -(BigInt::from(1u8) << (bits - 1))
   } else {
     BigInt::ZERO
   }
 }
 
-/// The largest integer of `bits` bits, signed or unsigned.
+/// The largest integer of `bits` bits, signed or unsigned: zero for zero bits.
 pub(crate) fn max(bits: u32, signed: bool) -> BigInt {
-  (BigInt::from(1u8) << (bits - u32::from(signed))) - 1u8
+  (BigInt::from(1u8) << bits.saturating_sub(u32::from(signed))) - 1u8
 }
 
 /// `value` in `N` limbs of type `L`, least significant first, in two's complement if `signed`, or
 /// `None` if it is out of range.
 pub(crate) fn to_limbs_of<L: Limb, const N: usize>(value: &BigInt, signed: bool) -> Option<[L; N]> {
+  // `num-bigint` writes zero as one byte, which no limbs hold, though they hold zero.
+  if value.sign() == Sign::NoSign {
+    return Some([L::ZERO; N]);
+  }
   let negative = value.sign() == Sign::Minus;
   // The shortest two's complement or unsigned encoding, which fits exactly when the value does.
   let mut bytes = match (signed, negative) {
@@ -209,7 +213,7 @@ pub(crate) fn exponents_by(max_exp: u32, step: u32) -> Vec<u32> {
   exps
 }
 
-/// [`exponents_by`] with the step of `int::limbs`, 19 digits (`MAX_STEP`).
+/// [`exponents_by`] with the step of `int::unsigned::b64`, 19 digits (`MAX_STEP`).
 pub(crate) fn exponents(max_exp: u32) -> Vec<u32> {
   exponents_by(max_exp, 19)
 }
@@ -232,7 +236,15 @@ where
 {
   let bits = L::BITS * N as u32;
   let indexes: Vec<u32> = if cfg!(miri) {
-    let mut indexes = vec![0, 1, L::BITS - 1, L::BITS, L::BITS + 1, bits - 2, bits - 1];
+    let mut indexes = vec![
+      0,
+      1,
+      L::BITS - 1,
+      L::BITS,
+      L::BITS + 1,
+      bits.saturating_sub(2),
+      bits.saturating_sub(1),
+    ];
     for &width in widths {
       indexes.extend([
         width.saturating_sub(2),

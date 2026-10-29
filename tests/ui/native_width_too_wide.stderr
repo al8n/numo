@@ -1,0 +1,57 @@
+error[E0277]: the storage cannot hold `Bits` bits
+  --> tests/ui/native_width_too_wide.rs:10:25
+   |
+10 |   let _: Uint<U9, u8> = Default::default();
+   |                         ^^^^^^^^^^^^^^^^^^ `Bits` is greater than the bits of the storage
+   |
+   = help: the trait `numo::width::sealed::NativeBitsFit` is not implemented for `B0`
+   = note: `u8` and `i8` hold 8 bits, `u16` and `i16` 16, `u32` and `i32` 32, `u64` and `i64` 64, and `u128` and `i128` 128
+help: the trait `numo::width::sealed::NativeBitsFit` is implemented for `B1`
+  --> src/width/mod.rs
+   |
+   |   impl NativeBitsFit for typenum::B1 {}
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>` to implement `numo::width::sealed::BitsOf<u8>`
+   = note: required for `UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>` to implement `FitsBits<u8>`
+   = note: required for `Uint<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, u8>` to implement `Default`
+
+error[E0599]: the associated function or constant `MAX` exists for struct `numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B1>, i128>`, but its trait bounds were not satisfied
+  --> tests/ui/native_width_too_wide.rs:11:33
+   |
+11 |   let _max = Int::<U129, i128>::MAX;
+   |                                 ^^^ associated function or constant cannot be called due to unsatisfied trait bounds
+   |
+  ::: $CARGO/typenum-$VERSION/src/uint.rs
+   |
+   | pub struct UInt<U, B> {
+   | --------------------- doesn't satisfy `_: FitsBits<i128>`
+   |
+  ::: $CARGO/typenum-$VERSION/src/bit.rs
+   |
+   | pub struct B0;
+   | ------------- doesn't satisfy `B0: numo::width::sealed::NativeBitsFit`
+   |
+   = note: the following trait bounds were not satisfied:
+           `B0: numo::width::sealed::NativeBitsFit`
+           which is required by `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B1>: FitsBits<i128>`
+
+error[E0277]: `Bits` does not fill the storage
+  --> tests/ui/native_width_too_wide.rs:13:11
+   |
+13 |   fills::<U9>();
+   |           ^^ `Bits` is less than the bits of the storage
+   |
+   = help: the trait `numo::width::sealed::NativeReprFilled` is not implemented for `B0`
+   = note: `u8` and `i8` hold 8 bits, `u16` and `i16` 16, `u32` and `i32` 32, `u64` and `i64` 64, and `u128` and `i128` 128
+help: the trait `numo::width::sealed::NativeReprFilled` is implemented for `B1`
+  --> src/width/mod.rs
+   |
+   |   impl NativeReprFilled for typenum::B1 {}
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>` to implement `numo::width::sealed::BitsFill<u16>`
+   = note: required for `UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>` to implement `FillsRepr<u16>`
+note: required by a bound in `fills`
+  --> tests/ui/native_width_too_wide.rs:6:13
+   |
+ 6 | fn fills<B: FillsRepr<u16>>() {}
+   |             ^^^^^^^^^^^^^^ required by this bound in `fills`

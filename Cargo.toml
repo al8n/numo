@@ -15,6 +15,10 @@ name = "foo"
 harness = false
 
 [features]
+default = ["std"]
+alloc = []
+std = ["thiserror/default"]
+
 # Only `serde_core`, without default features: turns on no feature of any other crate in a build.
 serde = ["dep:serde_core"]
 # `arbitrary`, which uses `std`: generation for fuzzing on a hosted target.
@@ -27,15 +31,19 @@ proptest = ["dep:proptest"]
 quickcheck = ["dep:quickcheck"]
 
 [dependencies]
+derive_more = { version = "2", default-features = false, features = ["is_variant", "display"] }
+thiserror = { version = "2", default-features = false }
+typenum = { version = "1.20", features = ["const-generics"] }
+
 arbitrary = { version = "1", optional = true }
 proptest = { version = "1", default-features = false, features = ["std"], optional = true }
 quickcheck = { version = "1", default-features = false, optional = true }
 serde_core = { version = "1", default-features = false, optional = true }
-typenum = { version = "1.20", features = ["const-generics"] }
+
 
 [dev-dependencies]
 bigdecimal = "0.4"
-criterion = "0.5"
+criterion = "0.8"
 num-bigint = "0.5"
 proptest = { version = "1", default-features = false, features = ["std"] }
 serde_json = "1"
@@ -56,7 +64,10 @@ rpath = false
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-[lints.rust]
+[lints]
+workspace = true
+
+[workspace.lints.rust]
 rust_2018_idioms = { level = "warn", priority = -1 }
 single_use_lifetimes = "warn"
 unsafe_op_in_unsafe_fn = "deny"
@@ -64,5 +75,5 @@ unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(all_tests)',
 ] }
 
-[lints.clippy]
+[workspace.lints.clippy]
 undocumented_unsafe_blocks = "deny"

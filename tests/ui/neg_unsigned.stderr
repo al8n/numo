@@ -5,7 +5,7 @@ error[E0600]: cannot apply unary operator `-` to type `Decimal<UInt<UInt<UTerm, 
   |                  ^^^^^^ cannot apply unary operator `-`
   |
 note: `Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UTerm, B1>, B0>, u16>` does not implement `Neg`
- --> src/decimal.rs
+ --> src/decimal/mod.rs
   |
   | pub struct Decimal<Integral, Fraction, Repr = <Sum<Integral, Fraction> as DigitCount>::Signed> {
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UTerm, B1>, B0>, u16>` is defined in another crate

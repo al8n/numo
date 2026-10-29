@@ -1,0 +1,36 @@
+error[E0599]: the associated function or constant `ZERO` exists for struct `Uint<UInt<UTerm, B1>, [u64; 0]>`, but its trait bounds were not satisfied
+ --> tests/ui/no_limbs_hold_no_bits.rs:6:33
+  |
+6 |   let _ = Uint::<U1, [u64; 0]>::ZERO;
+  |                                 ^^^^ associated function or constant cannot be called on `Uint<UInt<UTerm, B1>, [u64; 0]>` due to unsatisfied trait bounds
+  |
+ ::: $CARGO/typenum-$VERSION/src/uint.rs
+  |
+  | pub struct UInt<U, B> {
+  | --------------------- doesn't satisfy `UInt<UTerm, B1>: FitsBits<[u64; 0]>`
+  |
+ ::: $CARGO/typenum-$VERSION/src/bit.rs
+  |
+  | pub struct B0;
+  | ------------- doesn't satisfy `B0: numo::width::sealed::BitsFit`
+  |
+  = note: the following trait bounds were not satisfied:
+          `B0: numo::width::sealed::BitsFit`
+          which is required by `UInt<UTerm, B1>: FitsBits<[u64; 0]>`
+
+error[E0277]: the storage cannot hold `Bits` bits
+ --> tests/ui/no_limbs_hold_no_bits.rs:7:29
+  |
+7 |   let _: Int<U1, [u8; 0]> = Default::default();
+  |                             ^^^^^^^^^^^^^^^^^^ `Bits` is greater than the bits of the storage
+  |
+  = help: the trait `numo::width::sealed::BitsFit` is not implemented for `B0`
+  = note: `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` and `[u128; N]` hold `8 * N`, `16 * N`, `32 * N`, `64 * N` and `128 * N` bits
+help: the trait `numo::width::sealed::BitsFit` is implemented for `B1`
+ --> src/width/mod.rs
+  |
+  |   impl BitsFit for typenum::B1 {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `UInt<UTerm, B1>` to implement `numo::width::sealed::BitsOf<[u8; 0]>`
+  = note: required for `UInt<UTerm, B1>` to implement `FitsBits<[u8; 0]>`
+  = note: required for `numo::Int<UInt<UTerm, B1>, [u8; 0]>` to implement `Default`

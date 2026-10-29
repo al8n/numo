@@ -7,10 +7,10 @@ error[E0277]: the storage cannot hold `Bits` bits
   = help: the trait `numo::width::sealed::BitsFit` is not implemented for `B0`
   = note: `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` and `[u128; N]` hold `8 * N`, `16 * N`, `32 * N`, `64 * N` and `128 * N` bits
 help: the trait `numo::width::sealed::BitsFit` is implemented for `B1`
- --> src/width.rs
+ --> src/width/mod.rs
   |
   |   impl BitsFit for typenum::B1 {}
   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  = note: required for `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>, B1>, B1>, B0>, B0>` to implement `numo::width::sealed::SealedFitsBits<[u64; 4]>`
+  = note: required for `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>, B1>, B1>, B0>, B0>` to implement `numo::width::sealed::BitsOf<[u64; 4]>`
   = note: required for `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>, B1>, B1>, B0>, B0>` to implement `FitsBits<[u64; 4]>`
   = note: required for `Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>, B1>, B1>, B0>, B0>, [u64; 4]>` to implement `Default`

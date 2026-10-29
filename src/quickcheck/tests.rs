@@ -9,7 +9,7 @@ use typenum::{U0, U18};
 
 use crate::{
   Decimal, RoundingMode,
-  layout::{Layout, SealedLayout, Storage},
+  layout::{Layout, LayoutDigits, Storage},
   sample::{
     MODES,
     tests::{SAMPLES, big, candidates, check_values, for_each_type},
@@ -29,7 +29,7 @@ where
   F: 'static,
   (I, F): Layout<R>,
 {
-  let digits = <(I, F) as SealedLayout<R>>::DIGITS as usize;
+  let digits = <(I, F) as LayoutDigits<R>>::DIGITS as usize;
   let shrunk: Vec<Decimal<I, F, R>> = value.shrink().take(digits + 2).collect();
   assert!(shrunk.len() <= digits + 1, "{value:?}");
   assert!(!shrunk.contains(&value), "{value:?}");

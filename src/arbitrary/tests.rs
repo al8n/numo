@@ -9,7 +9,7 @@ use typenum::{U0, U1};
 
 use crate::{
   Decimal, RoundingMode,
-  layout::{Layout, SealedLayout, Storage},
+  layout::{Layout, LayoutDigits, Storage},
   sample::{
     MODES,
     tests::{SAMPLES, SplitMix, big, check_values, for_each_type},
@@ -71,7 +71,7 @@ fn check_bytes<I, F, R>(
   R: Storage,
   (I, F): Layout<R>,
 {
-  let digits = <(I, F) as SealedLayout<R>>::DIGITS;
+  let digits = <(I, F) as LayoutDigits<R>>::DIGITS;
   let several = usize::from(digits >= 2);
   let (lower, upper) = <Decimal<I, F, R> as Arbitrary<'_>>::size_hint(0);
   let upper = upper.expect("an upper bound");

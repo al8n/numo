@@ -506,11 +506,11 @@ macro_rules! limb_layer_tests {
       rounding_division::<8>();
     }
 
-    /// The widths at which the functions of a width are checked: 1, `B - 1`, `B`, `B + 1`,
+    /// The widths at which the functions of a width are checked: 0, 1, `B - 1`, `B`, `B + 1`,
     /// `B * N - 1` and `B * N`, those that `N` limbs hold.
     fn widths<const N: usize>() -> Vec<u32> {
       let top = B * N as u32;
-      let mut widths: Vec<u32> = [1, B - 1, B, B + 1, top - 1, top]
+      let mut widths: Vec<u32> = [0, 1, B - 1, B, B + 1, top.saturating_sub(1), top]
         .into_iter()
         .filter(|&width| width <= top)
         .collect();
@@ -534,6 +534,10 @@ macro_rules! limb_layer_tests {
       for &bits in &widths {
         let max = bigint::max(bits, false);
         assert_eq!(bigint::from_limbs(&max_of_bits::<N>(bits), false), max);
+        assert_eq!(
+          bigint::to_limbs_of(&max, false),
+          Some(max_of_bits::<N>(bits))
+        );
         for (pattern, value) in patterns.iter().zip(&values) {
           assert_eq!(
             fits_bits(pattern, bits),
@@ -551,6 +555,7 @@ macro_rules! limb_layer_tests {
       ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
     )]
     fn widths_match_big_integers() {
+      widths_against_big_integers::<0>();
       widths_against_big_integers::<1>();
       widths_against_big_integers::<2>();
       widths_against_big_integers::<3>();
@@ -734,8 +739,9 @@ macro_rules! limb_layer_tests {
           let start = write_digits(&value, &mut buf);
           assert_eq!(&buf[start..], expected.as_bytes());
         }
-        let mut buf = vec![0xff; crate::int::$unsigned::DIGITS_PER_LIMB * N];
-        let start = crate::int::$unsigned::write_digits_into(&unsigned_abs(&value), &mut buf);
+        let mut buf = vec![0xff; crate::int::unsigned::$unsigned::DIGITS_PER_LIMB * N];
+        let start =
+          crate::int::unsigned::$unsigned::write_digits_into(&unsigned_abs(&value), &mut buf);
         assert_eq!(&buf[start..], expected.as_bytes());
       }
     }
@@ -944,11 +950,11 @@ macro_rules! limb_layer_tests {
       rounding_division::<8>();
     }
 
-    /// The widths at which the functions of a width are checked: 1, `B - 1`, `B`, `B + 1`,
+    /// The widths at which the functions of a width are checked: 0, 1, `B - 1`, `B`, `B + 1`,
     /// `B * N - 1` and `B * N`, those that `N` limbs hold.
     fn widths<const N: usize>() -> Vec<u32> {
       let top = B * N as u32;
-      let mut widths: Vec<u32> = [1, B - 1, B, B + 1, top - 1, top]
+      let mut widths: Vec<u32> = [0, 1, B - 1, B, B + 1, top.saturating_sub(1), top]
         .into_iter()
         .filter(|&width| width <= top)
         .collect();
@@ -978,6 +984,14 @@ macro_rules! limb_layer_tests {
         let (min, max) = (bigint::min(bits, true), bigint::max(bits, true));
         assert_eq!(bigint::from_limbs(&max_of_bits::<N>(bits), true), max);
         assert_eq!(bigint::from_limbs(&min_of_bits::<N>(bits), true), min);
+        assert_eq!(
+          bigint::to_limbs_of(&max, true),
+          Some(max_of_bits::<N>(bits))
+        );
+        assert_eq!(
+          bigint::to_limbs_of(&min, true),
+          Some(min_of_bits::<N>(bits))
+        );
         let modulus = BigInt::from(1u8) << bits;
         for (pattern, (value, unsigned)) in patterns.iter().zip(&values) {
           assert_eq!(
@@ -1003,6 +1017,7 @@ macro_rules! limb_layer_tests {
       ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
     )]
     fn widths_match_big_integers() {
+      widths_against_big_integers::<0>();
       widths_against_big_integers::<1>();
       widths_against_big_integers::<2>();
       widths_against_big_integers::<3>();
@@ -1025,7 +1040,7 @@ macro_rules! limb_layer_tests {
       assert_eq!(expected.len(), if WIDEST == 4096 { 1233 } else { 154 });
       let mut buf = vec![0; expected.len()];
       assert_eq!(
-        crate::int::$unsigned::write_digits_into(&unsigned_abs(&min), &mut buf),
+        crate::int::unsigned::$unsigned::write_digits_into(&unsigned_abs(&min), &mut buf),
         0
       );
       assert_eq!(buf, expected.as_bytes());
@@ -1127,7 +1142,7 @@ macro_rules! other_limb_tests {
     /// integers in limbs of 64 bits. It allocates nothing, so that it also runs on 32-bit Miri,
     /// where the tests against `num-bigint` run out of addresses.
     fn matches_the_u64_layer<const M: usize, const N: usize>() {
-      use crate::int::limbs;
+      use crate::int::unsigned::b64;
 
       const { assert!(B as usize * M == 64 * N) };
       let mut rng = Rng(0x5eed_3264 ^ N as u64);
@@ -1136,29 +1151,29 @@ macro_rules! other_limb_tests {
         // Nonzero values, whose limbs have every normalization shift of a limb.
         let (a, b) = (rng.limbs::<M>(), rng.limbs::<M>());
         let (wide_a, wide_b): ([u64; N], [u64; N]) = (to_u64_limbs(&a), to_u64_limbs(&b));
-        assert_eq!(cmp(&a, &b), limbs::cmp(&wide_a, &wide_b));
-        assert_eq!(le(&a, &b), limbs::le(&wide_a, &wide_b));
+        assert_eq!(cmp(&a, &b), b64::cmp(&wide_a, &wide_b));
+        assert_eq!(le(&a, &b), b64::le(&wide_a, &wide_b));
         let (sum, carry) = overflowing_add(&a, &b);
         assert_eq!(
           (to_u64_limbs(&sum), carry),
-          limbs::overflowing_add(&wide_a, &wide_b)
+          b64::overflowing_add(&wide_a, &wide_b)
         );
         let (difference, borrow) = overflowing_sub(&a, &b);
         assert_eq!(
           (to_u64_limbs(&difference), borrow),
-          limbs::overflowing_sub(&wide_a, &wide_b)
+          b64::overflowing_sub(&wide_a, &wide_b)
         );
         let (quotient, remainder) = div_rem(&a, &b);
         assert_eq!(
           (to_u64_limbs(&quotient), to_u64_limbs(&remainder)),
-          limbs::div_rem(&wide_a, &wide_b),
+          b64::div_rem(&wide_a, &wide_b),
           "{a:x?} / {b:x?}"
         );
         for mode in bigint::MODES {
           let (rounded, remainder, away) = round_div(&a, &b, mode);
           assert_eq!(
             (to_u64_limbs(&rounded), to_u64_limbs(&remainder), away),
-            limbs::round_div(&wide_a, &wide_b, mode)
+            b64::round_div(&wide_a, &wide_b, mode)
           );
         }
 
@@ -1177,38 +1192,38 @@ macro_rules! other_limb_tests {
           (to_u64_limbs(&low_a), to_u64_limbs(&low_b));
         assert_eq!(
           to_u64_limbs(&mul(&low_a, &low_b)),
-          limbs::mul(&wide_low_a, &wide_low_b)
+          b64::mul(&wide_low_a, &wide_low_b)
         );
 
         let exp = (rng.next() % (20 * N as u64 + 2)) as u32;
         let product = checked_mul_pow10(&a, exp);
         assert_eq!(
           product.map(|product| to_u64_limbs(&product)),
-          limbs::checked_mul_pow10(&wide_a, exp)
+          b64::checked_mul_pow10(&wide_a, exp)
         );
         if product.is_some() {
           assert_eq!(
             to_u64_limbs(&mul_pow10(&a, exp)),
-            limbs::mul_pow10(&wide_a, exp)
+            b64::mul_pow10(&wide_a, exp)
           );
         }
         let (quotient, remainder) = div_rem_pow10(&a, exp);
         assert_eq!(
           (to_u64_limbs(&quotient), to_u64_limbs(&remainder)),
-          limbs::div_rem_pow10(&wide_a, exp)
+          b64::div_rem_pow10(&wide_a, exp)
         );
 
         let bits = (rng.next() % (64 * N as u64 + 1)) as u32;
-        assert_eq!(fits_bits(&a, bits), limbs::fits_bits(&wide_a, bits));
+        assert_eq!(fits_bits(&a, bits), b64::fits_bits(&wide_a, bits));
         assert_eq!(
           to_u64_limbs(&max_of_bits::<M>(bits)),
-          limbs::max_of_bits::<N>(bits)
+          b64::max_of_bits::<N>(bits)
         );
 
         // The digits agree and read back. Both layers need `20 * N` bytes at most.
         let (mut buf, mut wide_buf) = ([0; 160], [0; 160]);
         let start = write_digits_into(&a, &mut buf);
-        let wide_start = limbs::write_digits_into(&wide_a, &mut wide_buf);
+        let wide_start = b64::write_digits_into(&wide_a, &mut wide_buf);
         assert_eq!(&buf[start..], &wide_buf[wide_start..]);
         assert_eq!(push_digits(&[0; M], &buf, start, buf.len()), a);
       }

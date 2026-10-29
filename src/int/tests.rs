@@ -163,9 +163,66 @@ macro_rules! core_tests {
         }
       }
 
+      #[test]
+      fn bit_functions() {
+        for bits in 0..=<$int>::BITS {
+          core_tests!(@bit_functions $sign $int, bits);
+        }
+      }
+
       core_tests!(@sign_tests $sign $int);
     }
   )+};
+
+  // `max_of_bits`, `min_of_bits` and `fits_bits` at one width, against the limits computed in 128
+  // bits, for the values next to the limits and, for a type of 8 or 16 bits, for every value, or
+  // under Miri every 61st value of 16 bits.
+  (@bit_functions unsigned $int:ident, $bits:ident) => {{
+    let max = if $bits == 128 { u128::MAX } else { (1u128 << $bits) - 1 };
+    assert_eq!(native::max_of_bits($bits) as u128, max, "{} bits", $bits);
+    let check = |value: $int| {
+      let fits = value as u128 <= max;
+      assert_eq!(native::fits_bits(value, $bits), fits, "{value} in {} bits", $bits);
+    };
+    let edges = [0, 1, max.saturating_sub(1), max, max.saturating_add(1), <$int>::MAX as u128];
+    edges.into_iter().filter_map(|value| <$int>::try_from(value).ok()).for_each(check);
+    if <$int>::BITS <= 16 {
+      let step = if cfg!(miri) && <$int>::BITS == 16 { 61 } else { 1 };
+      (0..=<$int>::MAX).step_by(step).for_each(check);
+    }
+  }};
+  (@bit_functions signed $int:ident, $bits:ident) => {{
+    // Zero bits hold only zero.
+    let (min, max) = match $bits {
+      0 => (0, 0),
+      128 => (i128::MIN, i128::MAX),
+      _ => (-(1i128 << ($bits - 1)), (1i128 << ($bits - 1)) - 1),
+    };
+    assert_eq!(native::max_of_bits($bits) as i128, max, "{} bits", $bits);
+    assert_eq!(native::min_of_bits($bits) as i128, min, "{} bits", $bits);
+    let check = |value: $int| {
+      let fits = min <= value as i128 && value as i128 <= max;
+      assert_eq!(native::fits_bits(value, $bits), fits, "{value} in {} bits", $bits);
+    };
+    let edges = [
+      min.saturating_sub(1),
+      min,
+      min + 1,
+      -1,
+      0,
+      1,
+      max - 1,
+      max,
+      max.saturating_add(1),
+      <$int>::MIN as i128,
+      <$int>::MAX as i128,
+    ];
+    edges.into_iter().filter_map(|value| <$int>::try_from(value).ok()).for_each(check);
+    if <$int>::BITS <= 16 {
+      let step = if cfg!(miri) && <$int>::BITS == 16 { 61 } else { 1 };
+      (<$int>::MIN..=<$int>::MAX).step_by(step).for_each(check);
+    }
+  }};
 
   (@samples signed $int:ident) => {{
     let mut values = std::vec![0, 1, -1, 9, -9, 10, -10, <$int>::MAX, <$int>::MIN];
