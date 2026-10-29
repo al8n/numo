@@ -99,24 +99,35 @@
 //! [`FitsBits`] relates a width to the storages that hold it, [`FillsRepr`] to the storages that it
 //! fills, and [`Limbs<Bits, L>`](Limbs) names the array of limbs of type `L` that holds it.
 //!
-//! Each type has the constants `BITS`, `ZERO`, `MIN` and `MAX`. In a native integer, its `const fn`
-//! constructors are `new`, which panics if the value does not fit in `Bits` bits, and `try_new`,
-//! which returns [`TryNewError`] instead, and `value` returns the value. In an array, they are
-//! `from_limbs`, for a width that fills its limbs, and `checked_from_limbs`, which checks that the
-//! limbs hold a value of `Bits` bits, and `to_limbs` and `as_limbs` return the limbs. Its
-//! `const fn` queries are `is_zero`, and for `Int` also `is_negative` and `is_positive`. Values
-//! compare, hash and format by their numeric value, alike in every storage.
+//! Each type has the constants `BITS`, `ZERO`, `MIN` and `MAX`, and `ONE` from one bit for `Uint`
+//! and from two bits for `Int`. In a native integer, its `const fn` constructors are `new`, which
+//! panics if the value does not fit in `Bits` bits, and `try_new`, which returns [`TryNewError`]
+//! instead, and `value` returns the value. In an array, they are `from_limbs`, for a width that
+//! fills its limbs, and `checked_from_limbs`, which checks that the limbs hold a value of `Bits`
+//! bits, and `to_limbs` and `as_limbs` return the limbs. Its `const fn` queries are `is_zero` and
+//! `is_one`, and for `Int` also `is_negative` and `is_positive`. Values compare, hash and format by
+//! their numeric value, alike in every storage.
+//!
+//! Each type also has the arithmetic of the native integers at its width, as `const fn`s:
+//! addition, subtraction, multiplication and negation in the `checked_*`, `wrapping_*`,
+//! `overflowing_*`, `saturating_*` and `strict_*` forms, `carrying_add` and `borrowing_sub` for
+//! `Uint`, `abs` and its forms, `unsigned_abs` and `signum` for `Int`, and the operators `+`, `-`
+//! and `*`, which panic or wrap on overflow as the native integers do (see
+//! [Overflow](Uint#overflow)).
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
-//! storage of a kind: [`FixedInteger`], with the constants and `is_zero`, [`UnsignedFixedInteger`]
-//! and [`SignedFixedInteger`], and for the construction of each kind [`NativeInteger`],
-//! [`ArrayInteger`] and [`FromLimbs`]. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
-//! [`FixedInteger`] and the sign traits. The traits are not `const`, so constant contexts use the
-//! inherent `const fn`s, which a concrete type reaches without importing a trait.
+//! storage of a kind: [`FixedInteger`], with the constants, `is_zero`, `is_one` and the operators,
+//! [`UnsignedFixedInteger`] and [`SignedFixedInteger`], with the methods of each sign, [`HasOne`],
+//! with `ONE`, the families [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`]
+//! and [`StrictOps`], and for the construction of each kind [`NativeInteger`], [`ArrayInteger`] and
+//! [`FromLimbs`]. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` [`FixedInteger`], the sign
+//! traits and the families, and `HasOne` with a width that holds one. The traits are not `const`, so
+//! constant contexts use the inherent `const fn`s, which a concrete type reaches without importing a
+//! trait.
 //!
 //! ```
 //! use numo::{
-//!   BitWidth, FixedInteger, Int, Uint, i256,
+//!   BitWidth, CheckedOps, FixedInteger, Int, Uint, i256,
 //!   typenum::{U7, U24, U200},
 //!   u7,
 //! };
@@ -143,12 +154,23 @@
 //! assert!(Uint::<U7>::try_new(128).is_err());
 //! assert_eq!(Uint::<U200>::MAX, U200x4::MAX);
 //!
+//! // The arithmetic of 7 bits, which wraps at 128.
+//! assert_eq!(SMALL + u7::new(27), u7::MAX);
+//! assert_eq!(SMALL.checked_add(&u7::new(28)), None);
+//! assert_eq!(SMALL.wrapping_add(&u7::new(28)), u7::ZERO);
+//!
 //! // Generic code over the width alone.
 //! fn count_zeros<B: BitWidth>(values: &[Int<B>]) -> usize {
 //!   values.iter().filter(|value| value.is_zero()).count()
 //! }
 //! assert_eq!(count_zeros(&[Int::<U7>::ZERO, Int::<U7>::MIN]), 1);
 //! assert_eq!(count_zeros(&[Int::<U200>::ZERO; 3]), 3);
+//!
+//! fn total<B: BitWidth>(values: &[Uint<B>]) -> Option<Uint<B>> {
+//!   values.iter().try_fold(Uint::<B>::ZERO, |sum, value| sum.checked_add(value))
+//! }
+//! assert_eq!(total(&[u7::new(100), u7::new(27)]), Some(u7::MAX));
+//! assert_eq!(total(&[Uint::<U200>::MAX, Uint::<U200>::MAX]), None);
 //! ```
 //!
 //! # `typenum`

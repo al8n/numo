@@ -107,6 +107,34 @@ mod traits;
 /// `u7::new(100)`, `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)` or
 /// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
 ///
+/// # Arithmetic
+///
+/// Each storage has the arithmetic of the native unsigned integers at the width `Bits`, as
+/// `const fn`s: addition, subtraction, multiplication and negation in the `checked_*`,
+/// `wrapping_*`, `overflowing_*` and `strict_*` forms, the first three also in the `saturating_*`
+/// form, [`carrying_add`](Self::carrying_add) and [`borrowing_sub`](Self::borrowing_sub), and from
+/// one bit the constant `ONE`. The operators `+`, `-` and `*`, their compound assignments, `Sum`
+/// and `Product` work for every storage, and so do the traits that give generic code the methods,
+/// such as [`CheckedOps`](crate::CheckedOps). A method of a storage is called with method syntax or
+/// with a path that names the storage, such as `Uint::<U7>::checked_add(&a, &b)`: a path that
+/// leaves the storage to inference, such as `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
+///
+/// ```
+/// use numo::{Uint, typenum::U200, u7};
+///
+/// assert_eq!(u7::MAX.checked_add(&u7::ONE), None);
+/// assert_eq!(u7::MAX.wrapping_add(&u7::ONE), u7::ZERO);
+/// assert_eq!(u7::MAX.saturating_add(&u7::ONE), u7::MAX);
+/// assert_eq!(u7::new(100) + u7::new(27), u7::MAX);
+///
+/// // 2^199 needs every bit of 200, and twice it needs 201.
+/// type U200x4 = Uint<U200, [u64; 4]>;
+/// let top = U200x4::checked_from_limbs([0, 0, 0, 1 << 7]).unwrap();
+/// let two = U200x4::ONE + U200x4::ONE;
+/// assert_eq!(top.checked_mul(&two), None);
+/// assert_eq!(top.overflowing_mul(&two), (U200x4::ZERO, true));
+/// ```
+///
 /// # Overflow
 ///
 /// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
@@ -190,6 +218,29 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// construction names the alias, the width for the default storage, or the full type, for example
 /// `i7::new(-5)`, `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)` or
 /// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+///
+/// # Arithmetic
+///
+/// Each storage has the arithmetic of the native signed integers at the width `Bits`, as
+/// `const fn`s: addition, subtraction, multiplication and negation in the `checked_*`,
+/// `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` forms, the absolute value in the
+/// same forms, [`abs`](Self::abs) and [`unsigned_abs`](Self::unsigned_abs), which returns the
+/// [`Uint`] of the same width and storage size, [`signum`](Self::signum), and from two bits the
+/// constant `ONE`, since one bit holds only -1 and 0. The operators `+`, `-` and `*`, their compound
+/// assignments, the negation `-`, `Sum` and `Product` work for every storage, and so do the traits
+/// that give generic code the methods, such as [`CheckedOps`](crate::CheckedOps). As for [`Uint`],
+/// a path to a method names the storage.
+///
+/// ```
+/// use numo::i7;
+///
+/// assert_eq!(i7::MIN.checked_neg(), None);
+/// assert_eq!(i7::MIN.wrapping_abs(), i7::MIN);
+/// assert_eq!(i7::MIN.unsigned_abs().value(), 64);
+/// assert_eq!(i7::new(-5).signum(), -i7::ONE);
+/// assert_eq!(i7::MIN.saturating_sub(&i7::ONE), i7::MIN);
+/// assert_eq!(-i7::new(63) - i7::ONE, i7::MIN);
+/// ```
 ///
 /// # Overflow
 ///

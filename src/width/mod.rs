@@ -990,11 +990,13 @@ limb_arrays!(
 ///
 /// Generic code with the bound `B: BitWidth` gets `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Debug`,
 /// `Display` and `Default` on `Uint<B>` and `Int<B>`, their constants `BITS`, `ZERO`, `MIN` and
-/// `MAX`, as in `Uint::<B>::MAX`, and the integer traits, such as
-/// [`FixedInteger`](crate::FixedInteger), whose methods it calls with the trait in scope. The
-/// methods of the traits are not `const`, and the inherent `const fn`s belong to each storage, so a
-/// constant context calls them on a concrete type, such as `Uint<U7>`, or an alias. This trait is
-/// sealed and cannot be implemented outside this crate.
+/// `MAX`, as in `Uint::<B>::MAX`, the operators, and the integer traits, such as
+/// [`FixedInteger`](crate::FixedInteger) and [`CheckedOps`](crate::CheckedOps), whose methods it
+/// calls with the trait in scope. `ONE` needs a width that holds one: `B: NonZero` for `Uint<B>`,
+/// and `B: IsGreater<U1, Output = True>` for `Int<B>`. The methods of the traits are not `const`,
+/// and the inherent `const fn`s belong to each storage, so a constant context calls them on a
+/// concrete type, such as `Uint<U7>`, or an alias. This trait is sealed and cannot be implemented
+/// outside this crate.
 ///
 /// ```
 /// use numo::{

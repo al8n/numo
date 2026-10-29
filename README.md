@@ -28,7 +28,7 @@ checked during type checking, so no value can be created for a type that cannot 
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, formatting and generic traits; arithmetic planned |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, formatting, addition, subtraction, multiplication and negation in every overflow form of the native integers with the operators, and generic traits; division, bit operations and shifts planned |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
 
@@ -158,22 +158,30 @@ such as `u7` for `Uint<U7, u8>`, and `[u64; ceil(N / 64)]` for 129 to 1024 bits,
 storage is written out, such as `Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that `typenum`
 has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
 
-- `const` items and methods: `BITS`, `ZERO`, `MIN` and `MAX`; for a native integer, `new`, which
-  panics if the value does not fit, `try_new`, which returns an error instead, and `value`; for an
-  array, `from_limbs` for a width that fills its limbs, `checked_from_limbs` for any width, which
-  returns `None` unless the limbs hold a value of `Bits` bits, and `to_limbs` and `as_limbs`;
-  `is_zero`, plus `is_negative` and `is_positive` for `Int`.
+- `const` items and methods: `BITS`, `ZERO`, `MIN` and `MAX`, and `ONE` from one bit for `Uint`
+  and from two bits for `Int`; for a native integer, `new`, which panics if the value does not fit,
+  `try_new`, which returns an error instead, and `value`; for an array, `from_limbs` for a width
+  that fills its limbs, `checked_from_limbs` for any width, which returns `None` unless the limbs
+  hold a value of `Bits` bits, and `to_limbs` and `as_limbs`; `is_zero` and `is_one`, plus
+  `is_negative` and `is_positive` for `Int`.
+- The arithmetic of the native integers at the width `Bits`, as `const fn`s: addition, subtraction,
+  multiplication and negation in the `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and
+  `strict_*` forms, `carrying_add` and `borrowing_sub` for `Uint`, and `abs` and its forms,
+  `unsigned_abs` and `signum` for `Int`. The operators `+`, `-` and `*`, their compound
+  assignments, `-` for `Int`, `Sum` and `Product` panic or wrap on overflow as `overflow-checks`
+  decides, as for the native integers.
 - Numeric equality, ordering and hashing, where the hash depends only on the value and `Bits`,
   whatever the storage, decimal formatting, and `Default`, which is zero.
 - Traits with one implementation for every storage of a kind, `FixedInteger`,
-  `UnsignedFixedInteger`, `SignedFixedInteger`, `NativeInteger`, `ArrayInteger` and `FromLimbs`,
-  for generic code; with the bound `B: BitWidth`, such code uses `Uint<B>` and `Int<B>` for any
-  width from 0 to 65536 bits.
+  `UnsignedFixedInteger`, `SignedFixedInteger`, `HasOne`, `NativeInteger`, `ArrayInteger` and
+  `FromLimbs`, and the arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`,
+  `SaturatingOps` and `StrictOps`, for generic code; with the bound `B: BitWidth`, such code uses
+  `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
   width of more than 65536 bits without an explicit storage.
 
-Their arithmetic is planned.
+Division and remainder, bit operations and shifts are planned.
 
 #### License
 

@@ -45,7 +45,7 @@ macro_rules! overflowing_table {
 
       /// Overflowing negation: `-self` wrapped to the range of the type, and whether the exact
       /// negation is outside that range: for `Uint` every value but zero, and for `Int` only `MIN`,
-      /// unless `Bits` is zero and `MIN` is zero.
+      /// except at zero bits, where `MIN` is zero.
       fn overflowing_neg(&self) -> (Self, bool) = prim pair overflowing_neg_bits(self);
     }
   };
@@ -82,7 +82,7 @@ macro_rules! checked_table {
       }
 
       /// Checked negation: `-self`, or `None` if it is outside the range of the type: for `Uint`
-      /// unless `self` is zero, and for `Int` if `self` is `MIN`, unless `Bits` is zero and `MIN`
+      /// unless `self` is zero, and for `Int` if `self` is `MIN`, except at zero bits, where `MIN`
       /// is zero.
       fn checked_neg(&self) -> Option<Self> {
         match self.overflowing_neg() {
@@ -261,7 +261,7 @@ macro_rules! strict_table {
       /// # Panics
       ///
       /// Panics if the negation is outside the range of the type: for `Uint` if `self` is not
-      /// zero, and for `Int` if `self` is `MIN`, unless `Bits` is zero and `MIN` is zero.
+      /// zero, and for `Int` if `self` is `MIN`, except at zero bits, where `MIN` is zero.
       #[track_caller]
       fn strict_neg(&self) -> Self {
         match self.overflowing_neg() {
@@ -317,7 +317,7 @@ macro_rules! int_sign_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
       /// Saturating negation: `-self`, or `MAX` if the negation is outside the range of the type,
-      /// as it is for `MIN`, unless `Bits` is zero and `MIN` is zero.
+      /// as it is for `MIN`, except at zero bits, where `MIN` is zero.
       fn saturating_neg(&self) -> Self {
         match self.overflowing_neg() {
           (negated, false) => negated,
@@ -326,7 +326,7 @@ macro_rules! int_sign_table {
       }
 
       /// Overflowing absolute value: `|self|` wrapped to the range of the type, and whether it is
-      /// outside that range, as it is for `MIN`, unless `Bits` is zero and `MIN` is zero. `MIN`
+      /// outside that range, as it is for `MIN`, except at zero bits, where `MIN` is zero. `MIN`
       /// wraps to itself.
       fn overflowing_abs(&self) -> (Self, bool) {
         if self.is_negative() {
@@ -337,7 +337,7 @@ macro_rules! int_sign_table {
       }
 
       /// Checked absolute value: `|self|`, or `None` if it is outside the range of the type, as it
-      /// is for `MIN`, unless `Bits` is zero and `MIN` is zero.
+      /// is for `MIN`, except at zero bits, where `MIN` is zero.
       fn checked_abs(&self) -> Option<Self> {
         match self.overflowing_abs() {
           (abs, false) => Some(abs),
@@ -352,7 +352,7 @@ macro_rules! int_sign_table {
       }
 
       /// Saturating absolute value: `|self|`, or `MAX` if it is outside the range of the type, as
-      /// it is for `MIN`, unless `Bits` is zero and `MIN` is zero.
+      /// it is for `MIN`, except at zero bits, where `MIN` is zero.
       fn saturating_abs(&self) -> Self {
         match self.overflowing_abs() {
           (abs, false) => abs,
@@ -366,7 +366,7 @@ macro_rules! int_sign_table {
       /// # Panics
       ///
       /// Panics if the absolute value is outside the range of the type, as it is for `MIN`,
-      /// unless `Bits` is zero and `MIN` is zero.
+      /// except at zero bits, where `MIN` is zero.
       #[track_caller]
       fn strict_abs(&self) -> Self {
         match self.overflowing_abs() {
@@ -375,10 +375,9 @@ macro_rules! int_sign_table {
         }
       }
 
-      /// The absolute value, `|self|`. The absolute value of `MIN`, unless `Bits` is zero and
-      /// `MIN` is zero, is outside the range of the type: the method then panics or returns `MIN`,
-      /// as `overflow-checks` decides for the native integers (see
-      /// [Overflow](crate::Int#overflow)).
+      /// The absolute value, `|self|`. The absolute value of `MIN` is outside the range of the
+      /// type, except at zero bits, where `MIN` is zero: the method then panics or returns `MIN`, as
+      /// `overflow-checks` decides for the native integers (see [Overflow](crate::Int#overflow)).
       #[track_caller]
       fn abs(&self) -> Self {
         match self.overflowing_abs() {
