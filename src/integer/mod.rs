@@ -106,6 +106,15 @@ mod traits;
 /// construction names the alias, the width for the default storage, or the full type, for example
 /// `u7::new(100)`, `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)` or
 /// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+///
+/// # Overflow
+///
+/// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
+/// same in every build. The operators forward the overflow to a native operation. With one profile
+/// for the build, numo's `overflow-checks` and yours agree and the operators behave as the native
+/// integers do. With a per-package override, which setting applies depends on where the code is
+/// generated: an unoptimized build follows numo's setting; an optimized build panics only when both
+/// numo's and your crate's checks are on.
 #[repr(transparent)]
 pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits` or above is zero, so the
@@ -181,6 +190,17 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// construction names the alias, the width for the default storage, or the full type, for example
 /// `i7::new(-5)`, `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)` or
 /// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+///
+/// # Overflow
+///
+/// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
+/// same in every build. The operators forward the overflow to a native operation. With one profile
+/// for the build, numo's `overflow-checks` and yours agree and the operators behave as the native
+/// integers do. With a per-package override, which setting applies depends on where the code is
+/// generated: an unoptimized build follows numo's setting; an optimized build panics only when both
+/// numo's and your crate's checks are on. [`abs`](Self::abs) handles `MIN` in the same way, as the
+/// native `abs` does; in a constant, where `abs` is the only method that forwards an overflow,
+/// numo's setting applies and the error names the native value (`i8::MIN`).
 #[repr(transparent)]
 pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits - 1` or above equals bit

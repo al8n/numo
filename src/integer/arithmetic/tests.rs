@@ -1,8 +1,10 @@
-use typenum::{U0, U1, U2, U7, U8};
+use std::string::ToString;
+
+use typenum::{IsGreater, NonZero, True, U0, U1, U2, U7, U8, U64, U65, U128, U129, U200, U1024};
 
 use crate::{
-  CheckedOps, FixedInteger, HasOne, Int, OverflowingOps, SaturatingOps, SignedFixedInteger,
-  StrictOps, Uint, UnsignedFixedInteger, WrappingOps,
+  BitWidth, CheckedOps, FixedInteger, HasOne, Int, OverflowingOps, SaturatingOps,
+  SignedFixedInteger, StrictOps, Uint, UnsignedFixedInteger, WrappingOps,
 };
 
 /// The smallest and the largest value of `bits` bits, unsigned or in two's complement.
@@ -346,4 +348,144 @@ fn one_and_zero_bits() {
   assert!(!U::ZERO.is_one() && !I::ZERO.is_one());
   // One bit holds no positive value, so `signum` is never one.
   assert_eq!(Int::<U1, i8>::MIN.signum(), Int::<U1, i8>::MIN);
+}
+
+/// Checks every pair of values of `$ty`, of `$bits` bits, created by `$from` from their value, or
+/// under Miri every 61st pair: where the sum, the difference or the product is in range, the
+/// operator in its four forms of values and references and its compound assignment with a value
+/// and with a reference give the result of the checked method.
+macro_rules! check_operators {
+  ($ty:ty, $bits:expr, $signed:expr, $from:expr) => {{
+    let from: fn(i128) -> $ty = $from;
+    let (min, max) = range($bits, $signed);
+    let step = if cfg!(miri) { 61 } else { 1 };
+    let count = max - min + 1;
+    for pair in (0..count * count).step_by(step) {
+      let (x, y) = (from(min + pair / count), from(min + pair % count));
+      check_operators!(@op x, y, +, +=, x.checked_add(&y));
+      check_operators!(@op x, y, -, -=, x.checked_sub(&y));
+      check_operators!(@op x, y, *, *=, x.checked_mul(&y));
+    }
+  }};
+  (@op $x:ident, $y:ident, $op:tt, $assign:tt, $checked:expr) => {
+    if let Some(expected) = $checked {
+      assert_eq!($x $op $y, expected, "{} {} {}", $x, stringify!($op), $y);
+      assert_eq!($x $op &$y, expected);
+      assert_eq!(&$x $op $y, expected);
+      assert_eq!(&$x $op &$y, expected);
+      let mut target = $x;
+      target $assign $y;
+      assert_eq!(target, expected);
+      let mut target = $x;
+      target $assign &$y;
+      assert_eq!(target, expected);
+    }
+  };
+}
+
+/// The operators give the results of the checked methods where these are `Some`, in a native
+/// integer and in an array of one byte, at 7 bits and at zero bits, and so does `-` of `Int`.
+#[test]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn operators_match_the_checked_methods() {
+  check_operators!(Uint<U7, u8>, 7, false, |v| Uint::<U7, u8>::new(v as u8));
+  check_operators!(Int<U7, i8>, 7, true, |v| Int::<U7, i8>::new(v as i8));
+  check_operators!(Uint<U7, [u8; 1]>, 7, false, |v| {
+    Uint::<U7, [u8; 1]>::checked_from_limbs([v as u8]).expect("7 bits")
+  });
+  check_operators!(Int<U7, [u8; 1]>, 7, true, |v| {
+    Int::<U7, [u8; 1]>::checked_from_limbs([v as u8]).expect("7 bits")
+  });
+  check_operators!(Uint<U0, u8>, 0, false, |_| Uint::<U0, u8>::ZERO);
+  check_operators!(Int<U0, [u64; 0]>, 0, true, |_| Int::<U0, [u64; 0]>::ZERO);
+  for value in -64..=63 {
+    let native = Int::<U7, i8>::new(value);
+    let array = Int::<U7, [u8; 1]>::checked_from_limbs([value as u8]).expect("7 bits");
+    if let Some(negated) = native.checked_neg() {
+      assert_eq!(-native, negated);
+      assert_eq!(-&native, negated);
+      assert_eq!((-array).to_limbs(), [negated.value() as u8]);
+      assert_eq!((-&array).to_limbs(), [negated.value() as u8]);
+    }
+  }
+  assert_eq!(-Int::<U0, i8>::MIN, Int::<U0, i8>::ZERO);
+}
+
+/// Uses the operators, `Sum` and `Product` that the bound `B: BitWidth` gives `Uint<B>` and
+/// `Int<B>`, with `ONE` from the bounds on the width, which is at least 7 bits.
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn generic_operators<B: BitWidth + NonZero + IsGreater<U1, Output = True>>() {
+  let one = Uint::<B>::ONE;
+  let (two, three) = (one + one, one + &one + one);
+  let mut six = two;
+  six *= three;
+  assert_eq!(six.to_string(), "6");
+  assert_eq!((six - &three).to_string(), "3");
+  assert_eq!((&six * &two).to_string(), "12");
+  assert_eq!([one, two, three].iter().sum::<Uint<B>>(), six);
+  assert_eq!([two, three].into_iter().product::<Uint<B>>(), six);
+
+  let one = Int::<B>::ONE;
+  let minus_three = -(one + one + one);
+  let mut value = minus_three;
+  value -= one;
+  value += &one;
+  value *= -&one;
+  assert_eq!(value.to_string(), "3");
+  assert_eq!((minus_three * minus_three).to_string(), "9");
+  assert_eq!([minus_three, one, one].into_iter().sum::<Int<B>>(), -one);
+  assert_eq!([minus_three, -one].iter().product::<Int<B>>(), value);
+}
+
+#[test]
+fn bit_width_gives_the_operators() {
+  generic_operators::<U7>();
+  generic_operators::<U8>();
+  generic_operators::<U64>();
+  generic_operators::<U65>();
+  generic_operators::<U128>();
+  generic_operators::<U129>();
+  generic_operators::<U200>();
+  generic_operators::<U1024>();
+}
+
+/// The operators on two references and the negation of a reference need only the storage trait,
+/// `UintRepr` or `IntRepr`, not a storage that holds the value inline: code bounded by it uses
+/// them, in a native integer and in an array.
+#[test]
+fn reference_operators_need_only_the_storage_trait() {
+  use crate::{FitsBits, IntRepr, UintRepr, i7, i256, u7, u256};
+
+  fn unsigned<B: FitsBits<R>, R: UintRepr>(a: Uint<B, R>, b: Uint<B, R>) -> [Uint<B, R>; 3] {
+    [&a + &b, &a - &b, &a * &b]
+  }
+
+  fn signed<B: FitsBits<R>, R: IntRepr>(a: Int<B, R>, b: Int<B, R>) -> [Int<B, R>; 4] {
+    [&a + &b, &a - &b, &a * &b, -&a]
+  }
+
+  assert_eq!(
+    unsigned(u7::new(10), u7::new(3)),
+    [u7::new(13), u7::new(7), u7::new(30)]
+  );
+  let (ten, three) = (
+    u256::from_limbs([10, 0, 0, 0]),
+    u256::from_limbs([3, 0, 0, 0]),
+  );
+  assert_eq!(
+    unsigned(ten, three).map(|value| value.to_string()),
+    ["13", "7", "30"]
+  );
+  assert_eq!(
+    signed(i7::new(-10), i7::new(3)),
+    [i7::new(-7), i7::new(-13), i7::new(-30), i7::new(10)]
+  );
+  let (minus_ten, three) = (
+    -i256::from_limbs([10, 0, 0, 0]),
+    i256::from_limbs([3, 0, 0, 0]),
+  );
+  assert_eq!(
+    signed(minus_ten, three).map(|value| value.to_string()),
+    ["-7", "-13", "-30", "10"]
+  );
 }

@@ -17,8 +17,8 @@ help: the trait `numo::width::sealed::NativeBitsFit` is implemented for `B1`
 note: required by a bound in `numo::FixedInteger::MAX`
  --> src/integer/traits/mod.rs
   |
-  | pub trait FixedInteger: Sealed + Copy + Eq + Ord + Hash + Debug + Display + Default {
-  |                                                    ^^^^ required by this bound in `FixedInteger::MAX`
+  |   + Hash
+  |     ^^^^ required by this bound in `FixedInteger::MAX`
 ...
   |   const MAX: Self;
   |         --- required by a bound in this associated constant

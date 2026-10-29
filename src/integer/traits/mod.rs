@@ -8,6 +8,8 @@
 use core::{
   fmt::{Debug, Display},
   hash::Hash,
+  iter::{Product, Sum},
+  ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -37,7 +39,9 @@ mod sealed {
 /// The constants and methods are the inherent items of the same names, which a concrete type
 /// reaches without this trait, also in constant contexts. Generic code reaches them through this
 /// trait, which the bound `B: BitWidth` provides on `Uint<B>` and `Int<B>`; a method call needs the
-/// trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`.
+/// trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`. The supertraits
+/// give generic code the operators `+`, `-` and `*`, their compound assignments and `Sum`, which
+/// on overflow panic or wrap as `overflow-checks` decides, as for the native integers.
 ///
 /// ```
 /// use numo::{
@@ -53,13 +57,34 @@ mod sealed {
 ///   values.iter().filter(|value| value.is_zero()).count()
 /// }
 ///
+/// fn total<T: FixedInteger>(values: &[T]) -> T {
+///   values.iter().copied().sum()
+/// }
+///
 /// assert!(is_max(u256::MAX) && is_max(Int::<U7>::MAX) && !is_max(Uint::<U7>::ZERO));
 /// assert_eq!(zeros(&[Uint::<U200>::ZERO, Uint::<U200>::MAX, Uint::<U200>::MIN]), 2);
 /// assert_eq!(<Int<U7> as FixedInteger>::BITS, 7);
+/// assert_eq!(total(&[Int::<U7>::new(50), Int::<U7>::new(-20)]), Int::<U7>::new(30));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait FixedInteger: Sealed + Copy + Eq + Ord + Hash + Debug + Display + Default {
+pub trait FixedInteger:
+  Sealed
+  + Copy
+  + Eq
+  + Ord
+  + Hash
+  + Debug
+  + Display
+  + Default
+  + Add<Output = Self>
+  + Sub<Output = Self>
+  + Mul<Output = Self>
+  + AddAssign
+  + SubAssign
+  + MulAssign
+  + Sum
+{
   /// The number of bits, `Bits`.
   const BITS: u32;
 
@@ -119,7 +144,8 @@ pub trait UnsignedFixedInteger: Sealed + Sized {
 ///
 /// The sign queries, the absolute value in its forms, `saturating_neg`, `signum` and
 /// `unsigned_abs` are the inherent methods of the same names, which a concrete type reaches without
-/// this trait, also in constant contexts.
+/// this trait, also in constant contexts. The supertrait `Neg` gives generic code the operator `-`,
+/// which on overflow panics or wraps as `overflow-checks` decides, as for the native integers.
 ///
 /// ```
 /// use numo::{
@@ -147,7 +173,7 @@ pub trait UnsignedFixedInteger: Sealed + Sized {
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait SignedFixedInteger: Sealed + Sized {
+pub trait SignedFixedInteger: Sealed + Sized + Neg<Output = Self> {
   /// The unsigned integer of the same width in a storage of the same size: `Uint<B, u8>` for
   /// `Int<B, i8>`, and so on, and `Uint<B, [L; N]>` for `Int<B, [L; N]>`.
   type Unsigned;
@@ -162,8 +188,9 @@ pub trait SignedFixedInteger: Sealed + Sized {
 /// `ONE` is the inherent constant of the same name, which a concrete type reaches without this
 /// trait, also in constant contexts. Zero bits hold only zero, so `Uint` of zero bits has no `ONE`,
 /// rather than one that is zero, and one bit holds only -1 and 0, so `Int` of fewer than two bits
-/// has none either. Generic code over `B: BitWidth` adds `B: NonZero` for `Uint<B>`, or
-/// `B: IsGreater<U1, Output = True>` for `Int<B>`.
+/// has none either, and neither has `Product`, which multiplies from `ONE`. Generic code over
+/// `B: BitWidth` adds `B: NonZero` for `Uint<B>`, or `B: IsGreater<U1, Output = True>` for
+/// `Int<B>`.
 ///
 /// ```
 /// use numo::{BitWidth, CheckedOps, HasOne, Uint, typenum::NonZero, u7};
@@ -176,13 +203,18 @@ pub trait SignedFixedInteger: Sealed + Sized {
 ///   value == T::ONE
 /// }
 ///
+/// fn product<T: HasOne>(values: &[T]) -> T {
+///   values.iter().copied().product()
+/// }
+///
 /// assert_eq!(successor(u7::new(126)), Some(u7::MAX));
 /// assert_eq!(successor(u7::MAX), None);
 /// assert!(is_unit(u7::ONE) && !is_unit(u7::MAX));
+/// assert_eq!(product(&[u7::new(5), u7::new(25)]), u7::new(125));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait HasOne: FixedInteger {
+pub trait HasOne: FixedInteger + Product {
   /// One.
   const ONE: Self;
 }

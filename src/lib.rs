@@ -295,8 +295,8 @@ pub use layout::{
 };
 pub use rounding::RoundingMode;
 pub use width::{
-  ArraySize, BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, LimbArray,
-  Limbs, UintRepr,
+  ArraySize, BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntReprMut,
+  LimbArray, Limbs, UintRepr, UintReprMut,
 };
 
 pub mod aliases;

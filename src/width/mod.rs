@@ -19,7 +19,8 @@ pub(crate) use sealed::{IntCore, IntWidth, TypenumNumber, UintCore, UintWidth};
 
 use sealed::{
   ArrayLimb, BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr,
-  InlineIntConsts, InlineUintConsts, LimbFor, NativeBitsFit, NativeReprFilled, ReprFilled, Width,
+  InlineIntConsts, InlineUintConsts, LimbFor, MutableRepr, NativeBitsFit, NativeReprFilled,
+  ReprFilled, Width,
 };
 
 use crate::{
@@ -126,6 +127,11 @@ mod sealed {
   pub trait NativeReprFilled {}
 
   impl NativeReprFilled for typenum::B1 {}
+
+  /// Seals [`UintReprMut`](super::UintReprMut) and [`IntReprMut`](super::IntReprMut): the
+  /// storages that hold the value in place, which every native integer and every array of limbs
+  /// does.
+  pub trait MutableRepr {}
 
   /// Seals [`LimbArray`](super::LimbArray). Each impl requires `Bits: Unsigned`, which `typenum`
   /// seals, so that no other crate can implement `LimbArray` for a limb type with a width of its
@@ -420,10 +426,11 @@ where
 /// `u128`, holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first.
 ///
-/// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, and the
-/// arithmetic traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
-/// [`WrappingOps`](crate::WrappingOps) and [`StrictOps`](crate::StrictOps), for every `Repr` that
-/// implements this trait. This trait is sealed and cannot be implemented outside this crate.
+/// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
+/// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
+/// [`WrappingOps`](crate::WrappingOps) and [`StrictOps`](crate::StrictOps), and the operators `+`,
+/// `-` and `*` on two references, as in `&a + &b`, for every `Repr` that implements this trait.
+/// This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
   note = "`Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`"
@@ -435,10 +442,12 @@ pub trait UintRepr: Eq + UintCore {}
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first, in
 /// two's complement.
 ///
-/// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, and the
-/// arithmetic traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
-/// [`WrappingOps`](crate::WrappingOps) and [`StrictOps`](crate::StrictOps), for every `Repr` that
-/// implements this trait. This trait is sealed and cannot be implemented outside this crate.
+/// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
+/// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
+/// [`WrappingOps`](crate::WrappingOps) and [`StrictOps`](crate::StrictOps), the operators `+`, `-`
+/// and `*` on two references, as in `&a + &b`, and the negation `-` of a reference, for every
+/// `Repr` that implements this trait. This trait is sealed and cannot be implemented outside this
+/// crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
@@ -449,31 +458,47 @@ pub trait IntRepr: Eq + IntCore<Magnitude = <Self as IntRepr>::Unsigned> {
   type Unsigned: UintRepr;
 }
 
+/// A storage of [`Uint`](crate::Uint) that holds the value in place, so that the integers have the
+/// compound assignment operators `+=`, `-=` and `*=`.
+///
+/// Every storage of this crate implements it: the native unsigned integers and the arrays of
+/// limbs. This trait is sealed and cannot be implemented outside this crate.
+pub trait UintReprMut: UintRepr + MutableRepr {}
+
+/// A storage of [`Int`](crate::Int) that holds the value in place, so that the integers have the
+/// compound assignment operators `+=`, `-=` and `*=`.
+///
+/// Every storage of this crate implements it: the native signed integers and the arrays of limbs.
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait IntReprMut: IntRepr + MutableRepr {}
+
 /// A storage of [`Uint`](crate::Uint) that holds the value inline, so that the integer is `Copy`: a
 /// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`.
 ///
-/// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and `ONE` from one bit, and
-/// implements [`FixedInteger`](crate::FixedInteger),
+/// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
+/// [`FixedInteger`](crate::FixedInteger), with the operators `+`, `-` and `*` and `Sum`,
 /// [`UnsignedFixedInteger`](crate::UnsignedFixedInteger) and
-/// [`SaturatingOps`](crate::SaturatingOps), and [`HasOne`](crate::HasOne) from one bit, for every
-/// `Repr` that implements this trait. The default storages of [`BitWidth`] are inline. This trait
-/// is sealed and cannot be implemented outside this crate.
-pub trait InlineUintRepr: UintRepr + Copy + InlineUintConsts {}
+/// [`SaturatingOps`](crate::SaturatingOps), and from one bit it has the constant `ONE` and
+/// implements [`HasOne`](crate::HasOne), with `Product`, for every `Repr` that implements this
+/// trait. The default storages of [`BitWidth`] are inline. This trait is sealed and cannot be
+/// implemented outside this crate.
+pub trait InlineUintRepr: UintReprMut + Copy + InlineUintConsts {}
 
 /// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
 /// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`.
 ///
-/// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and `ONE` from two bits, and
-/// implements [`FixedInteger`](crate::FixedInteger),
-/// [`SignedFixedInteger`](crate::SignedFixedInteger) and [`SaturatingOps`](crate::SaturatingOps),
-/// and [`HasOne`](crate::HasOne) from two bits, for every `Repr` that implements this trait. The
-/// default storages of [`BitWidth`] are inline. This trait is sealed and cannot be implemented
-/// outside this crate.
-pub trait InlineIntRepr: IntRepr + Copy + InlineIntConsts {}
+/// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
+/// [`FixedInteger`](crate::FixedInteger), with the operators `+`, `-` and `*` and `Sum`,
+/// [`SignedFixedInteger`](crate::SignedFixedInteger), with the operator `-`, and
+/// [`SaturatingOps`](crate::SaturatingOps), and from two bits it has the constant `ONE` and
+/// implements [`HasOne`](crate::HasOne), with `Product`, for every `Repr` that implements this
+/// trait. The default storages of [`BitWidth`] are inline. This trait is sealed and cannot be
+/// implemented outside this crate.
+pub trait InlineIntRepr: IntReprMut + Copy + InlineIntConsts {}
 
-/// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`InlineUintRepr`] and [`InlineIntRepr`]
-/// for the arrays of each limb type, written `limb: BitsLog2, lower, upper`, where `lower` and
-/// `upper` are the modules of its limb layers.
+/// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`],
+/// [`InlineUintRepr`] and [`InlineIntRepr`] for the arrays of each limb type, written
+/// `limb: BitsLog2, lower, upper`, where `lower` and `upper` are the modules of its limb layers.
 macro_rules! array_storage {
   ($($limb:ident: $bits_log2:ident, $lower:ident, $upper:ident);+ $(;)?) => {$(
     impl ArrayLimb for $limb {
@@ -631,6 +656,12 @@ macro_rules! array_storage {
       }
     }
 
+    impl<const N: usize> MutableRepr for [$limb; N] {}
+
+    impl<const N: usize> UintReprMut for [$limb; N] {}
+
+    impl<const N: usize> IntReprMut for [$limb; N] {}
+
     impl<const N: usize> InlineUintRepr for [$limb; N] {}
 
     impl<const N: usize> InlineUintConsts for [$limb; N] {
@@ -668,9 +699,9 @@ array_storage!(
   u128: U7, b128, b128;
 );
 
-/// Implements [`UintRepr`], [`IntRepr`], [`InlineUintRepr`] and [`InlineIntRepr`] for the native
-/// integers, and their width relations, written `unsigned, signed: Bits`, where `Bits` is the
-/// number of bits of both.
+/// Implements [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`], [`InlineUintRepr`] and
+/// [`InlineIntRepr`] for the native integers, and their width relations, written
+/// `unsigned, signed: Bits`, where `Bits` is the number of bits of both.
 // Each native type has width impls of its own, as each array type constructor has: one impl over
 // every storage, bounded by a trait of the storages, would degrade the diagnostics of the arrays.
 macro_rules! native_storage {
@@ -823,6 +854,14 @@ macro_rules! native_storage {
         int::$int::unsigned_abs(*self)
       }
     }
+
+    impl MutableRepr for $uint {}
+
+    impl MutableRepr for $int {}
+
+    impl UintReprMut for $uint {}
+
+    impl IntReprMut for $int {}
 
     impl InlineUintRepr for $uint {}
 

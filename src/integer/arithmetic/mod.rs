@@ -1,12 +1,28 @@
 //! The arithmetic of [`Uint`](crate::Uint) and [`Int`](crate::Int): the method tables of the
 //! overflowing, checked, wrapping, saturating and strict addition, subtraction, multiplication and
 //! negation, of the carrying addition and the borrowing subtraction of `Uint`, and of the absolute
-//! value and the sign of `Int`, and the panics of the strict methods.
+//! value and the sign of `Int`, the panics of the strict methods, and the operators, `Sum` and
+//! `Product`.
 //!
 //! Each storage computes the overflowing methods at the width `Bits`, and most other methods are
 //! derived from them. The tables pass their rows to the callbacks of `tables`, for the inherent
 //! `const fn`s of each storage and for the generic implementations of the traits, so their bodies
-//! name the panics by the full path `$crate::integer::arithmetic::overflow`.
+//! name the panics by the full path `$crate::integer::arithmetic::overflow`. The operators are
+//! implemented once for every storage, over `OverflowingOps`, and repeat an overflow in a native
+//! operation, so that `overflow-checks` decides whether they panic, as for the native integers.
+
+use core::{
+  iter::{Product, Sum},
+  ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+};
+
+use typenum::{IsGreater, NonZero, True, U1};
+
+use super::{Int, OverflowingOps, Uint};
+use crate::{
+  layout::Token,
+  width::{FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntReprMut, UintRepr, UintReprMut},
+};
 
 /// Passes the overflowing methods of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
 macro_rules! overflowing_table {
@@ -361,7 +377,8 @@ macro_rules! int_sign_table {
 
       /// The absolute value, `|self|`. The absolute value of `MIN`, unless `Bits` is zero and
       /// `MIN` is zero, is outside the range of the type: the method then panics or returns `MIN`,
-      /// as `overflow-checks` decides for the native integers.
+      /// as `overflow-checks` decides for the native integers (see
+      /// [Overflow](crate::Int#overflow)).
       #[track_caller]
       fn abs(&self) -> Self {
         match self.overflowing_abs() {
@@ -417,6 +434,28 @@ pub(super) mod overflow {
     panic!("attempt to negate with overflow")
   }
 
+  /// Repeats the overflow of a native addition, which panics with the message of the native
+  /// integers when `overflow-checks` is on and does nothing otherwise.
+  #[inline]
+  #[track_caller]
+  pub(crate) const fn forward_add() {
+    let _ = black_box(u8::MAX) + 1;
+  }
+
+  /// Repeats the overflow of a native subtraction, as [`forward_add`] does.
+  #[inline]
+  #[track_caller]
+  pub(crate) const fn forward_sub() {
+    let _ = black_box(0u8) - 1;
+  }
+
+  /// Repeats the overflow of a native multiplication, as [`forward_add`] does.
+  #[inline]
+  #[track_caller]
+  pub(crate) const fn forward_mul() {
+    let _ = black_box(u8::MAX) * 2;
+  }
+
   /// Repeats the overflow of a native negation, which panics with the message of the native
   /// integers when `overflow-checks` is on and does nothing otherwise.
   #[inline]
@@ -425,6 +464,172 @@ pub(super) mod overflow {
     let _ = -black_box(i8::MIN);
   }
 }
+
+/// Implements the binary operator `$op` in its four forms of values and references, and its
+/// compound assignment `$assign` for a value and a reference. The form on two references computes
+/// over `OverflowingOps` for every storage, `$repr`; the forms with an owned operand, for a storage
+/// that holds the value inline, `$inline`, pass references to it; and the compound assignments, for
+/// a storage that holds the value in place, `$repr_mut`, compute with the sealed storage method
+/// `$primitive` and store the result. On overflow, each repeats a native overflow with `$forward`,
+/// which panics or not as `overflow-checks` decides; without a panic, the result is the wrapped
+/// value. An assignment stores the result after `$forward`, so that a panic leaves its target
+/// unchanged, as for the native integers.
+macro_rules! binary_operator {
+  (
+    $type:ident: $repr:ident, $inline:ident, $repr_mut:ident;
+    $op:ident $method:ident,
+    $assign:ident $assign_method:ident,
+    $overflowing:ident, $primitive:ident, $forward:ident
+  ) => {
+    impl<B: FitsBits<R>, R: $inline> $op for $type<B, R> {
+      type Output = Self;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: Self) -> Self {
+        $op::$method(&self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $inline> $op<&$type<B, R>> for $type<B, R> {
+      type Output = Self;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: &Self) -> Self {
+        $op::$method(&self, rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $inline> $op<$type<B, R>> for &$type<B, R> {
+      type Output = $type<B, R>;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: $type<B, R>) -> $type<B, R> {
+        $op::$method(self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $repr> $op<&$type<B, R>> for &$type<B, R> {
+      type Output = $type<B, R>;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: &$type<B, R>) -> $type<B, R> {
+        let (value, overflow) = OverflowingOps::$overflowing(self, rhs);
+        if overflow {
+          overflow::$forward();
+        }
+        value
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $repr_mut> $assign for $type<B, R> {
+      #[inline]
+      #[track_caller]
+      fn $assign_method(&mut self, rhs: Self) {
+        $assign::$assign_method(self, &rhs);
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $repr_mut> $assign<&$type<B, R>> for $type<B, R> {
+      #[inline]
+      #[track_caller]
+      fn $assign_method(&mut self, rhs: &Self) {
+        let (value, overflow) = self.repr.$primitive(&rhs.repr, Self::BITS, Token::new());
+        if overflow {
+          overflow::$forward();
+        }
+        self.repr = value;
+      }
+    }
+  };
+}
+
+binary_operator!(
+  Uint: UintRepr, InlineUintRepr, UintReprMut;
+  Add add, AddAssign add_assign, overflowing_add, overflowing_add_bits, forward_add
+);
+binary_operator!(
+  Uint: UintRepr, InlineUintRepr, UintReprMut;
+  Sub sub, SubAssign sub_assign, overflowing_sub, overflowing_sub_bits, forward_sub
+);
+binary_operator!(
+  Uint: UintRepr, InlineUintRepr, UintReprMut;
+  Mul mul, MulAssign mul_assign, overflowing_mul, overflowing_mul_bits, forward_mul
+);
+binary_operator!(
+  Int: IntRepr, InlineIntRepr, IntReprMut;
+  Add add, AddAssign add_assign, overflowing_add, overflowing_add_bits, forward_add
+);
+binary_operator!(
+  Int: IntRepr, InlineIntRepr, IntReprMut;
+  Sub sub, SubAssign sub_assign, overflowing_sub, overflowing_sub_bits, forward_sub
+);
+binary_operator!(
+  Int: IntRepr, InlineIntRepr, IntReprMut;
+  Mul mul, MulAssign mul_assign, overflowing_mul, overflowing_mul_bits, forward_mul
+);
+
+// As for the binary operators, the negation of a reference computes for every storage, and the
+// negation of a value, for a storage that holds the value inline, passes a reference to it.
+impl<B: FitsBits<R>, R: InlineIntRepr> Neg for Int<B, R> {
+  type Output = Self;
+
+  #[inline]
+  #[track_caller]
+  fn neg(self) -> Self {
+    Neg::neg(&self)
+  }
+}
+
+impl<B: FitsBits<R>, R: IntRepr> Neg for &Int<B, R> {
+  type Output = Int<B, R>;
+
+  #[inline]
+  #[track_caller]
+  fn neg(self) -> Int<B, R> {
+    let (value, overflow) = OverflowingOps::overflowing_neg(self);
+    if overflow {
+      overflow::forward_neg();
+    }
+    value
+  }
+}
+
+/// Implements `Sum`, which adds from `ZERO` with `+`, and `Product`, which multiplies from `ONE`
+/// with `*` for a width bounded by `$one`, for values and references.
+macro_rules! folds {
+  ($type:ident: $repr:ident, $($one:tt)+) => {
+    impl<B: FitsBits<R>, R: $repr> Sum for $type<B, R> {
+      fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |sum, value| sum + value)
+      }
+    }
+
+    impl<'a, B: FitsBits<R>, R: $repr> Sum<&'a $type<B, R>> for $type<B, R> {
+      fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |sum, value| sum + value)
+      }
+    }
+
+    impl<B: FitsBits<R> + $($one)+, R: $repr> Product for $type<B, R> {
+      fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::ONE, |product, value| product * value)
+      }
+    }
+
+    impl<'a, B: FitsBits<R> + $($one)+, R: $repr> Product<&'a $type<B, R>> for $type<B, R> {
+      fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::ONE, |product, value| product * value)
+      }
+    }
+  };
+}
+
+folds!(Uint: InlineUintRepr, NonZero);
+folds!(Int: InlineIntRepr, IsGreater<U1, Output = True>);
 
 #[cfg(test)]
 mod tests;
