@@ -17,8 +17,8 @@ use std::{
 
 use num_bigint::BigInt;
 use typenum::{
-  IsGreater, NonZero, True, U0, U1, U2, U7, U8, U9, U24, U63, U64, U65, U100, U127, U128, U129,
-  U200, U256, U1024, U4096,
+  IsGreater, NonZero, True, U0, U1, U2, U7, U8, U9, U16, U24, U32, U63, U64, U65, U100, U127, U128,
+  U129, U200, U256, U1024, U4096,
 };
 
 use crate::{
@@ -1279,6 +1279,29 @@ fn arithmetic_in_constant_contexts() {
     i7::MIN.wrapping_abs(),
     i7::MIN.saturating_abs(),
   ];
+  // SAFETY: each sum, difference and product is in range, so the checked method would return it.
+  const UNCHECKED: (u7, Uint<U8, u8>, Byte) = unsafe {
+    (
+      u7::new(100).unchecked_add(&u7::new(27)),
+      Uint::<U8, u8>::new(15).unchecked_mul(&Uint::<U8, u8>::new(17)),
+      Byte::MAX.unchecked_sub(&Byte::ONE),
+    )
+  };
+  // SAFETY: each sum, difference, product and negation is in range, so the checked method would
+  // return it.
+  const UNCHECKED_SIGNED: (i7, [Int<U8, i8>; 2], [Bytes; 2]) = unsafe {
+    (
+      i7::MIN.unchecked_add(&i7::ONE).unchecked_neg(),
+      [
+        Int::<U8, i8>::new(-100).unchecked_sub(&Int::<U8, i8>::new(28)),
+        Int::<U8, i8>::new(-127).unchecked_neg(),
+      ],
+      [
+        Bytes::ONE.unchecked_mul(&Bytes::MIN),
+        Bytes::MAX.unchecked_neg(),
+      ],
+    )
+  };
 
   assert_eq!(OVERFLOWING, [(u7::ZERO, true), (u7::ONE, true)]);
   assert_eq!(OVERFLOWING_ARRAY, [(Bytes::MAX, true), (Bytes::MIN, true)]);
@@ -1303,6 +1326,22 @@ fn arithmetic_in_constant_contexts() {
   assert_eq!(MAGNITUDES.1.to_limbs(), [0, 0, 0, 1 << 63]);
   assert_eq!(CARRIES, [(u256::ZERO, true), (u256::MAX, true)]);
   assert_eq!(ABS, [i7::new(5), i7::MIN, i7::MAX]);
+  assert_eq!(
+    UNCHECKED,
+    (
+      u7::MAX,
+      Uint::<U8, u8>::MAX,
+      Byte::MAX.wrapping_sub(&Byte::ONE)
+    )
+  );
+  assert_eq!(
+    UNCHECKED_SIGNED,
+    (
+      i7::MAX,
+      [Int::<U8, i8>::MIN, Int::<U8, i8>::MAX],
+      [Bytes::MIN, Bytes::MIN.wrapping_add(&Bytes::ONE)]
+    )
+  );
 }
 
 /// Uses the operators, `Sum` and `Product` that the bound `B: BitWidth` gives `Uint<B>` and
@@ -1382,4 +1421,128 @@ fn reference_operators_need_only_the_storage_trait() {
     signed(minus_ten, three).map(|value| value.to_string()),
     ["-7", "-13", "-30", "10"]
   );
+}
+
+/// The values of `bits` bits that `from` creates from their value: every value, or under Miri every
+/// 7th.
+fn every_value<T>(bits: u32, signed: bool, from: impl Fn(i128) -> T) -> Vec<T> {
+  let (min, max) = range(bits, signed);
+  let step = if cfg!(miri) { 7 } else { 1 };
+  (min..=max).step_by(step).map(from).collect()
+}
+
+/// Checks the `unchecked_*` methods at every pair of `$values`, and with `neg` `unchecked_neg` at
+/// every value, against the checked methods: each is called only where the checked method returns
+/// a value, and must return that value.
+macro_rules! check_unchecked {
+  (@neg $x:ident) => {
+    if let Some(negated) = $x.checked_neg() {
+      // SAFETY: `checked_neg` returns `Some`, which is the precondition of `unchecked_neg`.
+      assert_eq!(unsafe { $x.unchecked_neg() }, negated, "-{}", $x);
+    }
+  };
+  ($values:expr $(, $neg:ident)?) => {{
+    let values = $values;
+    for x in &values {
+      $(check_unchecked!(@$neg x);)?
+      for y in &values {
+        if let Some(sum) = x.checked_add(y) {
+          // SAFETY: `checked_add` returns `Some`, which is the precondition of `unchecked_add`.
+          assert_eq!(unsafe { x.unchecked_add(y) }, sum, "{x} + {y}");
+        }
+        if let Some(difference) = x.checked_sub(y) {
+          // SAFETY: `checked_sub` returns `Some`, which is the precondition of `unchecked_sub`.
+          assert_eq!(unsafe { x.unchecked_sub(y) }, difference, "{x} - {y}");
+        }
+        if let Some(product) = x.checked_mul(y) {
+          // SAFETY: `checked_mul` returns `Some`, which is the precondition of `unchecked_mul`.
+          assert_eq!(unsafe { x.unchecked_mul(y) }, product, "{x} * {y}");
+        }
+      }
+    }
+  }};
+}
+
+/// Checks the `unchecked_*` methods of `Uint` and `Int` of `$bits` bits, the width `$width`, at
+/// every value and every pair: `native` in `$uint` and `$int`, and `array` in `[$limb; $n]`.
+macro_rules! check_unchecked_storage {
+  (native $width:ty, $bits:expr, $uint:ident, $int:ident) => {{
+    check_unchecked!(every_value($bits, false, |v| Uint::<$width, $uint>::new(
+      v as $uint
+    )));
+    check_unchecked!(
+      every_value($bits, true, |v| Int::<$width, $int>::new(v as $int)),
+      neg
+    );
+  }};
+  (array $width:ty, $bits:expr, [$limb:ident; $n:literal]) => {{
+    check_unchecked!(every_value($bits, false, |v| {
+      Uint::<$width, [$limb; $n]>::checked_from_limbs(limbs_of(v)).expect("in range")
+    }));
+    check_unchecked!(
+      every_value($bits, true, |v| {
+        Int::<$width, [$limb; $n]>::checked_from_limbs(limbs_of(v)).expect("in range")
+      }),
+      neg
+    );
+  }};
+}
+
+/// The `unchecked_*` methods return what the checked methods return wherever these return a value,
+/// at every value and every pair of zero, one, 7 and 8 bits: in native integers at a partial width
+/// and at their full width, where they call the native `unchecked_*`, and in arrays of no limbs,
+/// one limb and two limbs. No other input is passed, here or in any test: the standard library
+/// checks the preconditions of unsafe functions in debug builds and aborts on a violation, and in
+/// release builds a violation is undefined behavior.
+#[test]
+fn unchecked_methods_return_the_checked_results() {
+  check_unchecked_storage!(native U0, 0, u8, i8);
+  check_unchecked_storage!(native U1, 1, u8, i8);
+  check_unchecked_storage!(native U7, 7, u8, i8);
+  check_unchecked_storage!(native U8, 8, u8, i8);
+  check_unchecked_storage!(native U8, 8, u16, i16);
+  check_unchecked_storage!(array U0, 0, [u8; 0]);
+  check_unchecked_storage!(array U0, 0, [u64; 1]);
+  check_unchecked_storage!(array U1, 1, [u8; 1]);
+  check_unchecked_storage!(array U7, 7, [u8; 1]);
+  check_unchecked_storage!(array U8, 8, [u8; 1]);
+  check_unchecked_storage!(array U7, 7, [u64; 1]);
+  check_unchecked_storage!(array U8, 8, [u8; 2]);
+}
+
+/// The same at the edge and random values of `big_samples`, in native integers at a partial and at
+/// their full width and in arrays of several limbs at a partial and at a full width.
+#[test]
+#[cfg_attr(
+  all(miri, target_pointer_width = "32"),
+  ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+)]
+fn unchecked_methods_return_the_checked_results_in_wide_storages() {
+  macro_rules! samples {
+    ($width:ty, $bits:literal; $($uint:ty, $int:ty);+ $(;)?) => {$(
+      check_unchecked!(
+        big_samples($bits, false, 16)
+          .iter()
+          .map(<Uint<$width, $uint>>::from_big)
+          .collect::<Vec<_>>()
+      );
+      check_unchecked!(
+        big_samples($bits, true, 16)
+          .iter()
+          .map(<Int<$width, $int>>::from_big)
+          .collect::<Vec<_>>(),
+        neg
+      );
+    )+};
+  }
+  samples!(U9, 9; u16, i16; [u8; 2], [u8; 2]);
+  samples!(U16, 16; u16, i16; [u8; 2], [u8; 2]);
+  samples!(U24, 24; u32, i32; [u16; 2], [u16; 2]);
+  samples!(U32, 32; u32, i32; [u16; 2], [u16; 2]);
+  samples!(U63, 63; u64, i64; [u32; 2], [u32; 2]);
+  samples!(U64, 64; u64, i64; [u32; 2], [u32; 2]);
+  samples!(U127, 127; u128, i128; [u64; 2], [u64; 2]);
+  samples!(U128, 128; u128, i128; [u64; 2], [u64; 2]);
+  samples!(U200, 200; [u64; 4], [u64; 4]; [u128; 2], [u128; 2]);
+  samples!(U256, 256; [u64; 4], [u64; 4]; [u128; 2], [u128; 2]);
 }
