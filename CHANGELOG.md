@@ -30,6 +30,8 @@ FEATURES
     digits, and `widen` and `try_convert` convert between native and wide storages. The 154th digit
     is available only with an explicit `u512`, as in `Decimal<U154, U0, u512>`, because no signed
     storage holds it.
+  - The errors `ParseErrorKind`, `ConvertError`, `QuantizeError` and `DivideError` have a
+    `const fn` predicate for each variant, such as `is_out_of_range`.
 - `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown` and
   `HalfEven`. Rounding happens only where a mode is given, for native and wide storages alike:
   - `round_to` converts to any decimal type as `try_convert` does, but rounds dropped fraction
@@ -87,7 +89,40 @@ FEATURES
   - Numeric `Eq`, `Ord` and `Hash`, where the hash depends only on the value and `Bits`: every
     storage writes the same 64-bit words, a native integer those of a one-limb array. Decimal
     `Display` and `Debug`, the latter also under the hexadecimal flags, and `Default`, which is
-    zero. There is no arithmetic yet.
+    zero.
+  - The arithmetic of the native integers at the width `Bits`, as `const fn`s of every storage:
+    `overflowing_*`, `checked_*`, `wrapping_*` and `strict_*` addition, subtraction, multiplication
+    and negation, and `saturating_*` addition, subtraction and multiplication; `carrying_add` and
+    `borrowing_sub` for `Uint`; `saturating_neg`, the absolute value as `overflowing_abs`,
+    `checked_abs`, `wrapping_abs`, `saturating_abs`, `strict_abs` and `abs`, `unsigned_abs`, which
+    returns the `Uint` of the same width, and `signum` for `Int`; `is_one`; and the constant `ONE`
+    from one bit for `Uint` and from two bits for `Int`, so that `u0`, `i0` and `i1` have none. The
+    strict methods panic on overflow in every build, with the messages of the native integers.
+  - `unchecked_add`, `unchecked_sub` and `unchecked_mul`, and `unchecked_neg` for `Int`, as
+    `const unsafe fn`s of every storage: the caller guarantees that the `checked_*` method of the
+    same operation would return `Some`, and the behavior is undefined otherwise.
+  - The operators `+`, `-` and `*` in every form of values and references, `+=`, `-=` and `*=` for
+    a value and a reference, `-` for `Int`, `Sum`, and `Product` where `ONE` exists, for every
+    storage. On overflow they repeat a native overflow, so that `overflow-checks` decides whether
+    they panic or wrap, as for the native integers: with a per-package override, an unoptimized
+    build follows the setting of this crate, and an optimized build panics only when both crates
+    check. A panic reports the expression of the caller, and a panicking compound assignment leaves
+    its target unchanged. `abs` handles `MIN` in the same way.
+  - The sealed traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`,
+    `UncheckedOps` and `HasOne`, each with one implementation for every storage; `is_one`, the
+    operators, their compound assignments and `Sum` on `FixedInteger`, the methods of each sign on
+    `UnsignedFixedInteger` and `SignedFixedInteger`, which also requires `Neg` and has
+    `unchecked_neg`, and `Product` on `HasOne`. The unsafe methods of the traits have the contract
+    of the inherent ones. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` the families and
+    the operators, and `ONE` with `B: NonZero` for `Uint<B>` or `B: IsGreater<U1, Output = True>`
+    for `Int<B>`. The sealed storage traits `UintReprMut` and `IntReprMut`, which every native
+    integer and array implements and `InlineUintRepr` and `InlineIntRepr` now require, bound the
+    compound assignments.
+  - Each storage has its own arithmetic methods, so a path to a method that leaves the storage to
+    inference, such as `Uint::checked_add(&a, &b)`, is ambiguous (E0034); method syntax or a path
+    with the storage, such as `Uint::<U7>::checked_add(&a, &b)`, resolves it. Generic code bounded
+    by these traits and by traits of other crates with the same names, such as `is_zero`, `is_one`,
+    `ZERO` or `ONE`, names the trait in the path.
   - `FitsBits` and `FillsRepr`, which relate a width to the storages that hold it and to the
     storages that it fills, with compile-time diagnostics, the sealed storage traits `UintRepr` and
     `IntRepr`, and `InlineUintRepr` and `InlineIntRepr` for the storages that hold the value inline.
@@ -110,5 +145,8 @@ FEATURES
     one implementation for every storage of a kind and mirrors the inherent items for generic
     code; the bound `B: BitWidth` gives `Uint<B>` and `Int<B>` `FixedInteger` and the sign traits.
     The traits are not `const`; constant contexts use the inherent `const fn`s.
+- The arithmetic methods of `Decimal`, `Uint` and `Int`, inherent and in the traits, take the
+  receiver and the operands by reference, as in `a.checked_add(&b)`, so that a call does not copy a
+  wide value, while the operators keep the signatures of their standard traits.
 - `Storage`, `DigitCount`, `FitsDigits`, `Layout`, `Widen`, `WidenRepr` and `Pick`: the type-level
   capacity and sign checks, with compile-time diagnostics for invalid digit counts and storages.

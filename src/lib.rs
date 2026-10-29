@@ -20,11 +20,11 @@
 //! let quantity: Quantity = "0.0015".parse()?;
 //!
 //! // The product type, `Decimal<U22, U16>`, is computed by the compiler; nothing is rounded.
-//! let notional = price.exact_mul(quantity);
+//! let notional = price.exact_mul(&quantity);
 //! assert_eq!(notional.to_string(), "96.37575");
 //!
 //! // Sums are checked against the decimal range, not only the storage range.
-//! assert_eq!(Price::MAX.checked_add(price), None);
+//! assert_eq!(Price::MAX.checked_add(&price), None);
 //! # Ok::<(), numo::ParseError>(())
 //! ```
 //!
@@ -99,25 +99,37 @@
 //! [`FitsBits`] relates a width to the storages that hold it, [`FillsRepr`] to the storages that it
 //! fills, and [`Limbs<Bits, L>`](Limbs) names the array of limbs of type `L` that holds it.
 //!
-//! Each type has the constants `BITS`, `ZERO`, `MIN` and `MAX`. In a native integer, its `const fn`
-//! constructors are `new`, which panics if the value does not fit in `Bits` bits, and `try_new`,
-//! which returns [`TryNewError`] instead, and `value` returns the value. In an array, they are
-//! `from_limbs`, for a width that fills its limbs, and `checked_from_limbs`, which checks that the
-//! limbs hold a value of `Bits` bits, and `to_limbs` and `as_limbs` return the limbs. Its
-//! `const fn` queries are `is_zero`, and for `Int` also `is_negative` and `is_positive`. Values
-//! compare, hash and format by their numeric value, alike in every storage. There is no integer
-//! arithmetic yet.
+//! Each type has the constants `BITS`, `ZERO`, `MIN` and `MAX`, and `ONE` from one bit for `Uint`
+//! and from two bits for `Int`. In a native integer, its `const fn` constructors are `new`, which
+//! panics if the value does not fit in `Bits` bits, and `try_new`, which returns [`TryNewError`]
+//! instead, and `value` returns the value. In an array, they are `from_limbs`, for a width that
+//! fills its limbs, and `checked_from_limbs`, which checks that the limbs hold a value of `Bits`
+//! bits, and `to_limbs` and `as_limbs` return the limbs. Its `const fn` queries are `is_zero` and
+//! `is_one`, and for `Int` also `is_negative` and `is_positive`. Values compare, hash and format by
+//! their numeric value, alike in every storage.
+//!
+//! Each type also has the arithmetic of the native integers at its width, as `const fn`s:
+//! addition, subtraction, multiplication and negation in the `checked_*`, `wrapping_*`,
+//! `overflowing_*`, `saturating_*` and `strict_*` forms, `carrying_add` and `borrowing_sub` for
+//! `Uint`, `abs` and its forms, `unsigned_abs` and `signum` for `Int`, and the operators `+`, `-`
+//! and `*`, which panic or wrap on overflow as the native integers do (see
+//! [Overflow](Uint#overflow)). Addition, subtraction and multiplication, and negation for `Int`,
+//! also have the `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the
+//! `checked_*` method would return `Some`.
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
-//! storage of a kind: [`FixedInteger`], with the constants and `is_zero`, [`UnsignedFixedInteger`]
-//! and [`SignedFixedInteger`], and for the construction of each kind [`NativeInteger`],
+//! storage of a kind: [`FixedInteger`], with the constants, `is_zero`, `is_one` and the operators,
+//! [`UnsignedFixedInteger`] and [`SignedFixedInteger`], with the methods of each sign, [`HasOne`],
+//! with `ONE`, the families [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`],
+//! [`StrictOps`] and [`UncheckedOps`], and for the construction of each kind [`NativeInteger`],
 //! [`ArrayInteger`] and [`FromLimbs`]. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
-//! [`FixedInteger`] and the sign traits. The traits are not `const`, so constant contexts use the
-//! inherent `const fn`s, which a concrete type reaches without importing a trait.
+//! [`FixedInteger`], the sign traits and the families, and `HasOne` with a width that holds one.
+//! The traits are not `const`, so constant contexts use the inherent `const fn`s, which a concrete
+//! type reaches without importing a trait.
 //!
 //! ```
 //! use numo::{
-//!   BitWidth, FixedInteger, Int, Uint, i256,
+//!   BitWidth, CheckedOps, FixedInteger, Int, Uint, i256,
 //!   typenum::{U7, U24, U200},
 //!   u7,
 //! };
@@ -144,12 +156,23 @@
 //! assert!(Uint::<U7>::try_new(128).is_err());
 //! assert_eq!(Uint::<U200>::MAX, U200x4::MAX);
 //!
+//! // The arithmetic of 7 bits, which wraps at 128.
+//! assert_eq!(SMALL + u7::new(27), u7::MAX);
+//! assert_eq!(SMALL.checked_add(&u7::new(28)), None);
+//! assert_eq!(SMALL.wrapping_add(&u7::new(28)), u7::ZERO);
+//!
 //! // Generic code over the width alone.
 //! fn count_zeros<B: BitWidth>(values: &[Int<B>]) -> usize {
 //!   values.iter().filter(|value| value.is_zero()).count()
 //! }
 //! assert_eq!(count_zeros(&[Int::<U7>::ZERO, Int::<U7>::MIN]), 1);
 //! assert_eq!(count_zeros(&[Int::<U200>::ZERO; 3]), 3);
+//!
+//! fn total<B: BitWidth>(values: &[Uint<B>]) -> Option<Uint<B>> {
+//!   values.iter().try_fold(Uint::<B>::ZERO, |sum, value| sum.checked_add(value))
+//! }
+//! assert_eq!(total(&[u7::new(100), u7::new(27)]), Some(u7::MAX));
+//! assert_eq!(total(&[Uint::<U200>::MAX, Uint::<U200>::MAX]), None);
 //! ```
 //!
 //! # `typenum`
@@ -237,8 +260,8 @@
 //!
 //! proptest!(|(price in any::<Price>(), mode in any::<RoundingMode>())| {
 //!   let tick: Price = "0.01".parse().unwrap();
-//!   if let Ok(rounded) = price.quantize(tick, mode) {
-//!     prop_assert!(rounded.is_multiple_of(tick));
+//!   if let Ok(rounded) = price.quantize(&tick, mode) {
+//!     prop_assert!(rounded.is_multiple_of(&tick));
 //!   }
 //! });
 //! # }
@@ -259,7 +282,7 @@
 //! type Price = Decimal<U10, U8>;
 //!
 //! fn cancels(price: Price) -> bool {
-//!   price.checked_add(-price) == Some(Price::ZERO)
+//!   price.checked_add(&-price) == Some(Price::ZERO)
 //! }
 //!
 //! QuickCheck::new().quickcheck(cancels as fn(Price) -> bool);
@@ -287,16 +310,17 @@ pub use typenum;
 pub use aliases::*;
 pub use decimal::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
 pub use integer::{
-  ArrayInteger, FixedInteger, FromLimbs, Int, NativeInteger, SignedFixedInteger, TryNewError, Uint,
-  UnsignedFixedInteger,
+  ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, Int, NativeInteger, OverflowingOps,
+  SaturatingOps, SignedFixedInteger, StrictOps, TryNewError, Uint, UncheckedOps,
+  UnsignedFixedInteger, WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,
 };
 pub use rounding::RoundingMode;
 pub use width::{
-  ArraySize, BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, LimbArray,
-  Limbs, UintRepr,
+  ArraySize, BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntReprMut,
+  LimbArray, Limbs, UintRepr, UintReprMut,
 };
 
 pub mod aliases;

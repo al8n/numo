@@ -8,14 +8,20 @@
 use core::{
   fmt::{Debug, Display},
   hash::Hash,
+  iter::{Product, Sum},
+  ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
+
+use typenum::{IsGreater, NonZero, True, U1};
 
 use sealed::Sealed;
 
 use super::{Int, TryNewError, Uint};
 use crate::{
   layout::Token,
-  width::{FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, UintCore},
+  width::{
+    FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, UintCore, UintRepr,
+  },
 };
 
 mod sealed {
@@ -33,7 +39,9 @@ mod sealed {
 /// The constants and methods are the inherent items of the same names, which a concrete type
 /// reaches without this trait, also in constant contexts. Generic code reaches them through this
 /// trait, which the bound `B: BitWidth` provides on `Uint<B>` and `Int<B>`; a method call needs the
-/// trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`.
+/// trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`. The supertraits
+/// give generic code the operators `+`, `-` and `*`, their compound assignments and `Sum`, which
+/// on overflow panic or wrap as `overflow-checks` decides, as for the native integers.
 ///
 /// ```
 /// use numo::{
@@ -49,13 +57,34 @@ mod sealed {
 ///   values.iter().filter(|value| value.is_zero()).count()
 /// }
 ///
+/// fn total<T: FixedInteger>(values: &[T]) -> T {
+///   values.iter().copied().sum()
+/// }
+///
 /// assert!(is_max(u256::MAX) && is_max(Int::<U7>::MAX) && !is_max(Uint::<U7>::ZERO));
 /// assert_eq!(zeros(&[Uint::<U200>::ZERO, Uint::<U200>::MAX, Uint::<U200>::MIN]), 2);
 /// assert_eq!(<Int<U7> as FixedInteger>::BITS, 7);
+/// assert_eq!(total(&[Int::<U7>::new(50), Int::<U7>::new(-20)]), Int::<U7>::new(30));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait FixedInteger: Sealed + Copy + Eq + Ord + Hash + Debug + Display + Default {
+pub trait FixedInteger:
+  Sealed
+  + Copy
+  + Eq
+  + Ord
+  + Hash
+  + Debug
+  + Display
+  + Default
+  + Add<Output = Self>
+  + Sub<Output = Self>
+  + Mul<Output = Self>
+  + AddAssign
+  + SubAssign
+  + MulAssign
+  + Sum
+{
   /// The number of bits, `Bits`.
   const BITS: u32;
 
@@ -73,10 +102,14 @@ pub trait FixedInteger: Sealed + Copy + Eq + Ord + Hash + Debug + Display + Defa
 
 /// An unsigned integer of a fixed number of bits: [`Uint`].
 ///
+/// The carrying addition and the borrowing subtraction are the inherent methods of the same names,
+/// which a concrete type reaches without this trait, also in constant contexts.
+///
 /// ```
 /// use numo::{
 ///   BitWidth, FixedInteger, Uint, UnsignedFixedInteger,
 ///   typenum::{U7, U200},
+///   u7,
 /// };
 ///
 /// // The smallest unsigned value is zero.
@@ -90,12 +123,30 @@ pub trait FixedInteger: Sealed + Copy + Eq + Ord + Hash + Debug + Display + Defa
 ///
 /// assert!(is_min(smallest::<U7>()) && is_min(smallest::<U200>()));
 /// assert!(!is_min(numo::u256::MAX));
+///
+/// // Two numbers of two digits each, the least significant digit first.
+/// fn sum<B: BitWidth>(a: [Uint<B>; 2], b: [Uint<B>; 2]) -> ([Uint<B>; 2], bool) {
+///   let (low, carry) = a[0].carrying_add(&b[0], false);
+///   let (high, carry) = a[1].carrying_add(&b[1], carry);
+///   ([low, high], carry)
+/// }
+///
+/// let (digits, overflow) = sum([u7::MAX, u7::new(5)], [u7::new(1), u7::new(2)]);
+/// assert_eq!((digits, overflow), ([u7::ZERO, u7::new(8)], false));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait UnsignedFixedInteger: Sealed + Sized {}
+pub trait UnsignedFixedInteger: Sealed + Sized {
+  uint_sign_table!(trait_items![]);
+}
 
 /// A signed integer of a fixed number of bits, in two's complement: [`Int`].
+///
+/// The sign queries, the absolute value in its forms, `saturating_neg`, `signum`, `unsigned_abs`
+/// and the unsafe `unchecked_neg` are the inherent methods of the same names, which a concrete type
+/// reaches without this trait, also in constant contexts. The supertrait `Neg` gives generic code
+/// the operator `-`, which on overflow panics or wraps as `overflow-checks` decides, as for the
+/// native integers.
 ///
 /// ```
 /// use numo::{
@@ -112,17 +163,62 @@ pub trait UnsignedFixedInteger: Sealed + Sized {}
 ///   Uint::<B>::MAX
 /// }
 ///
+/// // The distance from zero, which also holds that of `MIN`.
+/// fn distance<B: BitWidth>(value: Int<B>) -> Uint<B> {
+///   value.unsigned_abs()
+/// }
+///
 /// assert_eq!(negatives(&[i256::MIN, i256::ZERO, i256::MAX]), 1);
 /// assert_eq!(unsigned_max(Int::<U7>::MIN), Uint::<U7>::MAX);
+/// assert_eq!(distance(Int::<U7>::MIN), Uint::<U7>::new(64));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait SignedFixedInteger: Sealed + Sized {
+pub trait SignedFixedInteger: Sealed + Sized + Neg<Output = Self> {
   /// The unsigned integer of the same width in a storage of the same size: `Uint<B, u8>` for
   /// `Int<B, i8>`, and so on, and `Uint<B, [L; N]>` for `Int<B, [L; N]>`.
   type Unsigned;
 
   signed_query_table!(trait_items![]);
+  int_sign_table!(trait_items![]);
+  signed_unchecked_table!(trait_items![]);
+}
+
+/// An integer that holds one: [`Uint`] of at least one bit and [`Int`] of at least two bits, over a
+/// native integer or an array of limbs.
+///
+/// `ONE` is the inherent constant of the same name, which a concrete type reaches without this
+/// trait, also in constant contexts. Zero bits hold only zero, so `Uint` of zero bits has no `ONE`,
+/// rather than one that is zero, and one bit holds only -1 and 0, so `Int` of fewer than two bits
+/// has none either, and neither has `Product`, which multiplies from `ONE`. Generic code over
+/// `B: BitWidth` adds `B: NonZero` for `Uint<B>`, or `B: IsGreater<U1, Output = True>` for
+/// `Int<B>`.
+///
+/// ```
+/// use numo::{BitWidth, CheckedOps, HasOne, Uint, typenum::NonZero, u7};
+///
+/// fn successor<B: BitWidth + NonZero>(value: Uint<B>) -> Option<Uint<B>> {
+///   value.checked_add(&Uint::<B>::ONE)
+/// }
+///
+/// fn is_unit<T: HasOne>(value: T) -> bool {
+///   value == T::ONE
+/// }
+///
+/// fn product<T: HasOne>(values: &[T]) -> T {
+///   values.iter().copied().product()
+/// }
+///
+/// assert_eq!(successor(u7::new(126)), Some(u7::MAX));
+/// assert_eq!(successor(u7::MAX), None);
+/// assert!(is_unit(u7::ONE) && !is_unit(u7::MAX));
+/// assert_eq!(product(&[u7::new(5), u7::new(25)]), u7::new(125));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait HasOne: FixedInteger + Product {
+  /// One.
+  const ONE: Self;
 }
 
 /// An integer stored in a native integer: [`Uint`] over `u8`, `u16`, `u32`, `u64` or `u128`, and
@@ -220,6 +316,156 @@ pub trait FromLimbs: ArrayInteger {
   fn from_limbs(limbs: Self::Array) -> Self;
 }
 
+/// Overflowing addition, subtraction, multiplication and negation: the result wrapped to the range
+/// of the type, and whether the exact result is outside that range.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope.
+///
+/// ```
+/// use numo::{BitWidth, OverflowingOps, Uint, u7};
+///
+/// fn wrapped_sum<B: BitWidth>(a: Uint<B>, b: Uint<B>) -> (Uint<B>, bool) {
+///   a.overflowing_add(&b)
+/// }
+///
+/// assert_eq!(wrapped_sum(u7::new(100), u7::new(27)), (u7::MAX, false));
+/// assert_eq!(wrapped_sum(u7::MAX, u7::new(1)), (u7::ZERO, true));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait OverflowingOps: Sealed + Sized {
+  overflowing_table!(trait_items![]);
+}
+
+/// Checked addition, subtraction, multiplication and negation, which return `None` when the exact
+/// result is outside the range of the type.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope.
+///
+/// ```
+/// use numo::{BitWidth, CheckedOps, Uint, u7};
+///
+/// fn total<B: BitWidth>(values: &[Uint<B>]) -> Option<Uint<B>> {
+///   values.iter().try_fold(Uint::<B>::ZERO, |sum, value| sum.checked_add(value))
+/// }
+///
+/// assert_eq!(total(&[u7::new(100), u7::new(27)]), Some(u7::MAX));
+/// assert_eq!(total(&[u7::MAX, u7::new(1)]), None);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait CheckedOps: Sealed + Sized {
+  checked_table!(trait_items![]);
+}
+
+/// Wrapping addition, subtraction, multiplication and negation, modulo `2^Bits`.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope.
+///
+/// ```
+/// use numo::{BitWidth, Int, WrappingOps, i7};
+///
+/// // The sum of the values modulo `2^Bits`.
+/// fn checksum<B: BitWidth>(values: &[Int<B>]) -> Int<B> {
+///   values.iter().fold(Int::<B>::ZERO, |sum, value| sum.wrapping_add(value))
+/// }
+///
+/// assert_eq!(checksum(&[i7::new(60), i7::new(-20)]), i7::new(40));
+/// assert_eq!(checksum(&[i7::MAX, i7::new(1)]), i7::MIN);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait WrappingOps: Sealed + Sized {
+  wrapping_table!(trait_items![]);
+}
+
+/// Saturating addition, subtraction and multiplication, which return the bound of the range of the
+/// type that the exact result passes.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope.
+///
+/// ```
+/// use numo::{BitWidth, SaturatingOps, Uint, u7};
+///
+/// fn clamped_total<B: BitWidth>(values: &[Uint<B>]) -> Uint<B> {
+///   values.iter().fold(Uint::<B>::ZERO, |sum, value| sum.saturating_add(value))
+/// }
+///
+/// assert_eq!(clamped_total(&[u7::new(100), u7::new(20)]), u7::new(120));
+/// assert_eq!(clamped_total(&[u7::new(100), u7::new(100)]), u7::MAX);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait SaturatingOps: Sealed + Sized {
+  saturating_table!(Uint, trait_items![]);
+}
+
+/// Strict addition, subtraction, multiplication and negation, which panic when the exact result is
+/// outside the range of the type, whatever the `overflow-checks` setting.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts, where an overflow fails to compile. Generic code, such as code over
+/// `B: BitWidth`, calls the methods with this trait in scope.
+///
+/// ```
+/// use numo::{BitWidth, StrictOps, Uint, u7};
+///
+/// // Panics if the total does not fit in `B` bits.
+/// fn total<B: BitWidth>(values: &[Uint<B>]) -> Uint<B> {
+///   values.iter().fold(Uint::<B>::ZERO, |sum, value| sum.strict_add(value))
+/// }
+///
+/// assert_eq!(total(&[u7::new(100), u7::new(27)]), u7::MAX);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait StrictOps: Sealed + Sized {
+  strict_table!(trait_items![]);
+}
+
+/// Unchecked addition, subtraction and multiplication, which assume that the exact result is in
+/// the range of the type.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const unsafe fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope. The methods are unsafe: their caller guarantees that the checked method of the
+/// same operation, such as [`checked_add`](CheckedOps::checked_add), would return `Some`, and the
+/// behavior is undefined otherwise. The unchecked negation of `Int` is a method of
+/// [`SignedFixedInteger`].
+///
+/// ```
+/// use numo::{BitWidth, UncheckedOps, Uint, u7};
+///
+/// // The distance between two values, the larger minus the smaller.
+/// fn distance<B: BitWidth>(a: Uint<B>, b: Uint<B>) -> Uint<B> {
+///   let (high, low) = if a < b { (b, a) } else { (a, b) };
+///   // SAFETY: `low` is at most `high`, so `checked_sub` would return `Some`.
+///   unsafe { high.unchecked_sub(&low) }
+/// }
+///
+/// assert_eq!(distance(u7::new(27), u7::new(100)), u7::new(73));
+/// assert_eq!(distance(u7::MAX, u7::ZERO), u7::MAX);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait UncheckedOps: Sealed + Sized {
+  unchecked_table!(trait_items![]);
+}
+
 // The constants are the inherent constants, which `Self::` names first.
 impl<B: FitsBits<R>, R: InlineUintRepr> FixedInteger for Uint<B, R> {
   const BITS: u32 = Self::BITS;
@@ -239,12 +485,24 @@ impl<B: FitsBits<R>, R: InlineIntRepr> FixedInteger for Int<B, R> {
   integer_query_table!(generic_items![]);
 }
 
-impl<B: FitsBits<R>, R: InlineUintRepr> UnsignedFixedInteger for Uint<B, R> {}
+impl<B: FitsBits<R>, R: InlineUintRepr> UnsignedFixedInteger for Uint<B, R> {
+  uint_sign_table!(generic_items![]);
+}
 
 impl<B: FitsBits<R>, R: InlineIntRepr> SignedFixedInteger for Int<B, R> {
   type Unsigned = Uint<B, <R as IntRepr>::Unsigned>;
 
   signed_query_table!(generic_items![]);
+  int_sign_table!(generic_items![]);
+  signed_unchecked_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> HasOne for Uint<B, R> {
+  const ONE: Self = Self::ONE;
+}
+
+impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: InlineIntRepr> HasOne for Int<B, R> {
+  const ONE: Self = Self::ONE;
 }
 
 impl<B, L, const N: usize> ArrayInteger for Uint<B, [L; N]>
@@ -321,6 +579,56 @@ where
   fn from_limbs(limbs: [L; N]) -> Self {
     Self::wrap(limbs)
   }
+}
+
+// The families whose methods read no constant need only the storage trait. `SaturatingOps` reads
+// `MIN` and `MAX`, so it needs a storage that holds the value inline.
+impl<B: FitsBits<R>, R: UintRepr> OverflowingOps for Uint<B, R> {
+  overflowing_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> OverflowingOps for Int<B, R> {
+  overflowing_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: UintRepr> CheckedOps for Uint<B, R> {
+  checked_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> CheckedOps for Int<B, R> {
+  checked_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: UintRepr> WrappingOps for Uint<B, R> {
+  wrapping_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> WrappingOps for Int<B, R> {
+  wrapping_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: InlineUintRepr> SaturatingOps for Uint<B, R> {
+  saturating_table!(Uint, generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: InlineIntRepr> SaturatingOps for Int<B, R> {
+  saturating_table!(Int, generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: UintRepr> StrictOps for Uint<B, R> {
+  strict_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> StrictOps for Int<B, R> {
+  strict_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: UintRepr> UncheckedOps for Uint<B, R> {
+  unchecked_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> UncheckedOps for Int<B, R> {
+  unchecked_table!(generic_items![]);
 }
 
 #[cfg(test)]

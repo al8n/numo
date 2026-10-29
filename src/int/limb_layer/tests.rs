@@ -164,6 +164,95 @@ macro_rules! limb_layer_tests {
       maximal_products::<8>();
     }
 
+    /// Checks `overflowing_mul` at the full width of `N` limbs against `num-bigint`, with the
+    /// operands of `maximal_products` and seeded random ones.
+    fn overflowing_products<const N: usize>() {
+      let max = bigint::from_limbs(&[Limb::MAX; N], false);
+      let root = max.sqrt();
+      let mut operands = vec![
+        BigInt::ZERO,
+        BigInt::from(1u8),
+        root.clone(),
+        &root + 1u8,
+        max.clone(),
+        BigInt::from(Limb::MAX),
+        bigint::from_limbs(&ones_below::<N>(N - 1), false),
+        bigint::from_limbs(&boundary::<N>(N - 1), false),
+      ];
+      let mut rng = Rng(0x6f7e_7f10 ^ N as u64);
+      let count = if cfg!(miri) { 4 } else { 64 };
+      operands.extend((0..count).map(|_| bigint::from_limbs(&rng.limbs::<N>(), false)));
+      let modulus = &max + 1u8;
+      for a in &operands {
+        for b in &operands {
+          let product = a * b;
+          let (Some(limbs_a), Some(limbs_b)) = (
+            bigint::to_limbs_of::<Limb, N>(a, false),
+            bigint::to_limbs_of(b, false),
+          ) else {
+            panic!("operands fit");
+          };
+          let (wrapped, overflow) = overflowing_mul(&limbs_a, &limbs_b);
+          assert_eq!(
+            bigint::from_limbs(&wrapped, false),
+            &product % &modulus,
+            "{a} * {b}"
+          );
+          assert_eq!(overflow, product > max, "{a} * {b}");
+        }
+      }
+    }
+
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn overflowing_mul_matches_big_integers() {
+      overflowing_products::<1>();
+      overflowing_products::<2>();
+      overflowing_products::<3>();
+      overflowing_products::<4>();
+      overflowing_products::<5>();
+      overflowing_products::<6>();
+      overflowing_products::<7>();
+      overflowing_products::<8>();
+    }
+
+    /// `2^(B * i) * 2^(B * j)` carries out of no limb, so only the partial products past the top
+    /// limb report its overflow: the product is `2^(B * (i + j))`, which overflows exactly when
+    /// `i + j >= N`, and then wraps to zero.
+    fn boundary_products<const N: usize>() {
+      for i in 0..N {
+        for j in 0..N {
+          let expected = if i + j < N {
+            (boundary::<N>(i + j), false)
+          } else {
+            ([0; N], true)
+          };
+          assert_eq!(
+            overflowing_mul(&boundary::<N>(i), &boundary::<N>(j)),
+            expected,
+            "2^({B} * {i}) * 2^({B} * {j})"
+          );
+        }
+      }
+    }
+
+    #[test]
+    fn boundary_products_overflow_past_the_top_limb() {
+      boundary_products::<1>();
+      boundary_products::<2>();
+      boundary_products::<3>();
+      boundary_products::<4>();
+      boundary_products::<5>();
+      boundary_products::<6>();
+      boundary_products::<7>();
+      boundary_products::<8>();
+      // No limbs hold only zero, whose square does not overflow.
+      assert_eq!(overflowing_mul::<0>(&[], &[]), ([], false));
+    }
+
     fn division_by_every_power<const N: usize>() {
       let max = bigint::from_limbs(&[Limb::MAX; N], false);
       for value in [
@@ -563,6 +652,65 @@ macro_rules! limb_layer_tests {
       widths_against_big_integers::<8>();
       widths_against_big_integers::<16>();
       widths_against_big_integers::<64>();
+    }
+
+    /// Checks the arithmetic of each width of `N` limbs against `num-bigint`: the result wrapped
+    /// to the width, the overflow flag, and that the result has the width.
+    fn arithmetic_bits_against_big_integers<const N: usize>() {
+      let mut rng = Rng(0xa817_5eed ^ N as u64);
+      for bits in bigint::arithmetic_widths(B, N) {
+        let (min, max) = (bigint::min(bits, false), bigint::max(bits, false));
+        // No limbs hold only zero, from which nothing random is drawn.
+        let samples = bigint::arithmetic_samples(bits, B, &min, &max, || match N {
+          0 => BigInt::ZERO,
+          _ => bigint::from_limbs(&rng.limbs::<N>(), false),
+        });
+        let limbs: Vec<[Limb; N]> = samples
+          .iter()
+          .map(|value| bigint::to_limbs_of(value, false).expect("in range"))
+          .collect();
+        // `exact` is `lhs op rhs`, and `computed` its result in the layer.
+        let check = |exact: BigInt, computed: ([Limb; N], bool), lhs: &BigInt, op, rhs: &BigInt| {
+          let (result, overflow) = computed;
+          assert_eq!(
+            bigint::from_limbs(&result, false),
+            bigint::wrap(&exact, bits, &min),
+            "{lhs} {op} {rhs} in {bits} bits"
+          );
+          assert_eq!(
+            overflow,
+            exact < min || max < exact,
+            "{lhs} {op} {rhs} in {bits} bits"
+          );
+          assert!(fits_bits(&result, bits), "{lhs} {op} {rhs} in {bits} bits");
+        };
+        let (zero, one) = (BigInt::ZERO, BigInt::from(1u8));
+        for (a, limbs_a) in samples.iter().zip(&limbs) {
+          assert_eq!(is_one(limbs_a), *a == one, "{a}");
+          check(-a, overflowing_neg_bits(limbs_a, bits), &zero, '-', a);
+          for (b, limbs_b) in samples.iter().zip(&limbs) {
+            for (exact, op, computed) in [
+              (a + b, '+', overflowing_add_bits(limbs_a, limbs_b, bits)),
+              (a - b, '-', overflowing_sub_bits(limbs_a, limbs_b, bits)),
+              (a * b, '*', overflowing_mul_bits(limbs_a, limbs_b, bits)),
+            ] {
+              check(exact, computed, a, op, b);
+            }
+          }
+        }
+      }
+    }
+
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn arithmetic_bits_match_big_integers() {
+      arithmetic_bits_against_big_integers::<0>();
+      arithmetic_bits_against_big_integers::<1>();
+      arithmetic_bits_against_big_integers::<2>();
+      arithmetic_bits_against_big_integers::<3>();
     }
 
     fn digits_into_a_slice<const N: usize>() {
@@ -1027,6 +1175,71 @@ macro_rules! limb_layer_tests {
       widths_against_big_integers::<64>();
     }
 
+    /// Checks the arithmetic of each width of `N` limbs against `num-bigint`: the result wrapped
+    /// to the width, the overflow flag, and that the result has the width.
+    fn arithmetic_bits_against_big_integers<const N: usize>() {
+      let mut rng = Rng(0x5167_5eed ^ N as u64);
+      for bits in bigint::arithmetic_widths(B, N) {
+        let (min, max) = (bigint::min(bits, true), bigint::max(bits, true));
+        // No limbs hold only zero, from which nothing random is drawn.
+        let samples = bigint::arithmetic_samples(bits, B, &min, &max, || match N {
+          0 => BigInt::ZERO,
+          _ => bigint::from_limbs(&rng.signed::<N>(), true),
+        });
+        let limbs: Vec<[Limb; N]> = samples
+          .iter()
+          .map(|value| bigint::to_limbs_of(value, true).expect("in range"))
+          .collect();
+        // `exact` is `lhs op rhs`, and `computed` its result in the layer.
+        let check = |exact: BigInt, computed: ([Limb; N], bool), lhs: &BigInt, op, rhs: &BigInt| {
+          let (result, overflow) = computed;
+          assert_eq!(
+            bigint::from_limbs(&result, true),
+            bigint::wrap(&exact, bits, &min),
+            "{lhs} {op} {rhs} in {bits} bits"
+          );
+          assert_eq!(
+            overflow,
+            exact < min || max < exact,
+            "{lhs} {op} {rhs} in {bits} bits"
+          );
+          assert!(fits_bits(&result, bits), "{lhs} {op} {rhs} in {bits} bits");
+        };
+        let (zero, one) = (BigInt::ZERO, BigInt::from(1u8));
+        for (a, limbs_a) in samples.iter().zip(&limbs) {
+          assert_eq!(is_one(limbs_a), *a == one, "{a}");
+          let sign = if *a < zero { -1 } else { i8::from(*a > zero) };
+          assert_eq!(
+            bigint::from_limbs(&signum(limbs_a), true),
+            BigInt::from(sign),
+            "{a}"
+          );
+          check(-a, overflowing_neg_bits(limbs_a, bits), &zero, '-', a);
+          for (b, limbs_b) in samples.iter().zip(&limbs) {
+            for (exact, op, computed) in [
+              (a + b, '+', overflowing_add_bits(limbs_a, limbs_b, bits)),
+              (a - b, '-', overflowing_sub_bits(limbs_a, limbs_b, bits)),
+              (a * b, '*', overflowing_mul_bits(limbs_a, limbs_b, bits)),
+            ] {
+              check(exact, computed, a, op, b);
+            }
+          }
+        }
+      }
+    }
+
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn arithmetic_bits_match_big_integers() {
+      arithmetic_bits_against_big_integers::<0>();
+      arithmetic_bits_against_big_integers::<1>();
+      arithmetic_bits_against_big_integers::<2>();
+      arithmetic_bits_against_big_integers::<3>();
+    }
+
     /// The magnitude of `-2^4095`, the smallest value of 4096 bits, has 1233 digits, and that of
     /// `-2^511` has 154.
     #[test]
@@ -1295,20 +1508,45 @@ macro_rules! native_oracle {
     fn $name() {
       let samples: Vec<$native> = samples_of();
       let max_exp = $native::MAX.ilog10();
+      // At the full width, the arithmetic of a width is the native arithmetic.
+      let bits = $native::BITS;
       for &a in &samples {
         let limbs_a: [Limb; $n] = limbs_of(a);
         assert_eq!(is_zero(&limbs_a), a == 0);
         assert_eq!(is_positive(&limbs_a), a > 0);
+        assert_eq!(is_one(&limbs_a), a == 1);
+        let (negated, borrow) = a.overflowing_neg();
+        assert_eq!(
+          overflowing_neg_bits(&limbs_a, bits),
+          (limbs_of(negated), borrow)
+        );
         for &b in &samples {
           let limbs_b: [Limb; $n] = limbs_of(b);
           assert_eq!(cmp(&limbs_a, &limbs_b), a.cmp(&b));
           assert_eq!(le(&limbs_a, &limbs_b), a <= b);
           let (sum, carry) = a.overflowing_add(b);
           assert_eq!(overflowing_add(&limbs_a, &limbs_b), (limbs_of(sum), carry));
+          assert_eq!(
+            overflowing_add_bits(&limbs_a, &limbs_b, bits),
+            (limbs_of(sum), carry)
+          );
           let (difference, borrow) = a.overflowing_sub(b);
           assert_eq!(
             overflowing_sub(&limbs_a, &limbs_b),
             (limbs_of(difference), borrow)
+          );
+          assert_eq!(
+            overflowing_sub_bits(&limbs_a, &limbs_b, bits),
+            (limbs_of(difference), borrow)
+          );
+          let (product, overflow) = a.overflowing_mul(b);
+          assert_eq!(
+            overflowing_mul(&limbs_a, &limbs_b),
+            (limbs_of(product), overflow)
+          );
+          assert_eq!(
+            overflowing_mul_bits(&limbs_a, &limbs_b, bits),
+            (limbs_of(product), overflow)
           );
           assert_eq!(
             checked_add(&limbs_a, &limbs_b),
@@ -1369,6 +1607,8 @@ macro_rules! native_oracle {
     fn $name() {
       let samples: Vec<$native> = samples_of();
       let max_exp = $native::MAX.ilog10();
+      // At the full width, the arithmetic of a width is the native arithmetic.
+      let bits = $native::BITS;
       for &a in &samples {
         let limbs_a: [Limb; $n] = limbs_of(a);
         assert_eq!(is_negative(&limbs_a), a < 0);
@@ -1379,10 +1619,32 @@ macro_rules! native_oracle {
           assert_eq!(neg(&limbs_a), limbs_of(-a));
           assert_eq!(abs(&limbs_a), limbs_of(a.abs()));
         }
+        assert_eq!(is_one(&limbs_a), a == 1);
+        assert_eq!(signum(&limbs_a), limbs_of(a.signum()));
+        let (negated, overflow) = a.overflowing_neg();
+        assert_eq!(
+          overflowing_neg_bits(&limbs_a, bits),
+          (limbs_of(negated), overflow)
+        );
         for &b in &samples {
           let limbs_b: [Limb; $n] = limbs_of(b);
           assert_eq!(cmp(&limbs_a, &limbs_b), a.cmp(&b));
           assert_eq!(le(&limbs_a, &limbs_b), a <= b);
+          let (sum, overflow) = a.overflowing_add(b);
+          assert_eq!(
+            overflowing_add_bits(&limbs_a, &limbs_b, bits),
+            (limbs_of(sum), overflow)
+          );
+          let (difference, overflow) = a.overflowing_sub(b);
+          assert_eq!(
+            overflowing_sub_bits(&limbs_a, &limbs_b, bits),
+            (limbs_of(difference), overflow)
+          );
+          let (product, overflow) = a.overflowing_mul(b);
+          assert_eq!(
+            overflowing_mul_bits(&limbs_a, &limbs_b, bits),
+            (limbs_of(product), overflow)
+          );
           assert_eq!(
             checked_add(&limbs_a, &limbs_b),
             a.checked_add(b).map(limbs_of)

@@ -22,11 +22,12 @@
 
 `numo` 提供一组数字类型：大小是 [`typenum`](https://crates.io/crates/typenum)
 的类型层面数字，存储是在类型里指定的整数：原生整数，或者本 crate 的 192、256、320、384、448、512 位整数。容量在类型检查阶段核对，放不下位数的类型无法创建任何值。
+算术方法按引用接收 `self` 与操作数，例如 `a.checked_add(&b)`，因此调用时不会复制宽整数；运算符则保持标准库 trait 的签名。
 
 | 类型族 | 状态 |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`：精确的定点十进制数 | 已提供 |
-| `Uint<Bits, Repr>` 与 `Int<Bits, Repr>`：任意位宽的整数 | 已提供以最多 128 位的原生整数或 8、16、32、64、128 位 limb 存储的任意位宽，包括默认存储、别名 `u0`–`u1024` 与 `i0`–`i1024`、常量、带检查的构造、比较、哈希、格式化与泛型 trait；运算计划中 |
+| `Uint<Bits, Repr>` 与 `Int<Bits, Repr>`：任意位宽的整数 | 已提供以最多 128 位的原生整数或 8、16、32、64、128 位 limb 存储的任意位宽，包括默认存储、别名 `u0`–`u1024` 与 `i0`–`i1024`、常量、带检查的构造、比较、哈希、格式化，与原生整数各种溢出形式相同的加、减、乘与取负及其运算符，以及泛型 trait；除法、位运算与移位计划中 |
 | 标准格式的浮点类型，例如 `f16`、`bf16` 与 `f128` | 计划中 |
 | 上述整数类型的原子版本 | 计划中 |
 
@@ -52,11 +53,11 @@ fn main() -> Result<(), ParseError> {
   let quantity: Quantity = "0.0015".parse()?;
 
   // The product type, `Decimal<U22, U16>`, is computed by the compiler; nothing is rounded.
-  let notional = price.exact_mul(quantity);
+  let notional = price.exact_mul(&quantity);
   assert_eq!(notional.to_string(), "96.37575");
 
   // Sums are checked against the decimal range, not only the storage range.
-  assert_eq!(Price::MAX.checked_add(price), None);
+  assert_eq!(Price::MAX.checked_add(&price), None);
 
   Ok(())
 }
@@ -143,17 +144,24 @@ fn main() -> Result<(), ParseError> {
 `Uint<U8192>` 或 `Uint<U24, [u8; 3]>`；`typenum` 没有常量的位宽要用运算得出，例如 1500 位写作
 `Uint<Sum<U1024, U476>>`。
 
-- `const` 常量与方法：`BITS`、`ZERO`、`MIN` 与 `MAX`；原生整数存储有 `new`（值放不下时 panic）、`try_new`
-  （改为返回错误）与 `value`；limb 数组存储有位宽填满 limb 时的 `from_limbs`、适用于任意位宽的
-  `checked_from_limbs`（limb 中的值超出 `Bits` 位的范围时返回 `None`），以及 `to_limbs` 与 `as_limbs`；
-  `is_zero`，`Int` 还有 `is_negative` 与 `is_positive`。
+- `const` 常量与方法：`BITS`、`ZERO`、`MIN` 与 `MAX`，以及 `ONE`（`Uint` 至少 1 位、`Int` 至少 2 位时才有）；
+  原生整数存储有 `new`（值放不下时 panic）、`try_new`（改为返回错误）与 `value`；limb 数组存储有位宽填满
+  limb 时的 `from_limbs`、适用于任意位宽的 `checked_from_limbs`（limb 中的值超出 `Bits` 位的范围时返回
+  `None`），以及 `to_limbs` 与 `as_limbs`；`is_zero` 与 `is_one`，`Int` 还有 `is_negative` 与 `is_positive`。
+- 与原生整数相同、按位宽 `Bits` 计算的算术，均为 `const fn`：`checked_*`、`wrapping_*`、`overflowing_*`、
+  `saturating_*` 与 `strict_*` 各种形式的加、减、乘与取负，`Uint` 的 `carrying_add` 与 `borrowing_sub`，
+  以及 `Int` 的 `abs` 及其各种形式、`unsigned_abs` 与 `signum`。加、减、乘（`Int` 还有取负）另有
+  `unchecked_*` 形式，均为 `const unsafe fn`，调用者须保证对应的 `checked_*` 方法会返回 `Some`。
+  运算符 `+`、`-`、`*` 及其复合赋值、`Int` 的取负 `-`、`Sum` 与 `Product` 溢出时与原生整数一样，由
+  `overflow-checks` 决定 panic 还是回绕。
 - 按数值的相等、比较与哈希，哈希只取决于值与 `Bits`，与存储无关；十进制格式化；`Default` 为零。
 - 供泛型代码使用的 trait，每类存储各只有一个实现：`FixedInteger`、`UnsignedFixedInteger`、
-  `SignedFixedInteger`、`NativeInteger`、`ArrayInteger` 与 `FromLimbs`；加上 `B: BitWidth` 约束后，
-  泛型代码可以对 0 到 65536 位的任意位宽使用 `Uint<B>` 与 `Int<B>`。
+  `SignedFixedInteger`、`HasOne`、`NativeInteger`、`ArrayInteger` 与 `FromLimbs`，以及算术 trait
+  `OverflowingOps`、`CheckedOps`、`WrappingOps`、`SaturatingOps`、`StrictOps` 与 `UncheckedOps`；加上
+  `B: BitWidth` 约束后，泛型代码可以对 0 到 65536 位的任意位宽使用 `Uint<B>` 与 `Int<B>`。
 - 存储放不下的位宽、`2^32` 位及以上的位宽，以及带前导零位的位宽写法（`typenum` 的常量与运算结果都不会这样写），在类型检查阶段就会报错；没有写出存储且超过 65536 位的位宽也一样。
 
-它们的运算计划中。
+除法与取余、位运算与移位计划中。
 
 #### License
 

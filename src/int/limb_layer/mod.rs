@@ -73,6 +73,13 @@ macro_rules! limb_layer {
       !is_zero(value)
     }
 
+    /// Returns `true` if `value` is one, which no limbs hold.
+    #[inline]
+    pub(crate) const fn is_one<const N: usize>(value: &[Limb; N]) -> bool {
+      // `one` needs a limb to set.
+      N > 0 && eq(value, &one())
+    }
+
     /// Compares the unsigned integers formed by the limbs below index `top`. Requires `top <= N`.
     pub(crate) const fn cmp_below<const N: usize>(
       lhs: &[Limb; N],
@@ -201,6 +208,47 @@ macro_rules! limb_layer {
         i += 1;
       }
       product
+    }
+
+    /// The index of the most significant nonzero limb, or `None` for zero.
+    const fn top_limb<const N: usize>(value: &[Limb; N]) -> Option<usize> {
+      let mut i = N;
+      while i > 0 {
+        i -= 1;
+        if value[i] != 0 {
+          return Some(i);
+        }
+      }
+      None
+    }
+
+    /// `lhs * rhs` modulo `2^(B * N)`, and whether the product is `2^(B * N)` or more.
+    pub(crate) const fn overflowing_mul<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+    ) -> ([Limb; N], bool) {
+      let mut product = [0; N];
+      // A partial product `lhs[i] * rhs[j]` with `i + j >= N` lands past the top limb unless a
+      // factor is zero. A zero factor, as every value of no limbs is, has no top limb.
+      let mut overflow = match (top_limb(lhs), top_limb(rhs)) {
+        (Some(i), Some(j)) => i + j >= N,
+        _ => false,
+      };
+      let mut i = 0;
+      while i < N {
+        let mut carry: Limb = 0;
+        let mut j = 0;
+        while i + j < N {
+          (product[i + j], carry) = $carrying_mul_add(lhs[i], rhs[j], carry, product[i + j]);
+          j += 1;
+        }
+        // The partial products that would land past the top limb are zero, so the rows hold the
+        // whole product, and it reaches `2^(B * N)` exactly when a row carries out of the top
+        // limb.
+        overflow |= carry != 0;
+        i += 1;
+      }
+      (product, overflow)
     }
 
     /// `value * 10^exp`, or `None` if the product is not representable.
@@ -614,6 +662,66 @@ macro_rules! limb_layer {
       max
     }
 
+    /// `value` modulo `2^bits`: every bit at index `bits` or above cleared. Requires
+    /// `bits <= B * N`.
+    pub(crate) const fn zero_extend<const N: usize>(value: &[Limb; N], bits: u32) -> [Limb; N] {
+      let mut extended = *value;
+      let mut i = (bits / Limb::BITS) as usize;
+      if i < N {
+        // The shift is below `B`, so it does not overflow, and a shift of zero clears the limb.
+        extended[i] &= (1 << (bits % Limb::BITS)) - 1;
+        i += 1;
+        while i < N {
+          extended[i] = 0;
+          i += 1;
+        }
+      }
+      extended
+    }
+
+    /// `lhs + rhs` modulo `2^bits`, and whether the sum is `2^bits` or more. Requires
+    /// `bits <= B * N` and both values below `2^bits`.
+    pub(crate) const fn overflowing_add_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let (raw, carry) = overflowing_add(lhs, rhs);
+      (zero_extend(&raw, bits), carry || !fits_bits(&raw, bits))
+    }
+
+    /// `lhs - rhs` modulo `2^bits`, and whether `rhs > lhs`. Requires `bits <= B * N` and both
+    /// values below `2^bits`.
+    pub(crate) const fn overflowing_sub_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let (raw, borrow) = overflowing_sub(lhs, rhs);
+      (zero_extend(&raw, bits), borrow || !fits_bits(&raw, bits))
+    }
+
+    /// `lhs * rhs` modulo `2^bits`, and whether the product is `2^bits` or more. Requires
+    /// `bits <= B * N` and both values below `2^bits`.
+    pub(crate) const fn overflowing_mul_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let (raw, overflow) = overflowing_mul(lhs, rhs);
+      (zero_extend(&raw, bits), overflow || !fits_bits(&raw, bits))
+    }
+
+    /// `-value` modulo `2^bits`, and whether `value` is not zero. Requires `bits <= B * N` and
+    /// `value` below `2^bits`.
+    pub(crate) const fn overflowing_neg_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let (raw, borrow) = overflowing_sub(&[0; N], value);
+      (zero_extend(&raw, bits), borrow || !fits_bits(&raw, bits))
+    }
+
     /// Zero-extends or truncates `value` to `M` limbs.
     pub(crate) const fn resize<const N: usize, const M: usize>(value: &[Limb; N]) -> [Limb; M] {
       let mut resized = [0; M];
@@ -665,6 +773,24 @@ macro_rules! limb_layer {
     #[inline]
     pub(crate) const fn is_positive<const N: usize>(value: &[Limb; N]) -> bool {
       !is_negative(value) && !is_zero(value)
+    }
+
+    /// Returns `true` if `value` is one, which no limbs hold.
+    #[inline]
+    pub(crate) const fn is_one<const N: usize>(value: &[Limb; N]) -> bool {
+      $unsigned::is_one(value)
+    }
+
+    /// `-1`, `0` or `1` as the sign of `value`.
+    pub(crate) const fn signum<const N: usize>(value: &[Limb; N]) -> [Limb; N] {
+      if is_negative(value) {
+        [Limb::MAX; N]
+      } else if $unsigned::is_zero(value) {
+        [0; N]
+      } else {
+        // A positive value has a limb, which `one` sets.
+        $unsigned::one()
+      }
     }
 
     /// Compares `lhs` and `rhs`: the top limbs as `SignedLimb`, then the others as `Limb`, most
@@ -1015,6 +1141,72 @@ macro_rules! limb_layer {
         i += 1;
       }
       min
+    }
+
+    /// `lhs + rhs` wrapped to `bits` bits, and whether the sum is outside the range of `bits`
+    /// bits. Requires `bits <= B * N` and both values within that range.
+    pub(crate) const fn overflowing_add_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let (raw, _) = $unsigned::overflowing_add(lhs, rhs);
+      // The sum overflows `B * N` bits when the operands have the same sign and the wrapped sum
+      // the other.
+      let overflow = is_negative(lhs) == is_negative(rhs) && is_negative(&raw) != is_negative(lhs);
+      let wrapped = sign_extend(&raw, bits);
+      (wrapped, overflow || !$unsigned::eq(&wrapped, &raw))
+    }
+
+    /// `lhs - rhs` wrapped to `bits` bits, and whether the difference is outside the range of
+    /// `bits` bits. Requires `bits <= B * N` and both values within that range.
+    pub(crate) const fn overflowing_sub_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let (raw, _) = $unsigned::overflowing_sub(lhs, rhs);
+      // The difference overflows `B * N` bits when the operands have different signs and the
+      // wrapped difference has the sign of `rhs`.
+      let overflow = is_negative(lhs) != is_negative(rhs) && is_negative(&raw) != is_negative(lhs);
+      let wrapped = sign_extend(&raw, bits);
+      (wrapped, overflow || !$unsigned::eq(&wrapped, &raw))
+    }
+
+    /// `lhs * rhs` wrapped to `bits` bits, and whether the product is outside the range of `bits`
+    /// bits. Requires `bits <= B * N` and both values within that range.
+    pub(crate) const fn overflowing_mul_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let negative = is_negative(lhs) != is_negative(rhs);
+      let (magnitude, carried) = $unsigned::overflowing_mul(&unsigned_abs(lhs), &unsigned_abs(rhs));
+      // The wrapped product is the magnitude modulo `2^(B * N)` with the sign of the product, and
+      // it overflows `B * N` bits when the magnitude does not fit them with that sign.
+      let raw = if negative {
+        wrapping_neg(&magnitude)
+      } else {
+        magnitude
+      };
+      let overflow = carried || checked_from_magnitude(&magnitude, negative).is_none();
+      let wrapped = sign_extend(&raw, bits);
+      (wrapped, overflow || !$unsigned::eq(&wrapped, &raw))
+    }
+
+    /// `-value` wrapped to `bits` bits, and whether `value` is the smallest value of `bits` bits,
+    /// whose negation is outside the range. Requires `bits <= B * N` and `value` within that
+    /// range.
+    pub(crate) const fn overflowing_neg_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let raw = wrapping_neg(value);
+      // Only `MIN` of `B * N` bits, whose sign the negation keeps, negates out of range. Zero
+      // keeps its sign as well, and does not overflow.
+      let overflow = !$unsigned::is_zero(value) && is_negative(&raw) == is_negative(value);
+      let wrapped = sign_extend(&raw, bits);
+      (wrapped, overflow || !$unsigned::eq(&wrapped, &raw))
     }
 
     /// The unsigned integer `value` in `M` limbs of two's complement, or `None` if it is not

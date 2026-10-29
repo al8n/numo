@@ -188,6 +188,8 @@ jobs:
         key: ${{ runner.os }}-coverage-dotcargo
     - name: Run test
       run: cargo hack test --each-feature
+    - name: Run the arithmetic tests without overflow checks
+      run: cargo test --release --lib integer::arithmetic
   
   sanitizer:
     name: sanitizer

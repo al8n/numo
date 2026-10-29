@@ -124,6 +124,56 @@ fn two_limbs_match_u128() {
   }
 }
 
+/// At the full width of one and two limbs, the arithmetic of a width and `overflowing_mul` are the
+/// overflowing arithmetic of `u64` and `u128`.
+#[test]
+fn full_width_arithmetic_matches_u64_and_u128() {
+  for a in samples() {
+    let limbs_a = from_u128(a);
+    assert_eq!(is_one(&limbs_a), a == 1);
+    let (negated, borrow) = a.overflowing_neg();
+    assert_eq!(
+      overflowing_neg_bits(&limbs_a, 128),
+      (from_u128(negated), borrow)
+    );
+    if let Ok(a) = u64::try_from(a) {
+      let (negated, borrow) = a.overflowing_neg();
+      assert_eq!(overflowing_neg_bits(&[a], 64), ([negated], borrow));
+    }
+    for b in samples() {
+      let limbs_b = from_u128(b);
+      let (sum, carry) = a.overflowing_add(b);
+      assert_eq!(
+        overflowing_add_bits(&limbs_a, &limbs_b, 128),
+        (from_u128(sum), carry)
+      );
+      let (difference, borrow) = a.overflowing_sub(b);
+      assert_eq!(
+        overflowing_sub_bits(&limbs_a, &limbs_b, 128),
+        (from_u128(difference), borrow)
+      );
+      let (product, overflow) = a.overflowing_mul(b);
+      assert_eq!(
+        overflowing_mul(&limbs_a, &limbs_b),
+        (from_u128(product), overflow)
+      );
+      assert_eq!(
+        overflowing_mul_bits(&limbs_a, &limbs_b, 128),
+        (from_u128(product), overflow)
+      );
+      if let (Ok(a), Ok(b)) = (u64::try_from(a), u64::try_from(b)) {
+        let (sum, carry) = a.overflowing_add(b);
+        assert_eq!(overflowing_add_bits(&[a], &[b], 64), ([sum], carry));
+        let (difference, borrow) = a.overflowing_sub(b);
+        assert_eq!(overflowing_sub_bits(&[a], &[b], 64), ([difference], borrow));
+        let (product, overflow) = a.overflowing_mul(b);
+        assert_eq!(overflowing_mul(&[a], &[b]), ([product], overflow));
+        assert_eq!(overflowing_mul_bits(&[a], &[b], 64), ([product], overflow));
+      }
+    }
+  }
+}
+
 #[test]
 fn division_matches_u64_and_u128() {
   let samples = bigint::thin(samples());

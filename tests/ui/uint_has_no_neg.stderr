@@ -1,0 +1,11 @@
+error[E0600]: cannot apply unary operator `-` to type `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>`
+ --> tests/ui/uint_has_no_neg.rs:5:18
+  |
+5 |   let _negated = -u7::ONE;
+  |                  ^^^^^^^^ cannot apply unary operator `-`
+  |
+note: `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` does not implement `Neg`
+ --> src/integer/mod.rs
+  |
+  | pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` is defined in another crate

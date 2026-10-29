@@ -10,20 +10,26 @@
 //! Each storage has a module of the same name. For the native storages, the modules for `u8`
 //! through `u128` form the lower layer and the modules for `i8` through `i128` the upper layer.
 //! They also give `Uint` and `Int` over the native integers the limits of a width, `max_of_bits`
-//! and `min_of_bits`, and its range check, `fits_bits`, named as in the limb layers. The wide
-//! storages `u192` through `u512` and `i192` through `i512` hold arrays of 64-bit limbs, least
-//! significant first. Their modules apply `unsigned::b64`, the lower layer for `[u64; N]`, and
-//! `signed::b64`, the upper layer, which reads the array as two's complement. `Uint` and `Int`
-//! also store arrays of the other limb types, through `unsigned::b8`, `unsigned::b16`,
-//! `unsigned::b32` and `unsigned::b128` and the upper layers over them, `signed::b8`,
-//! `signed::b16`, `signed::b32` and `signed::b128`, which `limb_layer!` generates from the same
-//! code as `unsigned::b64` and `signed::b64`. No native integer has 256 bits, so `half_limbs!`
-//! computes the two primitives of the layer for `u128` from the 64-bit halves of each limb.
+//! and `min_of_bits`, its range check, `fits_bits`, and its arithmetic, such as
+//! `overflowing_add_bits`, named as in the limb layers: the functions that take `bits` serve `Uint`
+//! and `Int`, at the width `bits`. The wide storages `u192` through `u512` and `i192` through
+//! `i512` hold arrays of 64-bit limbs, least significant first. Their modules apply
+//! `unsigned::b64`, the lower layer for `[u64; N]`, and `signed::b64`, the upper layer, which reads
+//! the array as two's complement. `Uint` and `Int` also store arrays of the other limb types,
+//! through `unsigned::b8`, `unsigned::b16`, `unsigned::b32` and `unsigned::b128` and the upper
+//! layers over them, `signed::b8`, `signed::b16`, `signed::b32` and `signed::b128`, which
+//! `limb_layer!` generates from the same code as `unsigned::b64` and `signed::b64`. No native
+//! integer has 256 bits, so `half_limbs!` computes the two primitives of the layer for `u128` from
+//! the 64-bit halves of each limb.
 //!
-//! Every storage module provides `const fn`s with the same names and contracts, so storage-specific
-//! code calls them in constant contexts, and storage-generic code reaches them through the sealed
-//! storage trait. Each module also converts its values to and from limbs (two limbs for a native
-//! storage), which conversions between storages of different widths go through.
+//! Storage-specific code calls the `const fn`s of the storage modules in constant contexts; a
+//! function has the same name and contract in every module that provides it. A native module takes
+//! its values by value, as the native integers do, and a wide module takes them by reference, so
+//! that a call does not copy the limbs. Storage-generic code reaches the core through the sealed
+//! storage trait, which calls the module of a native storage and lends the limbs of a wide storage
+//! to its limb layer. A native module also converts its values to and from two limbs, and a wide
+//! module from its limbs: conversions between storages of different widths go through limbs, which
+//! a wide value lends.
 //!
 //! Preconditions are stated per function. Callers establish them from the coefficient bound
 //! `|c| <= 10^digits - 1` that every `Decimal` maintains. A violated precondition is a bug in this
@@ -156,6 +162,15 @@ macro_rules! native {
       pub(crate) const fn fits_bits(value: $uint, bits: u32) -> bool {
         value <= max_of_bits(bits)
       }
+
+      /// `value` modulo `2^bits`: every bit at index `bits` or above cleared. Requires
+      /// `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn zero_extend(value: $uint, bits: u32) -> $uint {
+        value & max_of_bits(bits)
+      }
+
+      native!(@bits $uint, zero_extend);
     }
   };
   (signed $int:ident => $uint:ident) => {
@@ -187,6 +202,18 @@ macro_rules! native {
       #[inline]
       pub(crate) const fn abs(value: $int) -> $int {
         value.abs()
+      }
+
+      /// `|value|` as an unsigned integer, which also holds `|MIN|`.
+      #[inline]
+      pub(crate) const fn unsigned_abs(value: $int) -> $uint {
+        value.unsigned_abs()
+      }
+
+      /// `-1`, `0` or `1` as the sign of `value`.
+      #[inline]
+      pub(crate) const fn signum(value: $int) -> $int {
+        value.signum()
       }
 
       /// Writes the decimal digits of `|value|` to the end of `buf`, without leading zeros (zero
@@ -300,6 +327,24 @@ macro_rules! native {
       pub(crate) const fn fits_bits(value: $int, bits: u32) -> bool {
         min_of_bits(bits) <= value && value <= max_of_bits(bits)
       }
+
+      /// `value` with every bit at index `bits - 1` or above set to bit `bits - 1`: the two's
+      /// complement integer of `bits` bits in the low bits of `value`, or zero for zero bits.
+      /// Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn sign_extend(value: $int, bits: u32) -> $int {
+        // Zero bits hold only zero, and have no sign bit to copy. The shifts below would be by
+        // `BITS` bits, which overflows.
+        if bits == 0 {
+          0
+        } else {
+          // The arithmetic shift right copies bit `bits - 1`, shifted to the top, into the bits
+          // above it.
+          (value << ($int::BITS - bits)) >> ($int::BITS - bits)
+        }
+      }
+
+      native!(@bits $int, sign_extend);
     }
   };
   (@shared $int:ident) => {
@@ -313,6 +358,12 @@ macro_rules! native {
     #[inline]
     pub(crate) const fn is_positive(value: $int) -> bool {
       value > 0
+    }
+
+    /// Returns `true` if `value` is one.
+    #[inline]
+    pub(crate) const fn is_one(value: $int) -> bool {
+      value == 1
     }
 
     #[inline]
@@ -393,6 +444,46 @@ macro_rules! native {
   (@u128 $limbs:ident) => {
     $limbs[0] as u128 | ($limbs[1] as u128) << 64
   };
+  // The arithmetic at a width of `bits` bits, which wraps the result of the native operation
+  // with `$extend`, `zero_extend` or `sign_extend`. The operands have `bits` bits, so the result
+  // overflows `bits` bits when the native operation overflows or when wrapping changes it.
+  (@bits $int:ident, $extend:ident) => {
+    /// `lhs + rhs` wrapped to `bits` bits, and whether the exact sum is outside the range of
+    /// `bits` bits. Requires `bits <= BITS` and both values within that range.
+    #[inline]
+    pub(crate) const fn overflowing_add_bits(lhs: $int, rhs: $int, bits: u32) -> ($int, bool) {
+      let (raw, overflow) = lhs.overflowing_add(rhs);
+      let wrapped = $extend(raw, bits);
+      (wrapped, overflow || wrapped != raw)
+    }
+
+    /// `lhs - rhs` wrapped to `bits` bits, and whether the exact difference is outside the range
+    /// of `bits` bits. Requires `bits <= BITS` and both values within that range.
+    #[inline]
+    pub(crate) const fn overflowing_sub_bits(lhs: $int, rhs: $int, bits: u32) -> ($int, bool) {
+      let (raw, overflow) = lhs.overflowing_sub(rhs);
+      let wrapped = $extend(raw, bits);
+      (wrapped, overflow || wrapped != raw)
+    }
+
+    /// `lhs * rhs` wrapped to `bits` bits, and whether the exact product is outside the range of
+    /// `bits` bits. Requires `bits <= BITS` and both values within that range.
+    #[inline]
+    pub(crate) const fn overflowing_mul_bits(lhs: $int, rhs: $int, bits: u32) -> ($int, bool) {
+      let (raw, overflow) = lhs.overflowing_mul(rhs);
+      let wrapped = $extend(raw, bits);
+      (wrapped, overflow || wrapped != raw)
+    }
+
+    /// `-value` wrapped to `bits` bits, and whether the exact negation is outside the range of
+    /// `bits` bits. Requires `bits <= BITS` and `value` within that range.
+    #[inline]
+    pub(crate) const fn overflowing_neg_bits(value: $int, bits: u32) -> ($int, bool) {
+      let (raw, overflow) = value.overflowing_neg();
+      let wrapped = $extend(raw, bits);
+      (wrapped, overflow || wrapped != raw)
+    }
+  };
 }
 
 native!(unsigned u8);
@@ -417,7 +508,7 @@ macro_rules! wide {
       "]`."
     )]
     pub(crate) mod $uint {
-      use super::{DigitBuf, unsigned::b64};
+      use super::unsigned::b64;
       use crate::{$uint, rounding::RoundingMode};
 
       wide!(@shared $uint, b64, $limbs);
@@ -432,25 +523,25 @@ macro_rules! wide {
       "]` in two's complement."
     )]
     pub(crate) mod $int {
-      use super::{DigitBuf, signed::b64};
+      use super::signed::b64;
       use crate::{$int, rounding::RoundingMode};
 
       wide!(@shared $int, b64, $limbs);
 
       #[inline]
-      pub(crate) const fn is_negative(value: $int) -> bool {
+      pub(crate) const fn is_negative(value: &$int) -> bool {
         b64::is_negative(value.as_limbs())
       }
 
       /// `-value`. Requires `value != MIN`.
       #[inline]
-      pub(crate) const fn neg(value: $int) -> $int {
+      pub(crate) const fn neg(value: &$int) -> $int {
         $int::from_limbs(b64::neg(value.as_limbs()))
       }
 
       /// `|value|`. Requires `value != MIN`.
       #[inline]
-      pub(crate) const fn abs(value: $int) -> $int {
+      pub(crate) const fn abs(value: &$int) -> $int {
         $int::from_limbs(b64::abs(value.as_limbs()))
       }
     }
@@ -459,22 +550,22 @@ macro_rules! wide {
     pub(crate) const ZERO: $ty = $ty::ZERO;
 
     #[inline]
-    pub(crate) const fn is_zero(value: $ty) -> bool {
+    pub(crate) const fn is_zero(value: &$ty) -> bool {
       $layer::is_zero(value.as_limbs())
     }
 
     #[inline]
-    pub(crate) const fn is_positive(value: $ty) -> bool {
+    pub(crate) const fn is_positive(value: &$ty) -> bool {
       $layer::is_positive(value.as_limbs())
     }
 
     #[inline]
-    pub(crate) const fn le(lhs: $ty, rhs: $ty) -> bool {
+    pub(crate) const fn le(lhs: &$ty, rhs: &$ty) -> bool {
       $layer::le(lhs.as_limbs(), rhs.as_limbs())
     }
 
     #[inline]
-    pub(crate) const fn checked_add(lhs: $ty, rhs: $ty) -> Option<$ty> {
+    pub(crate) const fn checked_add(lhs: &$ty, rhs: &$ty) -> Option<$ty> {
       match $layer::checked_add(lhs.as_limbs(), rhs.as_limbs()) {
         Some(sum) => Some($ty::from_limbs(sum)),
         None => None,
@@ -482,17 +573,11 @@ macro_rules! wide {
     }
 
     #[inline]
-    pub(crate) const fn checked_sub(lhs: $ty, rhs: $ty) -> Option<$ty> {
+    pub(crate) const fn checked_sub(lhs: &$ty, rhs: &$ty) -> Option<$ty> {
       match $layer::checked_sub(lhs.as_limbs(), rhs.as_limbs()) {
         Some(difference) => Some($ty::from_limbs(difference)),
         None => None,
       }
-    }
-
-    /// `lhs * rhs`. Requires the product to be representable.
-    #[inline]
-    pub(crate) const fn mul(lhs: $ty, rhs: $ty) -> $ty {
-      $ty::from_limbs($layer::mul(lhs.as_limbs(), rhs.as_limbs()))
     }
 
     /// `10^exp`. Requires `10^exp` to be representable.
@@ -510,32 +595,15 @@ macro_rules! wide {
 
     /// `value * 10^exp`. Requires the product to be representable.
     #[inline]
-    pub(crate) const fn mul_pow10(value: $ty, exp: u32) -> $ty {
+    pub(crate) const fn mul_pow10(value: &$ty, exp: u32) -> $ty {
       $ty::from_limbs($layer::mul_pow10(value.as_limbs(), exp))
-    }
-
-    /// `value * 10^exp`, or `None` if the product is not representable.
-    #[inline]
-    pub(crate) const fn checked_mul_pow10(value: $ty, exp: u32) -> Option<$ty> {
-      match $layer::checked_mul_pow10(value.as_limbs(), exp) {
-        Some(product) => Some($ty::from_limbs(product)),
-        None => None,
-      }
-    }
-
-    /// Quotient and remainder of `value / 10^exp`, rounding toward zero. For a signed type, as with
-    /// `/` and `%`, both have the sign of `value`.
-    #[inline]
-    pub(crate) const fn div_rem_pow10(value: $ty, exp: u32) -> ($ty, $ty) {
-      let (quotient, remainder) = $layer::div_rem_pow10(value.as_limbs(), exp);
-      ($ty::from_limbs(quotient), $ty::from_limbs(remainder))
     }
 
     /// Quotient and remainder of `lhs / rhs`, rounding toward zero. For a signed type, as with `/`
     /// and `%`, the remainder has the sign of `lhs`. Requires `rhs != 0`, and for a signed type
     /// not `lhs == MIN` with `rhs == -1`.
     #[inline]
-    pub(crate) const fn div_rem(lhs: $ty, rhs: $ty) -> ($ty, $ty) {
+    pub(crate) const fn div_rem(lhs: &$ty, rhs: &$ty) -> ($ty, $ty) {
       let (quotient, remainder) = $layer::div_rem(lhs.as_limbs(), rhs.as_limbs());
       ($ty::from_limbs(quotient), $ty::from_limbs(remainder))
     }
@@ -545,8 +613,8 @@ macro_rules! wide {
     /// quotient away from zero. Requires `divisor > 0`.
     #[inline]
     pub(crate) const fn round_div(
-      value: $ty,
-      divisor: $ty,
+      value: &$ty,
+      divisor: &$ty,
       mode: RoundingMode,
     ) -> ($ty, $ty, bool) {
       let (rounded, remainder, away) =
@@ -554,24 +622,12 @@ macro_rules! wide {
       ($ty::from_limbs(rounded), $ty::from_limbs(remainder), away)
     }
 
-    /// Writes the decimal digits of the magnitude of `value` to the end of `buf`, without leading
-    /// zeros (zero is a single `0`), and returns the index of the first digit.
-    #[inline]
-    pub(crate) const fn write_digits(value: $ty, buf: &mut DigitBuf) -> usize {
-      $layer::write_digits(value.as_limbs(), buf)
-    }
-
     /// Appends the ASCII digits in `bytes[start..end]` to `value`, computing `value * 10 + d` for
     /// each digit `d` and skipping every other byte, such as the separators `_` and `.`. Requires
     /// `value` not to be negative and a representable result.
     #[inline]
-    pub(crate) const fn push_digits(value: $ty, bytes: &[u8], start: usize, end: usize) -> $ty {
+    pub(crate) const fn push_digits(value: &$ty, bytes: &[u8], start: usize, end: usize) -> $ty {
       $ty::from_limbs($layer::push_digits(value.as_limbs(), bytes, start, end))
-    }
-
-    #[inline]
-    pub(crate) const fn to_limbs(value: $ty) -> [u64; $limbs] {
-      value.to_limbs()
     }
 
     #[inline]

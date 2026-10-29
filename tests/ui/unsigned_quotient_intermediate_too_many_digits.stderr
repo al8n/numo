@@ -1,8 +1,8 @@
 error[E0277]: the intermediate of `div_round` has more than 153 digits
   --> tests/ui/unsigned_quotient_intermediate_too_many_digits.rs:11:69
    |
-11 |   let _quotient: Result<Decimal<U10, U11, u128>, _> = lhs.div_round(rhs, RoundingMode::Down);
-   |                                                           --------- ^^^ `Integral + max(Fraction, F2 + F3)` or `I2 + max(F2 + F3, Fraction) - F3` is greater than 153
+11 |   let _quotient: Result<Decimal<U10, U11, u128>, _> = lhs.div_round(&rhs, RoundingMode::Down);
+   |                                                           --------- ^^^^ `Integral + max(Fraction, F2 + F3)` or `I2 + max(F2 + F3, Fraction) - F3` is greater than 153
    |                                                           |
    |                                                           required by a bound introduced by this call
    |

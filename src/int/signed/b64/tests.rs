@@ -36,6 +36,65 @@ fn samples() -> Vec<i128> {
   values
 }
 
+/// At the full width of one and two limbs, the arithmetic of a width is the overflowing arithmetic
+/// of `i64` and `i128`.
+#[test]
+fn full_width_arithmetic_matches_i64_and_i128() {
+  for a in samples() {
+    let limbs_a = from_i128(a);
+    assert_eq!(is_one(&limbs_a), a == 1);
+    assert_eq!(signum(&limbs_a), from_i128(a.signum()));
+    let (negated, overflow) = a.overflowing_neg();
+    assert_eq!(
+      overflowing_neg_bits(&limbs_a, 128),
+      (from_i128(negated), overflow)
+    );
+    if let Ok(a) = i64::try_from(a) {
+      let (negated, overflow) = a.overflowing_neg();
+      assert_eq!(
+        overflowing_neg_bits(&[a as u64], 64),
+        ([negated as u64], overflow)
+      );
+    }
+    for b in samples() {
+      let limbs_b = from_i128(b);
+      let (sum, overflow) = a.overflowing_add(b);
+      assert_eq!(
+        overflowing_add_bits(&limbs_a, &limbs_b, 128),
+        (from_i128(sum), overflow)
+      );
+      let (difference, overflow) = a.overflowing_sub(b);
+      assert_eq!(
+        overflowing_sub_bits(&limbs_a, &limbs_b, 128),
+        (from_i128(difference), overflow)
+      );
+      let (product, overflow) = a.overflowing_mul(b);
+      assert_eq!(
+        overflowing_mul_bits(&limbs_a, &limbs_b, 128),
+        (from_i128(product), overflow)
+      );
+      if let (Ok(a), Ok(b)) = (i64::try_from(a), i64::try_from(b)) {
+        let (limbs_a, limbs_b) = ([a as u64], [b as u64]);
+        let (sum, overflow) = a.overflowing_add(b);
+        assert_eq!(
+          overflowing_add_bits(&limbs_a, &limbs_b, 64),
+          ([sum as u64], overflow)
+        );
+        let (difference, overflow) = a.overflowing_sub(b);
+        assert_eq!(
+          overflowing_sub_bits(&limbs_a, &limbs_b, 64),
+          ([difference as u64], overflow)
+        );
+        let (product, overflow) = a.overflowing_mul(b);
+        assert_eq!(
+          overflowing_mul_bits(&limbs_a, &limbs_b, 64),
+          ([product as u64], overflow)
+        );
+      }
+    }
+  }
+}
+
 #[test]
 fn one_limb_matches_i64() {
   let samples: Vec<i64> = samples()

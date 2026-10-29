@@ -19,7 +19,8 @@ pub(crate) use sealed::{IntCore, IntWidth, TypenumNumber, UintCore, UintWidth};
 
 use sealed::{
   ArrayLimb, BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr,
-  InlineIntConsts, InlineUintConsts, LimbFor, NativeBitsFit, NativeReprFilled, ReprFilled, Width,
+  InlineIntConsts, InlineUintConsts, LimbFor, MutableRepr, NativeBitsFit, NativeReprFilled,
+  ReprFilled, Width,
 };
 
 use crate::{
@@ -127,6 +128,11 @@ mod sealed {
 
   impl NativeReprFilled for typenum::B1 {}
 
+  /// Seals [`UintReprMut`](super::UintReprMut) and [`IntReprMut`](super::IntReprMut): the
+  /// storages that hold the value in place, which every native integer and every array of limbs
+  /// does.
+  pub trait MutableRepr {}
+
   /// Seals [`LimbArray`](super::LimbArray). Each impl requires `Bits: Unsigned`, which `typenum`
   /// seals, so that no other crate can implement `LimbArray` for a limb type with a width of its
   /// own type.
@@ -137,6 +143,10 @@ mod sealed {
     /// Zero.
     const ZERO: Self;
 
+    /// One. `Uint` reads it only for a width of at least one bit, which an array of no limbs does
+    /// not hold, and whose `ONE` fails to evaluate.
+    const ONE: Self;
+
     /// The constants of `Uint<B, Self>` that depend on the width `B`.
     type Width<B: FitsBits<Self>>: UintWidth<Self>;
   }
@@ -145,6 +155,10 @@ mod sealed {
   pub trait InlineIntConsts: IntRepr + Copy {
     /// Zero.
     const ZERO: Self;
+
+    /// One. `Int` reads it only for a width of at least two bits, which an array of no limbs does
+    /// not hold, and whose `ONE` fails to evaluate.
+    const ONE: Self;
 
     /// The constants of `Int<B, Self>` that depend on the width `B`.
     type Width<B: FitsBits<Self>>: IntWidth<Self>;
@@ -238,6 +252,25 @@ mod sealed {
     /// Returns `true` if the value has `bits` bits: every bit at index `bits` or above is zero.
     /// Requires `bits` to be at most the bits of the storage.
     fn fits_bits(&self, bits: u32, token: Token) -> bool;
+
+    /// `self + rhs` modulo `2^bits`, and whether the sum is `2^bits` or more. Requires `bits` to
+    /// be at most the bits of the storage and both values to have `bits` bits.
+    fn overflowing_add_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self - rhs` modulo `2^bits`, and whether `rhs` is greater than `self`. Requires `bits` to
+    /// be at most the bits of the storage and both values to have `bits` bits.
+    fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self * rhs` modulo `2^bits`, and whether the product is `2^bits` or more. Requires `bits`
+    /// to be at most the bits of the storage and both values to have `bits` bits.
+    fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `-self` modulo `2^bits`, and whether `self` is not zero. Requires `bits` to be at most the
+    /// bits of the storage and the value to have `bits` bits.
+    fn overflowing_neg_bits(&self, bits: u32, token: Token) -> (Self, bool);
+
+    /// Returns `true` if the value is one.
+    fn is_one(&self, token: Token) -> bool;
   }
 
   /// Seals [`IntRepr`](super::IntRepr) and gives the trait implementations of [`Int`](crate::Int)
@@ -246,6 +279,10 @@ mod sealed {
   /// As for [`UintCore`], each method takes a [`Token`]. They rely on the width invariant of
   /// `Int`: the representation, read as a two's complement integer, equals the value.
   pub trait IntCore: Sized {
+    /// The storage of the absolute value of a value as an unsigned integer, which also holds the
+    /// absolute value of the smallest value: [`IntRepr::Unsigned`](super::IntRepr::Unsigned).
+    type Magnitude;
+
     /// Zero.
     fn zero(token: Token) -> Self;
 
@@ -273,6 +310,35 @@ mod sealed {
 
     /// Returns `true` if the value is positive.
     fn is_positive(&self, token: Token) -> bool;
+
+    /// `self + rhs` wrapped to `bits` bits, and whether the sum is outside the range of `bits`
+    /// bits. Requires `bits` to be at most the bits of the storage and both values to have `bits`
+    /// bits.
+    fn overflowing_add_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self - rhs` wrapped to `bits` bits, and whether the difference is outside the range of
+    /// `bits` bits. Requires `bits` to be at most the bits of the storage and both values to have
+    /// `bits` bits.
+    fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self * rhs` wrapped to `bits` bits, and whether the product is outside the range of `bits`
+    /// bits. Requires `bits` to be at most the bits of the storage and both values to have `bits`
+    /// bits.
+    fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `-self` wrapped to `bits` bits, and whether the negation is outside the range of `bits`
+    /// bits, as it is only for the smallest value. Requires `bits` to be at most the bits of the
+    /// storage and the value to have `bits` bits.
+    fn overflowing_neg_bits(&self, bits: u32, token: Token) -> (Self, bool);
+
+    /// Returns `true` if the value is one.
+    fn is_one(&self, token: Token) -> bool;
+
+    /// `-1`, `0` or `1` as the sign of the value.
+    fn signum(&self, token: Token) -> Self;
+
+    /// The absolute value as an unsigned integer, which has the bits of the value.
+    fn unsigned_abs(&self, token: Token) -> Self::Magnitude;
   }
 }
 
@@ -360,8 +426,12 @@ where
 /// `u128`, holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first.
 ///
-/// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default` for every `Repr`
-/// that implements this trait. This trait is sealed and cannot be implemented outside this crate.
+/// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
+/// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
+/// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
+/// [`UncheckedOps`](crate::UncheckedOps), and the operators `+`, `-` and `*` on two references, as
+/// in `&a + &b`, for every `Repr` that implements this trait. This trait is sealed and cannot be
+/// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
   note = "`Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`"
@@ -373,39 +443,63 @@ pub trait UintRepr: Eq + UintCore {}
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first, in
 /// two's complement.
 ///
-/// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default` for every `Repr`
-/// that implements this trait. This trait is sealed and cannot be implemented outside this crate.
+/// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
+/// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
+/// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
+/// [`UncheckedOps`](crate::UncheckedOps), the operators `+`, `-` and `*` on two references, as in
+/// `&a + &b`, and the negation `-` of a reference, for every `Repr` that implements this trait.
+/// This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
 )]
-pub trait IntRepr: Eq + IntCore {
+pub trait IntRepr: Eq + IntCore<Magnitude = <Self as IntRepr>::Unsigned> {
   /// The storage of [`Uint`](crate::Uint) of the same size: `u8` for `i8`, `u16` for `i16`, and so
   /// on, and the same array for an array of limbs.
   type Unsigned: UintRepr;
 }
 
+/// A storage of [`Uint`](crate::Uint) that holds the value in place, so that the integers have the
+/// compound assignment operators `+=`, `-=` and `*=`.
+///
+/// Every storage of this crate implements it: the native unsigned integers and the arrays of
+/// limbs. This trait is sealed and cannot be implemented outside this crate.
+pub trait UintReprMut: UintRepr + MutableRepr {}
+
+/// A storage of [`Int`](crate::Int) that holds the value in place, so that the integers have the
+/// compound assignment operators `+=`, `-=` and `*=`.
+///
+/// Every storage of this crate implements it: the native signed integers and the arrays of limbs.
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait IntReprMut: IntRepr + MutableRepr {}
+
 /// A storage of [`Uint`](crate::Uint) that holds the value inline, so that the integer is `Copy`: a
 /// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`.
 ///
 /// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger) and [`UnsignedFixedInteger`](crate::UnsignedFixedInteger),
-/// for every `Repr` that implements this trait. The default storages of [`BitWidth`] are inline.
-/// This trait is sealed and cannot be implemented outside this crate.
-pub trait InlineUintRepr: UintRepr + Copy + InlineUintConsts {}
+/// [`FixedInteger`](crate::FixedInteger), with the operators `+`, `-` and `*` and `Sum`,
+/// [`UnsignedFixedInteger`](crate::UnsignedFixedInteger) and
+/// [`SaturatingOps`](crate::SaturatingOps), and from one bit it has the constant `ONE` and
+/// implements [`HasOne`](crate::HasOne), with `Product`, for every `Repr` that implements this
+/// trait. The default storages of [`BitWidth`] are inline. This trait is sealed and cannot be
+/// implemented outside this crate.
+pub trait InlineUintRepr: UintReprMut + Copy + InlineUintConsts {}
 
 /// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
 /// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`.
 ///
 /// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger) and [`SignedFixedInteger`](crate::SignedFixedInteger),
-/// for every `Repr` that implements this trait. The default storages of [`BitWidth`] are inline.
-/// This trait is sealed and cannot be implemented outside this crate.
-pub trait InlineIntRepr: IntRepr + Copy + InlineIntConsts {}
+/// [`FixedInteger`](crate::FixedInteger), with the operators `+`, `-` and `*` and `Sum`,
+/// [`SignedFixedInteger`](crate::SignedFixedInteger), with the operator `-`, and
+/// [`SaturatingOps`](crate::SaturatingOps), and from two bits it has the constant `ONE` and
+/// implements [`HasOne`](crate::HasOne), with `Product`, for every `Repr` that implements this
+/// trait. The default storages of [`BitWidth`] are inline. This trait is sealed and cannot be
+/// implemented outside this crate.
+pub trait InlineIntRepr: IntReprMut + Copy + InlineIntConsts {}
 
-/// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`InlineUintRepr`] and [`InlineIntRepr`]
-/// for the arrays of each limb type, written `limb: BitsLog2, lower, upper`, where `lower` and
-/// `upper` are the modules of its limb layers.
+/// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`],
+/// [`InlineUintRepr`] and [`InlineIntRepr`] for the arrays of each limb type, written
+/// `limb: BitsLog2, lower, upper`, where `lower` and `upper` are the modules of its limb layers.
 macro_rules! array_storage {
   ($($limb:ident: $bits_log2:ident, $lower:ident, $upper:ident);+ $(;)?) => {$(
     impl ArrayLimb for $limb {
@@ -444,6 +538,31 @@ macro_rules! array_storage {
       fn fits_bits(&self, bits: u32, _: Token) -> bool {
         unsigned::$lower::fits_bits(self, bits)
       }
+
+      #[inline]
+      fn overflowing_add_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_add_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_sub_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_mul_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_neg_bits(self, bits)
+      }
+
+      #[inline]
+      fn is_one(&self, _: Token) -> bool {
+        unsigned::$lower::is_one(self)
+      }
     }
 
     impl<const N: usize> IntRepr for [$limb; N] {
@@ -451,6 +570,8 @@ macro_rules! array_storage {
     }
 
     impl<const N: usize> IntCore for [$limb; N] {
+      type Magnitude = Self;
+
       #[inline]
       fn zero(_: Token) -> Self {
         [0; N]
@@ -499,12 +620,54 @@ macro_rules! array_storage {
       fn is_positive(&self, _: Token) -> bool {
         signed::$upper::is_positive(self)
       }
+
+      #[inline]
+      fn overflowing_add_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_add_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_sub_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_mul_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_neg_bits(self, bits)
+      }
+
+      #[inline]
+      fn is_one(&self, _: Token) -> bool {
+        signed::$upper::is_one(self)
+      }
+
+      #[inline]
+      fn signum(&self, _: Token) -> Self {
+        signed::$upper::signum(self)
+      }
+
+      #[inline]
+      fn unsigned_abs(&self, _: Token) -> Self {
+        signed::$upper::unsigned_abs(self)
+      }
     }
+
+    impl<const N: usize> MutableRepr for [$limb; N] {}
+
+    impl<const N: usize> UintReprMut for [$limb; N] {}
+
+    impl<const N: usize> IntReprMut for [$limb; N] {}
 
     impl<const N: usize> InlineUintRepr for [$limb; N] {}
 
     impl<const N: usize> InlineUintConsts for [$limb; N] {
       const ZERO: Self = [0; N];
+      const ONE: Self = unsigned::$lower::one();
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
     }
@@ -517,6 +680,7 @@ macro_rules! array_storage {
 
     impl<const N: usize> InlineIntConsts for [$limb; N] {
       const ZERO: Self = [0; N];
+      const ONE: Self = unsigned::$lower::one();
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
     }
@@ -536,9 +700,9 @@ array_storage!(
   u128: U7, b128, b128;
 );
 
-/// Implements [`UintRepr`], [`IntRepr`], [`InlineUintRepr`] and [`InlineIntRepr`] for the native
-/// integers, and their width relations, written `unsigned, signed: Bits`, where `Bits` is the
-/// number of bits of both.
+/// Implements [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`], [`InlineUintRepr`] and
+/// [`InlineIntRepr`] for the native integers, and their width relations, written
+/// `unsigned, signed: Bits`, where `Bits` is the number of bits of both.
 // Each native type has width impls of its own, as each array type constructor has: one impl over
 // every storage, bounded by a trait of the storages, would degrade the diagnostics of the arrays.
 macro_rules! native_storage {
@@ -578,6 +742,31 @@ macro_rules! native_storage {
       fn fits_bits(&self, bits: u32, _: Token) -> bool {
         int::$uint::fits_bits(*self, bits)
       }
+
+      #[inline]
+      fn overflowing_add_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_add_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_sub_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_mul_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_neg_bits(*self, bits)
+      }
+
+      #[inline]
+      fn is_one(&self, _: Token) -> bool {
+        int::$uint::is_one(*self)
+      }
     }
 
     impl IntRepr for $int {
@@ -585,6 +774,8 @@ macro_rules! native_storage {
     }
 
     impl IntCore for $int {
+      type Magnitude = $uint;
+
       #[inline]
       fn zero(_: Token) -> Self {
         0
@@ -626,12 +817,58 @@ macro_rules! native_storage {
       fn is_positive(&self, _: Token) -> bool {
         int::$int::is_positive(*self)
       }
+
+      #[inline]
+      fn overflowing_add_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_add_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_sub_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_mul_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_neg_bits(*self, bits)
+      }
+
+      #[inline]
+      fn is_one(&self, _: Token) -> bool {
+        int::$int::is_one(*self)
+      }
+
+      // The layer is named by its path: method syntax on `self`, a `&$int`, would find these
+      // methods, which take `&self`, before the inherent methods of the same names.
+      #[inline]
+      fn signum(&self, _: Token) -> Self {
+        int::$int::signum(*self)
+      }
+
+      #[inline]
+      fn unsigned_abs(&self, _: Token) -> $uint {
+        int::$int::unsigned_abs(*self)
+      }
     }
+
+    impl MutableRepr for $uint {}
+
+    impl MutableRepr for $int {}
+
+    impl UintReprMut for $uint {}
+
+    impl IntReprMut for $int {}
 
     impl InlineUintRepr for $uint {}
 
     impl InlineUintConsts for $uint {
       const ZERO: Self = 0;
+      const ONE: Self = 1;
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
     }
@@ -644,6 +881,7 @@ macro_rules! native_storage {
 
     impl InlineIntConsts for $int {
       const ZERO: Self = 0;
+      const ONE: Self = 1;
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
     }
@@ -753,11 +991,13 @@ limb_arrays!(
 ///
 /// Generic code with the bound `B: BitWidth` gets `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Debug`,
 /// `Display` and `Default` on `Uint<B>` and `Int<B>`, their constants `BITS`, `ZERO`, `MIN` and
-/// `MAX`, as in `Uint::<B>::MAX`, and the integer traits, such as
-/// [`FixedInteger`](crate::FixedInteger), whose methods it calls with the trait in scope. The
-/// methods of the traits are not `const`, and the inherent `const fn`s belong to each storage, so a
-/// constant context calls them on a concrete type, such as `Uint<U7>`, or an alias. This trait is
-/// sealed and cannot be implemented outside this crate.
+/// `MAX`, as in `Uint::<B>::MAX`, the operators, and the integer traits, such as
+/// [`FixedInteger`](crate::FixedInteger) and [`CheckedOps`](crate::CheckedOps), whose methods it
+/// calls with the trait in scope. `ONE` needs a width that holds one: `B: NonZero` for `Uint<B>`,
+/// and `B: IsGreater<U1, Output = True>` for `Int<B>`. The methods of the traits are not `const`,
+/// and the inherent `const fn`s belong to each storage, so a constant context calls them on a
+/// concrete type, such as `Uint<U7>`, or an alias. This trait is sealed and cannot be implemented
+/// outside this crate.
 ///
 /// ```
 /// use numo::{

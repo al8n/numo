@@ -226,26 +226,26 @@ fn from_repr_checks_the_decimal_range() {
 fn checked_add_and_sub_at_the_i8_limit() {
   let ulp = D1x1::from_repr(1).unwrap();
   // The coefficient 100 fits in `i8`, so only the decimal bound rejects it.
-  assert_eq!(D1x1::MAX.checked_add(ulp), None);
-  assert_eq!(D1x1::MIN.checked_sub(ulp), None);
-  assert_eq!(ulp.checked_sub(D1x1::MIN), None);
+  assert_eq!(D1x1::MAX.checked_add(&ulp), None);
+  assert_eq!(D1x1::MIN.checked_sub(&ulp), None);
+  assert_eq!(ulp.checked_sub(&D1x1::MIN), None);
   // 99 + 99 overflows `i8` itself.
-  assert_eq!(D1x1::MAX.checked_add(D1x1::MAX), None);
-  assert_eq!(D1x1::MIN.checked_add(D1x1::MIN), None);
-  assert_eq!(D1x1::MAX.checked_sub(D1x1::MIN), None);
+  assert_eq!(D1x1::MAX.checked_add(&D1x1::MAX), None);
+  assert_eq!(D1x1::MIN.checked_add(&D1x1::MIN), None);
+  assert_eq!(D1x1::MAX.checked_sub(&D1x1::MIN), None);
 
-  assert_eq!(D1x1::MAX.checked_add(D1x1::MIN), Some(D1x1::ZERO));
-  assert_eq!(D1x1::MAX.checked_sub(D1x1::MAX), Some(D1x1::ZERO));
-  assert_eq!(D1x1::ZERO.checked_sub(D1x1::MIN), Some(D1x1::MAX));
+  assert_eq!(D1x1::MAX.checked_add(&D1x1::MIN), Some(D1x1::ZERO));
+  assert_eq!(D1x1::MAX.checked_sub(&D1x1::MAX), Some(D1x1::ZERO));
+  assert_eq!(D1x1::ZERO.checked_sub(&D1x1::MIN), Some(D1x1::MAX));
   assert_eq!(
-    D1x1::MAX.checked_sub(ulp),
+    D1x1::MAX.checked_sub(&ulp),
     Some(D1x1::from_repr(98).unwrap())
   );
 
-  assert_eq!(D2x0::MAX.checked_add(D2x0::ONE), None);
-  assert_eq!(D2x0::MIN.checked_sub(D2x0::ONE), None);
+  assert_eq!(D2x0::MAX.checked_add(&D2x0::ONE), None);
+  assert_eq!(D2x0::MIN.checked_sub(&D2x0::ONE), None);
   assert_eq!(
-    D0x2::MAX.checked_add(D0x2::from_repr(-1).unwrap()),
+    D0x2::MAX.checked_add(&D0x2::from_repr(-1).unwrap()),
     D0x2::from_repr(98)
   );
 }
@@ -254,18 +254,18 @@ fn checked_add_and_sub_at_the_i8_limit() {
 fn checked_add_and_sub_at_the_i128_limit() {
   let ulp = D19x19::from_repr(1).unwrap();
   // 10^38 fits in `i128`, so only the decimal bound rejects it.
-  assert_eq!(D19x19::MAX.checked_add(ulp), None);
-  assert_eq!(D19x19::MIN.checked_sub(ulp), None);
+  assert_eq!(D19x19::MAX.checked_add(&ulp), None);
+  assert_eq!(D19x19::MIN.checked_sub(&ulp), None);
   // 2 * (10^38 - 1) overflows `i128` itself.
-  assert_eq!(D19x19::MAX.checked_add(D19x19::MAX), None);
-  assert_eq!(D19x19::MIN.checked_add(D19x19::MIN), None);
-  assert_eq!(D19x19::MAX.checked_sub(D19x19::MIN), None);
-  assert_eq!(D19x19::MIN.checked_sub(D19x19::MAX), None);
+  assert_eq!(D19x19::MAX.checked_add(&D19x19::MAX), None);
+  assert_eq!(D19x19::MIN.checked_add(&D19x19::MIN), None);
+  assert_eq!(D19x19::MAX.checked_sub(&D19x19::MIN), None);
+  assert_eq!(D19x19::MIN.checked_sub(&D19x19::MAX), None);
 
-  assert_eq!(D19x19::MAX.checked_add(D19x19::MIN), Some(D19x19::ZERO));
-  assert_eq!(D38x0::MAX.checked_add(D38x0::ONE), None);
+  assert_eq!(D19x19::MAX.checked_add(&D19x19::MIN), Some(D19x19::ZERO));
+  assert_eq!(D38x0::MAX.checked_add(&D38x0::ONE), None);
   assert_eq!(
-    D38x0::MAX.checked_sub(D38x0::ONE),
+    D38x0::MAX.checked_sub(&D38x0::ONE),
     D38x0::from_repr(MAX_38 - 1)
   );
 }
@@ -274,10 +274,10 @@ fn checked_add_and_sub_at_the_i128_limit() {
 fn checked_add_and_sub_values() {
   let a: Price = "1.5".parse().unwrap();
   let b: Price = "-2.25".parse().unwrap();
-  assert_eq!(a.checked_add(b), Some("-0.75".parse().unwrap()));
-  assert_eq!(a.checked_sub(b), Some("3.75".parse().unwrap()));
-  assert_eq!(b.checked_sub(a), Some("-3.75".parse().unwrap()));
-  assert_eq!(a.checked_add(Price::ZERO), Some(a));
+  assert_eq!(a.checked_add(&b), Some("-0.75".parse().unwrap()));
+  assert_eq!(a.checked_sub(&b), Some("3.75".parse().unwrap()));
+  assert_eq!(b.checked_sub(&a), Some("-3.75".parse().unwrap()));
+  assert_eq!(a.checked_add(&Price::ZERO), Some(a));
 }
 
 #[test]
@@ -1056,9 +1056,9 @@ fn methods_in_const_context() {
     Some(tick) => tick,
     None => panic!("tick out of range"),
   };
-  const SUM: Option<Price> = TICK.checked_add(TICK);
-  const DIFFERENCE: Option<Price> = TICK.checked_sub(Price::ONE);
-  const OVERFLOW: Option<Price> = Price::MAX.checked_add(TICK);
+  const SUM: Option<Price> = TICK.checked_add(&TICK);
+  const DIFFERENCE: Option<Price> = TICK.checked_sub(&Price::ONE);
+  const OVERFLOW: Option<Price> = Price::MAX.checked_add(&TICK);
   const NEGATED: Price = TICK.neg();
   const ABSOLUTE: Price = NEGATED.abs();
   const SIGNS: [bool; 3] = [
@@ -1621,30 +1621,30 @@ fn exp_needs_the_bounds_of_display() {
 fn exact_mul() {
   let price: Price = "64250.5".parse().unwrap();
   let quantity: Quantity = "-0.0015".parse().unwrap();
-  let notional: Decimal<U22, U16> = price.exact_mul(quantity);
+  let notional: Decimal<U22, U16> = price.exact_mul(&quantity);
   assert_eq!(notional.repr(), -963_757_500_000_000_000);
   assert_eq!(notional.to_string(), "-96.37575");
 
   // `MAX * MAX` at the 38-digit limit.
-  let square: D38x0 = D19x0::MAX.exact_mul(D19x0::MAX);
+  let square: D38x0 = D19x0::MAX.exact_mul(&D19x0::MAX);
   assert_eq!(square.repr(), (TEN_POW_19 - 1) * (TEN_POW_19 - 1));
-  let negative: D38x0 = D19x0::MIN.exact_mul(D19x0::MAX);
+  let negative: D38x0 = D19x0::MIN.exact_mul(&D19x0::MAX);
   assert_eq!(negative, square.neg());
-  let price_square: Decimal<U20, U16> = Price::MAX.exact_mul(Price::MAX);
+  let price_square: Decimal<U20, U16> = Price::MAX.exact_mul(&Price::MAX);
   assert_eq!(price_square.repr(), 999_999_999_999_999_999i128.pow(2));
 
   // `i8` operands produce an `i16` result.
-  let small: Decimal<U2, U2> = D1x1::MAX.exact_mul(D1x1::MIN);
+  let small: Decimal<U2, U2> = D1x1::MAX.exact_mul(&D1x1::MIN);
   assert_eq!(small.to_string(), "-98.01");
-  let fraction_only: Decimal<U0, U4> = D0x2::MAX.exact_mul(D0x2::MAX);
+  let fraction_only: Decimal<U0, U4> = D0x2::MAX.exact_mul(&D0x2::MAX);
   assert_eq!(fraction_only.to_string(), "0.9801");
-  let integral_only: Decimal<U2, U2> = D0x2::MAX.exact_mul(D2x0::MAX);
+  let integral_only: Decimal<U2, U2> = D0x2::MAX.exact_mul(&D2x0::MAX);
   assert_eq!(integral_only.to_string(), "98.01");
 
   // Mixed storages.
-  let mixed: Decimal<U15, U12> = D5x4::MAX.exact_mul(WidePrice::MIN);
+  let mixed: Decimal<U15, U12> = D5x4::MAX.exact_mul(&WidePrice::MIN);
   assert_eq!(mixed.repr(), -999_999_999i128 * 999_999_999_999_999_999i128);
-  assert_eq!(D5x4::ZERO.exact_mul(WidePrice::MIN).repr(), 0);
+  assert_eq!(D5x4::ZERO.exact_mul(&WidePrice::MIN).repr(), 0);
 }
 
 #[test]
@@ -1980,35 +1980,35 @@ fn unsigned_parse() {
 fn unsigned_checked_add_and_sub() {
   let ulp = D19x0u64::from_repr(1).unwrap();
   // 2 * (10^19 - 1) overflows `u64` itself.
-  assert_eq!(D19x0u64::MAX.checked_add(D19x0u64::MAX), None);
+  assert_eq!(D19x0u64::MAX.checked_add(&D19x0u64::MAX), None);
   // 10^19 fits in `u64`, so only the decimal bound rejects it.
-  assert_eq!(D19x0u64::MAX.checked_add(ulp), None);
+  assert_eq!(D19x0u64::MAX.checked_add(&ulp), None);
   assert_eq!(
-    D19x0u64::MAX.checked_sub(ulp),
+    D19x0u64::MAX.checked_sub(&ulp),
     D19x0u64::from_repr(MAX_19_U64 - 1)
   );
   assert_eq!(
-    D19x0u64::MAX.checked_sub(D19x0u64::MAX),
+    D19x0u64::MAX.checked_sub(&D19x0u64::MAX),
     Some(D19x0u64::ZERO)
   );
   // Below zero.
-  assert_eq!(D19x0u64::ZERO.checked_sub(ulp), None);
-  assert_eq!(ulp.checked_sub(D19x0u64::MAX), None);
+  assert_eq!(D19x0u64::ZERO.checked_sub(&ulp), None);
+  assert_eq!(ulp.checked_sub(&D19x0u64::MAX), None);
 
   // 99 + 99 fits in `u8`, so only the decimal bound rejects it.
-  assert_eq!(D1x1u8::MAX.checked_add(D1x1u8::MAX), None);
-  assert_eq!(D1x1u8::ZERO.checked_sub(D1x1u8::MAX), None);
-  assert_eq!(D38x0u128::MAX.checked_add(D38x0u128::ONE), None);
+  assert_eq!(D1x1u8::MAX.checked_add(&D1x1u8::MAX), None);
+  assert_eq!(D1x1u8::ZERO.checked_sub(&D1x1u8::MAX), None);
+  assert_eq!(D38x0u128::MAX.checked_add(&D38x0u128::ONE), None);
   assert_eq!(
-    D38x0u128::MAX.checked_sub(D38x0u128::ONE),
+    D38x0u128::MAX.checked_sub(&D38x0u128::ONE),
     D38x0u128::from_repr(MAX_38_U128 - 1)
   );
 
   let a: D10x9u64 = "1.5".parse().unwrap();
   let b: D10x9u64 = "2.25".parse().unwrap();
-  assert_eq!(a.checked_add(b), Some("3.75".parse().unwrap()));
-  assert_eq!(b.checked_sub(a), Some("0.75".parse().unwrap()));
-  assert_eq!(a.checked_sub(b), None);
+  assert_eq!(a.checked_add(&b), Some("3.75".parse().unwrap()));
+  assert_eq!(b.checked_sub(&a), Some("0.75".parse().unwrap()));
+  assert_eq!(a.checked_sub(&b), None);
 }
 
 #[test]
@@ -2029,8 +2029,8 @@ fn unsigned_methods_in_const_context() {
     Ok(tick) => tick,
     Err(_) => panic!("invalid tick"),
   };
-  const SUM: Option<D10x9u64> = TICK.checked_add(D10x9u64::ONE);
-  const BELOW_ZERO: Option<D10x9u64> = TICK.checked_sub(D10x9u64::ONE);
+  const SUM: Option<D10x9u64> = TICK.checked_add(&D10x9u64::ONE);
+  const BELOW_ZERO: Option<D10x9u64> = TICK.checked_sub(&D10x9u64::ONE);
   const SIGNS: [bool; 2] = [TICK.is_zero(), TICK.is_positive()];
   const COEFF: u64 = TICK.repr();
   const REJECTED: Result<D10x9u64, ParseError> = D10x9u64::parse("-0");
@@ -2130,33 +2130,34 @@ fn unsigned_exp() {
 #[test]
 fn exact_mul_storage_follows_the_operand_signs() {
   // Two unsigned operands give the smallest unsigned storage.
-  let both: Decimal<U2, U2, u16> = D1x1u8::MAX.exact_mul(D1x1u8::MAX);
+  let both: Decimal<U2, U2, u16> = D1x1u8::MAX.exact_mul(&D1x1u8::MAX);
   assert_eq!(both.repr(), 9_801);
   assert_eq!(both.to_string(), "98.01");
-  let square: Decimal<U38, U0, u128> = D19x0u64::MAX.exact_mul(D19x0u64::MAX);
+  let square: Decimal<U38, U0, u128> = D19x0u64::MAX.exact_mul(&D19x0u64::MAX);
   assert_eq!(
     square.repr(),
     u128::from(MAX_19_U64) * u128::from(MAX_19_U64)
   );
   // 19 digits need an `i128` when signed but fit in a `u64`.
   let nineteen: Decimal<U19, U0, u64> =
-    Decimal::<U18, U0, u64>::MAX.exact_mul(Decimal::<U1, U0, u8>::MAX);
+    Decimal::<U18, U0, u64>::MAX.exact_mul(&Decimal::<U1, U0, u8>::MAX);
   assert_eq!(nineteen.repr(), 999_999_999_999_999_999 * 9);
-  let mixed_widths: Decimal<U21, U17, u128> = D10x9u64::MAX.exact_mul(Decimal::<U11, U8, u64>::ONE);
+  let mixed_widths: Decimal<U21, U17, u128> =
+    D10x9u64::MAX.exact_mul(&Decimal::<U11, U8, u64>::ONE);
   assert_eq!(mixed_widths.to_string(), D10x9u64::MAX.to_string());
 
   // A signed operand on either side gives the smallest signed storage.
-  let signed_first: Decimal<U2, U2, i16> = D1x1::MIN.exact_mul(D1x1u8::MAX);
+  let signed_first: Decimal<U2, U2, i16> = D1x1::MIN.exact_mul(&D1x1u8::MAX);
   assert_eq!(signed_first.to_string(), "-98.01");
-  let unsigned_first: Decimal<U2, U2, i16> = D1x1u8::MAX.exact_mul(D1x1::MIN);
+  let unsigned_first: Decimal<U2, U2, i16> = D1x1u8::MAX.exact_mul(&D1x1::MIN);
   assert_eq!(unsigned_first.to_string(), "-98.01");
-  let wide: Decimal<U20, U17, i128> = D10x9u64::MAX.exact_mul(Price::MIN);
+  let wide: Decimal<U20, U17, i128> = D10x9u64::MAX.exact_mul(&Price::MIN);
   assert_eq!(
     wide.repr(),
     -(i128::from(MAX_19_U64) * 999_999_999_999_999_999)
   );
   // The product of two signed operands keeps the smallest signed storage.
-  let signed: Decimal<U2, U2> = D1x1::MAX.exact_mul(D1x1::MAX);
+  let signed: Decimal<U2, U2> = D1x1::MAX.exact_mul(&D1x1::MAX);
   let _: i16 = signed.repr();
 }
 
@@ -2433,55 +2434,55 @@ fn wide_from_repr_checks_the_decimal_range() {
 #[test]
 fn wide_checked_add_and_sub_at_the_storage_limit() {
   // 2 * (10^77 - 1) overflows `u256` itself.
-  assert_eq!(D77x0u256::MAX.checked_add(D77x0u256::MAX), None);
+  assert_eq!(D77x0u256::MAX.checked_add(&D77x0u256::MAX), None);
   // 10^77 fits in `u256`, so only the decimal bound rejects it.
-  assert_eq!(D77x0u256::MAX.checked_add(D77x0u256::ONE), None);
-  let below = D77x0u256::MAX.checked_sub(D77x0u256::ONE).unwrap();
-  assert_eq!(below.checked_add(D77x0u256::ONE), Some(D77x0u256::MAX));
+  assert_eq!(D77x0u256::MAX.checked_add(&D77x0u256::ONE), None);
+  let below = D77x0u256::MAX.checked_sub(&D77x0u256::ONE).unwrap();
+  assert_eq!(below.checked_add(&D77x0u256::ONE), Some(D77x0u256::MAX));
   let lower: D77x0u256 = format!("4{}", nines(76)).parse().unwrap();
   let upper: D77x0u256 = format!("5{}", zeros(76)).parse().unwrap();
-  assert_eq!(lower.checked_add(upper), Some(D77x0u256::MAX));
+  assert_eq!(lower.checked_add(&upper), Some(D77x0u256::MAX));
   assert_eq!(
-    D77x0u256::MAX.checked_sub(D77x0u256::MAX),
+    D77x0u256::MAX.checked_sub(&D77x0u256::MAX),
     Some(D77x0u256::ZERO)
   );
-  assert_eq!(D77x0u256::ZERO.checked_sub(D77x0u256::ONE), None);
+  assert_eq!(D77x0u256::ZERO.checked_sub(&D77x0u256::ONE), None);
 
   // 2 * (10^96 - 1) overflows `i320` itself, on either side.
-  assert_eq!(D96x0::MAX.checked_add(D96x0::MAX), None);
-  assert_eq!(D96x0::MIN.checked_add(D96x0::MIN), None);
-  assert_eq!(D96x0::MAX.checked_sub(D96x0::MIN), None);
-  assert_eq!(D96x0::MIN.checked_sub(D96x0::MAX), None);
+  assert_eq!(D96x0::MAX.checked_add(&D96x0::MAX), None);
+  assert_eq!(D96x0::MIN.checked_add(&D96x0::MIN), None);
+  assert_eq!(D96x0::MAX.checked_sub(&D96x0::MIN), None);
+  assert_eq!(D96x0::MIN.checked_sub(&D96x0::MAX), None);
   // 10^96 fits in `i320`, so only the decimal bound rejects it.
-  assert_eq!(D96x0::MAX.checked_add(D96x0::ONE), None);
-  assert_eq!(D96x0::MIN.checked_sub(D96x0::ONE), None);
-  assert_eq!(D96x0::MAX.checked_add(D96x0::MIN), Some(D96x0::ZERO));
-  let below = D96x0::MAX.checked_sub(D96x0::ONE).unwrap();
-  assert_eq!(below.checked_add(D96x0::ONE), Some(D96x0::MAX));
-  assert_eq!(below.neg().checked_sub(D96x0::ONE), Some(D96x0::MIN));
+  assert_eq!(D96x0::MAX.checked_add(&D96x0::ONE), None);
+  assert_eq!(D96x0::MIN.checked_sub(&D96x0::ONE), None);
+  assert_eq!(D96x0::MAX.checked_add(&D96x0::MIN), Some(D96x0::ZERO));
+  let below = D96x0::MAX.checked_sub(&D96x0::ONE).unwrap();
+  assert_eq!(below.checked_add(&D96x0::ONE), Some(D96x0::MAX));
+  assert_eq!(below.neg().checked_sub(&D96x0::ONE), Some(D96x0::MIN));
 
   // 2 * (10^115 - 1) overflows `i384` itself, on either side.
-  assert_eq!(D97x18::MAX.checked_add(D97x18::MAX), None);
-  assert_eq!(D97x18::MIN.checked_add(D97x18::MIN), None);
-  assert_eq!(D97x18::MAX.checked_sub(D97x18::MIN), None);
-  assert_eq!(D97x18::MAX.checked_add(D97x18::MIN), Some(D97x18::ZERO));
-  assert_eq!(D97x18::MAX.checked_add(D97x18::ONE), None);
+  assert_eq!(D97x18::MAX.checked_add(&D97x18::MAX), None);
+  assert_eq!(D97x18::MIN.checked_add(&D97x18::MIN), None);
+  assert_eq!(D97x18::MAX.checked_sub(&D97x18::MIN), None);
+  assert_eq!(D97x18::MAX.checked_add(&D97x18::MIN), Some(D97x18::ZERO));
+  assert_eq!(D97x18::MAX.checked_add(&D97x18::ONE), None);
 
   // 2 * (10^154 - 1) overflows `u512` itself, and 10^154 fits.
-  assert_eq!(D154x0u512::MAX.checked_add(D154x0u512::MAX), None);
-  assert_eq!(D154x0u512::MAX.checked_add(D154x0u512::ONE), None);
-  let below = D154x0u512::MAX.checked_sub(D154x0u512::ONE).unwrap();
-  assert_eq!(below.checked_add(D154x0u512::ONE), Some(D154x0u512::MAX));
-  assert_eq!(D154x0u512::ZERO.checked_sub(D154x0u512::ONE), None);
+  assert_eq!(D154x0u512::MAX.checked_add(&D154x0u512::MAX), None);
+  assert_eq!(D154x0u512::MAX.checked_add(&D154x0u512::ONE), None);
+  let below = D154x0u512::MAX.checked_sub(&D154x0u512::ONE).unwrap();
+  assert_eq!(below.checked_add(&D154x0u512::ONE), Some(D154x0u512::MAX));
+  assert_eq!(D154x0u512::ZERO.checked_sub(&D154x0u512::ONE), None);
 
   // The other storages hold twice their largest coefficient; the decimal bound rejects the sum.
-  assert_eq!(D96x0u320::MAX.checked_add(D96x0u320::MAX), None);
-  assert_eq!(D39x18::MAX.checked_add(D39x18::MAX), None);
-  assert_eq!(D39x18u192::MAX.checked_add(D39x18u192::MAX), None);
-  assert_eq!(D58x18::MIN.checked_add(D58x18::MIN), None);
-  assert_eq!(D97x18u384::MAX.checked_add(D97x18u384::MAX), None);
-  assert_eq!(D116x18::MAX.checked_add(D116x18::MAX), None);
-  assert_eq!(D153x0::MIN.checked_add(D153x0::MIN), None);
+  assert_eq!(D96x0u320::MAX.checked_add(&D96x0u320::MAX), None);
+  assert_eq!(D39x18::MAX.checked_add(&D39x18::MAX), None);
+  assert_eq!(D39x18u192::MAX.checked_add(&D39x18u192::MAX), None);
+  assert_eq!(D58x18::MIN.checked_add(&D58x18::MIN), None);
+  assert_eq!(D97x18u384::MAX.checked_add(&D97x18u384::MAX), None);
+  assert_eq!(D116x18::MAX.checked_add(&D116x18::MAX), None);
+  assert_eq!(D153x0::MIN.checked_add(&D153x0::MIN), None);
 }
 
 #[test]
@@ -2624,33 +2625,34 @@ fn wide_exp_at_the_limits() {
 #[test]
 fn wide_exact_mul() {
   // Two 38-digit native coefficients give a 76-digit product in `i256` or `u256`.
-  let square: Decimal<U38, U38> = D19x19::MAX.exact_mul(D19x19::MAX);
+  let square: Decimal<U38, U38> = D19x19::MAX.exact_mul(&D19x19::MAX);
   let _: i256 = square.repr();
   let square_text = "9999999999999999999999999999999999999800000000000000000000000000000000000001";
   assert_eq!(square.repr().to_string(), square_text);
-  let negative: Decimal<U38, U38> = D19x19::MIN.exact_mul(D19x19::MAX);
+  let negative: Decimal<U38, U38> = D19x19::MIN.exact_mul(&D19x19::MAX);
   assert_eq!(negative, square.neg());
-  let unsigned: Decimal<U76, U0, u256> = D38x0u128::MAX.exact_mul(D38x0u128::MAX);
+  let unsigned: Decimal<U76, U0, u256> = D38x0u128::MAX.exact_mul(&D38x0u128::MAX);
   assert_eq!(unsigned.to_string(), square_text);
 
   // A native by a wide operand.
   let price: Price = "-64250.5".parse().unwrap();
   let amount: D39x18 = "1.000000000000000001".parse().unwrap();
-  let product: Decimal<U49, U26> = price.exact_mul(amount);
+  let product: Decimal<U49, U26> = price.exact_mul(&amount);
   let _: i256 = product.repr();
   assert_eq!(product.to_string(), "-64250.5000000000000642505");
 
   // Two wide operands, up to 96 digits.
   let max_57 = bigint::pow10(57) - 1u8;
   let max_39 = bigint::pow10(39) - 1u8;
-  let wide: Decimal<U59, U37> = D39x18::MAX.exact_mul(Decimal::<U20, U19>::MIN);
+  let wide: Decimal<U59, U37> = D39x18::MAX.exact_mul(&Decimal::<U20, U19>::MIN);
   let _: i320 = wide.repr();
   assert_eq!(wide.repr().to_string(), (-(&max_57 * &max_39)).to_string());
-  let unsigned: Decimal<U59, U37, u320> = D39x18u192::MAX.exact_mul(Decimal::<U20, U19, u192>::MAX);
+  let unsigned: Decimal<U59, U37, u320> =
+    D39x18u192::MAX.exact_mul(&Decimal::<U20, U19, u192>::MAX);
   assert_eq!(unsigned.repr().to_string(), (&max_57 * &max_39).to_string());
 
   // An unsigned and a signed operand give a signed product.
-  let mixed: Decimal<U78, U1> = D77x0u256::MAX.exact_mul(D1x1::MIN);
+  let mixed: Decimal<U78, U1> = D77x0u256::MAX.exact_mul(&D1x1::MIN);
   let _: i320 = mixed.repr();
   assert_eq!(
     mixed.repr().to_string(),
@@ -2658,26 +2660,28 @@ fn wide_exact_mul() {
   );
 
   // Operands in wide storages whose product type has a native storage.
-  let small: Decimal<U2, U0> = Decimal::<U1, U0, i192>::MIN.exact_mul(Decimal::<U1, U0, u320>::MAX);
+  let small: Decimal<U2, U0> =
+    Decimal::<U1, U0, i192>::MIN.exact_mul(&Decimal::<U1, U0, u320>::MAX);
   assert_eq!(small.repr(), -81);
 
   // A uint256 amount by a 20-digit price has 98 digits: `i384` for a signed price, `u384` for an
   // unsigned one.
   let amount: TokenAmount = "1.5".parse().unwrap();
   let price: Decimal<U10, U10> = "-1234.5678".parse().unwrap();
-  let notional: Decimal<U70, U28> = amount.exact_mul(price);
+  let notional: Decimal<U70, U28> = amount.exact_mul(&price);
   let _: i384 = notional.repr();
   assert_eq!(notional.to_string(), "-1851.8517");
   let price: Decimal<U10, U10, u128> = "1234.5678".parse().unwrap();
-  let notional: Decimal<U70, U28, u384> = amount.exact_mul(price);
+  let notional: Decimal<U70, U28, u384> = amount.exact_mul(&price);
   assert_eq!(notional.to_string(), "1851.8517");
-  let largest: Decimal<U70, U28, u384> = TokenAmount::MAX.exact_mul(Decimal::<U10, U10, u128>::MAX);
+  let largest: Decimal<U70, U28, u384> =
+    TokenAmount::MAX.exact_mul(&Decimal::<U10, U10, u128>::MAX);
   let max_78 = bigint::pow10(78) - 1u8;
   let max_20 = bigint::pow10(20) - 1u8;
   assert_eq!(largest.repr().to_string(), (&max_78 * &max_20).to_string());
 
   // 120 digits in `i448` or `u448`, and 153 digits in `i512` or `u512`.
-  let square: Decimal<U120, U0> = Decimal::<U60, U0>::MIN.exact_mul(Decimal::<U60, U0>::MAX);
+  let square: Decimal<U120, U0> = Decimal::<U60, U0>::MIN.exact_mul(&Decimal::<U60, U0>::MAX);
   let _: i448 = square.repr();
   let max_60 = bigint::pow10(60) - 1u8;
   assert_eq!(
@@ -2685,17 +2689,17 @@ fn wide_exact_mul() {
     (-(&max_60 * &max_60)).to_string()
   );
   let square: Decimal<U120, U0, u448> =
-    Decimal::<U60, U0, u256>::MAX.exact_mul(Decimal::<U60, U0, u256>::MAX);
+    Decimal::<U60, U0, u256>::MAX.exact_mul(&Decimal::<U60, U0, u256>::MAX);
   assert_eq!(square.repr().to_string(), (&max_60 * &max_60).to_string());
   let max_77 = bigint::pow10(77) - 1u8;
   let max_76 = bigint::pow10(76) - 1u8;
-  let widest: Decimal<U153, U0> = Decimal::<U77, U0>::MAX.exact_mul(Decimal::<U76, U0>::MIN);
+  let widest: Decimal<U153, U0> = Decimal::<U77, U0>::MAX.exact_mul(&Decimal::<U76, U0>::MIN);
   let _: i512 = widest.repr();
   assert_eq!(
     widest.repr().to_string(),
     (-(&max_77 * &max_76)).to_string()
   );
-  let widest: Decimal<U153, U0, u512> = D77x0u256::MAX.exact_mul(Decimal::<U76, U0, u256>::MAX);
+  let widest: Decimal<U153, U0, u512> = D77x0u256::MAX.exact_mul(&Decimal::<U76, U0, u256>::MAX);
   assert_eq!(widest.repr().to_string(), (&max_77 * &max_76).to_string());
 }
 
@@ -2875,8 +2879,8 @@ fn wide_methods_in_const_context() {
     Ok(amount) => amount,
     Err(_) => panic!("invalid amount"),
   };
-  const SUM: Option<TokenAmount> = ONE_TOKEN.checked_add(WEI);
-  const OVERFLOW: Option<TokenAmount> = TokenAmount::MAX.checked_add(WEI);
+  const SUM: Option<TokenAmount> = ONE_TOKEN.checked_add(&WEI);
+  const OVERFLOW: Option<TokenAmount> = TokenAmount::MAX.checked_add(&WEI);
   const NEGATED: D96x0 = D96x0::MAX.neg();
   const SIGNS: [bool; 3] = [
     NEGATED.is_zero(),
@@ -2886,7 +2890,7 @@ fn wide_methods_in_const_context() {
   const LIMBS: [u64; 5] = ONE_TOKEN.repr().to_limbs();
   const ERROR: Result<D96x0, ParseError> = D96x0::parse("1e96");
   const WIDEST: Result<D154x0u512, ParseError> = D154x0u512::parse("1e153");
-  const WIDEST_OVERFLOW: Option<D154x0u512> = D154x0u512::MAX.checked_add(D154x0u512::ONE);
+  const WIDEST_OVERFLOW: Option<D154x0u512> = D154x0u512::MAX.checked_add(&D154x0u512::ONE);
 
   assert_eq!(ONE_TOKEN, TokenAmount::ONE);
   assert_eq!(
@@ -3006,7 +3010,7 @@ fn rounding_mode_table() {
         "{value} {mode:?}"
       );
       assert_eq!(
-        value.quantize(D1x1::ONE, mode).map(|v| v.repr()),
+        value.quantize(&D1x1::ONE, mode).map(|v| v.repr()),
         Ok(expected * 10),
         "{value} {mode:?}"
       );
@@ -3054,14 +3058,14 @@ fn rounding_takes_the_sign_of_the_value() {
   ] {
     let (value, step): (D1x1, D1x1) = (text.parse().unwrap(), step.parse().unwrap());
     assert_eq!(
-      value.quantize(step, mode).map(|v| v.to_string()),
+      value.quantize(&step, mode).map(|v| v.to_string()),
       Ok(expected.to_string()),
       "{text} by {step} {mode:?}"
     );
     // In a wide storage, where the step has several limbs.
     let (value, step): (D1x38, D1x38) = (value.widen(), step.widen());
     assert_eq!(
-      value.quantize(step, mode).map(|v| v.to_string()),
+      value.quantize(&step, mode).map(|v| v.to_string()),
       Ok(expected.to_string()),
       "{text} by {step} {mode:?}"
     );
@@ -3074,13 +3078,13 @@ fn rounding_to_zero_has_no_sign() {
   let rounded: D1x0 = small.round_to(RoundingMode::HalfUp).unwrap();
   assert!(rounded.is_zero() && !rounded.is_negative());
   assert_eq!(rounded.to_string(), "0");
-  let quantized = small.quantize(D1x1::ONE, RoundingMode::Down).unwrap();
+  let quantized = small.quantize(&D1x1::ONE, RoundingMode::Down).unwrap();
   assert!(quantized.is_zero() && !quantized.is_negative());
   assert_eq!(quantized.to_string(), "0");
   let wide: D0x153 = format!("-0.4{}", nines(152)).parse().unwrap();
   let rounded: D1x0 = wide.round_to(RoundingMode::Ceiling).unwrap();
   assert_eq!(rounded.to_string(), "0");
-  let quantized = wide.quantize(D0x153::MAX, RoundingMode::Down).unwrap();
+  let quantized = wide.quantize(&D0x153::MAX, RoundingMode::Down).unwrap();
   assert!(quantized.is_zero() && !quantized.is_negative());
 }
 
@@ -3333,13 +3337,13 @@ fn quantize_to_steps() {
   ] {
     let (value, step): (D4x4, D4x4) = (value.parse().unwrap(), step.parse().unwrap());
     assert_eq!(
-      value.quantize(step, mode).map(|v| v.to_string()),
+      value.quantize(&step, mode).map(|v| v.to_string()),
       Ok(expected.to_string()),
       "{value} by {step} {mode:?}"
     );
     let (wide, wide_step): (D40x40, D40x40) = (value.widen(), step.widen());
     assert_eq!(
-      wide.quantize(wide_step, mode).map(|v| v.to_string()),
+      wide.quantize(&wide_step, mode).map(|v| v.to_string()),
       Ok(expected.to_string()),
       "{value} by {step} {mode:?}"
     );
@@ -3349,7 +3353,7 @@ fn quantize_to_steps() {
   for text in ["0", "12.35", "-12.35", "9999.95", "-0.05"] {
     let value: D4x4 = text.parse().unwrap();
     for mode in bigint::MODES {
-      assert_eq!(value.quantize(tick, mode), Ok(value), "{text} {mode:?}");
+      assert_eq!(value.quantize(&tick, mode), Ok(value), "{text} {mode:?}");
     }
   }
 }
@@ -3361,30 +3365,30 @@ fn quantize_rejects_steps_that_are_not_positive() {
   let value: D4x4 = "12.3456".parse().unwrap();
   for mode in bigint::MODES {
     for step in [D4x4::ZERO, D4x4::ONE.neg(), D4x4::MIN] {
-      assert_eq!(value.quantize(step, mode), Err(QuantizeError::InvalidStep));
+      assert_eq!(value.quantize(&step, mode), Err(QuantizeError::InvalidStep));
       assert_eq!(
-        D4x4::ZERO.quantize(step, mode),
+        D4x4::ZERO.quantize(&step, mode),
         Err(QuantizeError::InvalidStep)
       );
     }
     assert_eq!(
-      D2x0u8::MAX.quantize(D2x0u8::ZERO, mode),
+      D2x0u8::MAX.quantize(&D2x0u8::ZERO, mode),
       Err(QuantizeError::InvalidStep)
     );
     assert_eq!(
-      D153x0::MAX.quantize(D153x0::ZERO, mode),
+      D153x0::MAX.quantize(&D153x0::ZERO, mode),
       Err(QuantizeError::InvalidStep)
     );
     assert_eq!(
-      D153x0::MAX.quantize(D153x0::MIN, mode),
+      D153x0::MAX.quantize(&D153x0::MIN, mode),
       Err(QuantizeError::InvalidStep)
     );
     assert_eq!(
-      D154x0u512::MAX.quantize(D154x0u512::ZERO, mode),
+      D154x0u512::MAX.quantize(&D154x0u512::ZERO, mode),
       Err(QuantizeError::InvalidStep)
     );
     assert_eq!(
-      TokenAmount::ONE.quantize(TokenAmount::ZERO, mode),
+      TokenAmount::ONE.quantize(&TokenAmount::ZERO, mode),
       Err(QuantizeError::InvalidStep)
     );
   }
@@ -3398,64 +3402,64 @@ fn quantize_reports_both_kinds_of_overflow() {
 
   // 99 + 98 = 196 overflows an `i8`.
   let (value, step) = (D2x0::from_repr(99).unwrap(), D2x0::from_repr(98).unwrap());
-  assert_eq!(value.quantize(step, Up), Err(QuantizeError::OutOfRange));
+  assert_eq!(value.quantize(&step, Up), Err(QuantizeError::OutOfRange));
   assert_eq!(
-    value.neg().quantize(step, Up),
+    value.neg().quantize(&step, Up),
     Err(QuantizeError::OutOfRange)
   );
-  assert_eq!(value.quantize(step, Down).map(|v| v.repr()), Ok(98));
-  assert_eq!(value.quantize(step, HalfUp).map(|v| v.repr()), Ok(98));
+  assert_eq!(value.quantize(&step, Down).map(|v| v.repr()), Ok(98));
+  assert_eq!(value.quantize(&step, HalfUp).map(|v| v.repr()), Ok(98));
   // 90 + 10 = 100 fits an `i8` but not two digits.
   let (value, step) = (D2x0::from_repr(95).unwrap(), D2x0::from_repr(10).unwrap());
   for mode in [Up, HalfUp, HalfEven] {
-    assert_eq!(value.quantize(step, mode), Err(QuantizeError::OutOfRange));
+    assert_eq!(value.quantize(&step, mode), Err(QuantizeError::OutOfRange));
   }
   assert_eq!(
-    value.neg().quantize(step, Floor),
+    value.neg().quantize(&step, Floor),
     Err(QuantizeError::OutOfRange)
   );
-  assert_eq!(value.quantize(step, HalfDown).map(|v| v.repr()), Ok(90));
+  assert_eq!(value.quantize(&step, HalfDown).map(|v| v.repr()), Ok(90));
   // 99 + 98 = 196 fits a `u8` but not two digits.
   let (value, step) = (
     D2x0u8::from_repr(99).unwrap(),
     D2x0u8::from_repr(98).unwrap(),
   );
-  assert_eq!(value.quantize(step, Up), Err(QuantizeError::OutOfRange));
+  assert_eq!(value.quantize(&step, Up), Err(QuantizeError::OutOfRange));
   // 2 * (10^19 - 2) overflows a `u64`.
   let step = D19x0u64::from_repr(MAX_19_U64 - 1).unwrap();
   assert_eq!(
-    D19x0u64::MAX.quantize(step, Up),
+    D19x0u64::MAX.quantize(&step, Up),
     Err(QuantizeError::OutOfRange)
   );
   assert_eq!(
-    D19x0u64::MAX.quantize(step, HalfUp).map(|v| v.repr()),
+    D19x0u64::MAX.quantize(&step, HalfUp).map(|v| v.repr()),
     Ok(MAX_19_U64 - 1)
   );
 
   // The wide storages whose largest sums overflow: `u256` with 77 digits, `i320` with 96 and
   // `u512` with 154.
-  let step = D77x0u256::MAX.checked_sub(D77x0u256::ONE).unwrap();
+  let step = D77x0u256::MAX.checked_sub(&D77x0u256::ONE).unwrap();
   assert_eq!(
-    D77x0u256::MAX.quantize(step, Up),
+    D77x0u256::MAX.quantize(&step, Up),
     Err(QuantizeError::OutOfRange)
   );
-  assert_eq!(D77x0u256::MAX.quantize(step, Down), Ok(step));
-  let step = D96x0::MAX.checked_sub(D96x0::ONE).unwrap();
+  assert_eq!(D77x0u256::MAX.quantize(&step, Down), Ok(step));
+  let step = D96x0::MAX.checked_sub(&D96x0::ONE).unwrap();
   assert_eq!(
-    D96x0::MAX.quantize(step, Up),
+    D96x0::MAX.quantize(&step, Up),
     Err(QuantizeError::OutOfRange)
   );
   assert_eq!(
-    D96x0::MIN.quantize(step, Up),
+    D96x0::MIN.quantize(&step, Up),
     Err(QuantizeError::OutOfRange)
   );
-  assert_eq!(D96x0::MIN.quantize(step, Down), Ok(step.neg()));
-  let step = D154x0u512::MAX.checked_sub(D154x0u512::ONE).unwrap();
+  assert_eq!(D96x0::MIN.quantize(&step, Down), Ok(step.neg()));
+  let step = D154x0u512::MAX.checked_sub(&D154x0u512::ONE).unwrap();
   assert_eq!(
-    D154x0u512::MAX.quantize(step, Up),
+    D154x0u512::MAX.quantize(&step, Up),
     Err(QuantizeError::OutOfRange)
   );
-  assert_eq!(D154x0u512::MAX.quantize(step, HalfEven), Ok(step));
+  assert_eq!(D154x0u512::MAX.quantize(&step, HalfEven), Ok(step));
 }
 
 /// Values and steps of several limbs against rounding by distance.
@@ -3472,7 +3476,7 @@ fn quantize_with_multi_limb_steps() {
         Err(QuantizeError::OutOfRange)
       };
       assert_eq!(
-        value.quantize(step, mode).map(big),
+        value.quantize(&step, mode).map(big),
         expected,
         "{value} by {step} {mode:?}"
       );
@@ -3509,38 +3513,38 @@ fn is_multiple_of_steps() {
   let tick: Price = "0.05".parse().unwrap();
   let on: Price = "12.35".parse().unwrap();
   let off: Price = "12.34".parse().unwrap();
-  assert!(on.is_multiple_of(tick) && !off.is_multiple_of(tick));
-  assert!(on.neg().is_multiple_of(tick) && !off.neg().is_multiple_of(tick));
+  assert!(on.is_multiple_of(&tick) && !off.is_multiple_of(&tick));
+  assert!(on.neg().is_multiple_of(&tick) && !off.neg().is_multiple_of(&tick));
   // A negative step counts as its magnitude.
-  assert!(on.is_multiple_of(tick.neg()) && !off.is_multiple_of(tick.neg()));
+  assert!(on.is_multiple_of(&tick.neg()) && !off.is_multiple_of(&tick.neg()));
   // Only zero is a multiple of zero.
-  assert!(Price::ZERO.is_multiple_of(Price::ZERO));
-  assert!(!tick.is_multiple_of(Price::ZERO) && Price::ZERO.is_multiple_of(tick));
+  assert!(Price::ZERO.is_multiple_of(&Price::ZERO));
+  assert!(!tick.is_multiple_of(&Price::ZERO) && Price::ZERO.is_multiple_of(&tick));
   // Every value is a multiple of the smallest unit, of either sign.
   let unit = Price::from_repr(1).unwrap();
-  assert!(Price::MAX.is_multiple_of(unit) && Price::MIN.is_multiple_of(unit.neg()));
-  assert!(!unit.is_multiple_of(Price::MAX) && Price::MAX.is_multiple_of(Price::MIN));
+  assert!(Price::MAX.is_multiple_of(&unit) && Price::MIN.is_multiple_of(&unit.neg()));
+  assert!(!unit.is_multiple_of(&Price::MAX) && Price::MAX.is_multiple_of(&Price::MIN));
 
   let lot: D10x9u64 = "0.001".parse().unwrap();
-  assert!("5.002".parse::<D10x9u64>().unwrap().is_multiple_of(lot));
-  assert!(!"5.0025".parse::<D10x9u64>().unwrap().is_multiple_of(lot));
-  assert!(!lot.is_multiple_of(D10x9u64::ZERO) && D10x9u64::ZERO.is_multiple_of(D10x9u64::ZERO));
+  assert!("5.002".parse::<D10x9u64>().unwrap().is_multiple_of(&lot));
+  assert!(!"5.0025".parse::<D10x9u64>().unwrap().is_multiple_of(&lot));
+  assert!(!lot.is_multiple_of(&D10x9u64::ZERO) && D10x9u64::ZERO.is_multiple_of(&D10x9u64::ZERO));
 
   let gwei: TokenAmount = "0.000000001".parse().unwrap();
   assert!(
     TokenAmount::MAX
-      .is_multiple_of(TokenAmount::from_repr(u320::from_limbs([1, 0, 0, 0, 0])).unwrap())
+      .is_multiple_of(&TokenAmount::from_repr(u320::from_limbs([1, 0, 0, 0, 0])).unwrap())
   );
-  assert!(!TokenAmount::MAX.is_multiple_of(gwei));
+  assert!(!TokenAmount::MAX.is_multiple_of(&gwei));
   assert!(
     "123.000000004"
       .parse::<TokenAmount>()
       .unwrap()
-      .is_multiple_of(gwei)
+      .is_multiple_of(&gwei)
   );
-  let step = D153x0::MAX.checked_sub(D153x0::ONE).unwrap();
-  assert!(step.neg().is_multiple_of(step) && !D153x0::MAX.is_multiple_of(step));
-  assert!(D153x0::MIN.is_multiple_of(D153x0::MAX));
+  let step = D153x0::MAX.checked_sub(&D153x0::ONE).unwrap();
+  assert!(step.neg().is_multiple_of(&step) && !D153x0::MAX.is_multiple_of(&step));
+  assert!(D153x0::MIN.is_multiple_of(&D153x0::MAX));
 }
 
 #[test]
@@ -3553,10 +3557,10 @@ fn rounding_in_const_context() {
     Ok(price) => price,
     Err(_) => panic!("invalid price"),
   };
-  const ROUNDED: Result<Price, QuantizeError> = PRICE.quantize(TICK, RoundingMode::HalfEven);
-  const DOWN: Result<Price, QuantizeError> = PRICE.neg().quantize(TICK, RoundingMode::Down);
-  const INVALID: Result<Price, QuantizeError> = PRICE.quantize(Price::ZERO, RoundingMode::Up);
-  const OVERFLOW: Result<Price, QuantizeError> = Price::MAX.quantize(TICK, RoundingMode::Up);
+  const ROUNDED: Result<Price, QuantizeError> = PRICE.quantize(&TICK, RoundingMode::HalfEven);
+  const DOWN: Result<Price, QuantizeError> = PRICE.neg().quantize(&TICK, RoundingMode::Down);
+  const INVALID: Result<Price, QuantizeError> = PRICE.quantize(&Price::ZERO, RoundingMode::Up);
+  const OVERFLOW: Result<Price, QuantizeError> = Price::MAX.quantize(&TICK, RoundingMode::Up);
 
   const GWEI: TokenAmount = match TokenAmount::parse("0.000000001") {
     Ok(gwei) => gwei,
@@ -3566,11 +3570,11 @@ fn rounding_in_const_context() {
     Ok(amount) => amount,
     Err(_) => panic!("invalid amount"),
   };
-  const WIDE: Result<TokenAmount, QuantizeError> = AMOUNT.quantize(GWEI, RoundingMode::HalfUp);
+  const WIDE: Result<TokenAmount, QuantizeError> = AMOUNT.quantize(&GWEI, RoundingMode::HalfUp);
   const ON_STEP: [bool; 3] = [
-    PRICE.is_multiple_of(TICK),
-    TICK.is_multiple_of(TICK),
-    AMOUNT.is_multiple_of(GWEI),
+    PRICE.is_multiple_of(&TICK),
+    TICK.is_multiple_of(&TICK),
+    AMOUNT.is_multiple_of(&GWEI),
   ];
 
   assert_eq!(ROUNDED.map(|v| v.to_string()), Ok("12.35".to_string()));
@@ -3706,24 +3710,24 @@ fn div_round_by_zero() {
         for mode in bigint::MODES {
           for value in [D::ZERO, D::ONE, D::MAX, D::MIN] {
             assert_eq!(
-              value.div_round::<U1, U1, $repr, _, _, _>(D::ZERO, mode),
+              value.div_round::<U1, U1, $repr, _, _, _>(&D::ZERO, mode),
               Err(DivideError::DivisionByZero),
               "{value} in {name}, {mode:?}"
             );
             assert_eq!(
-              value.div_round::<U0, U1, i8, _, _, _>(D::ZERO, mode),
+              value.div_round::<U0, U1, i8, _, _, _>(&D::ZERO, mode),
               Err(DivideError::DivisionByZero),
               "{value} in {name}, {mode:?}"
             );
             assert_eq!(
-              value.div_round::<U0, U1, u8, _, _, _>(D::ZERO, mode),
+              value.div_round::<U0, U1, u8, _, _, _>(&D::ZERO, mode),
               Err(DivideError::DivisionByZero),
               "{value} in {name}, {mode:?}"
             );
           }
           // A negative dividend into an unsigned target.
           assert_eq!(
-            D1x1::MIN.div_round::<U1, U1, u8, _, _, _>(D::ZERO, mode),
+            D1x1::MIN.div_round::<U1, U1, u8, _, _, _>(&D::ZERO, mode),
             Err(DivideError::DivisionByZero),
             "{name}, {mode:?}"
           );
@@ -3738,11 +3742,11 @@ fn div_round_by_zero() {
   );
   for mode in bigint::MODES {
     assert_eq!(
-      D153x0::MAX.div_round::<U153, U0, i512, _, _, _>(D153x0::ZERO, mode),
+      D153x0::MAX.div_round::<U153, U0, i512, _, _, _>(&D153x0::ZERO, mode),
       Err(DivideError::DivisionByZero)
     );
     assert_eq!(
-      D154x0u512::MAX.div_round::<U154, U0, u512, _, _, _>(D154x0u512::ZERO, mode),
+      D154x0u512::MAX.div_round::<U154, U0, u512, _, _, _>(&D154x0u512::ZERO, mode),
       Err(DivideError::DivisionByZero)
     );
   }
@@ -3768,14 +3772,14 @@ fn div_round_quarters() {
     let wide: D2x38 = a.widen();
     for (mode, expected) in bigint::MODES.into_iter().zip(row) {
       assert_eq!(
-        a.div_round::<U2, U0, i8, _, _, _>(b, mode)
+        a.div_round::<U2, U0, i8, _, _, _>(&b, mode)
           .map(|q| q.repr()),
         Ok(expected),
         "{a} / {b} {mode:?}"
       );
       assert_eq!(
         wide
-          .div_round::<U2, U0, i8, _, _, _>(b, mode)
+          .div_round::<U2, U0, i8, _, _, _>(&b, mode)
           .map(|q| q.repr()),
         Ok(expected),
         "{a} / {b} {mode:?}"
@@ -3792,7 +3796,7 @@ fn div_round_quarters() {
     let (a, b) = (D2x0::from_repr(a).unwrap(), D1x0::from_repr(b).unwrap());
     for (mode, expected) in bigint::MODES.into_iter().zip(row) {
       assert_eq!(
-        a.div_round::<U1, U1, i8, _, _, _>(b, mode)
+        a.div_round::<U1, U1, i8, _, _, _>(&b, mode)
           .map(|q| q.repr()),
         Ok(expected),
         "{a} / {b} {mode:?}"
@@ -3804,7 +3808,7 @@ fn div_round_quarters() {
     let (a, b) = (D2x0::from_repr(a).unwrap(), D1x0::from_repr(b).unwrap());
     for mode in bigint::MODES {
       assert_eq!(
-        a.div_round::<U2, U2, i16, _, _, _>(b, mode)
+        a.div_round::<U2, U2, i16, _, _, _>(&b, mode)
           .map(|q| q.repr()),
         Ok(expected),
         "{a} / {b} {mode:?}"
@@ -3834,7 +3838,7 @@ fn div_round_half_even_ties() {
   ] {
     let (a, b) = (D2x0::from_repr(a).unwrap(), D1x0::from_repr(b).unwrap());
     assert_eq!(
-      a.div_round::<U2, U0, i8, _, _, _>(b, RoundingMode::HalfEven)
+      a.div_round::<U2, U0, i8, _, _, _>(&b, RoundingMode::HalfEven)
         .map(|q| q.repr()),
       Ok(expected),
       "{a} / {b}"
@@ -3842,7 +3846,7 @@ fn div_round_half_even_ties() {
     let wide: D2x38 = a.widen();
     assert_eq!(
       wide
-        .div_round::<U2, U0, i8, _, _, _>(b, RoundingMode::HalfEven)
+        .div_round::<U2, U0, i8, _, _, _>(&b, RoundingMode::HalfEven)
         .map(|q| q.repr()),
       Ok(expected),
       "{a} / {b}"
@@ -3858,7 +3862,7 @@ fn div_round_half_even_ties() {
   ] {
     let (a, b): (D4x4, D4x4) = (a.parse().unwrap(), b.parse().unwrap());
     assert_eq!(
-      a.div_round::<U4, U2, i32, _, _, _>(b, RoundingMode::HalfEven)
+      a.div_round::<U4, U2, i32, _, _, _>(&b, RoundingMode::HalfEven)
         .map(|q| q.to_string()),
       Ok(expected.to_string()),
       "{a} / {b}"
@@ -3891,13 +3895,13 @@ fn div_round_negative_quotient_into_an_unsigned_target() {
   ] {
     let (a, b): (D2x2, D1x0) = (a.parse().unwrap(), b.parse().unwrap());
     assert_eq!(
-      a.div_round::<U1, U1, u8, _, _, _>(b, mode)
+      a.div_round::<U1, U1, u8, _, _, _>(&b, mode)
         .map(|q| q.repr()),
       expected,
       "{a} / {b} {mode:?}"
     );
     assert_eq!(
-      a.div_round::<U1, U1, u256, _, _, _>(b, mode)
+      a.div_round::<U1, U1, u256, _, _, _>(&b, mode)
         .map(|q| q.repr().to_string()),
       expected.map(|coeff| coeff.to_string()),
       "{a} / {b} {mode:?}"
@@ -3908,20 +3912,20 @@ fn div_round_negative_quotient_into_an_unsigned_target() {
   let minus_four: D1x0 = "-4".parse().unwrap();
   assert_eq!(
     tenth
-      .div_round::<U1, U1, u8, _, _, _>(minus_four, Ceiling)
+      .div_round::<U1, U1, u8, _, _, _>(&minus_four, Ceiling)
       .map(|q| q.repr()),
     Ok(0)
   );
   assert_eq!(
-    tenth.div_round::<U1, U1, u8, _, _, _>(minus_four, Up),
+    tenth.div_round::<U1, U1, u8, _, _, _>(&minus_four, Up),
     Err(OutOfRange)
   );
   for mode in bigint::MODES {
     for divisor in [minus_four, D1x0::MIN, D1x0::MAX] {
-      let zero = D2x2::ZERO.div_round::<U1, U1, i8, _, _, _>(divisor, mode);
+      let zero = D2x2::ZERO.div_round::<U1, U1, i8, _, _, _>(&divisor, mode);
       assert!(zero.is_ok_and(|q| q.is_zero() && !q.is_negative()));
       assert_eq!(
-        D2x2::ZERO.div_round::<U1, U1, u8, _, _, _>(divisor, mode),
+        D2x2::ZERO.div_round::<U1, U1, u8, _, _, _>(&divisor, mode),
         Ok(D1x1u8::ZERO)
       );
     }
@@ -3940,11 +3944,11 @@ fn div_round_checks_the_range_after_rounding() {
   let at_max: Decimal<U3, U2> = "199.98".parse().unwrap();
   for mode in bigint::MODES {
     assert_eq!(
-      at_max.div_round::<U2, U2, i16, _, _, _>(two, mode),
+      at_max.div_round::<U2, U2, i16, _, _, _>(&two, mode),
       Ok(D2x2::MAX)
     );
     assert_eq!(
-      at_max.neg().div_round::<U2, U2, i16, _, _, _>(two, mode),
+      at_max.neg().div_round::<U2, U2, i16, _, _, _>(&two, mode),
       Ok(D2x2::MIN)
     );
   }
@@ -3961,12 +3965,12 @@ fn div_round_checks_the_range_after_rounding() {
     (HalfEven, Err(OutOfRange), Err(OutOfRange)),
   ] {
     assert_eq!(
-      past.div_round::<U2, U2, i16, _, _, _>(two, mode),
+      past.div_round::<U2, U2, i16, _, _, _>(&two, mode),
       positive,
       "{mode:?}"
     );
     assert_eq!(
-      past.neg().div_round::<U2, U2, i16, _, _, _>(two, mode),
+      past.neg().div_round::<U2, U2, i16, _, _, _>(&two, mode),
       negative,
       "{mode:?}"
     );
@@ -3977,24 +3981,24 @@ fn div_round_checks_the_range_after_rounding() {
     assert_eq!(
       D3x0::from_repr(600)
         .unwrap()
-        .div_round::<U2, U0, i8, _, _, _>(two, mode),
+        .div_round::<U2, U0, i8, _, _, _>(&two, mode),
       Err(OutOfRange)
     );
     assert_eq!(
       D3x0::from_repr(-200)
         .unwrap()
-        .div_round::<U2, U0, u8, _, _, _>(one, mode),
+        .div_round::<U2, U0, u8, _, _, _>(&one, mode),
       Err(OutOfRange)
     );
     // `2^64 + 5` in an `i192` truncates to `5` in an `i64`.
     let beyond: D39x18 = "18446744073709551621".parse().unwrap();
     assert_eq!(
-      beyond.div_round::<U18, U0, i64, _, _, _>(one, mode),
+      beyond.div_round::<U18, U0, i64, _, _, _>(&one, mode),
       Err(OutOfRange)
     );
     assert_eq!(
       beyond
-        .div_round::<U20, U0, i128, _, _, _>(one, mode)
+        .div_round::<U20, U0, i128, _, _, _>(&one, mode)
         .map(|q| q.repr()),
       Ok(18_446_744_073_709_551_621)
     );
@@ -4008,48 +4012,48 @@ fn div_round_at_the_limits() {
   for mode in bigint::MODES {
     let minus_one = D2x0::from_repr(-1).unwrap();
     assert_eq!(
-      D2x0::MIN.div_round::<U2, U0, i8, _, _, _>(minus_one, mode),
+      D2x0::MIN.div_round::<U2, U0, i8, _, _, _>(&minus_one, mode),
       Ok(D2x0::MAX)
     );
     assert_eq!(
-      D2x0::MIN.div_round::<U2, U0, i8, _, _, _>(D2x0::MIN, mode),
+      D2x0::MIN.div_round::<U2, U0, i8, _, _, _>(&D2x0::MIN, mode),
       Ok(D2x0::ONE)
     );
     assert_eq!(
-      D2x0::MAX.div_round::<U2, U0, i8, _, _, _>(D2x0::MIN, mode),
+      D2x0::MAX.div_round::<U2, U0, i8, _, _, _>(&D2x0::MIN, mode),
       Ok(D2x0::ONE.neg())
     );
     let minus_one = D38x0::from_repr(-1).unwrap();
     assert_eq!(
-      D38x0::MIN.div_round::<U38, U0, i128, _, _, _>(minus_one, mode),
+      D38x0::MIN.div_round::<U38, U0, i128, _, _, _>(&minus_one, mode),
       Ok(D38x0::MAX)
     );
     assert_eq!(
-      D38x0::MIN.div_round::<U38, U0, i128, _, _, _>(D38x0::MIN, mode),
+      D38x0::MIN.div_round::<U38, U0, i128, _, _, _>(&D38x0::MIN, mode),
       Ok(D38x0::ONE)
     );
     let minus_one = D153x0::ONE.neg();
     assert_eq!(
-      D153x0::MIN.div_round::<U153, U0, i512, _, _, _>(minus_one, mode),
+      D153x0::MIN.div_round::<U153, U0, i512, _, _, _>(&minus_one, mode),
       Ok(D153x0::MAX)
     );
     assert_eq!(
-      D153x0::MIN.div_round::<U153, U0, i512, _, _, _>(D153x0::MIN, mode),
+      D153x0::MIN.div_round::<U153, U0, i512, _, _, _>(&D153x0::MIN, mode),
       Ok(D153x0::ONE)
     );
     assert_eq!(
-      D154x0u512::MAX.div_round::<U154, U0, u512, _, _, _>(D154x0u512::MAX, mode),
+      D154x0u512::MAX.div_round::<U154, U0, u512, _, _, _>(&D154x0u512::MAX, mode),
       Ok(D154x0u512::ONE)
     );
     assert_eq!(
-      D154x0u512::MAX.div_round::<U154, U0, u512, _, _, _>(D154x0u512::ONE, mode),
+      D154x0u512::MAX.div_round::<U154, U0, u512, _, _, _>(&D154x0u512::ONE, mode),
       Ok(D154x0u512::MAX)
     );
     // `-9.9 / -0.1` into a type with more integral digits.
     let tenth = D1x1::from_repr(-1).unwrap();
     assert_eq!(
       D1x1::MIN
-        .div_round::<U2, U0, i8, _, _, _>(tenth, mode)
+        .div_round::<U2, U0, i8, _, _, _>(&tenth, mode)
         .map(|q| q.repr()),
       Ok(99)
     );
@@ -4072,7 +4076,7 @@ fn div_round_storage_families() {
     "0.01556408",
     "0.01556408",
   ]) {
-    let quantity: Quantity = budget.div_round(price, mode).unwrap();
+    let quantity: Quantity = budget.div_round(&price, mode).unwrap();
     assert_eq!(quantity.to_string(), expected, "{mode:?}");
   }
 
@@ -4083,7 +4087,7 @@ fn div_round_storage_families() {
     .into_iter()
     .zip(["142", "141", "142", "141", "141", "141", "141"])
   {
-    let quotient: D20x19 = D19x19::MAX.div_round(divisor, mode).unwrap();
+    let quotient: D20x19 = D19x19::MAX.div_round(&divisor, mode).unwrap();
     assert_eq!(quotient.to_string(), format!("{seventh}{last}"), "{mode:?}");
   }
 
@@ -4095,14 +4099,14 @@ fn div_round_storage_families() {
   {
     assert_eq!(
       D1x1::MAX
-        .div_round::<U2, U0, i8, _, _, _>(D20x19::MAX, mode)
+        .div_round::<U2, U0, i8, _, _, _>(&D20x19::MAX, mode)
         .map(|q| q.repr()),
       Ok(positive),
       "{mode:?}"
     );
     assert_eq!(
       D1x1::MAX
-        .div_round::<U2, U0, i8, _, _, _>(D20x19::MIN, mode)
+        .div_round::<U2, U0, i8, _, _, _>(&D20x19::MIN, mode)
         .map(|q| q.repr()),
       Ok(negative),
       "{mode:?}"
@@ -4121,13 +4125,13 @@ fn div_round_storage_families() {
     (RoundingMode::HalfDown, "143", "143"),
     (RoundingMode::HalfEven, "143", "143"),
   ] {
-    let quotient: D39x18 = D39x18::MAX.div_round(seven, mode).unwrap();
+    let quotient: D39x18 = D39x18::MAX.div_round(&seven, mode).unwrap();
     assert_eq!(
       quotient.to_string(),
       format!("{digits}{positive}"),
       "{mode:?}"
     );
-    let quotient: D39x18 = D39x18::MAX.div_round(seven.neg(), mode).unwrap();
+    let quotient: D39x18 = D39x18::MAX.div_round(&seven.neg(), mode).unwrap();
     assert_eq!(
       quotient.to_string(),
       format!("-{digits}{negative}"),
@@ -4137,7 +4141,7 @@ fn div_round_storage_families() {
 
   // Two unsigned storages divide in an unsigned intermediate, and mixed signs in a signed one.
   let third: D10x9u64 = "3".parse().unwrap();
-  let quotient: D10x9u64 = D10x9u64::MAX.div_round(third, RoundingMode::Up).unwrap();
+  let quotient: D10x9u64 = D10x9u64::MAX.div_round(&third, RoundingMode::Up).unwrap();
   assert_eq!(quotient.to_string(), "3333333333.333333333");
   let one: D10x9u64 = "1".parse().unwrap();
   let minus_three: Price = "-3".parse().unwrap();
@@ -4150,7 +4154,7 @@ fn div_round_storage_families() {
     "-0.33333333",
     "-0.33333333",
   ]) {
-    let quotient: Price = one.div_round(minus_three, mode).unwrap();
+    let quotient: Price = one.div_round(&minus_three, mode).unwrap();
     assert_eq!(quotient.to_string(), expected, "{mode:?}");
   }
 
@@ -4167,14 +4171,14 @@ fn div_round_storage_families() {
   {
     assert_eq!(
       five
-        .div_round::<U1, U0, i8, _, _, _>(two, mode)
+        .div_round::<U1, U0, i8, _, _, _>(&two, mode)
         .map(|q| q.repr()),
       Ok(tie),
       "{mode:?}"
     );
     assert_eq!(
       almost_ten
-        .div_round::<U1, U0, i8, _, _, _>(large, mode)
+        .div_round::<U1, U0, i8, _, _, _>(&large, mode)
         .map(|q| q.repr()),
       Ok(tiny),
       "{mode:?}"
@@ -4185,16 +4189,16 @@ fn div_round_storage_families() {
   // so a negative price gives a negative quotient, which is out of range.
   let amount: TokenAmount = "1000000".parse().unwrap();
   let price: Decimal<U10, U10> = "1234.5678".parse().unwrap();
-  let down: TokenAmount = amount.div_round(price, RoundingMode::Down).unwrap();
+  let down: TokenAmount = amount.div_round(&price, RoundingMode::Down).unwrap();
   assert_eq!(down.to_string(), "810.00006642000544644");
-  let up: TokenAmount = amount.div_round(price, RoundingMode::Up).unwrap();
+  let up: TokenAmount = amount.div_round(&price, RoundingMode::Up).unwrap();
   assert_eq!(up.to_string(), "810.000066420005446441");
   assert_eq!(
-    amount.div_round::<U60, U18, u320, _, _, _>(price.neg(), RoundingMode::Down),
+    amount.div_round::<U60, U18, u320, _, _, _>(&price.neg(), RoundingMode::Down),
     Err(DivideError::OutOfRange)
   );
   let price: Decimal<U10, U10, u128> = "1234.5678".parse().unwrap();
-  let down: TokenAmount = amount.div_round(price, RoundingMode::Down).unwrap();
+  let down: TokenAmount = amount.div_round(&price, RoundingMode::Down).unwrap();
   assert_eq!(down.to_string(), "810.00006642000544644");
 }
 
@@ -4206,7 +4210,7 @@ fn div_round_with_the_widest_intermediates() {
   let one: Price = "1".parse().unwrap();
   let max_by_tick = format!("{}.{}", nines(143), nines(10));
   for mode in bigint::MODES {
-    let quotient: D143x10 = D135x18::MAX.div_round(tick, mode).unwrap();
+    let quotient: D143x10 = D135x18::MAX.div_round(&tick, mode).unwrap();
     assert_eq!(quotient.to_string(), max_by_tick, "{mode:?}");
   }
   for (mode, expected) in bigint::MODES.into_iter().zip([
@@ -4218,9 +4222,9 @@ fn div_round_with_the_widest_intermediates() {
     format!("1{}", zeros(135)),
     format!("1{}", zeros(135)),
   ]) {
-    let quotient: D143x10 = D135x18::MAX.div_round(one, mode).unwrap();
+    let quotient: D143x10 = D135x18::MAX.div_round(&one, mode).unwrap();
     assert_eq!(quotient.to_string(), expected, "{mode:?}");
-    let quotient: D143x10 = D135x18::MIN.div_round(one, mirror(mode)).unwrap();
+    let quotient: D143x10 = D135x18::MIN.div_round(&one, mirror(mode)).unwrap();
     assert_eq!(quotient.to_string(), format!("-{expected}"), "{mode:?}");
   }
 
@@ -4235,14 +4239,14 @@ fn div_round_with_the_widest_intermediates() {
   {
     assert_eq!(
       D0x153::MAX
-        .div_round::<U1, U1, i8, _, _, _>(three, mode)
+        .div_round::<U1, U1, i8, _, _, _>(&three, mode)
         .map(|q| q.repr()),
       Ok(third),
       "{mode:?}"
     );
     assert_eq!(
       quarter
-        .div_round::<U1, U1, i8, _, _, _>(unit, mode)
+        .div_round::<U1, U1, i8, _, _, _>(&unit, mode)
         .map(|q| q.repr()),
       Ok(tie),
       "{mode:?}"
@@ -4252,7 +4256,7 @@ fn div_round_with_the_widest_intermediates() {
   let tick: Decimal<U10, U8, u64> = "0.00000001".parse().unwrap();
   let expected = format!("{}.99", nines(144));
   for mode in bigint::MODES {
-    let quotient: D144x10u512 = D136x10u512::MAX.div_round(tick, mode).unwrap();
+    let quotient: D144x10u512 = D136x10u512::MAX.div_round(&tick, mode).unwrap();
     assert_eq!(quotient.to_string(), expected, "{mode:?}");
   }
 }

@@ -9,8 +9,11 @@ use core::{
 
 pub use error::TryNewError;
 pub use traits::{
-  ArrayInteger, FixedInteger, FromLimbs, NativeInteger, SignedFixedInteger, UnsignedFixedInteger,
+  ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, NativeInteger, OverflowingOps,
+  SaturatingOps, SignedFixedInteger, StrictOps, UncheckedOps, UnsignedFixedInteger, WrappingOps,
 };
+
+use typenum::{IsGreater, NonZero, True, U1};
 
 use crate::{
   int,
@@ -24,6 +27,8 @@ use crate::{
 mod error;
 #[macro_use]
 mod tables;
+#[macro_use]
+mod arithmetic;
 mod traits;
 
 /// An unsigned integer of `Bits` bits, stored in `Repr`.
@@ -54,7 +59,7 @@ mod traits;
 /// a width that fills its limbs, and [`checked_from_limbs`](Self::checked_from_limbs) from the
 /// limbs of any width, checking that they hold a value of `Bits` bits. Values compare, hash and
 /// format by their numeric value: `Ord` is numeric, `Hash` depends only on the value and `Bits`,
-/// whatever the storage, and `Display` and `Debug` write decimal. There is no arithmetic.
+/// whatever the storage, and `Display` and `Debug` write decimal.
 ///
 /// The aliases from 192 to 512 bits are the wide storages of [`Decimal`](crate::Decimal):
 ///
@@ -101,12 +106,56 @@ mod traits;
 /// construction names the alias, the width for the default storage, or the full type, for example
 /// `u7::new(100)`, `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)` or
 /// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+///
+/// # Arithmetic
+///
+/// Each storage has the arithmetic of the native unsigned integers at the width `Bits`, as
+/// `const fn`s: addition, subtraction, multiplication and negation in the `checked_*`,
+/// `wrapping_*`, `overflowing_*` and `strict_*` forms, the first three also in the `saturating_*`
+/// form, [`carrying_add`](Self::carrying_add) and [`borrowing_sub`](Self::borrowing_sub), and from
+/// one bit the constant `ONE`. Addition, subtraction and multiplication also have the `unchecked_*`
+/// form, such as [`unchecked_add`](Self::unchecked_add), as `const unsafe fn`s: the caller
+/// guarantees that the `checked_*` method would return `Some`, and the behavior is undefined
+/// otherwise. The operators `+`, `-` and `*`, their compound assignments, `Sum` and `Product` work
+/// for every storage, and so do the traits that give generic code the methods, such as
+/// [`CheckedOps`](crate::CheckedOps). A method of a storage is called with method syntax or with a
+/// path that names the storage, such as `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the
+/// storage to inference, such as `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
+///
+/// ```
+/// use numo::{Uint, typenum::U200, u7};
+///
+/// assert_eq!(u7::MAX.checked_add(&u7::ONE), None);
+/// assert_eq!(u7::MAX.wrapping_add(&u7::ONE), u7::ZERO);
+/// assert_eq!(u7::MAX.saturating_add(&u7::ONE), u7::MAX);
+/// assert_eq!(u7::new(100) + u7::new(27), u7::MAX);
+/// // SAFETY: 100 + 27 is at most `MAX`, so `checked_add` would return `Some`.
+/// assert_eq!(unsafe { u7::new(100).unchecked_add(&u7::new(27)) }, u7::MAX);
+///
+/// // 2^199 needs every bit of 200, and twice it needs 201.
+/// type U200x4 = Uint<U200, [u64; 4]>;
+/// let top = U200x4::checked_from_limbs([0, 0, 0, 1 << 7]).unwrap();
+/// let two = U200x4::ONE + U200x4::ONE;
+/// assert_eq!(top.checked_mul(&two), None);
+/// assert_eq!(top.overflowing_mul(&two), (U200x4::ZERO, true));
+/// ```
+///
+/// # Overflow
+///
+/// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
+/// same in every build. The operators forward the overflow to a native operation. With one profile
+/// for the build, numo's `overflow-checks` and yours agree and the operators behave as the native
+/// integers do. With a per-package override, which setting applies depends on where the code is
+/// generated: an unoptimized build follows numo's setting; an optimized build panics only when both
+/// numo's and your crate's checks are on.
 #[repr(transparent)]
 pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits` or above is zero, so the
-  // storage, read as an unsigned integer, equals the value. Every constructor establishes this, and
-  // equality, comparison, hashing and formatting rely on it. It is a logical invariant, not a
-  // safety invariant: no `unsafe` code may rely on it.
+  // storage, read as an unsigned integer, equals the value. Every constructor and every arithmetic
+  // result establishes this, and equality, comparison, hashing, formatting and the arithmetic rely
+  // on it. It is a logical invariant, not a safety invariant: no `unsafe` code may rely on it. The
+  // `unchecked_*` methods assume only their caller's guarantee, which is stated through
+  // `checked_*`, so they do not rely on it either.
   repr: Repr,
   bits: PhantomData<Bits>,
 }
@@ -128,8 +177,7 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// value and [`value`](Self::value) returns it, and in an array [`from_limbs`](Self::from_limbs)
 /// creates a value from any bit pattern of a width that fills its limbs, and
 /// [`checked_from_limbs`](Self::checked_from_limbs) from the limbs of any width, checking that
-/// they hold a value of `Bits` bits. Values compare, hash and format by their numeric value, and
-/// there is no arithmetic.
+/// they hold a value of `Bits` bits. Values compare, hash and format by their numeric value.
 ///
 /// ```
 /// use numo::{
@@ -177,13 +225,55 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// construction names the alias, the width for the default storage, or the full type, for example
 /// `i7::new(-5)`, `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)` or
 /// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+///
+/// # Arithmetic
+///
+/// Each storage has the arithmetic of the native signed integers at the width `Bits`, as
+/// `const fn`s: addition, subtraction, multiplication and negation in the `checked_*`,
+/// `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` forms, the absolute value in the
+/// same forms, [`abs`](Self::abs) and [`unsigned_abs`](Self::unsigned_abs), which returns the
+/// [`Uint`] of the same width and storage size, [`signum`](Self::signum), and from two bits the
+/// constant `ONE`, since one bit holds only -1 and 0. As for [`Uint`], addition, subtraction,
+/// multiplication and negation also have the `unchecked_*` form, as `const unsafe fn`s whose caller
+/// guarantees that the `checked_*` method would return `Some`:
+/// [`unchecked_neg`](Self::unchecked_neg), for example, requires that `self` is not `MIN`, except at
+/// zero bits. The operators `+`, `-` and `*`, their compound assignments, the negation `-`, `Sum`
+/// and `Product` work for every storage, and so do the traits that give generic code the methods,
+/// such as [`CheckedOps`](crate::CheckedOps). As for [`Uint`], a path to a method names the
+/// storage.
+///
+/// ```
+/// use numo::i7;
+///
+/// assert_eq!(i7::MIN.checked_neg(), None);
+/// assert_eq!(i7::MIN.wrapping_abs(), i7::MIN);
+/// assert_eq!(i7::MIN.unsigned_abs().value(), 64);
+/// assert_eq!(i7::new(-5).signum(), -i7::ONE);
+/// assert_eq!(i7::MIN.saturating_sub(&i7::ONE), i7::MIN);
+/// assert_eq!(-i7::new(63) - i7::ONE, i7::MIN);
+/// // SAFETY: -63 is not `MIN`, so `checked_neg` would return `Some`.
+/// assert_eq!(unsafe { i7::new(-63).unchecked_neg() }, i7::MAX);
+/// ```
+///
+/// # Overflow
+///
+/// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
+/// same in every build. The operators forward the overflow to a native operation. With one profile
+/// for the build, numo's `overflow-checks` and yours agree and the operators behave as the native
+/// integers do. With a per-package override, which setting applies depends on where the code is
+/// generated: an unoptimized build follows numo's setting; an optimized build panics only when both
+/// numo's and your crate's checks are on. [`abs`](Self::abs) handles `MIN` in the same way, as the
+/// native `abs` does; in a constant, where `abs` is the only method that forwards an overflow,
+/// numo's setting applies and the error names the native value (`i8::MIN`).
 #[repr(transparent)]
 pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits - 1` or above equals bit
   // `Bits - 1`, the sign bit, so the storage, read as a two's complement integer, equals the value.
-  // Zero bits have no sign bit, and every bit of the storage is zero. Every constructor establishes
-  // this, and equality, comparison, the sign queries, hashing and formatting rely on it. It is a
-  // logical invariant, not a safety invariant: no `unsafe` code may rely on it.
+  // Zero bits have no sign bit, and every bit of the storage is zero. Every constructor and every
+  // arithmetic result establishes this, and equality, comparison, the sign queries, hashing,
+  // formatting and the arithmetic rely on it. It is a logical invariant, not a safety invariant: no
+  // `unsafe` code may rely on it. The `unchecked_*` methods assume only their caller's guarantee,
+  // which is stated through `checked_*`, so they do not rely on it either.
   repr: Repr,
   bits: PhantomData<Bits>,
 }
@@ -212,7 +302,8 @@ impl<B, R> Int<B, R> {
 
 // The constants are generic over the storage. `BITS` needs only the width relation, so every
 // storage has it; the values need a storage that holds them inline, and come from the storage's
-// own constants for each width, which its sealed trait carries.
+// own constants for each width, which its sealed trait carries. `ONE` also needs a width that
+// holds one.
 impl<B: FitsBits<R>, R: UintRepr> Uint<B, R> {
   /// The number of bits, `Bits`.
   pub const BITS: u32 = B::U32;
@@ -229,6 +320,11 @@ impl<B: FitsBits<R>, R: InlineUintRepr> Uint<B, R> {
   pub const MAX: Self = Self::wrap(<R::Width<B> as UintWidth<R>>::MAX);
 }
 
+impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> Uint<B, R> {
+  /// One. Zero bits hold only zero, so `Uint` of zero bits has no `ONE`.
+  pub const ONE: Self = Self::wrap(R::ONE);
+}
+
 impl<B: FitsBits<R>, R: IntRepr> Int<B, R> {
   /// The number of bits, `Bits`, including the sign bit.
   pub const BITS: u32 = B::U32;
@@ -243,6 +339,12 @@ impl<B: FitsBits<R>, R: InlineIntRepr> Int<B, R> {
 
   /// The largest value, `2^(Bits - 1) - 1`, or zero for zero bits.
   pub const MAX: Self = Self::wrap(<R::Width<B> as IntWidth<R>>::MAX);
+}
+
+impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: InlineIntRepr> Int<B, R> {
+  /// One. One bit holds only -1 and 0, and zero bits only 0, so `Int` of fewer than two bits has
+  /// no `ONE`.
+  pub const ONE: Self = Self::wrap(R::ONE);
 }
 
 /// Generates the `const fn`s of [`Uint`] and [`Int`] over the arrays of each limb type, written
@@ -298,6 +400,70 @@ macro_rules! array_integers {
         } else {
           None
         }
+      }
+
+      overflowing_table!(inherent_items![unsigned, $lower, &]);
+      checked_table!(inherent_items![unsigned, $lower, &]);
+      wrapping_table!(inherent_items![unsigned, $lower, &]);
+      saturating_table!(Uint, inherent_items![unsigned, $lower, &]);
+      strict_table!(inherent_items![unsigned, $lower, &]);
+      uint_sign_table!(inherent_items![unsigned, $lower, &]);
+
+      /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The sum must be at most `MAX`, that is, [`checked_add`](Self::checked_add) would return
+      /// `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_add(&self, rhs: &Self) -> Self {
+        let (sum, overflow) =
+          int::unsigned::$lower::overflowing_add_bits(&self.repr, &rhs.repr, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_add` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `sum` is the value that
+        // `wrapping_add` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(sum)
+      }
+
+      /// Unchecked subtraction: `self - rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be at most `self`, that is, [`checked_sub`](Self::checked_sub) would return
+      /// `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_sub(&self, rhs: &Self) -> Self {
+        let (difference, overflow) =
+          int::unsigned::$lower::overflowing_sub_bits(&self.repr, &rhs.repr, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_sub` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `difference` is the
+        // value that `wrapping_sub` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(difference)
+      }
+
+      /// Unchecked multiplication: `self * rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The product must be at most `MAX`, that is, [`checked_mul`](Self::checked_mul) would
+      /// return `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_mul(&self, rhs: &Self) -> Self {
+        let (product, overflow) =
+          int::unsigned::$lower::overflowing_mul_bits(&self.repr, &rhs.repr, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_mul` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `product` is the value
+        // that `wrapping_mul` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(product)
       }
     }
 
@@ -374,6 +540,89 @@ macro_rules! array_integers {
         } else {
           None
         }
+      }
+
+      overflowing_table!(inherent_items![signed, $upper, &]);
+      checked_table!(inherent_items![signed, $upper, &]);
+      wrapping_table!(inherent_items![signed, $upper, &]);
+      saturating_table!(Int, inherent_items![signed, $upper, &]);
+      strict_table!(inherent_items![signed, $upper, &]);
+      int_sign_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
+
+      /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The sum must be within `MIN..=MAX`, that is, [`checked_add`](Self::checked_add) would
+      /// return `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_add(&self, rhs: &Self) -> Self {
+        let (sum, overflow) =
+          int::signed::$upper::overflowing_add_bits(&self.repr, &rhs.repr, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_add` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `sum` is the value that
+        // `wrapping_add` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(sum)
+      }
+
+      /// Unchecked subtraction: `self - rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The difference must be within `MIN..=MAX`, that is, [`checked_sub`](Self::checked_sub)
+      /// would return `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_sub(&self, rhs: &Self) -> Self {
+        let (difference, overflow) =
+          int::signed::$upper::overflowing_sub_bits(&self.repr, &rhs.repr, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_sub` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `difference` is the
+        // value that `wrapping_sub` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(difference)
+      }
+
+      /// Unchecked multiplication: `self * rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The product must be within `MIN..=MAX`, that is, [`checked_mul`](Self::checked_mul)
+      /// would return `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_mul(&self, rhs: &Self) -> Self {
+        let (product, overflow) =
+          int::signed::$upper::overflowing_mul_bits(&self.repr, &rhs.repr, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_mul` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `product` is the value
+        // that `wrapping_mul` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(product)
+      }
+
+      /// Unchecked negation: `-self`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The negation must be within `MIN..=MAX`, that is, [`checked_neg`](Self::checked_neg)
+      /// would return `Some`: `self` must not be `MIN`, except at zero bits, where `MIN` is zero.
+      /// Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_neg(&self) -> Self {
+        let (negated, overflow) = int::signed::$upper::overflowing_neg_bits(&self.repr, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_neg` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `negated` is the value
+        // that `wrapping_neg` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(negated)
       }
     }
 
@@ -599,6 +848,90 @@ macro_rules! native_integers {
           Err(TryNewError::new(Self::BITS))
         }
       }
+
+      overflowing_table!(inherent_items![$uint]);
+      checked_table!(inherent_items![$uint]);
+      wrapping_table!(inherent_items![$uint]);
+      saturating_table!(Uint, inherent_items![$uint]);
+      strict_table!(inherent_items![$uint]);
+      uint_sign_table!(inherent_items![$uint]);
+
+      /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The sum must be at most `MAX`, that is, [`checked_add`](Self::checked_add) would return
+      /// `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_add(&self, rhs: &Self) -> Self {
+        if Self::BITS == $uint::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_add` returns `Some`
+          // exactly when the native addition does not overflow, and the caller guarantees that it
+          // would: that is the precondition of the native `unchecked_add`.
+          Self::wrap(unsafe { $uint::unchecked_add(self.repr, rhs.repr) })
+        } else {
+          let (sum, overflow) = int::$uint::overflowing_add_bits(self.repr, rhs.repr, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_add` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `sum` is the value
+          // that `wrapping_add` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(sum)
+        }
+      }
+
+      /// Unchecked subtraction: `self - rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be at most `self`, that is, [`checked_sub`](Self::checked_sub) would return
+      /// `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_sub(&self, rhs: &Self) -> Self {
+        if Self::BITS == $uint::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_sub` returns `Some`
+          // exactly when the native subtraction does not overflow, and the caller guarantees that
+          // it would: that is the precondition of the native `unchecked_sub`.
+          Self::wrap(unsafe { $uint::unchecked_sub(self.repr, rhs.repr) })
+        } else {
+          let (difference, overflow) =
+            int::$uint::overflowing_sub_bits(self.repr, rhs.repr, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_sub` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `difference` is the
+          // value that `wrapping_sub` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(difference)
+        }
+      }
+
+      /// Unchecked multiplication: `self * rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The product must be at most `MAX`, that is, [`checked_mul`](Self::checked_mul) would
+      /// return `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_mul(&self, rhs: &Self) -> Self {
+        if Self::BITS == $uint::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_mul` returns `Some`
+          // exactly when the native multiplication does not overflow, and the caller guarantees
+          // that it would: that is the precondition of the native `unchecked_mul`.
+          Self::wrap(unsafe { $uint::unchecked_mul(self.repr, rhs.repr) })
+        } else {
+          let (product, overflow) =
+            int::$uint::overflowing_mul_bits(self.repr, rhs.repr, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_mul` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `product` is the
+          // value that `wrapping_mul` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(product)
+        }
+      }
     }
 
     impl<B> Uint<B, $uint> {
@@ -643,6 +976,116 @@ macro_rules! native_integers {
           Ok(Self::wrap(value))
         } else {
           Err(TryNewError::new(Self::BITS))
+        }
+      }
+
+      overflowing_table!(inherent_items![$int]);
+      checked_table!(inherent_items![$int]);
+      wrapping_table!(inherent_items![$int]);
+      saturating_table!(Int, inherent_items![$int]);
+      strict_table!(inherent_items![$int]);
+      int_sign_table!(inherent_items![$int, Uint<B, $uint>]);
+
+      /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The sum must be within `MIN..=MAX`, that is, [`checked_add`](Self::checked_add) would
+      /// return `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_add(&self, rhs: &Self) -> Self {
+        if Self::BITS == $int::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_add` returns `Some`
+          // exactly when the native addition does not overflow, and the caller guarantees that it
+          // would: that is the precondition of the native `unchecked_add`.
+          Self::wrap(unsafe { $int::unchecked_add(self.repr, rhs.repr) })
+        } else {
+          let (sum, overflow) = int::$int::overflowing_add_bits(self.repr, rhs.repr, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_add` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `sum` is the value
+          // that `wrapping_add` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(sum)
+        }
+      }
+
+      /// Unchecked subtraction: `self - rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The difference must be within `MIN..=MAX`, that is, [`checked_sub`](Self::checked_sub)
+      /// would return `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_sub(&self, rhs: &Self) -> Self {
+        if Self::BITS == $int::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_sub` returns `Some`
+          // exactly when the native subtraction does not overflow, and the caller guarantees that
+          // it would: that is the precondition of the native `unchecked_sub`.
+          Self::wrap(unsafe { $int::unchecked_sub(self.repr, rhs.repr) })
+        } else {
+          let (difference, overflow) =
+            int::$int::overflowing_sub_bits(self.repr, rhs.repr, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_sub` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `difference` is the
+          // value that `wrapping_sub` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(difference)
+        }
+      }
+
+      /// Unchecked multiplication: `self * rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The product must be within `MIN..=MAX`, that is, [`checked_mul`](Self::checked_mul)
+      /// would return `Some`. Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_mul(&self, rhs: &Self) -> Self {
+        if Self::BITS == $int::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_mul` returns `Some`
+          // exactly when the native multiplication does not overflow, and the caller guarantees
+          // that it would: that is the precondition of the native `unchecked_mul`.
+          Self::wrap(unsafe { $int::unchecked_mul(self.repr, rhs.repr) })
+        } else {
+          let (product, overflow) =
+            int::$int::overflowing_mul_bits(self.repr, rhs.repr, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_mul` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `product` is the
+          // value that `wrapping_mul` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(product)
+        }
+      }
+
+      /// Unchecked negation: `-self`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The negation must be within `MIN..=MAX`, that is, [`checked_neg`](Self::checked_neg)
+      /// would return `Some`: `self` must not be `MIN`, except at zero bits, where `MIN` is zero.
+      /// Otherwise the behavior is undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_neg(&self) -> Self {
+        if Self::BITS == $int::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_neg` returns `Some`
+          // exactly when the native negation does not overflow, and the caller guarantees that it
+          // would: that is the precondition of the native `unchecked_neg`.
+          Self::wrap(unsafe { $int::unchecked_neg(self.repr) })
+        } else {
+          let (negated, overflow) = int::$int::overflowing_neg_bits(self.repr, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_neg` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `negated` is the
+          // value that `wrapping_neg` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(negated)
         }
       }
     }

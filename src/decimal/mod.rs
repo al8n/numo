@@ -156,10 +156,10 @@ mod tests;
 ///   Ok(tick) => tick,
 ///   Err(_) => panic!("invalid tick"),
 /// };
-/// const TWO_TICKS: Option<Price> = TICK.checked_add(TICK);
+/// const TWO_TICKS: Option<Price> = TICK.checked_add(&TICK);
 ///
 /// assert_eq!(TWO_TICKS, Price::from_repr(2_000_000));
-/// assert_eq!(Price::MAX.checked_add(TICK), None);
+/// assert_eq!(Price::MAX.checked_add(&TICK), None);
 /// ```
 ///
 /// # Text
@@ -302,18 +302,18 @@ where
   ///
   /// let price: Decimal<U10, U8> = "64250.5".parse()?;
   /// let quantity: Decimal<U12, U8> = "-0.0015".parse()?;
-  /// let notional: Decimal<U22, U16> = price.exact_mul(quantity);
+  /// let notional: Decimal<U22, U16> = price.exact_mul(&quantity);
   /// assert_eq!(notional.to_string(), "-96.37575");
   ///
   /// // The product of two unsigned storages is unsigned.
   /// let price: Decimal<U10, U9, u64> = "64250.5".parse()?;
   /// let quantity: Decimal<U11, U8, u64> = "0.0015".parse()?;
-  /// let notional: Decimal<U21, U17, u128> = price.exact_mul(quantity);
+  /// let notional: Decimal<U21, U17, u128> = price.exact_mul(&quantity);
   /// assert_eq!(notional.to_string(), "96.37575");
   ///
   /// // Two 38-digit operands give a 76-digit product in a wide storage.
   /// let large: Decimal<U19, U19> = "-1e18".parse()?;
-  /// let square: Decimal<U38, U38, i256> = large.exact_mul(large);
+  /// let square: Decimal<U38, U38, i256> = large.exact_mul(&large);
   /// assert_eq!(square.to_string(), "1000000000000000000000000000000000000");
   /// # Ok::<(), numo::ParseError>(())
   /// ```
@@ -323,8 +323,8 @@ where
     reason = "the product storage is computed from the operand storages and the digit count"
   )]
   pub fn exact_mul<I2, F2, R2>(
-    self,
-    rhs: Decimal<I2, F2, R2>,
+    &self,
+    rhs: &Decimal<I2, F2, R2>,
   ) -> Decimal<
     Sum<I, I2>,
     Sum<F, F2>,
@@ -346,7 +346,7 @@ where
     // Between native storages, the conversions are casts and the multiplication is native.
     let lhs = self.repr.convert(Token::new());
     let rhs = rhs.repr.convert(Token::new());
-    Decimal::from_coeff(StorageCore::mul(lhs, rhs, Token::new()))
+    Decimal::from_coeff(StorageCore::mul(&lhs, &rhs, Token::new()))
   }
 }
 
@@ -564,8 +564,8 @@ where
   /// type.
   ///
   /// The target type `Decimal<I3, F3, R3>` is chosen by inference or with a turbofish, whose first
-  /// parameters are the target's, as in `a.div_round::<U12, U8, i128, _, _, _>(b, mode)`. The exact
-  /// quotient is rounded once, to `F3` fraction digits, as [`RoundingMode`] describes, so the
+  /// parameters are the target's, as in `a.div_round::<U12, U8, i128, _, _, _>(&b, mode)`. The
+  /// exact quotient is rounded once, to `F3` fraction digits, as [`RoundingMode`] describes, so the
   /// result is never inexact. A negative quotient that rounds to zero gives zero, which has no
   /// sign. [`Down`](RoundingMode::Down) rounds toward zero, which for a negative quotient differs
   /// from [`Floor`](RoundingMode::Floor), and with [`HalfEven`](RoundingMode::HalfEven) a tie goes
@@ -601,50 +601,50 @@ where
   /// // The quantity that a budget buys at a price, rounded down to the quantity's fraction digits.
   /// let budget: Decimal<U12, U2> = "1000".parse()?;
   /// let price: Decimal<U10, U8> = "64250.5".parse()?;
-  /// let quantity: Decimal<U12, U8> = budget.div_round(price, RoundingMode::Down)?;
+  /// let quantity: Decimal<U12, U8> = budget.div_round(&price, RoundingMode::Down)?;
   /// assert_eq!(quantity.to_string(), "0.01556408");
-  /// let up = budget.div_round::<U12, U8, i128, _, _, _>(price, RoundingMode::Up)?;
+  /// let up = budget.div_round::<U12, U8, i128, _, _, _>(&price, RoundingMode::Up)?;
   /// assert_eq!(up.to_string(), "0.01556409");
   ///
   /// // Then down to a lot size, converted to the quantity's type first.
   /// let lot: Decimal<U1, U4> = "0.0001".parse()?;
-  /// let lots = quantity.quantize(lot.try_convert()?, RoundingMode::Down)?;
+  /// let lots = quantity.quantize(&lot.try_convert()?, RoundingMode::Down)?;
   /// assert_eq!(lots.to_string(), "0.0155");
   ///
   /// // A negative quotient goes into an unsigned storage only if it rounds to zero.
   /// let change: Decimal<U2, U2> = "-0.1".parse()?;
   /// let four: Decimal<U1, U0> = "4".parse()?;
-  /// let zero: Decimal<U1, U1, u8> = change.div_round(four, RoundingMode::HalfUp)?;
+  /// let zero: Decimal<U1, U1, u8> = change.div_round(&four, RoundingMode::HalfUp)?;
   /// assert!(zero.is_zero());
   /// assert_eq!(
-  ///   change.div_round::<U1, U1, u8, _, _, _>(four, RoundingMode::Floor),
+  ///   change.div_round::<U1, U1, u8, _, _, _>(&four, RoundingMode::Floor),
   ///   Err(DivideError::OutOfRange)
   /// );
   ///
   /// // Division by zero is an error, never zero.
   /// assert_eq!(
-  ///   budget.div_round::<U12, U8, i128, _, _, _>(Decimal::<U10, U8>::ZERO, RoundingMode::Down),
+  ///   budget.div_round::<U12, U8, i128, _, _, _>(&Decimal::<U10, U8>::ZERO, RoundingMode::Down),
   ///   Err(DivideError::DivisionByZero)
   /// );
   ///
   /// // A quotient with more integral digits than the target holds.
   /// let tick: Decimal<U10, U8> = "0.00000001".parse()?;
   /// assert_eq!(
-  ///   budget.div_round::<U10, U8, i64, _, _, _>(tick, RoundingMode::Down),
+  ///   budget.div_round::<U10, U8, i64, _, _, _>(&tick, RoundingMode::Down),
   ///   Err(DivideError::OutOfRange)
   /// );
   ///
   /// // Two 38-digit native operands, whose intermediate has 39 digits in an `i192`.
   /// let divisor: Decimal<U1, U1> = "0.7".parse()?;
   /// let quotient: Decimal<U20, U19> =
-  ///   Decimal::<U19, U19>::MAX.div_round(divisor, RoundingMode::HalfEven)?;
+  ///   Decimal::<U19, U19>::MAX.div_round(&divisor, RoundingMode::HalfEven)?;
   /// assert_eq!(quotient.to_string(), "14285714285714285714.2857142857142857141");
   /// # Ok::<(), Box<dyn core::error::Error>>(())
   /// ```
   #[must_use = "this returns the rounded quotient, without modifying the original"]
   pub fn div_round<I3, F3, R3, I2, F2, R2>(
-    self,
-    rhs: Decimal<I2, F2, R2>,
+    &self,
+    rhs: &Decimal<I2, F2, R2>,
     mode: RoundingMode,
   ) -> Result<Decimal<I3, F3, R3>, DivideError>
   where
@@ -681,18 +681,18 @@ where
     let denominator = rhs.repr.convert(Token::new());
     let (numerator, denominator) = if to + by >= from {
       (
-        StorageCore::mul_pow10(numerator, to + by - from, Token::new()),
+        StorageCore::mul_pow10(&numerator, to + by - from, Token::new()),
         denominator,
       )
     } else {
       (
         numerator,
-        StorageCore::mul_pow10(denominator, from - to - by, Token::new()),
+        StorageCore::mul_pow10(&denominator, from - to - by, Token::new()),
       )
     };
     // `|N|, |D| <= 10^W - 1 <= MAX < |MIN|` in the intermediate, so neither operand is `MIN`. The
     // rounded quotient is at most `|N|`: rounding away from zero needs a remainder, so `|D| >= 2`.
-    let quotient = numerator.round_div(denominator, mode, Token::new());
+    let quotient = numerator.round_div(&denominator, mode, Token::new());
     match quotient.checked_convert::<R3>(Token::new()) {
       Some(coeff) if coeff.within_digits(Decimal::<I3, F3, R3>::DIGITS, Token::new()) => {
         Ok(Decimal::from_coeff(coeff))
