@@ -15,7 +15,7 @@ use core::{
 
 use typenum::{And, Diff, Max, Maximum, Sum};
 
-use sealed::Sealed;
+use sealed::{Sealed, SealedPair, SealedTriple};
 
 use super::{ConvertError, Decimal, DivideError, ParseError, QuantizeError};
 use crate::{
@@ -24,10 +24,26 @@ use crate::{
 };
 
 mod sealed {
-  /// Seals the decimal traits: only [`Decimal`](crate::Decimal) implements them.
+  /// Seals the traits on one type: only [`Decimal`](crate::Decimal) implements them.
   pub trait Sealed {}
 
   impl<I, F, R> Sealed for super::Decimal<I, F, R> {}
+
+  /// Seals the traits that relate a decimal type to another, including the parameter: only pairs
+  /// of [`Decimal`](crate::Decimal)s implement them.
+  pub trait SealedPair<T> {}
+
+  impl<I, F, R, I2, F2, R2> SealedPair<super::Decimal<I2, F2, R2>> for super::Decimal<I, F, R> {}
+
+  /// Seals the traits that relate a decimal type to two others, including the parameters: only
+  /// triples of [`Decimal`](crate::Decimal)s implement them.
+  pub trait SealedTriple<T, U> {}
+
+  impl<I, F, R, I2, F2, R2, I3, F3, R3>
+    SealedTriple<super::Decimal<I2, F2, R2>, super::Decimal<I3, F3, R3>>
+    for super::Decimal<I, F, R>
+  {
+  }
 }
 
 /// An exact fixed-point decimal number: [`Decimal`] over any storage.
@@ -286,7 +302,7 @@ pub trait HasDecimalOne: FixedDecimal {
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait ExactMul<Rhs = Self>: Sealed {
+pub trait ExactMul<Rhs = Self>: SealedPair<Rhs> {
   /// The type of the product.
   type Output: FixedDecimal;
 
@@ -324,7 +340,7 @@ pub trait ExactMul<Rhs = Self>: Sealed {
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait WidenTo<T>: Sealed {
+pub trait WidenTo<T>: SealedPair<T> {
   /// Converts to `T`, which has at least as many integral and fraction digits. Never fails.
   #[must_use]
   fn widen(self) -> T;
@@ -364,7 +380,7 @@ pub trait WidenTo<T>: Sealed {
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait ConvertTo<T>: Sealed {
+pub trait ConvertTo<T>: SealedPair<T> {
   /// Converts to `T`, failing instead of losing digits, as [`Decimal::try_convert`] describes.
   ///
   /// # Errors
@@ -418,7 +434,7 @@ pub trait ConvertTo<T>: Sealed {
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait DivRound<Rhs, Out>: Sealed {
+pub trait DivRound<Rhs, Out>: SealedTriple<Rhs, Out> {
   /// Divides by `rhs`, rounding the quotient once with `mode` to the fraction digits of `Out`, as
   /// [`Decimal::div_round`] describes.
   ///
