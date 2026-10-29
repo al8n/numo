@@ -428,9 +428,10 @@ where
 ///
 /// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
-/// [`WrappingOps`](crate::WrappingOps) and [`StrictOps`](crate::StrictOps), and the operators `+`,
-/// `-` and `*` on two references, as in `&a + &b`, for every `Repr` that implements this trait.
-/// This trait is sealed and cannot be implemented outside this crate.
+/// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
+/// [`UncheckedOps`](crate::UncheckedOps), and the operators `+`, `-` and `*` on two references, as
+/// in `&a + &b`, for every `Repr` that implements this trait. This trait is sealed and cannot be
+/// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
   note = "`Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`"
@@ -444,10 +445,10 @@ pub trait UintRepr: Eq + UintCore {}
 ///
 /// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
-/// [`WrappingOps`](crate::WrappingOps) and [`StrictOps`](crate::StrictOps), the operators `+`, `-`
-/// and `*` on two references, as in `&a + &b`, and the negation `-` of a reference, for every
-/// `Repr` that implements this trait. This trait is sealed and cannot be implemented outside this
-/// crate.
+/// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
+/// [`UncheckedOps`](crate::UncheckedOps), the operators `+`, `-` and `*` on two references, as in
+/// `&a + &b`, and the negation `-` of a reference, for every `Repr` that implements this trait.
+/// This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"

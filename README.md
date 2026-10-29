@@ -24,6 +24,9 @@ English | [简体中文][zh-cn-url]
 [`typenum`](https://crates.io/crates/typenum) and whose storage is an integer named in the type: a
 native integer, or a 192-, 256-, 320-, 384-, 448- or 512-bit integer of this crate. Capacity is
 checked during type checking, so no value can be created for a type that cannot hold its digits.
+The arithmetic methods take the receiver and the operands by reference, as in `a.checked_add(&b)`,
+so that a call does not copy a wide value, while the operators keep the signatures of their
+standard traits.
 
 | Family | Status |
 |---|---|
@@ -167,7 +170,9 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
 - The arithmetic of the native integers at the width `Bits`, as `const fn`s: addition, subtraction,
   multiplication and negation in the `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and
   `strict_*` forms, `carrying_add` and `borrowing_sub` for `Uint`, and `abs` and its forms,
-  `unsigned_abs` and `signum` for `Int`. The operators `+`, `-` and `*`, their compound
+  `unsigned_abs` and `signum` for `Int`. Addition, subtraction and multiplication, and negation for
+  `Int`, also have the `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the
+  `checked_*` method would return `Some`. The operators `+`, `-` and `*`, their compound
   assignments, `-` for `Int`, `Sum` and `Product` panic or wrap on overflow as `overflow-checks`
   decides, as for the native integers.
 - Numeric equality, ordering and hashing, where the hash depends only on the value and `Bits`,
@@ -175,8 +180,8 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
 - Traits with one implementation for every storage of a kind, `FixedInteger`,
   `UnsignedFixedInteger`, `SignedFixedInteger`, `HasOne`, `NativeInteger`, `ArrayInteger` and
   `FromLimbs`, and the arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`,
-  `SaturatingOps` and `StrictOps`, for generic code; with the bound `B: BitWidth`, such code uses
-  `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
+  `SaturatingOps`, `StrictOps` and `UncheckedOps`, for generic code; with the bound `B: BitWidth`,
+  such code uses `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
   width of more than 65536 bits without an explicit storage.

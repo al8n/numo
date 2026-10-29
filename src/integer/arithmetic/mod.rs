@@ -1,15 +1,18 @@
 //! The arithmetic of [`Uint`](crate::Uint) and [`Int`](crate::Int): the method tables of the
 //! overflowing, checked, wrapping, saturating and strict addition, subtraction, multiplication and
-//! negation, of the carrying addition and the borrowing subtraction of `Uint`, and of the absolute
-//! value and the sign of `Int`, the panics of the strict methods, and the operators, `Sum` and
-//! `Product`.
+//! negation, of the carrying addition and the borrowing subtraction of `Uint`, of the absolute
+//! value and the sign of `Int`, and of the unchecked arithmetic of the traits, the panics of the
+//! strict methods, and the operators, `Sum` and `Product`.
 //!
 //! Each storage computes the overflowing methods at the width `Bits`, and most other methods are
 //! derived from them. The tables pass their rows to the callbacks of `tables`, for the inherent
 //! `const fn`s of each storage and for the generic implementations of the traits, so their bodies
-//! name the panics by the full path `$crate::integer::arithmetic::overflow`. The operators are
-//! implemented once for every storage, over `OverflowingOps`, and repeat an overflow in a native
-//! operation, so that `overflow-checks` decides whether they panic, as for the native integers.
+//! name the panics by the full path `$crate::integer::arithmetic::overflow`. The unchecked tables
+//! serve only the traits, whose bodies compute the overflowing method and check its flag with a
+//! debug assertion: they never call the inherent `unchecked_*` methods, which each storage writes
+//! out with their unsafe blocks. The operators are implemented once for every storage, over
+//! `OverflowingOps`, and repeat an overflow in a native operation, so that `overflow-checks`
+//! decides whether they panic, as for the native integers.
 
 use core::{
   iter::{Product, Sum},
@@ -25,6 +28,7 @@ use crate::{
 };
 
 /// Passes the overflowing methods of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
+// The inherent `unchecked_*` methods rely on the shape of these rows, as `checked_table!` explains.
 macro_rules! overflowing_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -52,6 +56,13 @@ macro_rules! overflowing_table {
 }
 
 /// Passes the checked methods of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
+// The safety argument of the inherent `unchecked_*` methods, in `integer`, relies on the shape of
+// these rows and of those of `overflowing_table!`: `checked_*` matches on the flag of
+// `overflowing_*`, which is `prim pair overflowing_*_bits(..)` and so passes `Self::BITS`.
+// `unchecked_*` passes the flag of the same `overflowing_*_bits` call to `assert_unchecked`, or at
+// the full width of a native integer calls the native `unchecked_*`, whose precondition is then
+// that flag: either way it assumes exactly what `checked_*` tests. A change to either shape
+// requires revisiting those unsafe blocks.
 macro_rules! checked_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -396,6 +407,67 @@ macro_rules! int_sign_table {
       /// The absolute value, `|self|`, as the unsigned integer of the same width, which also holds
       /// the absolute value of `MIN`.
       fn unsigned_abs(&self) -> Self::Unsigned = prim unsigned unsigned_abs(self);
+    }
+  };
+}
+
+/// Passes the unchecked addition, subtraction and multiplication of `Uint` and `Int` to
+/// `$callback`, after the tokens of `$args`, for the traits alone: each storage writes out its
+/// inherent `unchecked_*` methods.
+macro_rules! unchecked_table {
+  ($callback:ident! $args:tt) => {
+    $callback! { $args
+      /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The sum must be at most `MAX` for `Uint` and within `MIN..=MAX` for `Int`, that is,
+      /// [`checked_add`](crate::CheckedOps::checked_add) would return `Some`. Otherwise the
+      /// behavior is undefined.
+      #[track_caller]
+      unsafe fn unchecked_add(&self, rhs: &Self) -> Self
+        = unchecked overflowing_add(self, rhs), "attempt to add with overflow";
+
+      /// Unchecked subtraction: `self - rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// For `Uint`, `rhs` must be at most `self`, and for `Int`, the difference must be within
+      /// `MIN..=MAX`, that is, [`checked_sub`](crate::CheckedOps::checked_sub) would return `Some`.
+      /// Otherwise the behavior is undefined.
+      #[track_caller]
+      unsafe fn unchecked_sub(&self, rhs: &Self) -> Self
+        = unchecked overflowing_sub(self, rhs), "attempt to subtract with overflow";
+
+      /// Unchecked multiplication: `self * rhs`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The product must be at most `MAX` for `Uint` and within `MIN..=MAX` for `Int`, that is,
+      /// [`checked_mul`](crate::CheckedOps::checked_mul) would return `Some`. Otherwise the
+      /// behavior is undefined.
+      #[track_caller]
+      unsafe fn unchecked_mul(&self, rhs: &Self) -> Self
+        = unchecked overflowing_mul(self, rhs), "attempt to multiply with overflow";
+    }
+  };
+}
+
+/// Passes the unchecked negation of `Int` to `$callback`, after the tokens of `$args`, for the
+/// trait of its sign alone, as `unchecked_table!` does.
+macro_rules! signed_unchecked_table {
+  ($callback:ident! $args:tt) => {
+    $callback! { $args
+      /// Unchecked negation: `-self`, assuming it cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// The negation must be within `MIN..=MAX`, that is,
+      /// [`checked_neg`](crate::CheckedOps::checked_neg) would return `Some`: `self` must not be
+      /// `MIN`, except at zero bits, where `MIN` is zero. Otherwise the behavior is undefined.
+      #[track_caller]
+      unsafe fn unchecked_neg(&self) -> Self
+        = unchecked overflowing_neg(self), "attempt to negate with overflow";
     }
   };
 }

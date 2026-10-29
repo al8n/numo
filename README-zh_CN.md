@@ -22,6 +22,7 @@
 
 `numo` 提供一组数字类型：大小是 [`typenum`](https://crates.io/crates/typenum)
 的类型层面数字，存储是在类型里指定的整数：原生整数，或者本 crate 的 192、256、320、384、448、512 位整数。容量在类型检查阶段核对，放不下位数的类型无法创建任何值。
+算术方法按引用接收 `self` 与操作数，例如 `a.checked_add(&b)`，因此调用时不会复制宽整数；运算符则保持标准库 trait 的签名。
 
 | 类型族 | 状态 |
 |---|---|
@@ -149,13 +150,15 @@ fn main() -> Result<(), ParseError> {
   `None`），以及 `to_limbs` 与 `as_limbs`；`is_zero` 与 `is_one`，`Int` 还有 `is_negative` 与 `is_positive`。
 - 与原生整数相同、按位宽 `Bits` 计算的算术，均为 `const fn`：`checked_*`、`wrapping_*`、`overflowing_*`、
   `saturating_*` 与 `strict_*` 各种形式的加、减、乘与取负，`Uint` 的 `carrying_add` 与 `borrowing_sub`，
-  以及 `Int` 的 `abs` 及其各种形式、`unsigned_abs` 与 `signum`。运算符 `+`、`-`、`*` 及其复合赋值、`Int` 的
-  取负 `-`、`Sum` 与 `Product` 溢出时与原生整数一样，由 `overflow-checks` 决定 panic 还是回绕。
+  以及 `Int` 的 `abs` 及其各种形式、`unsigned_abs` 与 `signum`。加、减、乘（`Int` 还有取负）另有
+  `unchecked_*` 形式，均为 `const unsafe fn`，调用者须保证对应的 `checked_*` 方法会返回 `Some`。
+  运算符 `+`、`-`、`*` 及其复合赋值、`Int` 的取负 `-`、`Sum` 与 `Product` 溢出时与原生整数一样，由
+  `overflow-checks` 决定 panic 还是回绕。
 - 按数值的相等、比较与哈希，哈希只取决于值与 `Bits`，与存储无关；十进制格式化；`Default` 为零。
 - 供泛型代码使用的 trait，每类存储各只有一个实现：`FixedInteger`、`UnsignedFixedInteger`、
   `SignedFixedInteger`、`HasOne`、`NativeInteger`、`ArrayInteger` 与 `FromLimbs`，以及算术 trait
-  `OverflowingOps`、`CheckedOps`、`WrappingOps`、`SaturatingOps` 与 `StrictOps`；加上 `B: BitWidth` 约束后，
-  泛型代码可以对 0 到 65536 位的任意位宽使用 `Uint<B>` 与 `Int<B>`。
+  `OverflowingOps`、`CheckedOps`、`WrappingOps`、`SaturatingOps`、`StrictOps` 与 `UncheckedOps`；加上
+  `B: BitWidth` 约束后，泛型代码可以对 0 到 65536 位的任意位宽使用 `Uint<B>` 与 `Int<B>`。
 - 存储放不下的位宽、`2^32` 位及以上的位宽，以及带前导零位的位宽写法（`typenum` 的常量与运算结果都不会这样写），在类型检查阶段就会报错；没有写出存储且超过 65536 位的位宽也一样。
 
 除法与取余、位运算与移位计划中。

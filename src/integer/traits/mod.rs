@@ -142,10 +142,11 @@ pub trait UnsignedFixedInteger: Sealed + Sized {
 
 /// A signed integer of a fixed number of bits, in two's complement: [`Int`].
 ///
-/// The sign queries, the absolute value in its forms, `saturating_neg`, `signum` and
-/// `unsigned_abs` are the inherent methods of the same names, which a concrete type reaches without
-/// this trait, also in constant contexts. The supertrait `Neg` gives generic code the operator `-`,
-/// which on overflow panics or wraps as `overflow-checks` decides, as for the native integers.
+/// The sign queries, the absolute value in its forms, `saturating_neg`, `signum`, `unsigned_abs`
+/// and the unsafe `unchecked_neg` are the inherent methods of the same names, which a concrete type
+/// reaches without this trait, also in constant contexts. The supertrait `Neg` gives generic code
+/// the operator `-`, which on overflow panics or wraps as `overflow-checks` decides, as for the
+/// native integers.
 ///
 /// ```
 /// use numo::{
@@ -180,6 +181,7 @@ pub trait SignedFixedInteger: Sealed + Sized + Neg<Output = Self> {
 
   signed_query_table!(trait_items![]);
   int_sign_table!(trait_items![]);
+  signed_unchecked_table!(trait_items![]);
 }
 
 /// An integer that holds one: [`Uint`] of at least one bit and [`Int`] of at least two bits, over a
@@ -434,6 +436,36 @@ pub trait StrictOps: Sealed + Sized {
   strict_table!(trait_items![]);
 }
 
+/// Unchecked addition, subtraction and multiplication, which assume that the exact result is in
+/// the range of the type.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const unsafe fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope. The methods are unsafe: their caller guarantees that the checked method of the
+/// same operation, such as [`checked_add`](CheckedOps::checked_add), would return `Some`, and the
+/// behavior is undefined otherwise. The unchecked negation of `Int` is a method of
+/// [`SignedFixedInteger`].
+///
+/// ```
+/// use numo::{BitWidth, UncheckedOps, Uint, u7};
+///
+/// // The distance between two values, the larger minus the smaller.
+/// fn distance<B: BitWidth>(a: Uint<B>, b: Uint<B>) -> Uint<B> {
+///   let (high, low) = if a < b { (b, a) } else { (a, b) };
+///   // SAFETY: `low` is at most `high`, so `checked_sub` would return `Some`.
+///   unsafe { high.unchecked_sub(&low) }
+/// }
+///
+/// assert_eq!(distance(u7::new(27), u7::new(100)), u7::new(73));
+/// assert_eq!(distance(u7::MAX, u7::ZERO), u7::MAX);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait UncheckedOps: Sealed + Sized {
+  unchecked_table!(trait_items![]);
+}
+
 // The constants are the inherent constants, which `Self::` names first.
 impl<B: FitsBits<R>, R: InlineUintRepr> FixedInteger for Uint<B, R> {
   const BITS: u32 = Self::BITS;
@@ -462,6 +494,7 @@ impl<B: FitsBits<R>, R: InlineIntRepr> SignedFixedInteger for Int<B, R> {
 
   signed_query_table!(generic_items![]);
   int_sign_table!(generic_items![]);
+  signed_unchecked_table!(generic_items![]);
 }
 
 impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> HasOne for Uint<B, R> {
@@ -588,6 +621,14 @@ impl<B: FitsBits<R>, R: UintRepr> StrictOps for Uint<B, R> {
 
 impl<B: FitsBits<R>, R: IntRepr> StrictOps for Int<B, R> {
   strict_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: UintRepr> UncheckedOps for Uint<B, R> {
+  unchecked_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> UncheckedOps for Int<B, R> {
+  unchecked_table!(generic_items![]);
 }
 
 #[cfg(test)]

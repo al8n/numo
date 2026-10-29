@@ -10,7 +10,7 @@ use core::{
 pub use error::TryNewError;
 pub use traits::{
   ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, NativeInteger, OverflowingOps,
-  SaturatingOps, SignedFixedInteger, StrictOps, UnsignedFixedInteger, WrappingOps,
+  SaturatingOps, SignedFixedInteger, StrictOps, UncheckedOps, UnsignedFixedInteger, WrappingOps,
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -113,11 +113,14 @@ mod traits;
 /// `const fn`s: addition, subtraction, multiplication and negation in the `checked_*`,
 /// `wrapping_*`, `overflowing_*` and `strict_*` forms, the first three also in the `saturating_*`
 /// form, [`carrying_add`](Self::carrying_add) and [`borrowing_sub`](Self::borrowing_sub), and from
-/// one bit the constant `ONE`. The operators `+`, `-` and `*`, their compound assignments, `Sum`
-/// and `Product` work for every storage, and so do the traits that give generic code the methods,
-/// such as [`CheckedOps`](crate::CheckedOps). A method of a storage is called with method syntax or
-/// with a path that names the storage, such as `Uint::<U7>::checked_add(&a, &b)`: a path that
-/// leaves the storage to inference, such as `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
+/// one bit the constant `ONE`. Addition, subtraction and multiplication also have the `unchecked_*`
+/// form, such as [`unchecked_add`](Self::unchecked_add), as `const unsafe fn`s: the caller
+/// guarantees that the `checked_*` method would return `Some`, and the behavior is undefined
+/// otherwise. The operators `+`, `-` and `*`, their compound assignments, `Sum` and `Product` work
+/// for every storage, and so do the traits that give generic code the methods, such as
+/// [`CheckedOps`](crate::CheckedOps). A method of a storage is called with method syntax or with a
+/// path that names the storage, such as `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the
+/// storage to inference, such as `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
 ///
 /// ```
 /// use numo::{Uint, typenum::U200, u7};
@@ -126,6 +129,8 @@ mod traits;
 /// assert_eq!(u7::MAX.wrapping_add(&u7::ONE), u7::ZERO);
 /// assert_eq!(u7::MAX.saturating_add(&u7::ONE), u7::MAX);
 /// assert_eq!(u7::new(100) + u7::new(27), u7::MAX);
+/// // SAFETY: 100 + 27 is at most `MAX`, so `checked_add` would return `Some`.
+/// assert_eq!(unsafe { u7::new(100).unchecked_add(&u7::new(27)) }, u7::MAX);
 ///
 /// // 2^199 needs every bit of 200, and twice it needs 201.
 /// type U200x4 = Uint<U200, [u64; 4]>;
@@ -228,10 +233,14 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` forms, the absolute value in the
 /// same forms, [`abs`](Self::abs) and [`unsigned_abs`](Self::unsigned_abs), which returns the
 /// [`Uint`] of the same width and storage size, [`signum`](Self::signum), and from two bits the
-/// constant `ONE`, since one bit holds only -1 and 0. The operators `+`, `-` and `*`, their compound
-/// assignments, the negation `-`, `Sum` and `Product` work for every storage, and so do the traits
-/// that give generic code the methods, such as [`CheckedOps`](crate::CheckedOps). As for [`Uint`],
-/// a path to a method names the storage.
+/// constant `ONE`, since one bit holds only -1 and 0. As for [`Uint`], addition, subtraction,
+/// multiplication and negation also have the `unchecked_*` form, as `const unsafe fn`s whose caller
+/// guarantees that the `checked_*` method would return `Some`:
+/// [`unchecked_neg`](Self::unchecked_neg), for example, requires that `self` is not `MIN`, except at
+/// zero bits. The operators `+`, `-` and `*`, their compound assignments, the negation `-`, `Sum`
+/// and `Product` work for every storage, and so do the traits that give generic code the methods,
+/// such as [`CheckedOps`](crate::CheckedOps). As for [`Uint`], a path to a method names the
+/// storage.
 ///
 /// ```
 /// use numo::i7;
@@ -242,6 +251,8 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// assert_eq!(i7::new(-5).signum(), -i7::ONE);
 /// assert_eq!(i7::MIN.saturating_sub(&i7::ONE), i7::MIN);
 /// assert_eq!(-i7::new(63) - i7::ONE, i7::MIN);
+/// // SAFETY: -63 is not `MIN`, so `checked_neg` would return `Some`.
+/// assert_eq!(unsafe { i7::new(-63).unchecked_neg() }, i7::MAX);
 /// ```
 ///
 /// # Overflow

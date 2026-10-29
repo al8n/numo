@@ -113,17 +113,19 @@
 //! `overflowing_*`, `saturating_*` and `strict_*` forms, `carrying_add` and `borrowing_sub` for
 //! `Uint`, `abs` and its forms, `unsigned_abs` and `signum` for `Int`, and the operators `+`, `-`
 //! and `*`, which panic or wrap on overflow as the native integers do (see
-//! [Overflow](Uint#overflow)).
+//! [Overflow](Uint#overflow)). Addition, subtraction and multiplication, and negation for `Int`,
+//! also have the `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the
+//! `checked_*` method would return `Some`.
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind: [`FixedInteger`], with the constants, `is_zero`, `is_one` and the operators,
 //! [`UnsignedFixedInteger`] and [`SignedFixedInteger`], with the methods of each sign, [`HasOne`],
-//! with `ONE`, the families [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`]
-//! and [`StrictOps`], and for the construction of each kind [`NativeInteger`], [`ArrayInteger`] and
-//! [`FromLimbs`]. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` [`FixedInteger`], the sign
-//! traits and the families, and `HasOne` with a width that holds one. The traits are not `const`, so
-//! constant contexts use the inherent `const fn`s, which a concrete type reaches without importing a
-//! trait.
+//! with `ONE`, the families [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`],
+//! [`StrictOps`] and [`UncheckedOps`], and for the construction of each kind [`NativeInteger`],
+//! [`ArrayInteger`] and [`FromLimbs`]. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
+//! [`FixedInteger`], the sign traits and the families, and `HasOne` with a width that holds one.
+//! The traits are not `const`, so constant contexts use the inherent `const fn`s, which a concrete
+//! type reaches without importing a trait.
 //!
 //! ```
 //! use numo::{
@@ -309,8 +311,8 @@ pub use aliases::*;
 pub use decimal::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
 pub use integer::{
   ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, Int, NativeInteger, OverflowingOps,
-  SaturatingOps, SignedFixedInteger, StrictOps, TryNewError, Uint, UnsignedFixedInteger,
-  WrappingOps,
+  SaturatingOps, SignedFixedInteger, StrictOps, TryNewError, Uint, UncheckedOps,
+  UnsignedFixedInteger, WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

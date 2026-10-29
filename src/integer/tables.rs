@@ -17,6 +17,12 @@
 //!
 //! A derived body calls the inherent `const fn`s of the storage in an inherent block, and the trait
 //! methods, which must be in scope, in a generic implementation.
+//!
+//! An unchecked row, `unsafe fn name(..) -> Self = unchecked method(operands), "message";`,
+//! declares an unsafe method whose caller guarantees that `method`, the overflowing method of the
+//! same operation, does not overflow. Only `trait_items!` and `generic_items!` take it: the generic
+//! body returns the value of `method` and checks its flag with a debug assertion that panics with
+//! `message`, so it has no unsafe code. Each storage writes out its inherent `unchecked_*` methods.
 
 /// Passes the queries of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
 macro_rules! integer_query_table {
@@ -173,6 +179,19 @@ macro_rules! trait_items {
 
     trait_items!([] $($rest)*);
   };
+  (
+    []
+    $(#[$meta:meta])*
+    unsafe fn $name:ident($($param:tt)*) -> $ret:ty
+      = unchecked $method:ident($($operand:ident),+), $message:literal;
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[must_use]
+    unsafe fn $name($($param)*) -> $ret;
+
+    trait_items!([] $($rest)*);
+  };
 }
 
 /// Emits the rows of a method table as the methods of a trait implementation that is generic over
@@ -246,6 +265,25 @@ macro_rules! generic_items {
     $(#[$meta])*
     #[inline]
     fn $name($($param)*) -> $ret $body
+
+    generic_items!([] $($rest)*);
+  };
+  // The body is safe: it returns the value of the overflowing method, which is the exact result
+  // when the caller's guarantee holds, and never calls the inherent `unchecked_*` methods.
+  (
+    []
+    $(#[$meta:meta])*
+    unsafe fn $name:ident($($param:tt)*) -> $ret:ty
+      = unchecked $method:ident($receiver:ident $(, $operand:ident)*), $message:literal;
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[inline]
+    unsafe fn $name($($param)*) -> $ret {
+      let (value, overflow) = $receiver.$method($($operand),*);
+      debug_assert!(!overflow, $message);
+      value
+    }
 
     generic_items!([] $($rest)*);
   };

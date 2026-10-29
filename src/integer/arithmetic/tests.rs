@@ -23,8 +23,8 @@ use typenum::{
 
 use crate::{
   BitWidth, CheckedOps, FitsBits, FixedInteger, HasOne, Int, IntReprMut, OverflowingOps,
-  SaturatingOps, SignedFixedInteger, StrictOps, Uint, UintReprMut, UnsignedFixedInteger,
-  WrappingOps, bigint, i7, i256, u7, u256, u4096,
+  SaturatingOps, SignedFixedInteger, StrictOps, Uint, UintReprMut, UncheckedOps,
+  UnsignedFixedInteger, WrappingOps, bigint, i7, i256, u7, u256, u4096,
 };
 
 /// The smallest and the largest value of `bits` bits, unsigned or in two's complement.
@@ -1170,7 +1170,11 @@ fn bit_width_gives_one_and_product() {
 /// of `Product`.
 #[test]
 fn arithmetic_trait_surface() {
-  fn families<T: OverflowingOps + CheckedOps + WrappingOps + SaturatingOps + StrictOps>() {}
+  fn families<T>()
+  where
+    T: OverflowingOps + CheckedOps + WrappingOps + SaturatingOps + StrictOps + UncheckedOps,
+  {
+  }
   fn unsigned<T: FixedInteger + UnsignedFixedInteger>() {}
   fn signed<T: FixedInteger + SignedFixedInteger + Neg<Output = T>>() {}
   fn has_one<T: HasOne>() {}
@@ -1432,34 +1436,52 @@ fn every_value<T>(bits: u32, signed: bool, from: impl Fn(i128) -> T) -> Vec<T> {
 }
 
 /// Checks the `unchecked_*` methods at every pair of `$values`, and with `neg` `unchecked_neg` at
-/// every value, against the checked methods: each is called only where the checked method returns
-/// a value, and must return that value.
+/// every value, against the checked methods, through the inherent methods and through the traits,
+/// `UncheckedOps` and `SignedFixedInteger`: each is called only where the checked method returns
+/// a value, and both paths must return that value. Each operation must be called at least once,
+/// so that the check cannot pass where the checked methods return no value; at zero bits, each is
+/// called exactly once, on zero.
 macro_rules! check_unchecked {
-  (@neg $x:ident) => {
+  (@neg $x:ident, $calls:ident) => {
     if let Some(negated) = $x.checked_neg() {
       // SAFETY: `checked_neg` returns `Some`, which is the precondition of `unchecked_neg`.
-      assert_eq!(unsafe { $x.unchecked_neg() }, negated, "-{}", $x);
+      let results = unsafe { ($x.unchecked_neg(), SignedFixedInteger::unchecked_neg($x)) };
+      assert_eq!(results, (negated, negated), "-{}", $x);
+      $calls[3] += 1;
     }
+  };
+  (@called neg $calls:ident) => {
+    assert!($calls[3] > 0, "no call of unchecked_neg");
   };
   ($values:expr $(, $neg:ident)?) => {{
     let values = $values;
+    // The calls of `unchecked_add`, `unchecked_sub`, `unchecked_mul` and `unchecked_neg`.
+    let mut calls = [0usize; 4];
     for x in &values {
-      $(check_unchecked!(@$neg x);)?
+      $(check_unchecked!(@$neg x, calls);)?
       for y in &values {
         if let Some(sum) = x.checked_add(y) {
           // SAFETY: `checked_add` returns `Some`, which is the precondition of `unchecked_add`.
-          assert_eq!(unsafe { x.unchecked_add(y) }, sum, "{x} + {y}");
+          let results = unsafe { (x.unchecked_add(y), UncheckedOps::unchecked_add(x, y)) };
+          assert_eq!(results, (sum, sum), "{x} + {y}");
+          calls[0] += 1;
         }
         if let Some(difference) = x.checked_sub(y) {
           // SAFETY: `checked_sub` returns `Some`, which is the precondition of `unchecked_sub`.
-          assert_eq!(unsafe { x.unchecked_sub(y) }, difference, "{x} - {y}");
+          let results = unsafe { (x.unchecked_sub(y), UncheckedOps::unchecked_sub(x, y)) };
+          assert_eq!(results, (difference, difference), "{x} - {y}");
+          calls[1] += 1;
         }
         if let Some(product) = x.checked_mul(y) {
           // SAFETY: `checked_mul` returns `Some`, which is the precondition of `unchecked_mul`.
-          assert_eq!(unsafe { x.unchecked_mul(y) }, product, "{x} * {y}");
+          let results = unsafe { (x.unchecked_mul(y), UncheckedOps::unchecked_mul(x, y)) };
+          assert_eq!(results, (product, product), "{x} * {y}");
+          calls[2] += 1;
         }
       }
     }
+    assert!(calls[..3].iter().all(|&count| count > 0), "calls: {calls:?}");
+    $(check_unchecked!(@called $neg calls);)?
   }};
 }
 
@@ -1488,12 +1510,13 @@ macro_rules! check_unchecked_storage {
   }};
 }
 
-/// The `unchecked_*` methods return what the checked methods return wherever these return a value,
-/// at every value and every pair of zero, one, 7 and 8 bits: in native integers at a partial width
-/// and at their full width, where they call the native `unchecked_*`, and in arrays of no limbs,
-/// one limb and two limbs. No other input is passed, here or in any test: the standard library
-/// checks the preconditions of unsafe functions in debug builds and aborts on a violation, and in
-/// release builds a violation is undefined behavior.
+/// The `unchecked_*` methods, inherent and through the traits, return what the checked methods
+/// return wherever these return a value, at every value and every pair of zero, one, 7 and 8 bits:
+/// in native integers at a partial width and at their full width, where the inherent methods call
+/// the native `unchecked_*`, and in arrays of no limbs, one limb and two limbs. No other input is
+/// passed, here or in any test: the standard library checks the preconditions of unsafe functions
+/// in debug builds and aborts on a violation, and in release builds a violation is undefined
+/// behavior.
 #[test]
 fn unchecked_methods_return_the_checked_results() {
   check_unchecked_storage!(native U0, 0, u8, i8);
@@ -1545,4 +1568,35 @@ fn unchecked_methods_return_the_checked_results_in_wide_storages() {
   samples!(U128, 128; u128, i128; [u64; 2], [u64; 2]);
   samples!(U200, 200; [u64; 4], [u64; 4]; [u128; 2], [u128; 2]);
   samples!(U256, 256; [u64; 4], [u64; 4]; [u128; 2], [u128; 2]);
+}
+
+/// Code over `B: BitWidth` reaches the `unchecked_*` methods through `UncheckedOps` and
+/// `SignedFixedInteger`, which `check_unchecked!` calls at every pair of `unsigned` and `signed`.
+fn unchecked_over_the_width<B: BitWidth>(unsigned: Vec<Uint<B>>, signed: Vec<Int<B>>) {
+  check_unchecked!(unsigned);
+  check_unchecked!(signed, neg);
+}
+
+/// The `unchecked_*` methods in code over `B: BitWidth`, at widths of each kind of default storage,
+/// for the pairs of zero, the limits and the values that wrap from them.
+#[test]
+fn bit_width_gives_the_unchecked_methods() {
+  macro_rules! at {
+    ($($width:ident),+ $(,)?) => {$({
+      type U = Uint<$width>;
+      type I = Int<$width>;
+      unchecked_over_the_width::<$width>(
+        vec![U::ZERO, U::MAX, U::MAX.wrapping_add(&U::MAX), U::MAX.wrapping_mul(&U::MAX)],
+        vec![
+          I::ZERO,
+          I::MIN,
+          I::MAX,
+          I::MIN.wrapping_sub(&I::MAX),
+          I::MAX.wrapping_add(&I::MAX),
+        ],
+      );
+    })+};
+  }
+
+  at!(U0, U1, U7, U8, U64, U65, U128, U129, U200, U1024);
 }
