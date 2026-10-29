@@ -275,9 +275,14 @@ impl<I, F, R> Decimal<I, F, R>
 where
   (I, F): Layout<R>,
 {
-  const INTEGRAL: u32 = <(I, F) as LayoutDigits<R>>::INTEGRAL;
-  const FRACTION: u32 = <(I, F) as LayoutDigits<R>>::FRACTION;
-  const DIGITS: u32 = <(I, F) as LayoutDigits<R>>::DIGITS;
+  /// The number of integral digits, `Integral`.
+  pub const INTEGRAL: u32 = <(I, F) as LayoutDigits<R>>::INTEGRAL;
+
+  /// The number of fraction digits, `Fraction`.
+  pub const FRACTION: u32 = <(I, F) as LayoutDigits<R>>::FRACTION;
+
+  /// The total number of digits, `Integral + Fraction`.
+  pub const DIGITS: u32 = <(I, F) as LayoutDigits<R>>::DIGITS;
 }
 
 // Not `const`: storage-generic code calls trait methods, which cannot be `const` (E0015).

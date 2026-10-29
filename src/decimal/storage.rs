@@ -100,6 +100,9 @@ macro_rules! storage_decimal {
       /// The smallest value, `-MAX`.
       pub const MIN: Self = Self::from_coeff(Self::MIN_COEFF);
 
+      /// Whether the storage is signed: `true`, so values can be negative.
+      pub const SIGNED: bool = true;
+
       const fn in_range(coeff: $($by)* $repr) -> bool {
         int::$repr::le($($by)* Self::MIN_COEFF, coeff)
           && int::$repr::le(coeff, $($by)* Self::MAX_COEFF)
@@ -402,6 +405,9 @@ macro_rules! storage_decimal {
 
       /// The smallest value, zero.
       pub const MIN: Self = Self::ZERO;
+
+      /// Whether the storage is signed: `false`, so values are never negative.
+      pub const SIGNED: bool = false;
 
       const fn in_range(coeff: $($by)* $repr) -> bool {
         int::$repr::le(coeff, $($by)* Self::MAX_COEFF)
