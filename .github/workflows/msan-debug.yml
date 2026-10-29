@@ -13,14 +13,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - case: all
-            filter: ""
-          - case: b8
-            filter: int::unsigned::b8::tests::arithmetic_of_9_to_16_bits_against_structured_operands
-          - case: pairs
+          - case: pairs-2m
             filter: integer::arithmetic::tests::every_pair_of_7_and_8_bits
-          - case: storages
-            filter: integer::arithmetic::tests::storages_agree_on_the_arithmetic
+            min_stack: ""
+          - case: pairs-64m
+            filter: integer::arithmetic::tests::every_pair_of_7_and_8_bits
+            min_stack: "67108864"
+          - case: all-64m
+            filter: ""
+            min_stack: "67108864"
     steps:
       - uses: actions/checkout@v4
       - name: Install nightly
@@ -42,6 +43,7 @@ jobs:
         env:
           FILTER: ${{ matrix.filter }}
           CASE: ${{ matrix.case }}
+          MIN_STACK: ${{ matrix.min_stack }}
         run: |
           bin=$(cat bin.txt)
           if [ -n "$FILTER" ]; then
@@ -49,7 +51,27 @@ jobs:
           else
             args=()
           fi
+          if [ -n "$MIN_STACK" ]; then
+            export RUST_MIN_STACK="$MIN_STACK"
+          fi
           echo "case: $CASE"
           echo "binary: $bin"
           echo "arguments: ${args[*]}"
-          gdb -q -batch -ex 'set pagination off' -ex 'handle SIGSEGV stop print nopass' -ex run -ex 'bt 80' -ex 'info threads' -ex 'info registers rip rsp' -ex 'x/6i $pc' --args "$bin" "${args[@]}"
+          echo "RUST_MIN_STACK: ${RUST_MIN_STACK:-<unset>}"
+          gdb -q -batch \
+            -ex 'set pagination off' \
+            -ex 'handle SIGSEGV stop print nopass' \
+            -ex run \
+            -ex 'bt 12' \
+            -ex 'info registers rip rsp rbp' \
+            -ex 'x/6i $pc' \
+            -ex 'frame 0' -ex 'info frame' \
+            -ex 'frame 1' -ex 'info frame' \
+            -ex 'frame 2' -ex 'info frame' \
+            -ex 'frame 3' -ex 'info frame' \
+            -ex 'frame 4' -ex 'info frame' \
+            -ex 'frame 5' -ex 'info frame' \
+            -ex "x/24i 'numo::integer::arithmetic::tests::every_pair_of_7_and_8_bits'" \
+            -ex 'info threads' \
+            -ex 'info proc mappings' \
+            --args "$bin" "${args[@]}"
