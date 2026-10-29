@@ -9,7 +9,8 @@ use core::{
 
 pub use error::TryNewError;
 pub use traits::{
-  ArrayInteger, FixedInteger, FromLimbs, NativeInteger, SignedFixedInteger, UnsignedFixedInteger,
+  ArrayInteger, CheckedOps, FixedInteger, FromLimbs, NativeInteger, OverflowingOps, SaturatingOps,
+  SignedFixedInteger, StrictOps, UnsignedFixedInteger, WrappingOps,
 };
 
 use crate::{
@@ -24,6 +25,8 @@ use crate::{
 mod error;
 #[macro_use]
 mod tables;
+#[macro_use]
+mod arithmetic;
 mod traits;
 
 /// An unsigned integer of `Bits` bits, stored in `Repr`.
@@ -54,7 +57,7 @@ mod traits;
 /// a width that fills its limbs, and [`checked_from_limbs`](Self::checked_from_limbs) from the
 /// limbs of any width, checking that they hold a value of `Bits` bits. Values compare, hash and
 /// format by their numeric value: `Ord` is numeric, `Hash` depends only on the value and `Bits`,
-/// whatever the storage, and `Display` and `Debug` write decimal. There is no arithmetic.
+/// whatever the storage, and `Display` and `Debug` write decimal.
 ///
 /// The aliases from 192 to 512 bits are the wide storages of [`Decimal`](crate::Decimal):
 ///
@@ -104,9 +107,9 @@ mod traits;
 #[repr(transparent)]
 pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits` or above is zero, so the
-  // storage, read as an unsigned integer, equals the value. Every constructor establishes this, and
-  // equality, comparison, hashing and formatting rely on it. It is a logical invariant, not a
-  // safety invariant: no `unsafe` code may rely on it.
+  // storage, read as an unsigned integer, equals the value. Every constructor and every arithmetic
+  // result establishes this, and equality, comparison, hashing, formatting and the arithmetic rely
+  // on it. It is a logical invariant, not a safety invariant: no `unsafe` code may rely on it.
   repr: Repr,
   bits: PhantomData<Bits>,
 }
@@ -128,8 +131,7 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// value and [`value`](Self::value) returns it, and in an array [`from_limbs`](Self::from_limbs)
 /// creates a value from any bit pattern of a width that fills its limbs, and
 /// [`checked_from_limbs`](Self::checked_from_limbs) from the limbs of any width, checking that
-/// they hold a value of `Bits` bits. Values compare, hash and format by their numeric value, and
-/// there is no arithmetic.
+/// they hold a value of `Bits` bits. Values compare, hash and format by their numeric value.
 ///
 /// ```
 /// use numo::{
@@ -181,9 +183,10 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits - 1` or above equals bit
   // `Bits - 1`, the sign bit, so the storage, read as a two's complement integer, equals the value.
-  // Zero bits have no sign bit, and every bit of the storage is zero. Every constructor establishes
-  // this, and equality, comparison, the sign queries, hashing and formatting rely on it. It is a
-  // logical invariant, not a safety invariant: no `unsafe` code may rely on it.
+  // Zero bits have no sign bit, and every bit of the storage is zero. Every constructor and every
+  // arithmetic result establishes this, and equality, comparison, the sign queries, hashing,
+  // formatting and the arithmetic rely on it. It is a logical invariant, not a safety invariant: no
+  // `unsafe` code may rely on it.
   repr: Repr,
   bits: PhantomData<Bits>,
 }
@@ -299,6 +302,12 @@ macro_rules! array_integers {
           None
         }
       }
+
+      overflowing_table!(inherent_items![unsigned, $lower, &]);
+      checked_table!(inherent_items![unsigned, $lower, &]);
+      wrapping_table!(inherent_items![unsigned, $lower, &]);
+      saturating_table!(Uint, inherent_items![unsigned, $lower, &]);
+      strict_table!(inherent_items![unsigned, $lower, &]);
     }
 
     impl<B, const N: usize> Uint<B, [$limb; N]> {
@@ -375,6 +384,12 @@ macro_rules! array_integers {
           None
         }
       }
+
+      overflowing_table!(inherent_items![signed, $upper, &]);
+      checked_table!(inherent_items![signed, $upper, &]);
+      wrapping_table!(inherent_items![signed, $upper, &]);
+      saturating_table!(Int, inherent_items![signed, $upper, &]);
+      strict_table!(inherent_items![signed, $upper, &]);
     }
 
     impl<B, const N: usize> Int<B, [$limb; N]> {
@@ -599,6 +614,12 @@ macro_rules! native_integers {
           Err(TryNewError::new(Self::BITS))
         }
       }
+
+      overflowing_table!(inherent_items![$uint]);
+      checked_table!(inherent_items![$uint]);
+      wrapping_table!(inherent_items![$uint]);
+      saturating_table!(Uint, inherent_items![$uint]);
+      strict_table!(inherent_items![$uint]);
     }
 
     impl<B> Uint<B, $uint> {
@@ -645,6 +666,12 @@ macro_rules! native_integers {
           Err(TryNewError::new(Self::BITS))
         }
       }
+
+      overflowing_table!(inherent_items![$int]);
+      checked_table!(inherent_items![$int]);
+      wrapping_table!(inherent_items![$int]);
+      saturating_table!(Int, inherent_items![$int]);
+      strict_table!(inherent_items![$int]);
     }
 
     impl<B> Int<B, $int> {

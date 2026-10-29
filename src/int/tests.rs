@@ -602,3 +602,196 @@ wide_tests!(
   signed i448: 7, 134, true,
   signed i512: 8, 153, true,
 );
+
+/// The arithmetic of a width in the native layers: every pair of values of up to 8 bits in `u8`,
+/// `i8`, `u16` and `i16`, every value of 9 to 16 bits in `u16` and `i16` against the structured
+/// operands of its width, and in the wider types the structured operands of a few widths, against
+/// wider native integers or, for `u128` and `i128`, against `num-bigint`.
+mod arithmetic_bits {
+  use num_bigint::BigInt;
+  use std::{vec, vec::Vec};
+
+  use crate::{bigint, int};
+
+  /// The range of `bits` bits, unsigned or in two's complement.
+  fn range(bits: u32, signed: bool) -> (i128, i128) {
+    match (bits, signed) {
+      (0, _) => (0, 0),
+      (_, false) => (0, (1 << bits) - 1),
+      (_, true) => (-(1 << (bits - 1)), (1 << (bits - 1)) - 1),
+    }
+  }
+
+  /// `exact` wrapped to the range of `bits` bits, at most 64, and whether it is outside that
+  /// range.
+  fn wrapped(exact: i128, bits: u32, signed: bool) -> (i128, bool) {
+    let (min, max) = range(bits, signed);
+    let result = (exact - min).rem_euclid(1 << bits) + min;
+    (result, !(min..=max).contains(&exact))
+  }
+
+  /// The unsigned results of `bits` bits, at most 64, for `a` and `b` below `2^bits`, computed
+  /// modulo `2^128` and reduced to `bits` bits: the sum, the difference, the product and the
+  /// negation of `a`, each with whether the exact result is outside the range of `bits` bits.
+  fn unsigned_results(a: u128, b: u128, bits: u32) -> [(u128, bool); 4] {
+    let mask = (1 << bits) - 1;
+    // `a` and `b` are below `2^64`, so neither the sum nor the product overflows `u128`.
+    let (sum, product) = (a + b, a * b);
+    [
+      (sum & mask, sum > mask),
+      (a.wrapping_sub(b) & mask, a < b),
+      (product & mask, product > mask),
+      (a.wrapping_neg() & mask, a != 0),
+    ]
+  }
+
+  /// Checks the arithmetic of each width of `$widths` in the unsigned layer `$uint` and the signed
+  /// layer `$int`, for `bits` bits at most 64: every value of up to `$every` bits against every
+  /// other, or under Miri every 61st pair, and otherwise every value against the structured
+  /// operands of the width, or under Miri every 61st value against them.
+  macro_rules! check_native {
+    ($uint:ident, $int:ident, $widths:expr, $every:expr) => {{
+      let step = if cfg!(miri) { 61 } else { 1 };
+      for bits in $widths {
+        // Every value, or the structured operands.
+        let lefts: Vec<u128> = if bits <= $every {
+          (0..1u128 << bits).collect()
+        } else {
+          bigint::structured_patterns(bits)
+        };
+        let rights: Vec<u128> = if bits <= $every {
+          lefts.clone()
+        } else {
+          bigint::structured_patterns(bits)
+        };
+        for &a in lefts.iter().step_by(step) {
+          for &b in &rights {
+            let [sum, difference, product, negated] = unsigned_results(a, b, bits);
+            let (x, y) = (a as $uint, b as $uint);
+            let native = |(value, overflow): (u128, bool)| (value as $uint, overflow);
+            assert_eq!(int::$uint::overflowing_add_bits(x, y, bits), native(sum));
+            assert_eq!(
+              int::$uint::overflowing_sub_bits(x, y, bits),
+              native(difference)
+            );
+            assert_eq!(
+              int::$uint::overflowing_mul_bits(x, y, bits),
+              native(product)
+            );
+            assert_eq!(int::$uint::overflowing_neg_bits(x, bits), native(negated));
+
+            let (a, b) = (bigint::to_signed(a, bits), bigint::to_signed(b, bits));
+            let (x, y) = (a as $int, b as $int);
+            for (exact, op, result) in [
+              (a + b, '+', int::$int::overflowing_add_bits(x, y, bits)),
+              (a - b, '-', int::$int::overflowing_sub_bits(x, y, bits)),
+              (a * b, '*', int::$int::overflowing_mul_bits(x, y, bits)),
+            ] {
+              let (value, overflow) = wrapped(exact, bits, true);
+              assert_eq!(
+                result,
+                (value as $int, overflow),
+                "{a} {op} {b} in {bits} bits"
+              );
+            }
+            let (value, overflow) = wrapped(-a, bits, true);
+            assert_eq!(
+              int::$int::overflowing_neg_bits(x, bits),
+              (value as $int, overflow),
+              "-{a} in {bits} bits"
+            );
+          }
+        }
+      }
+    }};
+  }
+
+  #[test]
+  fn u8_and_i8_match_wider_integers() {
+    check_native!(u8, i8, 0..=8, 8);
+  }
+
+  #[test]
+  fn u16_and_i16_match_wider_integers() {
+    let widths: Vec<u32> = if cfg!(miri) {
+      vec![0, 1, 7, 8, 9, 16]
+    } else {
+      (0..=16).collect()
+    };
+    check_native!(u16, i16, widths, 8);
+  }
+
+  #[test]
+  fn u32_to_i64_match_wider_integers() {
+    check_native!(u32, i32, [0, 1, 2, 16, 31, 32], 0);
+    check_native!(u64, i64, [0, 1, 2, 32, 63, 64], 0);
+  }
+
+  /// The structured operands of 128 bits and of a few narrower widths in `u128` and `i128`, against
+  /// `num-bigint`.
+  #[test]
+  #[cfg_attr(
+    all(miri, target_pointer_width = "32"),
+    ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+  )]
+  fn u128_and_i128_match_big_integers() {
+    for bits in [0, 1, 2, 64, 65, 127, 128] {
+      for signed in [false, true] {
+        let (min, max) = (bigint::min(bits, signed), bigint::max(bits, signed));
+        let mut patterns = bigint::structured_patterns(bits).into_iter().cycle();
+        let samples = bigint::arithmetic_samples(bits, 64, &min, &max, || {
+          BigInt::from(patterns.next().expect("a pattern"))
+        });
+        // `exact` is `lhs op rhs`, and `computed` its result in the layer, read as an integer.
+        let check = |exact: BigInt, computed: (BigInt, bool), lhs: &BigInt, op, rhs: &BigInt| {
+          let expected = (bigint::wrap(&exact, bits, &min), exact < min || max < exact);
+          assert_eq!(computed, expected, "{lhs} {op} {rhs} in {bits} bits");
+        };
+        let zero = BigInt::ZERO;
+        for a in &samples {
+          if signed {
+            let x = i128::try_from(a).expect("in range");
+            let big = |(value, overflow): (i128, bool)| (BigInt::from(value), overflow);
+            check(
+              -a,
+              big(int::i128::overflowing_neg_bits(x, bits)),
+              &zero,
+              '-',
+              a,
+            );
+            for b in &samples {
+              let y = i128::try_from(b).expect("in range");
+              for (exact, op, computed) in [
+                (a + b, '+', int::i128::overflowing_add_bits(x, y, bits)),
+                (a - b, '-', int::i128::overflowing_sub_bits(x, y, bits)),
+                (a * b, '*', int::i128::overflowing_mul_bits(x, y, bits)),
+              ] {
+                check(exact, big(computed), a, op, b);
+              }
+            }
+          } else {
+            let x = u128::try_from(a).expect("in range");
+            let big = |(value, overflow): (u128, bool)| (BigInt::from(value), overflow);
+            check(
+              -a,
+              big(int::u128::overflowing_neg_bits(x, bits)),
+              &zero,
+              '-',
+              a,
+            );
+            for b in &samples {
+              let y = u128::try_from(b).expect("in range");
+              for (exact, op, computed) in [
+                (a + b, '+', int::u128::overflowing_add_bits(x, y, bits)),
+                (a - b, '-', int::u128::overflowing_sub_bits(x, y, bits)),
+                (a * b, '*', int::u128::overflowing_mul_bits(x, y, bits)),
+              ] {
+                check(exact, big(computed), a, op, b);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

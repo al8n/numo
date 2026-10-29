@@ -218,6 +218,135 @@ pub(crate) fn exponents(max_exp: u32) -> Vec<u32> {
   exponents_by(max_exp, 19)
 }
 
+/// `exact` wrapped to the range of `bits` bits that starts at `min`: `min` plus `exact - min`
+/// modulo `2^bits`.
+pub(crate) fn wrap(exact: &BigInt, bits: u32, min: &BigInt) -> BigInt {
+  let modulus = BigInt::from(1u8) << bits;
+  // `%` takes the sign of the dividend, so a negative remainder moves up by one modulus.
+  let offset = (exact - min) % &modulus;
+  if offset.sign() == Sign::Minus {
+    offset + modulus + min
+  } else {
+    offset + min
+  }
+}
+
+/// The widths at which the arithmetic of a width is checked in `limbs` limbs of `limb_bits` bits:
+/// every width from zero to `limb_bits * limbs` for limbs of at most 16 bits, and otherwise, or
+/// under Miri, zero, one, two and the widths next to each multiple of `limb_bits`.
+pub(crate) fn arithmetic_widths(limb_bits: u32, limbs: usize) -> Vec<u32> {
+  let top = limb_bits * limbs as u32;
+  if limb_bits <= 16 && !cfg!(miri) {
+    return (0..=top).collect();
+  }
+  let mut widths = vec![0, 1, 2];
+  for k in 1..=limbs as u32 {
+    widths.extend([limb_bits * k - 1, limb_bits * k, limb_bits * k + 1]);
+  }
+  widths.retain(|&width| width <= top);
+  widths.sort_unstable();
+  widths.dedup();
+  widths
+}
+
+/// The values from `min` to `max`, the range of `bits` bits, at which the arithmetic of a width is
+/// checked for limbs of `limb_bits` bits: the limits and the values next to them and to zero, the
+/// powers `±2^k` and the values next to them for `k` next to the limb boundaries and to `bits`, and
+/// values from `random`, wrapped to the range. Under Miri, fewer random values and every third
+/// value.
+pub(crate) fn arithmetic_samples(
+  bits: u32,
+  limb_bits: u32,
+  min: &BigInt,
+  max: &BigInt,
+  mut random: impl FnMut() -> BigInt,
+) -> Vec<BigInt> {
+  let mut values = vec![
+    min.clone(),
+    min + 1u8,
+    min + 2u8,
+    max - 2u8,
+    max - 1u8,
+    max.clone(),
+  ];
+  values.extend([-2, -1, 0, 1, 2].map(BigInt::from));
+  let mut indexes = vec![0, 1, bits.saturating_sub(2), bits.saturating_sub(1)];
+  for k in 1..=bits / limb_bits {
+    indexes.extend([limb_bits * k - 1, limb_bits * k, limb_bits * k + 1]);
+  }
+  for k in indexes.into_iter().filter(|&k| k < bits) {
+    let power = BigInt::from(1u8) << k;
+    values.extend([&power - 1u8, power.clone(), &power + 1u8]);
+    values.extend([1u8 - &power, -&power, -&power - 1u8]);
+  }
+  let count = if cfg!(miri) { 2 } else { 16 };
+  values.extend((0..count).map(|_| wrap(&random(), bits, min)));
+  values.retain(|value| min <= value && value <= max);
+  values.sort_unstable();
+  values.dedup();
+  thin(values)
+}
+
+/// Bit patterns of `bits` bits, at most 128, read as unsigned integers: zero, one, two, every bit
+/// set and the two patterns below it, the limits of the two's complement range and the patterns
+/// next to them, `2^k`, `2^k ± 1` and `2^bits - 2^k` for every `k` below `bits`, `2^8` and the
+/// patterns next to it, and 16 seeded random patterns, each reduced to `bits` bits.
+pub(crate) fn structured_patterns(bits: u32) -> Vec<u128> {
+  let mask = match bits {
+    0 => 0,
+    _ => u128::MAX >> (128 - bits),
+  };
+  // The smallest value of the two's complement range, or zero for zero bits.
+  let min: u128 = match bits {
+    0 => 0,
+    _ => 1 << (bits - 1),
+  };
+  let mut patterns = vec![0, 1, 2, mask, mask.wrapping_sub(1), mask.wrapping_sub(2)];
+  patterns.extend([
+    min.wrapping_sub(3),
+    min.wrapping_sub(2),
+    min.wrapping_sub(1),
+  ]);
+  patterns.extend([min, min.wrapping_add(1), min.wrapping_add(2), 255, 256, 257]);
+  for k in 0..bits {
+    let power = 1u128 << k;
+    patterns.extend([
+      power.wrapping_sub(1),
+      power,
+      power.wrapping_add(1),
+      mask.wrapping_sub(power).wrapping_add(1),
+    ]);
+  }
+  // A xorshift generator seeded by the width, so that a failure replays.
+  let mut state = 0x9e37_79b9_7f4a_7c15 ^ u64::from(bits);
+  for _ in 0..16 {
+    let mut word = || {
+      state ^= state >> 12;
+      state ^= state << 25;
+      state ^= state >> 27;
+      state.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    };
+    patterns.push(u128::from(word()) << 64 | u128::from(word()));
+  }
+  for pattern in &mut patterns {
+    *pattern &= mask;
+  }
+  patterns.sort_unstable();
+  patterns.dedup();
+  patterns
+}
+
+/// `pattern`, of `bits` bits, at most 128, read in two's complement.
+pub(crate) fn to_signed(pattern: u128, bits: u32) -> i128 {
+  match bits {
+    0 => 0,
+    // Every pattern of 128 bits is the `i128` of the same bits.
+    128 => pattern as i128,
+    _ if pattern >> (bits - 1) == 1 => pattern as i128 - (1 << bits),
+    _ => pattern as i128,
+  }
+}
+
 /// `samples`, or every third of them under Miri, which runs big-integer arithmetic slowly.
 pub(crate) fn thin<T>(samples: Vec<T>) -> Vec<T> {
   let step = if cfg!(miri) { 3 } else { 1 };

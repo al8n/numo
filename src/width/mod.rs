@@ -238,6 +238,22 @@ mod sealed {
     /// Returns `true` if the value has `bits` bits: every bit at index `bits` or above is zero.
     /// Requires `bits` to be at most the bits of the storage.
     fn fits_bits(&self, bits: u32, token: Token) -> bool;
+
+    /// `self + rhs` modulo `2^bits`, and whether the sum is `2^bits` or more. Requires `bits` to
+    /// be at most the bits of the storage and both values to have `bits` bits.
+    fn overflowing_add_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self - rhs` modulo `2^bits`, and whether `rhs` is greater than `self`. Requires `bits` to
+    /// be at most the bits of the storage and both values to have `bits` bits.
+    fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self * rhs` modulo `2^bits`, and whether the product is `2^bits` or more. Requires `bits`
+    /// to be at most the bits of the storage and both values to have `bits` bits.
+    fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `-self` modulo `2^bits`, and whether `self` is not zero. Requires `bits` to be at most the
+    /// bits of the storage and the value to have `bits` bits.
+    fn overflowing_neg_bits(&self, bits: u32, token: Token) -> (Self, bool);
   }
 
   /// Seals [`IntRepr`](super::IntRepr) and gives the trait implementations of [`Int`](crate::Int)
@@ -273,6 +289,26 @@ mod sealed {
 
     /// Returns `true` if the value is positive.
     fn is_positive(&self, token: Token) -> bool;
+
+    /// `self + rhs` wrapped to `bits` bits, and whether the sum is outside the range of `bits`
+    /// bits. Requires `bits` to be at most the bits of the storage and both values to have `bits`
+    /// bits.
+    fn overflowing_add_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self - rhs` wrapped to `bits` bits, and whether the difference is outside the range of
+    /// `bits` bits. Requires `bits` to be at most the bits of the storage and both values to have
+    /// `bits` bits.
+    fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self * rhs` wrapped to `bits` bits, and whether the product is outside the range of `bits`
+    /// bits. Requires `bits` to be at most the bits of the storage and both values to have `bits`
+    /// bits.
+    fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `-self` wrapped to `bits` bits, and whether the negation is outside the range of `bits`
+    /// bits, as it is only for the smallest value. Requires `bits` to be at most the bits of the
+    /// storage and the value to have `bits` bits.
+    fn overflowing_neg_bits(&self, bits: u32, token: Token) -> (Self, bool);
   }
 }
 
@@ -360,8 +396,10 @@ where
 /// `u128`, holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first.
 ///
-/// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default` for every `Repr`
-/// that implements this trait. This trait is sealed and cannot be implemented outside this crate.
+/// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, and the
+/// arithmetic traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
+/// [`WrappingOps`](crate::WrappingOps) and [`StrictOps`](crate::StrictOps), for every `Repr` that
+/// implements this trait. This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
   note = "`Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`"
@@ -373,8 +411,10 @@ pub trait UintRepr: Eq + UintCore {}
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first, in
 /// two's complement.
 ///
-/// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default` for every `Repr`
-/// that implements this trait. This trait is sealed and cannot be implemented outside this crate.
+/// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, and the
+/// arithmetic traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
+/// [`WrappingOps`](crate::WrappingOps) and [`StrictOps`](crate::StrictOps), for every `Repr` that
+/// implements this trait. This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
@@ -389,18 +429,20 @@ pub trait IntRepr: Eq + IntCore {
 /// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`.
 ///
 /// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger) and [`UnsignedFixedInteger`](crate::UnsignedFixedInteger),
-/// for every `Repr` that implements this trait. The default storages of [`BitWidth`] are inline.
-/// This trait is sealed and cannot be implemented outside this crate.
+/// [`FixedInteger`](crate::FixedInteger), [`UnsignedFixedInteger`](crate::UnsignedFixedInteger)
+/// and [`SaturatingOps`](crate::SaturatingOps), for every `Repr` that implements this trait. The
+/// default storages of [`BitWidth`] are inline. This trait is sealed and cannot be implemented
+/// outside this crate.
 pub trait InlineUintRepr: UintRepr + Copy + InlineUintConsts {}
 
 /// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
 /// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`.
 ///
 /// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger) and [`SignedFixedInteger`](crate::SignedFixedInteger),
-/// for every `Repr` that implements this trait. The default storages of [`BitWidth`] are inline.
-/// This trait is sealed and cannot be implemented outside this crate.
+/// [`FixedInteger`](crate::FixedInteger), [`SignedFixedInteger`](crate::SignedFixedInteger) and
+/// [`SaturatingOps`](crate::SaturatingOps), for every `Repr` that implements this trait. The
+/// default storages of [`BitWidth`] are inline. This trait is sealed and cannot be implemented
+/// outside this crate.
 pub trait InlineIntRepr: IntRepr + Copy + InlineIntConsts {}
 
 /// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`InlineUintRepr`] and [`InlineIntRepr`]
@@ -443,6 +485,26 @@ macro_rules! array_storage {
       #[inline]
       fn fits_bits(&self, bits: u32, _: Token) -> bool {
         unsigned::$lower::fits_bits(self, bits)
+      }
+
+      #[inline]
+      fn overflowing_add_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_add_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_sub_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_mul_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_neg_bits(self, bits)
       }
     }
 
@@ -498,6 +560,26 @@ macro_rules! array_storage {
       #[inline]
       fn is_positive(&self, _: Token) -> bool {
         signed::$upper::is_positive(self)
+      }
+
+      #[inline]
+      fn overflowing_add_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_add_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_sub_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_mul_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_neg_bits(self, bits)
       }
     }
 
@@ -578,6 +660,26 @@ macro_rules! native_storage {
       fn fits_bits(&self, bits: u32, _: Token) -> bool {
         int::$uint::fits_bits(*self, bits)
       }
+
+      #[inline]
+      fn overflowing_add_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_add_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_sub_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_mul_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_neg_bits(*self, bits)
+      }
     }
 
     impl IntRepr for $int {
@@ -625,6 +727,26 @@ macro_rules! native_storage {
       #[inline]
       fn is_positive(&self, _: Token) -> bool {
         int::$int::is_positive(*self)
+      }
+
+      #[inline]
+      fn overflowing_add_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_add_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_sub_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_sub_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_mul_bits(&self, rhs: &Self, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_mul_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_neg_bits(*self, bits)
       }
     }
 

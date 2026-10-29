@@ -105,8 +105,7 @@
 //! `from_limbs`, for a width that fills its limbs, and `checked_from_limbs`, which checks that the
 //! limbs hold a value of `Bits` bits, and `to_limbs` and `as_limbs` return the limbs. Its
 //! `const fn` queries are `is_zero`, and for `Int` also `is_negative` and `is_positive`. Values
-//! compare, hash and format by their numeric value, alike in every storage. There is no integer
-//! arithmetic yet.
+//! compare, hash and format by their numeric value, alike in every storage.
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind: [`FixedInteger`], with the constants and `is_zero`, [`UnsignedFixedInteger`]
@@ -287,8 +286,9 @@ pub use typenum;
 pub use aliases::*;
 pub use decimal::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
 pub use integer::{
-  ArrayInteger, FixedInteger, FromLimbs, Int, NativeInteger, SignedFixedInteger, TryNewError, Uint,
-  UnsignedFixedInteger,
+  ArrayInteger, CheckedOps, FixedInteger, FromLimbs, Int, NativeInteger, OverflowingOps,
+  SaturatingOps, SignedFixedInteger, StrictOps, TryNewError, Uint, UnsignedFixedInteger,
+  WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

@@ -108,3 +108,127 @@ fn every_one_limb_value_matches_i8() {
     assert_eq!(min_of_bits::<1>(bits), [(-(1i16 << (bits - 1))) as u8]);
   }
 }
+
+/// `value`, from `-2^15` to `2^15 - 1`, in two limbs of two's complement, least significant first.
+fn two_limbs(value: i32) -> [u8; 2] {
+  (value as i16).to_le_bytes()
+}
+
+/// `exact` wrapped to the range of `bits` bits, and whether it is outside that range.
+fn wrapped(exact: i64, bits: u32) -> (i32, bool) {
+  let (min, max) = match bits {
+    0 => (0, 0),
+    _ => (-(1 << (bits - 1)), (1 << (bits - 1)) - 1),
+  };
+  let result = (exact - min).rem_euclid(1 << bits) + min;
+  (result as i32, !(min..=max).contains(&exact))
+}
+
+/// Checks the arithmetic of `bits` bits, at most 16, on `a` and `b` against `i64`: in one limb
+/// when `bits` is at most 8, and in two limbs.
+fn check_arithmetic_bits(a: i32, b: i32, bits: u32) {
+  type One = fn(&[u8; 1], &[u8; 1], u32) -> ([u8; 1], bool);
+  type Two = fn(&[u8; 2], &[u8; 2], u32) -> ([u8; 2], bool);
+  let (wide_a, wide_b) = (i64::from(a), i64::from(b));
+  let operations: [(i64, char, One, Two); 3] = [
+    (
+      wide_a + wide_b,
+      '+',
+      overflowing_add_bits,
+      overflowing_add_bits,
+    ),
+    (
+      wide_a - wide_b,
+      '-',
+      overflowing_sub_bits,
+      overflowing_sub_bits,
+    ),
+    (
+      wide_a * wide_b,
+      '*',
+      overflowing_mul_bits,
+      overflowing_mul_bits,
+    ),
+  ];
+  for (exact, op, one, two) in operations {
+    let (result, overflow) = wrapped(exact, bits);
+    if bits <= 8 {
+      assert_eq!(
+        one(&[a as u8], &[b as u8], bits),
+        ([result as u8], overflow),
+        "{a} {op} {b} in {bits} bits"
+      );
+    }
+    assert_eq!(
+      two(&two_limbs(a), &two_limbs(b), bits),
+      (two_limbs(result), overflow),
+      "{a} {op} {b} in {bits} bits"
+    );
+  }
+}
+
+/// Checks the negation of `bits` bits, at most 16, of `a` against `i64`, as
+/// [`check_arithmetic_bits`] does.
+fn check_negation_bits(a: i32, bits: u32) {
+  let (result, overflow) = wrapped(-i64::from(a), bits);
+  if bits <= 8 {
+    assert_eq!(
+      overflowing_neg_bits(&[a as u8], bits),
+      ([result as u8], overflow),
+      "-{a} in {bits} bits"
+    );
+  }
+  assert_eq!(
+    overflowing_neg_bits(&two_limbs(a), bits),
+    (two_limbs(result), overflow),
+    "-{a} in {bits} bits"
+  );
+}
+
+/// The values of `bits` bits, at most 16, in order.
+fn values_of(bits: u32) -> core::ops::RangeInclusive<i32> {
+  match bits {
+    0 => 0..=0,
+    _ => -(1 << (bits - 1))..=(1 << (bits - 1)) - 1,
+  }
+}
+
+/// Every pair of values of each width from zero to 8 bits, in one and in two limbs, against `i64`,
+/// or under Miri every 61st pair.
+#[test]
+fn arithmetic_of_every_pair_up_to_8_bits() {
+  let step = if cfg!(miri) { 61 } else { 1 };
+  for bits in 0..=8 {
+    for a in values_of(bits) {
+      check_negation_bits(a, bits);
+    }
+    let pairs = values_of(bits).flat_map(|a| values_of(bits).map(move |b| (a, b)));
+    for (a, b) in pairs.step_by(step) {
+      check_arithmetic_bits(a, b, bits);
+    }
+  }
+}
+
+/// Every value of each width from 9 to 16 bits, in two limbs, against the structured operands of
+/// that width read in two's complement, against `i64`, or under Miri every 61st value at 9 and 16
+/// bits.
+#[test]
+fn arithmetic_of_9_to_16_bits_against_structured_operands() {
+  let (widths, step) = if cfg!(miri) {
+    (vec![9, 16], 61)
+  } else {
+    ((9..=16).collect(), 1)
+  };
+  for bits in widths {
+    let operands: Vec<i32> = bigint::structured_patterns(bits)
+      .into_iter()
+      .map(|pattern| bigint::to_signed(pattern, bits) as i32)
+      .collect();
+    for a in values_of(bits).step_by(step) {
+      check_negation_bits(a, bits);
+      for &b in &operands {
+        check_arithmetic_bits(a, b, bits);
+      }
+    }
+  }
+}

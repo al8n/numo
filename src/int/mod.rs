@@ -10,15 +10,17 @@
 //! Each storage has a module of the same name. For the native storages, the modules for `u8`
 //! through `u128` form the lower layer and the modules for `i8` through `i128` the upper layer.
 //! They also give `Uint` and `Int` over the native integers the limits of a width, `max_of_bits`
-//! and `min_of_bits`, and its range check, `fits_bits`, named as in the limb layers. The wide
-//! storages `u192` through `u512` and `i192` through `i512` hold arrays of 64-bit limbs, least
-//! significant first. Their modules apply `unsigned::b64`, the lower layer for `[u64; N]`, and
-//! `signed::b64`, the upper layer, which reads the array as two's complement. `Uint` and `Int`
-//! also store arrays of the other limb types, through `unsigned::b8`, `unsigned::b16`,
-//! `unsigned::b32` and `unsigned::b128` and the upper layers over them, `signed::b8`,
-//! `signed::b16`, `signed::b32` and `signed::b128`, which `limb_layer!` generates from the same
-//! code as `unsigned::b64` and `signed::b64`. No native integer has 256 bits, so `half_limbs!`
-//! computes the two primitives of the layer for `u128` from the 64-bit halves of each limb.
+//! and `min_of_bits`, its range check, `fits_bits`, and its arithmetic, such as
+//! `overflowing_add_bits`, named as in the limb layers: the functions that take `bits` serve `Uint`
+//! and `Int`, at the width `bits`. The wide storages `u192` through `u512` and `i192` through
+//! `i512` hold arrays of 64-bit limbs, least significant first. Their modules apply
+//! `unsigned::b64`, the lower layer for `[u64; N]`, and `signed::b64`, the upper layer, which reads
+//! the array as two's complement. `Uint` and `Int` also store arrays of the other limb types,
+//! through `unsigned::b8`, `unsigned::b16`, `unsigned::b32` and `unsigned::b128` and the upper
+//! layers over them, `signed::b8`, `signed::b16`, `signed::b32` and `signed::b128`, which
+//! `limb_layer!` generates from the same code as `unsigned::b64` and `signed::b64`. No native
+//! integer has 256 bits, so `half_limbs!` computes the two primitives of the layer for `u128` from
+//! the 64-bit halves of each limb.
 //!
 //! Every storage module provides `const fn`s with the same names and contracts, so storage-specific
 //! code calls them in constant contexts, and storage-generic code reaches them through the sealed
@@ -156,6 +158,15 @@ macro_rules! native {
       pub(crate) const fn fits_bits(value: $uint, bits: u32) -> bool {
         value <= max_of_bits(bits)
       }
+
+      /// `value` modulo `2^bits`: every bit at index `bits` or above cleared. Requires
+      /// `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn zero_extend(value: $uint, bits: u32) -> $uint {
+        value & max_of_bits(bits)
+      }
+
+      native!(@bits $uint, zero_extend);
     }
   };
   (signed $int:ident => $uint:ident) => {
@@ -300,6 +311,24 @@ macro_rules! native {
       pub(crate) const fn fits_bits(value: $int, bits: u32) -> bool {
         min_of_bits(bits) <= value && value <= max_of_bits(bits)
       }
+
+      /// `value` with every bit at index `bits - 1` or above set to bit `bits - 1`: the two's
+      /// complement integer of `bits` bits in the low bits of `value`, or zero for zero bits.
+      /// Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn sign_extend(value: $int, bits: u32) -> $int {
+        // Zero bits hold only zero, and have no sign bit to copy. The shifts below would be by
+        // `BITS` bits, which overflows.
+        if bits == 0 {
+          0
+        } else {
+          // The arithmetic shift right copies bit `bits - 1`, shifted to the top, into the bits
+          // above it.
+          (value << ($int::BITS - bits)) >> ($int::BITS - bits)
+        }
+      }
+
+      native!(@bits $int, sign_extend);
     }
   };
   (@shared $int:ident) => {
@@ -392,6 +421,46 @@ macro_rules! native {
   };
   (@u128 $limbs:ident) => {
     $limbs[0] as u128 | ($limbs[1] as u128) << 64
+  };
+  // The arithmetic at a width of `bits` bits, which wraps the result of the native operation
+  // with `$extend`, `zero_extend` or `sign_extend`. The operands have `bits` bits, so the result
+  // overflows `bits` bits when the native operation overflows or when wrapping changes it.
+  (@bits $int:ident, $extend:ident) => {
+    /// `lhs + rhs` wrapped to `bits` bits, and whether the exact sum is outside the range of
+    /// `bits` bits. Requires `bits <= BITS` and both values within that range.
+    #[inline]
+    pub(crate) const fn overflowing_add_bits(lhs: $int, rhs: $int, bits: u32) -> ($int, bool) {
+      let (raw, overflow) = lhs.overflowing_add(rhs);
+      let wrapped = $extend(raw, bits);
+      (wrapped, overflow || wrapped != raw)
+    }
+
+    /// `lhs - rhs` wrapped to `bits` bits, and whether the exact difference is outside the range
+    /// of `bits` bits. Requires `bits <= BITS` and both values within that range.
+    #[inline]
+    pub(crate) const fn overflowing_sub_bits(lhs: $int, rhs: $int, bits: u32) -> ($int, bool) {
+      let (raw, overflow) = lhs.overflowing_sub(rhs);
+      let wrapped = $extend(raw, bits);
+      (wrapped, overflow || wrapped != raw)
+    }
+
+    /// `lhs * rhs` wrapped to `bits` bits, and whether the exact product is outside the range of
+    /// `bits` bits. Requires `bits <= BITS` and both values within that range.
+    #[inline]
+    pub(crate) const fn overflowing_mul_bits(lhs: $int, rhs: $int, bits: u32) -> ($int, bool) {
+      let (raw, overflow) = lhs.overflowing_mul(rhs);
+      let wrapped = $extend(raw, bits);
+      (wrapped, overflow || wrapped != raw)
+    }
+
+    /// `-value` wrapped to `bits` bits, and whether the exact negation is outside the range of
+    /// `bits` bits. Requires `bits <= BITS` and `value` within that range.
+    #[inline]
+    pub(crate) const fn overflowing_neg_bits(value: $int, bits: u32) -> ($int, bool) {
+      let (raw, overflow) = value.overflowing_neg();
+      let wrapped = $extend(raw, bits);
+      (wrapped, overflow || wrapped != raw)
+    }
   };
 }
 

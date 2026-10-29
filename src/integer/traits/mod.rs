@@ -15,7 +15,9 @@ use sealed::Sealed;
 use super::{Int, TryNewError, Uint};
 use crate::{
   layout::Token,
-  width::{FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, UintCore},
+  width::{
+    FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, UintCore, UintRepr,
+  },
 };
 
 mod sealed {
@@ -220,6 +222,126 @@ pub trait FromLimbs: ArrayInteger {
   fn from_limbs(limbs: Self::Array) -> Self;
 }
 
+/// Overflowing addition, subtraction, multiplication and negation: the result wrapped to the range
+/// of the type, and whether the exact result is outside that range.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope.
+///
+/// ```
+/// use numo::{BitWidth, OverflowingOps, Uint, u7};
+///
+/// fn wrapped_sum<B: BitWidth>(a: Uint<B>, b: Uint<B>) -> (Uint<B>, bool) {
+///   a.overflowing_add(&b)
+/// }
+///
+/// assert_eq!(wrapped_sum(u7::new(100), u7::new(27)), (u7::MAX, false));
+/// assert_eq!(wrapped_sum(u7::MAX, u7::new(1)), (u7::ZERO, true));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait OverflowingOps: Sealed + Sized {
+  overflowing_table!(trait_items![]);
+}
+
+/// Checked addition, subtraction, multiplication and negation, which return `None` when the exact
+/// result is outside the range of the type.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope.
+///
+/// ```
+/// use numo::{BitWidth, CheckedOps, Uint, u7};
+///
+/// fn total<B: BitWidth>(values: &[Uint<B>]) -> Option<Uint<B>> {
+///   values.iter().try_fold(Uint::<B>::ZERO, |sum, value| sum.checked_add(value))
+/// }
+///
+/// assert_eq!(total(&[u7::new(100), u7::new(27)]), Some(u7::MAX));
+/// assert_eq!(total(&[u7::MAX, u7::new(1)]), None);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait CheckedOps: Sealed + Sized {
+  checked_table!(trait_items![]);
+}
+
+/// Wrapping addition, subtraction, multiplication and negation, modulo `2^Bits`.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope.
+///
+/// ```
+/// use numo::{BitWidth, Int, WrappingOps, i7};
+///
+/// // The sum of the values modulo `2^Bits`.
+/// fn checksum<B: BitWidth>(values: &[Int<B>]) -> Int<B> {
+///   values.iter().fold(Int::<B>::ZERO, |sum, value| sum.wrapping_add(value))
+/// }
+///
+/// assert_eq!(checksum(&[i7::new(60), i7::new(-20)]), i7::new(40));
+/// assert_eq!(checksum(&[i7::MAX, i7::new(1)]), i7::MIN);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait WrappingOps: Sealed + Sized {
+  wrapping_table!(trait_items![]);
+}
+
+/// Saturating addition, subtraction and multiplication, which return the bound of the range of the
+/// type that the exact result passes.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope.
+///
+/// ```
+/// use numo::{BitWidth, SaturatingOps, Uint, u7};
+///
+/// fn clamped_total<B: BitWidth>(values: &[Uint<B>]) -> Uint<B> {
+///   values.iter().fold(Uint::<B>::ZERO, |sum, value| sum.saturating_add(value))
+/// }
+///
+/// assert_eq!(clamped_total(&[u7::new(100), u7::new(20)]), u7::new(120));
+/// assert_eq!(clamped_total(&[u7::new(100), u7::new(100)]), u7::MAX);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait SaturatingOps: Sealed + Sized {
+  saturating_table!(Uint, trait_items![]);
+}
+
+/// Strict addition, subtraction, multiplication and negation, which panic when the exact result is
+/// outside the range of the type, whatever the `overflow-checks` setting.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts, where an overflow fails to compile. Generic code, such as code over
+/// `B: BitWidth`, calls the methods with this trait in scope.
+///
+/// ```
+/// use numo::{BitWidth, StrictOps, Uint, u7};
+///
+/// // Panics if the total does not fit in `B` bits.
+/// fn total<B: BitWidth>(values: &[Uint<B>]) -> Uint<B> {
+///   values.iter().fold(Uint::<B>::ZERO, |sum, value| sum.strict_add(value))
+/// }
+///
+/// assert_eq!(total(&[u7::new(100), u7::new(27)]), u7::MAX);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait StrictOps: Sealed + Sized {
+  strict_table!(trait_items![]);
+}
+
 // The constants are the inherent constants, which `Self::` names first.
 impl<B: FitsBits<R>, R: InlineUintRepr> FixedInteger for Uint<B, R> {
   const BITS: u32 = Self::BITS;
@@ -321,6 +443,48 @@ where
   fn from_limbs(limbs: [L; N]) -> Self {
     Self::wrap(limbs)
   }
+}
+
+// The families whose methods read no constant need only the storage trait. `SaturatingOps` reads
+// `MIN` and `MAX`, so it needs a storage that holds the value inline.
+impl<B: FitsBits<R>, R: UintRepr> OverflowingOps for Uint<B, R> {
+  overflowing_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> OverflowingOps for Int<B, R> {
+  overflowing_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: UintRepr> CheckedOps for Uint<B, R> {
+  checked_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> CheckedOps for Int<B, R> {
+  checked_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: UintRepr> WrappingOps for Uint<B, R> {
+  wrapping_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> WrappingOps for Int<B, R> {
+  wrapping_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: InlineUintRepr> SaturatingOps for Uint<B, R> {
+  saturating_table!(Uint, generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: InlineIntRepr> SaturatingOps for Int<B, R> {
+  saturating_table!(Int, generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: UintRepr> StrictOps for Uint<B, R> {
+  strict_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> StrictOps for Int<B, R> {
+  strict_table!(generic_items![]);
 }
 
 #[cfg(test)]
