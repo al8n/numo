@@ -1,0 +1,55 @@
+name: msan-debug
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  msan-debug:
+    name: msan-debug (${{ matrix.case }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: all
+            filter: ""
+          - case: b8
+            filter: int::unsigned::b8::tests::arithmetic_of_9_to_16_bits_against_structured_operands
+          - case: pairs
+            filter: integer::arithmetic::tests::every_pair_of_7_and_8_bits
+          - case: storages
+            filter: integer::arithmetic::tests::storages_agree_on_the_arithmetic
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly
+        run: rustup update nightly --no-self-update && rustup default nightly && rustup component add rust-src
+      - name: Install gdb and jq
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gdb jq
+      - name: Build the lib tests with the memory sanitizer
+        env:
+          RUSTFLAGS: -Z sanitizer=memory --cfg all_tests
+        run: |
+          cargo -Zbuild-std test --lib --target x86_64-unknown-linux-gnu --all-features --no-run --message-format=json > build.json
+          bin=$(jq -r 'select(.executable != null and .target.kind == ["lib"]) | .executable' build.json | head -n 1)
+          if [ -z "$bin" ]; then
+            echo "no test executable found" >&2
+            exit 1
+          fi
+          echo "$bin" > bin.txt
+      - name: Run under gdb
+        env:
+          FILTER: ${{ matrix.filter }}
+          CASE: ${{ matrix.case }}
+        run: |
+          bin=$(cat bin.txt)
+          if [ -n "$FILTER" ]; then
+            args=("$FILTER" --exact --test-threads=1)
+          else
+            args=()
+          fi
+          echo "case: $CASE"
+          echo "binary: $bin"
+          echo "arguments: ${args[*]}"
+          gdb -q -batch -ex 'set pagination off' -ex 'handle SIGSEGV stop print nopass' -ex run -ex 'bt 80' -ex 'info threads' -ex 'info registers rip rsp' -ex 'x/6i $pc' --args "$bin" "${args[@]}"
