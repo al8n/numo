@@ -1,9 +1,9 @@
 use numo::{
-  Decimal, HasDecimalOne,
+  Decimal, DecimalOne,
   typenum::{U0, U2},
 };
 
-fn one<T: HasDecimalOne>() -> T {
+fn one<T: DecimalOne>() -> T {
   T::ONE
 }
 

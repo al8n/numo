@@ -1,7 +1,7 @@
 //! The traits that [`Decimal`] implements for generic code.
 //!
 //! Each trait mirrors inherent items of the same names, which concrete types reach without the
-//! trait. [`FixedDecimal`], the sign traits and [`HasDecimalOne`] have one implementation for each
+//! trait. [`FixedDecimal`], the sign traits and [`DecimalOne`] have one implementation for each
 //! storage, which `storage_decimal!` emits next to the inherent items. [`ExactMul`], [`WidenTo`],
 //! [`ConvertTo`] and [`DivRound`], which relate two or three decimal types, each have a single
 //! implementation for every combination of them, with the bounds of the inherent method it calls.
@@ -243,12 +243,12 @@ pub trait UnsignedFixedDecimal: FixedDecimal {}
 ///
 /// ```
 /// use numo::{
-///   Decimal, HasDecimalOne,
+///   Decimal, DecimalOne,
 ///   typenum::{U2, U8, U10},
 /// };
 ///
 /// // The value plus one, or `None` if the sum is outside the range of the type.
-/// fn successor<T: HasDecimalOne>(value: &T) -> Option<T> {
+/// fn successor<T: DecimalOne>(value: &T) -> Option<T> {
 ///   value.checked_add(&T::ONE)
 /// }
 ///
@@ -256,12 +256,12 @@ pub trait UnsignedFixedDecimal: FixedDecimal {}
 ///
 /// assert_eq!(successor(&"1.5".parse::<Price>()?), Some("2.5".parse()?));
 /// assert_eq!(successor(&Price::MAX), None);
-/// assert_eq!(<Decimal<U2, U2, u16> as HasDecimalOne>::ONE.to_string(), "1");
+/// assert_eq!(<Decimal<U2, U2, u16> as DecimalOne>::ONE.to_string(), "1");
 /// # Ok::<(), numo::ParseError>(())
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait HasDecimalOne: FixedDecimal {
+pub trait DecimalOne: FixedDecimal {
   /// One.
   const ONE: Self;
 }

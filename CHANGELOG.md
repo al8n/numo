@@ -38,13 +38,13 @@ FEATURES
   - The sealed traits `FixedDecimal`, with the constants, the storage as `Repr`, `repr`,
     `from_repr`, `is_zero`, `is_positive`, `checked_add`, `checked_sub`, `quantize` and
     `is_multiple_of`, `SignedFixedDecimal`, which also requires `Neg` and has `is_negative`, `neg`
-    and `abs`, `UnsignedFixedDecimal`, and `HasDecimalOne`, with `ONE` where `Integral` is nonzero,
+    and `abs`, `UnsignedFixedDecimal`, and `DecimalOne`, with `ONE` where `Integral` is nonzero,
     each with one implementation for every storage; and `ExactMul`, `WidenTo`, `ConvertTo` and
-    `DivRound`, each with one implementation for the decimal types that the inherent method
-    accepts, so that generic code does not repeat its bounds. `ExactMul` has the product type as
-    `Output`, which implements `FixedDecimal`. Because the implementations are per storage, code
-    generic over `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`. The traits are
-    not `const`; constant contexts use the inherent `const fn`s.
+    `DivRound`, each with one implementation for the decimal types that the inherent method accepts,
+    so that generic code does not repeat its bounds. `ExactMul` has the product type as `Output`,
+    which implements `FixedDecimal`. Because the implementations are per storage, code generic over
+    `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`. The traits are not `const`;
+    constant contexts use the inherent `const fn`s.
 - `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown` and
   `HalfEven`. Rounding happens only where a mode is given, for native and wide storages alike:
   - `round_to` converts to any decimal type as `try_convert` does, but rounds dropped fraction

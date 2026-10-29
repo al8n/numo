@@ -7,7 +7,7 @@ use typenum::{
 };
 
 use super::{
-  ConvertTo, DivRound, ExactMul, FixedDecimal, HasDecimalOne, SignedFixedDecimal,
+  ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal, SignedFixedDecimal,
   UnsignedFixedDecimal, WidenTo,
 };
 use crate::{
@@ -145,11 +145,11 @@ macro_rules! assert_unsigned {
   })+};
 }
 
-/// Asserts that [`HasDecimalOne::ONE`] is the inherent `ONE`, which is one, for each type.
+/// Asserts that [`DecimalOne::ONE`] is the inherent `ONE`, which is one, for each type.
 macro_rules! assert_one {
   ($($ty:ty),+ $(,)?) => {$(
-    assert_eq!(<$ty as HasDecimalOne>::ONE, <$ty>::ONE);
-    assert_eq!(<$ty as HasDecimalOne>::ONE.to_string(), "1");
+    assert_eq!(<$ty as DecimalOne>::ONE, <$ty>::ONE);
+    assert_eq!(<$ty as DecimalOne>::ONE.to_string(), "1");
   )+};
 }
 
@@ -517,8 +517,8 @@ mod collisions {
     reason = "every trait is in scope, as in code that imports all of them"
   )]
   use crate::{
-    ArrayInteger, CheckedOps, ConvertTo, Decimal, DivRound, ExactMul, FixedDecimal, FixedInteger,
-    FromLimbs, HasDecimalOne, HasOne, NativeInteger, OverflowingOps, SaturatingOps,
+    ArrayInteger, CheckedOps, ConvertTo, Decimal, DecimalOne, DivRound, ExactMul, FixedDecimal,
+    FixedInteger, FromLimbs, HasOne, NativeInteger, OverflowingOps, SaturatingOps,
     SignedFixedDecimal, SignedFixedInteger, StrictOps, UncheckedOps, UnsignedFixedDecimal,
     UnsignedFixedInteger, WidenTo, WrappingOps, i256, u256,
   };
@@ -528,7 +528,7 @@ mod collisions {
 
   fn signed_decimal<T>(x: &T) -> (Option<T>, bool, bool, T, T)
   where
-    T: FixedDecimal + SignedFixedDecimal + HasDecimalOne,
+    T: FixedDecimal + SignedFixedDecimal + DecimalOne,
   {
     (
       x.checked_add(&T::ONE),
@@ -541,7 +541,7 @@ mod collisions {
 
   fn unsigned_decimal<T>(x: &T) -> (Option<T>, bool)
   where
-    T: FixedDecimal + UnsignedFixedDecimal + HasDecimalOne,
+    T: FixedDecimal + UnsignedFixedDecimal + DecimalOne,
   {
     (x.checked_add(&T::ONE), x.is_zero())
   }

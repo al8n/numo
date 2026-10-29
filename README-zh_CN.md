@@ -90,7 +90,7 @@ fn main() -> Result<(), ParseError> {
 - 只依赖存储的方法都是 `const fn`，常量可以在编译期解析和计算。
 - 常量 `INTEGRAL`、`FRACTION` 与 `DIGITS` 给出类型的位数，`SIGNED` 表示存储是否有符号。供泛型代码使用的
   sealed trait 提供同样的项：`FixedDecimal` 提供常量、查询以及每种存储都有的算术，`SignedFixedDecimal`
-  与 `UnsignedFixedDecimal` 按符号区分，`HasDecimalOne` 提供 `ONE`，它们每种存储各有一个实现；
+  与 `UnsignedFixedDecimal` 按符号区分，`DecimalOne` 提供 `ONE`，它们每种存储各有一个实现；
   `ExactMul`、`WidenTo`、`ConvertTo` 与 `DivRound` 提供十进制类型之间的方法。对 `Decimal<I, F, R>`
   泛型的代码需要加上约束 `Decimal<I, F, R>: FixedDecimal`。
 - `parse` 接受 ASCII 文本，可以带符号、小数点与指数，并按 Rust 字面量的规则使用 `_` 分隔符：

@@ -41,7 +41,7 @@
 //! Every decimal type has the constants `INTEGRAL`, `FRACTION` and `DIGITS`, its digit counts, and
 //! `SIGNED`, whether its storage is signed. Generic code reaches the constants and methods through
 //! traits: [`FixedDecimal`], with the constants, the queries and the arithmetic of every storage,
-//! [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`], for each sign, and [`HasDecimalOne`], with
+//! [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`], for each sign, and [`DecimalOne`], with
 //! `ONE`, each with one implementation for every storage, and [`ExactMul`], [`WidenTo`],
 //! [`ConvertTo`] and [`DivRound`], with the methods between decimal types. Code generic over the
 //! storage adds the bound `Decimal<I, F, R>: FixedDecimal`. The traits are not `const`, so constant
@@ -318,7 +318,7 @@ pub use typenum;
 
 pub use aliases::*;
 pub use decimal::{
-  ConvertError, ConvertTo, Decimal, DivRound, DivideError, ExactMul, FixedDecimal, HasDecimalOne,
+  ConvertError, ConvertTo, Decimal, DecimalOne, DivRound, DivideError, ExactMul, FixedDecimal,
   ParseError, ParseErrorKind, QuantizeError, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 pub use integer::{

@@ -102,7 +102,7 @@ fn main() -> Result<(), ParseError> {
 - The constants `INTEGRAL`, `FRACTION` and `DIGITS` give the digit counts of a type, and `SIGNED`
   whether its storage is signed. Sealed traits give generic code the same items: `FixedDecimal`,
   with the constants, the queries and the arithmetic of every storage, `SignedFixedDecimal` and
-  `UnsignedFixedDecimal` for each sign, and `HasDecimalOne`, with `ONE`, each implemented for every
+  `UnsignedFixedDecimal` for each sign, and `DecimalOne`, with `ONE`, each implemented for every
   storage, and `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound` for the methods between decimal
   types. Code generic over `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`.
 - `parse` accepts ASCII text with an optional sign, point and exponent, and `_` separators as in

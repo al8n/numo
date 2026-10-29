@@ -3,7 +3,7 @@ use core::{ops::Neg, str::FromStr};
 use typenum::NonZero;
 
 use super::{
-  Decimal, FixedDecimal, HasDecimalOne, ParseError, QuantizeError, SignedFixedDecimal,
+  Decimal, DecimalOne, FixedDecimal, ParseError, QuantizeError, SignedFixedDecimal,
   UnsignedFixedDecimal, parse,
 };
 use crate::{
@@ -108,7 +108,7 @@ macro_rules! storage_decimal {
       }
     }
 
-    impl<I, F> HasDecimalOne for Decimal<I, F, $repr>
+    impl<I, F> DecimalOne for Decimal<I, F, $repr>
     where
       I: NonZero,
       (I, F): Layout<$repr>,

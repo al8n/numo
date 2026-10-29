@@ -12,7 +12,7 @@ use typenum::{And, Diff, Max, Maximum, Sum};
 
 pub use error::{ConvertError, DivideError, ParseError, ParseErrorKind, QuantizeError};
 pub use traits::{
-  ConvertTo, DivRound, ExactMul, FixedDecimal, HasDecimalOne, SignedFixedDecimal,
+  ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal, SignedFixedDecimal,
   UnsignedFixedDecimal, WidenTo,
 };
 
@@ -101,7 +101,7 @@ mod tests;
 /// The constants and methods defined for each storage, such as [`ZERO`](Self::ZERO) and
 /// [`checked_add`](Self::checked_add), reach generic code through traits: [`FixedDecimal`] for
 /// every storage, [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`] for each sign, and
-/// [`HasDecimalOne`] for [`ONE`](Self::ONE), while [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
+/// [`DecimalOne`] for [`ONE`](Self::ONE), while [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
 /// [`DivRound`] carry the bounds of the methods between decimal types. Because the implementations
 /// are per storage, code generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`,
 /// which `R: Storage` and `(I, F): Layout<R>` do not imply. Every type also has the constants
