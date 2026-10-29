@@ -42,7 +42,6 @@ mod sealed {
   /// each source storage, call the `ConvertFrom` implementation of the target, which this trait
   /// requires for every source. Storage-generic code is not `const`, because trait methods cannot
   /// be.
-  // clippy's `wrong_self_convention` requires `Copy` for `is_*` methods that take `self`.
   pub trait StorageCore:
     Copy
     + ConvertFrom<i8>
@@ -75,54 +74,54 @@ mod sealed {
     const SIGNED: bool = !<Self::IsUnsigned as typenum::Bit>::BOOL;
 
     /// Returns `true` if the value is negative, which an unsigned value never is.
-    fn is_negative(self, token: Token) -> bool;
+    fn is_negative(&self, token: Token) -> bool;
 
     /// Returns `true` if the value is zero.
-    fn is_zero(self, token: Token) -> bool;
+    fn is_zero(&self, token: Token) -> bool;
 
     /// Returns `true` if `|self| <= 10^digits - 1`. Requires `10^digits` to be representable.
-    fn within_digits(self, digits: u32, token: Token) -> bool;
+    fn within_digits(&self, digits: u32, token: Token) -> bool;
 
     /// `self * rhs`. Requires the product to be representable.
-    fn mul(self, rhs: Self, token: Token) -> Self;
+    fn mul(&self, rhs: &Self, token: Token) -> Self;
 
     /// `self * 10^exp`. Requires the product to be representable.
-    fn mul_pow10(self, exp: u32, token: Token) -> Self;
+    fn mul_pow10(&self, exp: u32, token: Token) -> Self;
 
     /// `self * 10^exp`, or `None` if the product is not representable. Requires `10^exp` to be
     /// representable.
-    fn checked_mul_pow10(self, exp: u32, token: Token) -> Option<Self>;
+    fn checked_mul_pow10(&self, exp: u32, token: Token) -> Option<Self>;
 
     /// Quotient and remainder of `self / 10^exp`, rounding toward zero; both have the sign of
     /// `self`. Requires `10^exp` to be representable.
-    fn div_rem_pow10(self, exp: u32, token: Token) -> (Self, Self);
+    fn div_rem_pow10(&self, exp: u32, token: Token) -> (Self, Self);
 
     /// `self / 10^exp` rounded to an integer with `mode`. Requires `10^exp` to be representable.
-    fn round_div_pow10(self, exp: u32, mode: RoundingMode, token: Token) -> Self;
+    fn round_div_pow10(&self, exp: u32, mode: RoundingMode, token: Token) -> Self;
 
     /// `self / divisor` rounded to an integer with `mode`. Requires `divisor != 0`, and for a
     /// signed storage that neither operand is `MIN`.
-    fn round_div(self, divisor: Self, mode: RoundingMode, token: Token) -> Self;
+    fn round_div(&self, divisor: &Self, mode: RoundingMode, token: Token) -> Self;
 
     /// Writes the decimal digits of the magnitude to the end of `buf` and returns the index of
     /// the first digit.
-    fn write_digits(self, buf: &mut DigitBuf, token: Token) -> usize;
+    fn write_digits(&self, buf: &mut DigitBuf, token: Token) -> usize;
 
     /// Appends the ASCII digits in `bytes[start..end]` to `self`, computing `self * 10 + d` for
     /// each digit `d` and skipping every other byte. Requires `self` not to be negative and a
     /// representable result.
-    fn push_digits(self, bytes: &[u8], start: usize, end: usize, token: Token) -> Self;
+    fn push_digits(&self, bytes: &[u8], start: usize, end: usize, token: Token) -> Self;
 
     /// `-self`, or `None` if it is not representable, which for an unsigned storage is every value
     /// but zero. Requires, for a signed storage, that `self` is not `MIN`, which no coefficient is.
-    fn checked_neg(self, token: Token) -> Option<Self>;
+    fn checked_neg(&self, token: Token) -> Option<Self>;
 
     /// Converts the value to `Target`. Requires it to be representable there, so not negative for
     /// an unsigned `Target`.
-    fn convert<Target: StorageCore>(self, token: Token) -> Target;
+    fn convert<Target: StorageCore>(&self, token: Token) -> Target;
 
     /// Converts the value to `Target`, or returns `None` if it is not representable there.
-    fn checked_convert<Target: StorageCore>(self, token: Token) -> Option<Target>;
+    fn checked_convert<Target: StorageCore>(&self, token: Token) -> Option<Target>;
   }
 
   /// Converts values of the storage `Source` to this storage. Implemented for every ordered pair
@@ -130,10 +129,10 @@ mod sealed {
   pub trait ConvertFrom<Source>: Sized {
     /// Converts `value`. Requires it to be representable in this storage, so not negative for an
     /// unsigned one.
-    fn convert_from(value: Source, token: Token) -> Self;
+    fn convert_from(value: &Source, token: Token) -> Self;
 
     /// Converts `value`, or returns `None` if it is not representable in this storage.
-    fn checked_convert_from(value: Source, token: Token) -> Option<Self>;
+    fn checked_convert_from(value: &Source, token: Token) -> Option<Self>;
   }
 
   /// Seals [`FitsDigits`](super::FitsDigits).
@@ -396,41 +395,45 @@ where
 )]
 pub trait WidenRepr<Target>: ReprWidensTo<Target> {}
 
+/// Implements [`StorageCore`] and [`Storage`] for the native storages, written `native`, whose
+/// methods copy the value to the storage's module in `int`, and for the wide storages, written
+/// `wide`, whose methods lend their limbs to the limb layer, `int::signed::b64` or
+/// `int::unsigned::b64`.
 macro_rules! impl_storage {
-  (signed: $($int:ident),+; unsigned: $($uint:ident),+ $(,)?) => {
+  (native signed: $($int:ident),+; unsigned: $($uint:ident),+ $(,)?) => {
     $(
       impl StorageCore for $int {
         type IsUnsigned = B0;
 
         #[inline]
-        fn is_negative(self, _: Token) -> bool {
-          int::$int::is_negative(self)
+        fn is_negative(&self, _: Token) -> bool {
+          int::$int::is_negative(*self)
         }
 
         #[inline]
-        fn within_digits(self, digits: u32, _: Token) -> bool {
+        fn within_digits(&self, digits: u32, _: Token) -> bool {
           let max = int::$int::max_magnitude(digits);
-          int::$int::le(int::$int::neg(max), self) && int::$int::le(self, max)
+          int::$int::le(int::$int::neg(max), *self) && int::$int::le(*self, max)
         }
 
         #[inline]
-        fn round_div(self, divisor: Self, mode: RoundingMode, _: Token) -> Self {
+        fn round_div(&self, divisor: &Self, mode: RoundingMode, _: Token) -> Self {
           // The rounding step requires a positive divisor: it reads the divisor as its magnitude
           // and the sign of the exact quotient from the dividend, because a quotient of zero has
           // none. Negating both operands keeps the quotient and moves its sign to the dividend.
-          if int::$int::is_negative(divisor) {
-            int::$int::round_div(int::$int::neg(self), int::$int::neg(divisor), mode).0
+          if int::$int::is_negative(*divisor) {
+            int::$int::round_div(int::$int::neg(*self), int::$int::neg(*divisor), mode).0
           } else {
-            int::$int::round_div(self, divisor, mode).0
+            int::$int::round_div(*self, *divisor, mode).0
           }
         }
 
         #[inline]
-        fn checked_neg(self, _: Token) -> Option<Self> {
-          Some(int::$int::neg(self))
+        fn checked_neg(&self, _: Token) -> Option<Self> {
+          Some(int::$int::neg(*self))
         }
 
-        impl_storage!(@shared $int);
+        impl_storage!(@native $int);
       }
 
       impl Storage for $int {}
@@ -440,92 +443,222 @@ macro_rules! impl_storage {
         type IsUnsigned = B1;
 
         #[inline]
-        fn is_negative(self, _: Token) -> bool {
+        fn is_negative(&self, _: Token) -> bool {
           false
         }
 
         #[inline]
-        fn within_digits(self, digits: u32, _: Token) -> bool {
-          int::$uint::le(self, int::$uint::max_magnitude(digits))
+        fn within_digits(&self, digits: u32, _: Token) -> bool {
+          int::$uint::le(*self, int::$uint::max_magnitude(digits))
         }
 
         #[inline]
-        fn round_div(self, divisor: Self, mode: RoundingMode, _: Token) -> Self {
-          int::$uint::round_div(self, divisor, mode).0
+        fn round_div(&self, divisor: &Self, mode: RoundingMode, _: Token) -> Self {
+          int::$uint::round_div(*self, *divisor, mode).0
         }
 
         #[inline]
-        fn checked_neg(self, _: Token) -> Option<Self> {
-          if int::$uint::is_zero(self) {
-            Some(self)
+        fn checked_neg(&self, _: Token) -> Option<Self> {
+          if int::$uint::is_zero(*self) {
+            Some(*self)
           } else {
             None
           }
         }
 
-        impl_storage!(@shared $uint);
+        impl_storage!(@native $uint);
       }
 
       impl Storage for $uint {}
     )+
   };
-  (@shared $repr:ident) => {
+  (wide signed: $($int:ident),+; unsigned: $($uint:ident),+ $(,)?) => {
+    $(
+      impl StorageCore for $int {
+        type IsUnsigned = B0;
+
+        #[inline]
+        fn is_negative(&self, _: Token) -> bool {
+          int::signed::b64::is_negative(self.as_limbs())
+        }
+
+        #[inline]
+        fn within_digits(&self, digits: u32, _: Token) -> bool {
+          let max = int::signed::b64::max_magnitude(digits);
+          int::signed::b64::le(&int::signed::b64::neg(&max), self.as_limbs())
+            && int::signed::b64::le(self.as_limbs(), &max)
+        }
+
+        #[inline]
+        fn round_div(&self, divisor: &Self, mode: RoundingMode, _: Token) -> Self {
+          // As for a native storage, negating both operands makes the divisor positive.
+          let (value, divisor) = (self.as_limbs(), divisor.as_limbs());
+          let (rounded, _, _) = if int::signed::b64::is_negative(divisor) {
+            let (value, divisor) = (int::signed::b64::neg(value), int::signed::b64::neg(divisor));
+            int::signed::b64::round_div(&value, &divisor, mode)
+          } else {
+            int::signed::b64::round_div(value, divisor, mode)
+          };
+          Self::from_limbs(rounded)
+        }
+
+        #[inline]
+        fn checked_neg(&self, _: Token) -> Option<Self> {
+          Some(Self::from_limbs(int::signed::b64::neg(self.as_limbs())))
+        }
+
+        impl_storage!(@wide signed $int);
+      }
+
+      impl Storage for $int {}
+    )+
+    $(
+      impl StorageCore for $uint {
+        type IsUnsigned = B1;
+
+        #[inline]
+        fn is_negative(&self, _: Token) -> bool {
+          false
+        }
+
+        #[inline]
+        fn within_digits(&self, digits: u32, _: Token) -> bool {
+          int::unsigned::b64::le(self.as_limbs(), &int::unsigned::b64::max_magnitude(digits))
+        }
+
+        #[inline]
+        fn round_div(&self, divisor: &Self, mode: RoundingMode, _: Token) -> Self {
+          let (rounded, _, _) =
+            int::unsigned::b64::round_div(self.as_limbs(), divisor.as_limbs(), mode);
+          Self::from_limbs(rounded)
+        }
+
+        #[inline]
+        fn checked_neg(&self, _: Token) -> Option<Self> {
+          if int::unsigned::b64::is_zero(self.as_limbs()) {
+            Some(*self)
+          } else {
+            None
+          }
+        }
+
+        impl_storage!(@wide unsigned $uint);
+      }
+
+      impl Storage for $uint {}
+    )+
+  };
+  (@native $repr:ident) => {
     #[inline]
-    fn is_zero(self, _: Token) -> bool {
-      int::$repr::is_zero(self)
+    fn is_zero(&self, _: Token) -> bool {
+      int::$repr::is_zero(*self)
     }
 
     #[inline]
-    fn mul(self, rhs: Self, _: Token) -> Self {
-      int::$repr::mul(self, rhs)
+    fn mul(&self, rhs: &Self, _: Token) -> Self {
+      int::$repr::mul(*self, *rhs)
     }
 
     #[inline]
-    fn mul_pow10(self, exp: u32, _: Token) -> Self {
-      int::$repr::mul_pow10(self, exp)
+    fn mul_pow10(&self, exp: u32, _: Token) -> Self {
+      int::$repr::mul_pow10(*self, exp)
     }
 
     #[inline]
-    fn checked_mul_pow10(self, exp: u32, _: Token) -> Option<Self> {
-      int::$repr::checked_mul_pow10(self, exp)
+    fn checked_mul_pow10(&self, exp: u32, _: Token) -> Option<Self> {
+      int::$repr::checked_mul_pow10(*self, exp)
     }
 
     #[inline]
-    fn div_rem_pow10(self, exp: u32, _: Token) -> (Self, Self) {
-      int::$repr::div_rem_pow10(self, exp)
+    fn div_rem_pow10(&self, exp: u32, _: Token) -> (Self, Self) {
+      int::$repr::div_rem_pow10(*self, exp)
     }
 
     #[inline]
-    fn round_div_pow10(self, exp: u32, mode: RoundingMode, _: Token) -> Self {
+    fn round_div_pow10(&self, exp: u32, mode: RoundingMode, _: Token) -> Self {
       // `10^exp` is positive, as the rounding step requires of the divisor.
-      int::$repr::round_div(self, int::$repr::pow10(exp), mode).0
+      int::$repr::round_div(*self, int::$repr::pow10(exp), mode).0
     }
 
     #[inline]
-    fn write_digits(self, buf: &mut DigitBuf, _: Token) -> usize {
-      int::$repr::write_digits(self, buf)
+    fn write_digits(&self, buf: &mut DigitBuf, _: Token) -> usize {
+      int::$repr::write_digits(*self, buf)
     }
 
     #[inline]
-    fn push_digits(self, bytes: &[u8], start: usize, end: usize, _: Token) -> Self {
-      int::$repr::push_digits(self, bytes, start, end)
+    fn push_digits(&self, bytes: &[u8], start: usize, end: usize, _: Token) -> Self {
+      int::$repr::push_digits(*self, bytes, start, end)
+    }
+
+    impl_storage!(@convert $repr);
+  };
+  (@wide $sign:ident $repr:ident) => {
+    #[inline]
+    fn is_zero(&self, _: Token) -> bool {
+      int::$sign::b64::is_zero(self.as_limbs())
     }
 
     #[inline]
-    fn convert<Target: StorageCore>(self, token: Token) -> Target {
+    fn mul(&self, rhs: &Self, _: Token) -> Self {
+      Self::from_limbs(int::$sign::b64::mul(self.as_limbs(), rhs.as_limbs()))
+    }
+
+    #[inline]
+    fn mul_pow10(&self, exp: u32, _: Token) -> Self {
+      Self::from_limbs(int::$sign::b64::mul_pow10(self.as_limbs(), exp))
+    }
+
+    #[inline]
+    fn checked_mul_pow10(&self, exp: u32, _: Token) -> Option<Self> {
+      int::$sign::b64::checked_mul_pow10(self.as_limbs(), exp).map(Self::from_limbs)
+    }
+
+    #[inline]
+    fn div_rem_pow10(&self, exp: u32, _: Token) -> (Self, Self) {
+      let (quotient, remainder) = int::$sign::b64::div_rem_pow10(self.as_limbs(), exp);
+      (Self::from_limbs(quotient), Self::from_limbs(remainder))
+    }
+
+    #[inline]
+    fn round_div_pow10(&self, exp: u32, mode: RoundingMode, _: Token) -> Self {
+      // `10^exp` is positive, as the rounding step requires of the divisor.
+      let divisor = int::$sign::b64::pow10(exp);
+      let (rounded, _, _) = int::$sign::b64::round_div(self.as_limbs(), &divisor, mode);
+      Self::from_limbs(rounded)
+    }
+
+    #[inline]
+    fn write_digits(&self, buf: &mut DigitBuf, _: Token) -> usize {
+      int::$sign::b64::write_digits(self.as_limbs(), buf)
+    }
+
+    #[inline]
+    fn push_digits(&self, bytes: &[u8], start: usize, end: usize, _: Token) -> Self {
+      Self::from_limbs(int::$sign::b64::push_digits(self.as_limbs(), bytes, start, end))
+    }
+
+    impl_storage!(@convert $repr);
+  };
+  (@convert $repr:ident) => {
+    #[inline]
+    fn convert<Target: StorageCore>(&self, token: Token) -> Target {
       <Target as ConvertFrom<$repr>>::convert_from(self, token)
     }
 
     #[inline]
-    fn checked_convert<Target: StorageCore>(self, token: Token) -> Option<Target> {
+    fn checked_convert<Target: StorageCore>(&self, token: Token) -> Option<Target> {
       <Target as ConvertFrom<$repr>>::checked_convert_from(self, token)
     }
   };
 }
 
 impl_storage!(
-  signed: i8, i16, i32, i64, i128, i192, i256, i320, i384, i448, i512;
-  unsigned: u8, u16, u32, u64, u128, u192, u256, u320, u384, u448, u512,
+  native signed: i8, i16, i32, i64, i128;
+  unsigned: u8, u16, u32, u64, u128,
+);
+impl_storage!(
+  wide signed: i192, i256, i320, i384, i448, i512;
+  unsigned: u192, u256, u320, u384, u448, u512,
 );
 
 /// Implements [`ConvertFrom`] for every ordered pair of the listed storages, each written as
@@ -551,13 +684,13 @@ macro_rules! impl_convert {
   ) => {
     impl ConvertFrom<$source> for $target {
       #[inline]
-      fn convert_from(value: $source, _: Token) -> Self {
-        value as $target
+      fn convert_from(value: &$source, _: Token) -> Self {
+        *value as $target
       }
 
       #[inline]
-      fn checked_convert_from(value: $source, _: Token) -> Option<Self> {
-        <$target>::try_from(value).ok()
+      fn checked_convert_from(value: &$source, _: Token) -> Option<Self> {
+        <$target>::try_from(*value).ok()
       }
     }
   };
@@ -567,19 +700,27 @@ macro_rules! impl_convert {
   ) => {
     impl ConvertFrom<$source> for $target {
       #[inline]
-      fn convert_from(value: $source, _: Token) -> Self {
-        int::$target::from_limbs(impl_convert!(@resize $source_sign &int::$source::to_limbs(value)))
+      fn convert_from(value: &$source, _: Token) -> Self {
+        let limbs = impl_convert!(@limbs $source_kind $source value);
+        int::$target::from_limbs(impl_convert!(@resize $source_sign limbs))
       }
 
       #[inline]
-      fn checked_convert_from(value: $source, _: Token) -> Option<Self> {
-        let limbs = int::$source::to_limbs(value);
-        match impl_convert!(@checked_resize $source_sign $target_sign &limbs) {
+      fn checked_convert_from(value: &$source, _: Token) -> Option<Self> {
+        let limbs = impl_convert!(@limbs $source_kind $source value);
+        match impl_convert!(@checked_resize $source_sign $target_sign limbs) {
           Some(limbs) => int::$target::checked_from_limbs(limbs),
           None => None,
         }
       }
     }
+  };
+  // The limbs of the source: a native value converts to two limbs, and a wide value lends its own.
+  (@limbs native $source:ident $value:ident) => {
+    &int::$source::to_limbs(*$value)
+  };
+  (@limbs wide $source:ident $value:ident) => {
+    $value.as_limbs()
   };
   (@resize unsigned $limbs:expr) => {
     int::unsigned::b64::resize($limbs)

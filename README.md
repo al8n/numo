@@ -54,11 +54,11 @@ fn main() -> Result<(), ParseError> {
   let quantity: Quantity = "0.0015".parse()?;
 
   // The product type, `Decimal<U22, U16>`, is computed by the compiler; nothing is rounded.
-  let notional = price.exact_mul(quantity);
+  let notional = price.exact_mul(&quantity);
   assert_eq!(notional.to_string(), "96.37575");
 
   // Sums are checked against the decimal range, not only the storage range.
-  assert_eq!(Price::MAX.checked_add(price), None);
+  assert_eq!(Price::MAX.checked_add(&price), None);
 
   Ok(())
 }

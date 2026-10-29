@@ -1,8 +1,8 @@
 error[E0277]: a `Decimal` must have between 1 and 153 digits in total
  --> tests/ui/product_too_many_digits.rs:9:32
   |
-9 |   let _product = lhs.exact_mul(rhs);
-  |                      --------- ^^^ `Integral + Fraction` is zero or greater than 153
+9 |   let _product = lhs.exact_mul(&rhs);
+  |                      --------- ^^^^ `Integral + Fraction` is zero or greater than 153
   |                      |
   |                      required by a bound introduced by this call
   |

@@ -322,6 +322,7 @@ macro_rules! wide_tests {
       use crate::{
         $int as Wide, bigint,
         int::{$int as wide, DIGIT_BUF_LEN},
+        layout::{StorageCore, Token},
       };
 
       const SIGNED: bool = wide_tests!(@signed $sign);
@@ -415,11 +416,11 @@ macro_rules! wide_tests {
       fn predicates_and_comparison() {
         let samples = with_big(edges());
         for &(a, ref big_a) in &samples {
-          assert_eq!(wide::is_zero(a), big_a.sign() == Sign::NoSign);
-          assert_eq!(wide::is_positive(a), big_a.sign() == Sign::Plus);
+          assert_eq!(wide::is_zero(&a), big_a.sign() == Sign::NoSign);
+          assert_eq!(wide::is_positive(&a), big_a.sign() == Sign::Plus);
           wide_tests!(@is_negative $sign a, big_a);
           for &(b, ref big_b) in &samples {
-            assert_eq!(wide::le(a, b), big_a <= big_b);
+            assert_eq!(wide::le(&a, &b), big_a <= big_b);
           }
         }
       }
@@ -429,8 +430,8 @@ macro_rules! wide_tests {
         let samples = with_big(edges());
         for &(a, ref big_a) in &samples {
           for &(b, ref big_b) in &samples {
-            assert_eq!(wide::checked_add(a, b), from_big(&(big_a + big_b)));
-            assert_eq!(wide::checked_sub(a, b), from_big(&(big_a - big_b)));
+            assert_eq!(wide::checked_add(&a, &b), from_big(&(big_a + big_b)));
+            assert_eq!(wide::checked_sub(&a, &b), from_big(&(big_a - big_b)));
           }
         }
       }
@@ -440,7 +441,7 @@ macro_rules! wide_tests {
         assert_eq!(bigint::max_exp(&max()), $digits);
         let largest = wide::max_magnitude($digits);
         assert_eq!(big(largest), bigint::pow10($digits) - 1u8);
-        let sum = wide::checked_add(largest, largest);
+        let sum = wide::checked_add(&largest, &largest);
         assert_eq!(sum.is_some(), $sums_fit);
         assert_eq!(sum, from_big(&(big(largest) * 2u8)));
       }
@@ -451,7 +452,7 @@ macro_rules! wide_tests {
         for &(a, ref big_a) in &samples {
           for &(b, ref big_b) in &samples {
             if let Some(product) = from_big(&(big_a * big_b)) {
-              assert_eq!(wide::mul(a, b), product, "{a:?} * {b:?}");
+              assert_eq!(StorageCore::mul(&a, &b, Token::new()), product, "{a:?} * {b:?}");
             }
           }
         }
@@ -467,7 +468,7 @@ macro_rules! wide_tests {
             if big_b.sign() == Sign::NoSign || (*big_a == min() && *big_b == minus_one) {
               continue;
             }
-            let (quotient, remainder) = wide::div_rem(a, b);
+            let (quotient, remainder) = wide::div_rem(&a, &b);
             assert_eq!(big(quotient), big_a / big_b, "{a:?} / {b:?}");
             assert_eq!(big(remainder), big_a % big_b, "{a:?} % {b:?}");
           }
@@ -480,7 +481,7 @@ macro_rules! wide_tests {
           for &(b, ref big_b) in divisors.step_by(stride) {
             let truncated = big_a / big_b;
             for mode in bigint::MODES {
-              let (rounded, remainder, away) = wide::round_div(a, b, mode);
+              let (rounded, remainder, away) = wide::round_div(&a, &b, mode);
               let expected = bigint::round(big_a, big_b, mode);
               assert_eq!(big(rounded), expected, "{a:?} / {b:?}, {mode:?}");
               assert_eq!(big(remainder), big_a % big_b);
@@ -509,12 +510,12 @@ macro_rules! wide_tests {
         for (a, big_a) in with_big(samples()) {
           for &(exp, ref power) in &powers {
             let product = from_big(&(&big_a * power));
-            assert_eq!(wide::checked_mul_pow10(a, exp), product);
+            assert_eq!(StorageCore::checked_mul_pow10(&a, exp, Token::new()), product);
             if let Some(product) = product {
-              assert_eq!(wide::mul_pow10(a, exp), product);
+              assert_eq!(wide::mul_pow10(&a, exp), product);
             }
             // As with `/` and `%`, the quotient and the remainder have the sign of `a`.
-            let (quotient, remainder) = wide::div_rem_pow10(a, exp);
+            let (quotient, remainder) = StorageCore::div_rem_pow10(&a, exp, Token::new());
             assert_eq!(big(quotient), &big_a / power);
             assert_eq!(big(remainder), &big_a % power);
           }
@@ -525,17 +526,17 @@ macro_rules! wide_tests {
       fn decimal_digits() {
         for a in samples() {
           let mut buf = [0xff; DIGIT_BUF_LEN];
-          let start = wide::write_digits(a, &mut buf);
+          let start = StorageCore::write_digits(&a, &mut buf, Token::new());
           let expected = big(a).magnitude().to_string();
           assert_eq!(&buf[start..], expected.as_bytes());
 
           if big(a).sign() != Sign::Minus {
             let digits = expected.as_bytes();
-            assert_eq!(wide::push_digits(wide::ZERO, digits, 0, digits.len()), a);
+            assert_eq!(wide::push_digits(&wide::ZERO, digits, 0, digits.len()), a);
             // Appending to a prefix continues the same number.
             let split = digits.len() / 2;
-            let prefix = wide::push_digits(wide::ZERO, digits, 0, split);
-            assert_eq!(wide::push_digits(prefix, digits, split, digits.len()), a);
+            let prefix = wide::push_digits(&wide::ZERO, digits, 0, split);
+            assert_eq!(wide::push_digits(&prefix, digits, split, digits.len()), a);
             // Separators between the digits are skipped.
             let mut separated = Vec::new();
             for (i, &digit) in digits.iter().enumerate() {
@@ -544,7 +545,7 @@ macro_rules! wide_tests {
               }
               separated.extend([digit, b'_']);
             }
-            assert_eq!(wide::push_digits(wide::ZERO, &separated, 0, separated.len()), a);
+            assert_eq!(wide::push_digits(&wide::ZERO, &separated, 0, separated.len()), a);
           }
         }
       }
@@ -552,8 +553,7 @@ macro_rules! wide_tests {
       #[test]
       fn limbs() {
         for a in edges() {
-          let limbs = wide::to_limbs(a);
-          assert_eq!(limbs, a.to_limbs());
+          let limbs = a.to_limbs();
           assert_eq!(wide::from_limbs(limbs), a);
           assert_eq!(wide::checked_from_limbs(limbs), Some(a));
         }
@@ -572,7 +572,7 @@ macro_rules! wide_tests {
   };
 
   (@is_negative signed $a:ident, $big:ident) => {
-    assert_eq!(wide::is_negative($a), $big.sign() == Sign::Minus)
+    assert_eq!(wide::is_negative(&$a), $big.sign() == Sign::Minus)
   };
   (@is_negative unsigned $a:ident, $big:ident) => {};
 
@@ -580,8 +580,8 @@ macro_rules! wide_tests {
     #[test]
     fn neg_and_abs() {
       for a in edges().into_iter().filter(|&a| big(a) != min()) {
-        assert_eq!(big(wide::neg(a)), -big(a));
-        assert_eq!(big(wide::abs(a)), BigInt::from(big(a).magnitude().clone()));
+        assert_eq!(big(wide::neg(&a)), -big(a));
+        assert_eq!(big(wide::abs(&a)), BigInt::from(big(a).magnitude().clone()));
       }
     }
   };

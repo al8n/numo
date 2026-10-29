@@ -655,8 +655,8 @@ macro_rules! suite {
         #[test]
         fn arithmetic_matches_big_integers(a in value(), b in value()) {
           let (big_a, big_b) = (big(a), big(b));
-          prop_assert_eq!(a.checked_add(b).map(big), from_big(&(&big_a + &big_b)).map(big));
-          prop_assert_eq!(a.checked_sub(b).map(big), from_big(&(&big_a - &big_b)).map(big));
+          prop_assert_eq!(a.checked_add(&b).map(big), from_big(&(&big_a + &big_b)).map(big));
+          prop_assert_eq!(a.checked_sub(&b).map(big), from_big(&(&big_a - &big_b)).map(big));
           prop_assert_eq!(a.cmp(&b), big_a.cmp(&big_b));
           prop_assert_eq!(a == b, big_a == big_b);
           prop_assert_eq!(a.is_zero(), big_a.sign() == Sign::NoSign);
@@ -997,7 +997,7 @@ macro_rules! exact_mul {
 
       #[test]
       fn $name(a in $lhs::value(), b in $rhs::value()) {
-        let product: $product = a.exact_mul(b);
+        let product: $product = a.exact_mul(&b);
         let expected = $lhs::big(a) * $rhs::big(b);
         prop_assert_eq!(product.repr().to_big(), expected.clone());
         prop_assert_eq!(
@@ -1780,7 +1780,7 @@ macro_rules! quantize {
 
         for mode in MODES {
           prop_assert_eq!(
-            a.quantize(step, mode).map($suite::big),
+            a.quantize(&step, mode).map($suite::big),
             oracle_quantize(&big_a, &big_step, mode, $suite::DIGITS),
             "{} by {} {:?}",
             a,
@@ -1789,31 +1789,31 @@ macro_rules! quantize {
           );
           // The smallest unit leaves every value unchanged.
           let unit = $suite::from_big(&BigInt::from(1u8)).expect("one unit fits");
-          prop_assert_eq!(a.quantize(unit, mode), Ok(a));
+          prop_assert_eq!(a.quantize(&unit, mode), Ok(a));
         }
         let multiple = if big_step.sign() == Sign::NoSign {
           big_a.sign() == Sign::NoSign
         } else {
           (&big_a % &big_step).sign() == Sign::NoSign
         };
-        prop_assert_eq!(a.is_multiple_of(step), multiple, "{} by {}", a, step);
+        prop_assert_eq!(a.is_multiple_of(&step), multiple, "{} by {}", a, step);
         if big_step.sign() == Sign::Plus {
-          prop_assert_eq!(a.is_multiple_of(step), a.quantize(step, Down) == Ok(a));
+          prop_assert_eq!(a.is_multiple_of(&step), a.quantize(&step, Down) == Ok(a));
           if multiple {
             for mode in MODES {
-              prop_assert_eq!(a.quantize(step, mode), Ok(a));
+              prop_assert_eq!(a.quantize(&step, mode), Ok(a));
             }
           }
           // An odd step has no ties, so the half modes agree.
           if (&big_step % 2u8).sign() != Sign::NoSign {
-            let half_up = a.quantize(step, HalfUp);
-            prop_assert_eq!(half_up, a.quantize(step, HalfDown));
-            prop_assert_eq!(half_up, a.quantize(step, HalfEven));
+            let half_up = a.quantize(&step, HalfUp);
+            prop_assert_eq!(half_up, a.quantize(&step, HalfDown));
+            prop_assert_eq!(half_up, a.quantize(&step, HalfEven));
           }
           // Below the step, the quotient is zero, and the result is zero or one step.
           if big_a.magnitude() < big_step.magnitude() {
             for mode in MODES {
-              if let Ok(rounded) = a.quantize(step, mode) {
+              if let Ok(rounded) = a.quantize(&step, mode) {
                 let rounded = $suite::big(rounded);
                 prop_assert!(
                   rounded.sign() == Sign::NoSign || rounded.magnitude() == big_step.magnitude()
@@ -1826,8 +1826,8 @@ macro_rules! quantize {
         if let Some(negated) = $suite::from_big(&-&big_a) {
           for mode in MODES {
             prop_assert_eq!(
-              negated.quantize(step, mirror(mode)).map(|value| -$suite::big(value)),
-              a.quantize(step, mode).map($suite::big),
+              negated.quantize(&step, mirror(mode)).map(|value| -$suite::big(value)),
+              a.quantize(&step, mode).map($suite::big),
               "{} by {} {:?}",
               a,
               step,
@@ -2003,20 +2003,20 @@ macro_rules! div_round {
         let negated_b = $rhs::from_big(&-&big_b);
         let one = $rhs::from_big(&pow10($rhs::FRACTION));
         for mode in MODES {
-          let quotient: Result<$target::T, DivideError> = a.div_round(b, mode);
+          let quotient: Result<$target::T, DivideError> = a.div_round(&b, mode);
           let quotient = quotient.map($target::big);
           let expected =
             oracle_div_round(&numerator, &denominator, $target::DIGITS, $target::SIGNED, mode);
           prop_assert_eq!(&quotient, &expected, "{} / {} {:?}", a, b, mode);
           // `div_round(-a, -b, m) == div_round(a, b, m)`.
           if let (Some(negated_a), Some(negated_b)) = (negated_a, negated_b) {
-            let both: Result<$target::T, DivideError> = negated_a.div_round(negated_b, mode);
+            let both: Result<$target::T, DivideError> = negated_a.div_round(&negated_b, mode);
             prop_assert_eq!(both.map($target::big), quotient.clone(), "{} / {} {:?}", a, b, mode);
           }
           // `div_round(-a, b, m) == -div_round(a, b, mirror(m))`, and the same for `-b`, into a
           // signed type.
           if let (true, Some(negated_a)) = ($target::SIGNED, negated_a) {
-            let mirrored: Result<$target::T, DivideError> = negated_a.div_round(b, mirror(mode));
+            let mirrored: Result<$target::T, DivideError> = negated_a.div_round(&b, mirror(mode));
             prop_assert_eq!(
               mirrored.map(|q| -$target::big(q)),
               quotient.clone(),
@@ -2027,7 +2027,7 @@ macro_rules! div_round {
             );
           }
           if let (true, Some(negated_b)) = ($target::SIGNED, negated_b) {
-            let mirrored: Result<$target::T, DivideError> = a.div_round(negated_b, mirror(mode));
+            let mirrored: Result<$target::T, DivideError> = a.div_round(&negated_b, mirror(mode));
             prop_assert_eq!(
               mirrored.map(|q| -$target::big(q)),
               quotient.clone(),
@@ -2039,7 +2039,7 @@ macro_rules! div_round {
           }
           // Dividing by one rounds as `round_to` does.
           if let Some(one) = one {
-            let divided: Result<$target::T, DivideError> = a.div_round(one, mode);
+            let divided: Result<$target::T, DivideError> = a.div_round(&one, mode);
             let rounded: Result<$target::T, ConvertError> = a.round_to(mode);
             prop_assert_eq!(
               divided.map($target::big),

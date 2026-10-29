@@ -30,6 +30,8 @@ FEATURES
     digits, and `widen` and `try_convert` convert between native and wide storages. The 154th digit
     is available only with an explicit `u512`, as in `Decimal<U154, U0, u512>`, because no signed
     storage holds it.
+  - The errors `ParseErrorKind`, `ConvertError`, `QuantizeError` and `DivideError` have a
+    `const fn` predicate for each variant, such as `is_out_of_range`.
 - `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown` and
   `HalfEven`. Rounding happens only where a mode is given, for native and wide storages alike:
   - `round_to` converts to any decimal type as `try_convert` does, but rounds dropped fraction

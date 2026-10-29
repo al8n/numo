@@ -38,7 +38,7 @@ impl core::error::Error for ParseError {}
 ///
 /// [`Decimal::parse`](crate::Decimal::parse) reports the first kind that applies, in the order
 /// of the variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::IsVariant)]
 #[non_exhaustive]
 pub enum ParseErrorKind {
   /// The input is empty.
@@ -60,7 +60,7 @@ pub enum ParseErrorKind {
 /// The error returned by [`Decimal::try_convert`](crate::Decimal::try_convert) and
 /// [`Decimal::round_to`](crate::Decimal::round_to), which returns only
 /// [`OutOfRange`](Self::OutOfRange).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::IsVariant)]
 #[non_exhaustive]
 pub enum ConvertError {
   /// The value is outside the range of the target type.
@@ -81,7 +81,7 @@ impl fmt::Display for ConvertError {
 impl core::error::Error for ConvertError {}
 
 /// The error returned by [`Decimal::quantize`](crate::Decimal::quantize).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::IsVariant)]
 #[non_exhaustive]
 pub enum QuantizeError {
   /// The step is zero or negative.
@@ -102,7 +102,7 @@ impl fmt::Display for QuantizeError {
 impl core::error::Error for QuantizeError {}
 
 /// The error returned by [`Decimal::div_round`](crate::Decimal::div_round).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::IsVariant)]
 #[non_exhaustive]
 pub enum DivideError {
   /// The divisor is zero.

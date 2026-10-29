@@ -10,10 +10,11 @@ use crate::{
 
 /// Implements the constants, `const fn` methods and traits that depend only on the storage, for
 /// each listed storage with its sign, `signed` or `unsigned`, and its kind, `native` or `wide`.
-/// The kind selects how the examples import the storage and spell its coefficients.
+/// The kind selects how a coefficient goes to the storage's module in `int`, and how the examples
+/// import the storage and spell its coefficients.
 macro_rules! storage_decimal {
   ($($repr:ident: $sign:ident $kind:ident),+ $(,)?) => {$(
-    storage_decimal!(@$sign $repr $kind);
+    storage_decimal!(@by $sign $repr $kind);
 
     impl<I, F> Decimal<I, F, $repr>
     where
@@ -67,7 +68,16 @@ macro_rules! storage_decimal {
     }
   )+};
 
-  (@signed $repr:ident $kind:ident) => {
+  // The module of a native storage takes a coefficient by value, and that of a wide storage by
+  // reference: the arms put `$($by)*` before each coefficient that they pass to it.
+  (@by $sign:ident $repr:ident native) => {
+    storage_decimal!(@$sign $repr native []);
+  };
+  (@by $sign:ident $repr:ident wide) => {
+    storage_decimal!(@$sign $repr wide [&]);
+  };
+
+  (@signed $repr:ident $kind:ident [$($by:tt)*]) => {
     impl<I, F> Decimal<I, F, $repr>
     where
       (I, F): Layout<$repr>,
@@ -76,7 +86,7 @@ macro_rules! storage_decimal {
       const MAX_COEFF: $repr = int::$repr::max_magnitude(Self::DIGITS);
 
       /// The smallest coefficient, `-MAX_COEFF`.
-      const MIN_COEFF: $repr = int::$repr::neg(Self::MAX_COEFF);
+      const MIN_COEFF: $repr = int::$repr::neg($($by)* Self::MAX_COEFF);
 
       /// The coefficient of one, `10^Fraction`.
       const SCALE: $repr = int::$repr::pow10(Self::FRACTION);
@@ -90,29 +100,30 @@ macro_rules! storage_decimal {
       /// The smallest value, `-MAX`.
       pub const MIN: Self = Self::from_coeff(Self::MIN_COEFF);
 
-      const fn in_range(coeff: $repr) -> bool {
-        int::$repr::le(Self::MIN_COEFF, coeff) && int::$repr::le(coeff, Self::MAX_COEFF)
+      const fn in_range(coeff: $($by)* $repr) -> bool {
+        int::$repr::le($($by)* Self::MIN_COEFF, coeff)
+          && int::$repr::le(coeff, $($by)* Self::MAX_COEFF)
       }
 
       /// Returns `true` if the value is zero.
       #[must_use]
       #[inline]
-      pub const fn is_zero(self) -> bool {
-        int::$repr::is_zero(self.repr)
+      pub const fn is_zero(&self) -> bool {
+        int::$repr::is_zero($($by)* self.repr)
       }
 
       /// Returns `true` if the value is less than zero.
       #[must_use]
       #[inline]
-      pub const fn is_negative(self) -> bool {
-        int::$repr::is_negative(self.repr)
+      pub const fn is_negative(&self) -> bool {
+        int::$repr::is_negative($($by)* self.repr)
       }
 
       /// Returns `true` if the value is greater than zero.
       #[must_use]
       #[inline]
-      pub const fn is_positive(self) -> bool {
-        int::$repr::is_positive(self.repr)
+      pub const fn is_positive(&self) -> bool {
+        int::$repr::is_positive($($by)* self.repr)
       }
 
       /// Returns the coefficient: the stored integer `c` such that the value is
@@ -129,7 +140,7 @@ macro_rules! storage_decimal {
       #[must_use]
       #[inline]
       pub const fn from_repr(repr: $repr) -> Option<Self> {
-        if Self::in_range(repr) {
+        if Self::in_range($($by)* repr) {
           Some(Self::from_coeff(repr))
         } else {
           None
@@ -216,10 +227,11 @@ macro_rules! storage_decimal {
           Ok(digits) => digits,
           Err(err) => return Err(err),
         };
-        let mut coeff = int::$repr::push_digits(int::$repr::ZERO, input, digits.start, digits.end);
-        coeff = int::$repr::mul_pow10(coeff, digits.scale);
+        let mut coeff =
+          int::$repr::push_digits($($by)* int::$repr::ZERO, input, digits.start, digits.end);
+        coeff = int::$repr::mul_pow10($($by)* coeff, digits.scale);
         if digits.negative {
-          coeff = int::$repr::neg(coeff);
+          coeff = int::$repr::neg($($by)* coeff);
         }
         Ok(Self::from_coeff(coeff))
       }
@@ -227,9 +239,9 @@ macro_rules! storage_decimal {
       /// Adds two values, returning `None` if the sum is outside the range of the type.
       #[must_use]
       #[inline]
-      pub const fn checked_add(self, rhs: Self) -> Option<Self> {
-        match int::$repr::checked_add(self.repr, rhs.repr) {
-          Some(sum) if Self::in_range(sum) => Some(Self::from_coeff(sum)),
+      pub const fn checked_add(&self, rhs: &Self) -> Option<Self> {
+        match int::$repr::checked_add($($by)* self.repr, $($by)* rhs.repr) {
+          Some(sum) if Self::in_range($($by)* sum) => Some(Self::from_coeff(sum)),
           _ => None,
         }
       }
@@ -238,9 +250,11 @@ macro_rules! storage_decimal {
       /// the type.
       #[must_use]
       #[inline]
-      pub const fn checked_sub(self, rhs: Self) -> Option<Self> {
-        match int::$repr::checked_sub(self.repr, rhs.repr) {
-          Some(difference) if Self::in_range(difference) => Some(Self::from_coeff(difference)),
+      pub const fn checked_sub(&self, rhs: &Self) -> Option<Self> {
+        match int::$repr::checked_sub($($by)* self.repr, $($by)* rhs.repr) {
+          Some(difference) if Self::in_range($($by)* difference) => {
+            Some(Self::from_coeff(difference))
+          }
           _ => None,
         }
       }
@@ -274,49 +288,50 @@ macro_rules! storage_decimal {
       ///
       /// let step = D::parse("0.5")?;
       /// let value = D::parse("2.3")?;
-      /// assert_eq!(value.quantize(step, RoundingMode::Up)?, D::parse("2.5")?);
-      /// assert_eq!(value.quantize(step, RoundingMode::Down)?, D::parse("2")?);
-      /// assert_eq!(value.quantize(step, RoundingMode::HalfEven)?, D::parse("2.5")?);
-      /// assert!(!value.is_multiple_of(step));
+      /// assert_eq!(value.quantize(&step, RoundingMode::Up)?, D::parse("2.5")?);
+      /// assert_eq!(value.quantize(&step, RoundingMode::Down)?, D::parse("2")?);
+      /// assert_eq!(value.quantize(&step, RoundingMode::HalfEven)?, D::parse("2.5")?);
+      /// assert!(!value.is_multiple_of(&step));
       ///
       /// // 2.1 lies halfway between 2 and 2.2, which are 10 and 11 steps of 0.2.
       /// let tick = D::parse("0.2")?;
       /// let tie = D::parse("2.1")?;
-      /// assert_eq!(tie.quantize(tick, RoundingMode::HalfEven)?, D::parse("2")?);
-      /// assert_eq!(tie.quantize(tick, RoundingMode::HalfUp)?, D::parse("2.2")?);
+      /// assert_eq!(tie.quantize(&tick, RoundingMode::HalfEven)?, D::parse("2")?);
+      /// assert_eq!(tie.quantize(&tick, RoundingMode::HalfUp)?, D::parse("2.2")?);
       ///
       /// // A negative quantity rounds down to a step with `Down`.
       /// let short = D::parse("-2.3")?;
-      /// assert_eq!(short.quantize(step, RoundingMode::Down)?, D::parse("-2")?);
-      /// assert_eq!(short.quantize(step, RoundingMode::Floor)?, D::parse("-2.5")?);
+      /// assert_eq!(short.quantize(&step, RoundingMode::Down)?, D::parse("-2")?);
+      /// assert_eq!(short.quantize(&step, RoundingMode::Floor)?, D::parse("-2.5")?);
       ///
-      /// assert_eq!(value.quantize(D::ZERO, RoundingMode::Up), Err(QuantizeError::InvalidStep));
-      /// assert_eq!(value.quantize(-step, RoundingMode::Up), Err(QuantizeError::InvalidStep));
+      /// assert_eq!(value.quantize(&D::ZERO, RoundingMode::Up), Err(QuantizeError::InvalidStep));
+      /// assert_eq!(value.quantize(&-step, RoundingMode::Up), Err(QuantizeError::InvalidStep));
       /// // 9.9 rounds up to 10, which has two integral digits.
-      /// assert_eq!(D::MAX.quantize(step, RoundingMode::Up), Err(QuantizeError::OutOfRange));
+      /// assert_eq!(D::MAX.quantize(&step, RoundingMode::Up), Err(QuantizeError::OutOfRange));
       /// # Ok::<(), Box<dyn core::error::Error>>(())
       /// ```
       #[must_use = "this returns the rounded value, without modifying the original"]
-      pub const fn quantize(self, step: Self, mode: RoundingMode) -> Result<Self, QuantizeError> {
-        if !int::$repr::is_positive(step.repr) {
+      pub const fn quantize(&self, step: &Self, mode: RoundingMode) -> Result<Self, QuantizeError> {
+        if !int::$repr::is_positive($($by)* step.repr) {
           return Err(QuantizeError::InvalidStep);
         }
-        let (_, remainder, away) = int::$repr::round_div(self.repr, step.repr, mode);
+        let (_, remainder, away) =
+          int::$repr::round_div($($by)* self.repr, $($by)* step.repr, mode);
         // The remainder has the sign of `self` and a smaller magnitude, so the multiple toward
         // zero, `self - remainder`, exists and is in range. Only the step away from zero can leave
         // the storage or the decimal range.
-        let rounded = match int::$repr::checked_sub(self.repr, remainder) {
+        let rounded = match int::$repr::checked_sub($($by)* self.repr, $($by)* remainder) {
           Some(toward_zero) if away => {
-            if int::$repr::is_negative(self.repr) {
-              int::$repr::checked_sub(toward_zero, step.repr)
+            if int::$repr::is_negative($($by)* self.repr) {
+              int::$repr::checked_sub($($by)* toward_zero, $($by)* step.repr)
             } else {
-              int::$repr::checked_add(toward_zero, step.repr)
+              int::$repr::checked_add($($by)* toward_zero, $($by)* step.repr)
             }
           }
           toward_zero => toward_zero,
         };
         match rounded {
-          Some(coeff) if Self::in_range(coeff) => Ok(Self::from_coeff(coeff)),
+          Some(coeff) if Self::in_range($($by)* coeff) => Ok(Self::from_coeff(coeff)),
           _ => Err(QuantizeError::OutOfRange),
         }
       }
@@ -329,27 +344,28 @@ macro_rules! storage_decimal {
       /// [`quantize`](Self::quantize) rejects a step that is zero or negative.
       #[must_use]
       #[inline]
-      pub const fn is_multiple_of(&self, step: Self) -> bool {
-        if int::$repr::is_zero(step.repr) {
-          return int::$repr::is_zero(self.repr);
+      pub const fn is_multiple_of(&self, step: &Self) -> bool {
+        if int::$repr::is_zero($($by)* step.repr) {
+          return int::$repr::is_zero($($by)* self.repr);
         }
         // A coefficient is never `MIN`, so the division does not overflow, even for a step of
         // `-1`.
-        int::$repr::is_zero(int::$repr::div_rem(self.repr, step.repr).1)
+        let (_, remainder) = int::$repr::div_rem($($by)* self.repr, $($by)* step.repr);
+        int::$repr::is_zero($($by)* remainder)
       }
 
       /// Returns `-self`. Never fails, because the range is symmetric.
       #[must_use]
       #[inline]
-      pub const fn neg(self) -> Self {
-        Self::from_coeff(int::$repr::neg(self.repr))
+      pub const fn neg(&self) -> Self {
+        Self::from_coeff(int::$repr::neg($($by)* self.repr))
       }
 
       /// Returns the absolute value. Never fails, because the range is symmetric.
       #[must_use]
       #[inline]
-      pub const fn abs(self) -> Self {
-        Self::from_coeff(int::$repr::abs(self.repr))
+      pub const fn abs(&self) -> Self {
+        Self::from_coeff(int::$repr::abs($($by)* self.repr))
       }
     }
 
@@ -362,12 +378,12 @@ macro_rules! storage_decimal {
       /// Returns `-self`. Never fails, because the range is symmetric.
       #[inline]
       fn neg(self) -> Self {
-        Self::neg(self)
+        Self::neg(&self)
       }
     }
   };
 
-  (@unsigned $repr:ident $kind:ident) => {
+  (@unsigned $repr:ident $kind:ident [$($by:tt)*]) => {
     impl<I, F> Decimal<I, F, $repr>
     where
       (I, F): Layout<$repr>,
@@ -387,22 +403,22 @@ macro_rules! storage_decimal {
       /// The smallest value, zero.
       pub const MIN: Self = Self::ZERO;
 
-      const fn in_range(coeff: $repr) -> bool {
-        int::$repr::le(coeff, Self::MAX_COEFF)
+      const fn in_range(coeff: $($by)* $repr) -> bool {
+        int::$repr::le(coeff, $($by)* Self::MAX_COEFF)
       }
 
       /// Returns `true` if the value is zero.
       #[must_use]
       #[inline]
-      pub const fn is_zero(self) -> bool {
-        int::$repr::is_zero(self.repr)
+      pub const fn is_zero(&self) -> bool {
+        int::$repr::is_zero($($by)* self.repr)
       }
 
       /// Returns `true` if the value is greater than zero, that is, not zero.
       #[must_use]
       #[inline]
-      pub const fn is_positive(self) -> bool {
-        int::$repr::is_positive(self.repr)
+      pub const fn is_positive(&self) -> bool {
+        int::$repr::is_positive($($by)* self.repr)
       }
 
       /// Returns the coefficient: the stored integer `c` such that the value is
@@ -419,7 +435,7 @@ macro_rules! storage_decimal {
       #[must_use]
       #[inline]
       pub const fn from_repr(repr: $repr) -> Option<Self> {
-        if Self::in_range(repr) {
+        if Self::in_range($($by)* repr) {
           Some(Self::from_coeff(repr))
         } else {
           None
@@ -507,16 +523,17 @@ macro_rules! storage_decimal {
           Ok(digits) => digits,
           Err(err) => return Err(err),
         };
-        let coeff = int::$repr::push_digits(int::$repr::ZERO, input, digits.start, digits.end);
-        Ok(Self::from_coeff(int::$repr::mul_pow10(coeff, digits.scale)))
+        let coeff =
+          int::$repr::push_digits($($by)* int::$repr::ZERO, input, digits.start, digits.end);
+        Ok(Self::from_coeff(int::$repr::mul_pow10($($by)* coeff, digits.scale)))
       }
 
       /// Adds two values, returning `None` if the sum is outside the range of the type.
       #[must_use]
       #[inline]
-      pub const fn checked_add(self, rhs: Self) -> Option<Self> {
-        match int::$repr::checked_add(self.repr, rhs.repr) {
-          Some(sum) if Self::in_range(sum) => Some(Self::from_coeff(sum)),
+      pub const fn checked_add(&self, rhs: &Self) -> Option<Self> {
+        match int::$repr::checked_add($($by)* self.repr, $($by)* rhs.repr) {
+          Some(sum) if Self::in_range($($by)* sum) => Some(Self::from_coeff(sum)),
           _ => None,
         }
       }
@@ -524,9 +541,9 @@ macro_rules! storage_decimal {
       /// Subtracts `rhs` from `self`, returning `None` if the difference is negative.
       #[must_use]
       #[inline]
-      pub const fn checked_sub(self, rhs: Self) -> Option<Self> {
+      pub const fn checked_sub(&self, rhs: &Self) -> Option<Self> {
         // A difference that is not negative is at most `self`, so it is in range.
-        match int::$repr::checked_sub(self.repr, rhs.repr) {
+        match int::$repr::checked_sub($($by)* self.repr, $($by)* rhs.repr) {
           Some(difference) => Some(Self::from_coeff(difference)),
           None => None,
         }
@@ -559,36 +576,37 @@ macro_rules! storage_decimal {
       ///
       /// let step = D::parse("0.5")?;
       /// let value = D::parse("2.3")?;
-      /// assert_eq!(value.quantize(step, RoundingMode::Up)?, D::parse("2.5")?);
-      /// assert_eq!(value.quantize(step, RoundingMode::Down)?, D::parse("2")?);
-      /// assert_eq!(value.quantize(step, RoundingMode::HalfEven)?, D::parse("2.5")?);
-      /// assert!(!value.is_multiple_of(step));
+      /// assert_eq!(value.quantize(&step, RoundingMode::Up)?, D::parse("2.5")?);
+      /// assert_eq!(value.quantize(&step, RoundingMode::Down)?, D::parse("2")?);
+      /// assert_eq!(value.quantize(&step, RoundingMode::HalfEven)?, D::parse("2.5")?);
+      /// assert!(!value.is_multiple_of(&step));
       ///
       /// // 2.1 lies halfway between 2 and 2.2, which are 10 and 11 steps of 0.2.
       /// let tick = D::parse("0.2")?;
       /// let tie = D::parse("2.1")?;
-      /// assert_eq!(tie.quantize(tick, RoundingMode::HalfEven)?, D::parse("2")?);
-      /// assert_eq!(tie.quantize(tick, RoundingMode::HalfUp)?, D::parse("2.2")?);
+      /// assert_eq!(tie.quantize(&tick, RoundingMode::HalfEven)?, D::parse("2")?);
+      /// assert_eq!(tie.quantize(&tick, RoundingMode::HalfUp)?, D::parse("2.2")?);
       ///
-      /// assert_eq!(value.quantize(D::ZERO, RoundingMode::Up), Err(QuantizeError::InvalidStep));
+      /// assert_eq!(value.quantize(&D::ZERO, RoundingMode::Up), Err(QuantizeError::InvalidStep));
       /// // 9.9 rounds up to 10, which has two integral digits.
-      /// assert_eq!(D::MAX.quantize(step, RoundingMode::Up), Err(QuantizeError::OutOfRange));
+      /// assert_eq!(D::MAX.quantize(&step, RoundingMode::Up), Err(QuantizeError::OutOfRange));
       /// # Ok::<(), Box<dyn core::error::Error>>(())
       /// ```
       #[must_use = "this returns the rounded value, without modifying the original"]
-      pub const fn quantize(self, step: Self, mode: RoundingMode) -> Result<Self, QuantizeError> {
-        if !int::$repr::is_positive(step.repr) {
+      pub const fn quantize(&self, step: &Self, mode: RoundingMode) -> Result<Self, QuantizeError> {
+        if !int::$repr::is_positive($($by)* step.repr) {
           return Err(QuantizeError::InvalidStep);
         }
-        let (_, remainder, away) = int::$repr::round_div(self.repr, step.repr, mode);
+        let (_, remainder, away) =
+          int::$repr::round_div($($by)* self.repr, $($by)* step.repr, mode);
         // The remainder is at most `self`, so the multiple below, `self - remainder`, exists and is
         // in range. Only the step up can leave the storage or the decimal range.
-        let rounded = match int::$repr::checked_sub(self.repr, remainder) {
-          Some(below) if away => int::$repr::checked_add(below, step.repr),
+        let rounded = match int::$repr::checked_sub($($by)* self.repr, $($by)* remainder) {
+          Some(below) if away => int::$repr::checked_add($($by)* below, $($by)* step.repr),
           below => below,
         };
         match rounded {
-          Some(coeff) if Self::in_range(coeff) => Ok(Self::from_coeff(coeff)),
+          Some(coeff) if Self::in_range($($by)* coeff) => Ok(Self::from_coeff(coeff)),
           _ => Err(QuantizeError::OutOfRange),
         }
       }
@@ -600,11 +618,12 @@ macro_rules! storage_decimal {
       /// [`quantize`](Self::quantize) rejects a zero step.
       #[must_use]
       #[inline]
-      pub const fn is_multiple_of(&self, step: Self) -> bool {
-        if int::$repr::is_zero(step.repr) {
-          return int::$repr::is_zero(self.repr);
+      pub const fn is_multiple_of(&self, step: &Self) -> bool {
+        if int::$repr::is_zero($($by)* step.repr) {
+          return int::$repr::is_zero($($by)* self.repr);
         }
-        int::$repr::is_zero(int::$repr::div_rem(self.repr, step.repr).1)
+        let (_, remainder) = int::$repr::div_rem($($by)* self.repr, $($by)* step.repr);
+        int::$repr::is_zero($($by)* remainder)
       }
     }
   };
