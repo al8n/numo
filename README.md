@@ -100,11 +100,15 @@ fn main() -> Result<(), ParseError> {
 - Methods that depend only on the storage are `const fn`, so constants can be parsed and computed
   at compile time.
 - The constants `INTEGRAL`, `FRACTION` and `DIGITS` give the digit counts of a type, and `SIGNED`
-  whether its storage is signed. Sealed traits give generic code the same items: `FixedDecimal`,
-  with the constants, the queries and the arithmetic of every storage, `SignedFixedDecimal` and
-  `UnsignedFixedDecimal` for each sign, and `DecimalOne`, with `ONE`, each implemented for every
-  storage, and `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound` for the methods between decimal
-  types. Code generic over `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`.
+  whether its storage is signed. Sealed traits give generic code the items of a type in two
+  layers, each implemented for every storage. The general layer requires `Clone` but not `Copy`:
+  `FixedDecimal`, with the digit counts, the queries, the arithmetic and `zero()`, `max_value()`
+  and `min_value()`, `SignedFixedDecimal` and `UnsignedFixedDecimal` for each sign, and
+  `DecimalOne`, with `one()`; these functions return the constants `ZERO`, `MAX`, `MIN` and `ONE`.
+  The const layer, `ConstFixedDecimal` and `ConstDecimalOne`, adds `Copy` and the constants
+  themselves, which a generic `const fn` can read. `ExactMul`, `WidenTo`, `ConvertTo` and
+  `DivRound` have the methods between decimal types. Code generic over `Decimal<I, F, R>` adds the
+  bound `Decimal<I, F, R>: FixedDecimal`.
 - `parse` accepts ASCII text with an optional sign, point and exponent, and `_` separators as in
   Rust literals: the numeric strings of the General Decimal Arithmetic specification and every
   form that `f64` parses, such as `-1.5`, `+.5`, `5.`, `2.5E-3` and `1_000`. Infinity and NaN are

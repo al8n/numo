@@ -89,10 +89,13 @@ fn main() -> Result<(), ParseError> {
   把负数转换为无符号存储时返回 `OutOfRange`。
 - 只依赖存储的方法都是 `const fn`，常量可以在编译期解析和计算。
 - 常量 `INTEGRAL`、`FRACTION` 与 `DIGITS` 给出类型的位数，`SIGNED` 表示存储是否有符号。供泛型代码使用的
-  sealed trait 提供同样的项：`FixedDecimal` 提供常量、查询以及每种存储都有的算术，`SignedFixedDecimal`
-  与 `UnsignedFixedDecimal` 按符号区分，`DecimalOne` 提供 `ONE`，它们每种存储各有一个实现；
-  `ExactMul`、`WidenTo`、`ConvertTo` 与 `DivRound` 提供十进制类型之间的方法。对 `Decimal<I, F, R>`
-  泛型的代码需要加上约束 `Decimal<I, F, R>: FixedDecimal`。
+  sealed trait 分两层提供类型的各项，每种存储各有一个实现。通用层要求 `Clone`，不要求 `Copy`：
+  `FixedDecimal` 提供位数、查询、算术以及 `zero()`、`max_value()` 与 `min_value()`，
+  `SignedFixedDecimal` 与 `UnsignedFixedDecimal` 按符号区分，`DecimalOne` 提供 `one()`；这些函数返回
+  常量 `ZERO`、`MAX`、`MIN` 与 `ONE`。常量层 `ConstFixedDecimal` 与 `ConstDecimalOne`
+  另外要求 `Copy`，并直接提供这些常量，泛型 `const fn` 也能读取它们。`ExactMul`、`WidenTo`、
+  `ConvertTo` 与 `DivRound` 提供十进制类型之间的方法。对 `Decimal<I, F, R>` 泛型的代码需要加上约束
+  `Decimal<I, F, R>: FixedDecimal`。
 - `parse` 接受 ASCII 文本，可以带符号、小数点与指数，并按 Rust 字面量的规则使用 `_` 分隔符：
   即 General Decimal Arithmetic 规范的数值字符串，以及 `f64` 能解析的全部写法，例如 `-1.5`、
   `+.5`、`5.`、`2.5E-3` 与 `1_000`。无穷与 NaN 能被识别，但报告为 `NotFinite`，因为 `Decimal`

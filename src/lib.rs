@@ -40,12 +40,15 @@
 //!
 //! Every decimal type has the constants `INTEGRAL`, `FRACTION` and `DIGITS`, its digit counts, and
 //! `SIGNED`, whether its storage is signed. Generic code reaches the constants and methods through
-//! traits: [`FixedDecimal`], with the constants, the queries and the arithmetic of every storage,
-//! [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`], for each sign, and [`DecimalOne`], with
-//! `ONE`, each with one implementation for every storage, and [`ExactMul`], [`WidenTo`],
-//! [`ConvertTo`] and [`DivRound`], with the methods between decimal types. Code generic over the
-//! storage adds the bound `Decimal<I, F, R>: FixedDecimal`. The traits are not `const`, so constant
-//! contexts use the inherent `const fn`s.
+//! traits in two layers, each with one implementation for every storage. The general layer,
+//! [`FixedDecimal`], with the digit counts, the queries, the arithmetic and the functions `zero`,
+//! `max_value` and `min_value`, [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`], for each sign,
+//! and [`DecimalOne`], with `one`, requires `Clone` but not `Copy`; its functions return the
+//! inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The const layer, [`ConstFixedDecimal`] and
+//! [`ConstDecimalOne`], adds `Copy` and these constants, which a generic `const fn` can read.
+//! [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] have the methods between decimal
+//! types. Code generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`. The trait
+//! methods are not `const`, so constant contexts call the inherent `const fn`s.
 //!
 //! # Wide storage
 //!

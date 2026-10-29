@@ -35,16 +35,21 @@ FEATURES
   - The constants `INTEGRAL`, `FRACTION` and `DIGITS`, the digit counts of the type, and `SIGNED`,
     `true` for a signed storage and `false` for an unsigned one, so that generic code can derive a
     display scale or a step from the fraction digits of a type.
-  - The sealed traits `FixedDecimal`, with the constants, the storage as `Repr`, `repr`,
-    `from_repr`, `is_zero`, `is_positive`, `checked_add`, `checked_sub`, `quantize` and
+  - The sealed traits of a decimal type in two layers, each with one implementation for every
+    storage. The general layer requires `Clone` but not `Copy`: `FixedDecimal`, with the digit
+    counts, `SIGNED`, the storage as `Repr`, `repr`, `from_repr`, `zero`, `max_value`,
+    `min_value`, `is_zero`, `is_positive`, `checked_add`, `checked_sub`, `quantize` and
     `is_multiple_of`, `SignedFixedDecimal`, which also requires `Neg` and has `is_negative`, `neg`
-    and `abs`, `UnsignedFixedDecimal`, and `DecimalOne`, with `ONE` where `Integral` is nonzero,
-    each with one implementation for every storage; and `ExactMul`, `WidenTo`, `ConvertTo` and
-    `DivRound`, each with one implementation for the decimal types that the inherent method accepts,
+    and `abs`, `UnsignedFixedDecimal`, and `DecimalOne`, with `one` where `Integral` is nonzero.
+    Its functions `zero`, `max_value`, `min_value` and `one` return the inherent constants `ZERO`,
+    `MAX`, `MIN` and `ONE`. The const layer also requires `Copy` and has these constants, which a
+    generic `const fn` can read: `ConstFixedDecimal`, with `ZERO`, `MAX` and `MIN`, and
+    `ConstDecimalOne`, with `ONE`. The sealed traits `ExactMul`, `WidenTo`, `ConvertTo` and
+    `DivRound` each have one implementation for the decimal types that the inherent method accepts,
     so that generic code does not repeat its bounds. `ExactMul` has the product type as `Output`,
     which implements `FixedDecimal`. Because the implementations are per storage, code generic over
-    `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`. The traits are not `const`;
-    constant contexts use the inherent `const fn`s.
+    `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`. The trait methods are not
+    `const`; constant contexts use the inherent `const fn`s.
 - `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown` and
   `HalfEven`. Rounding happens only where a mode is given, for native and wide storages alike:
   - `round_to` converts to any decimal type as `try_convert` does, but rounds dropped fraction

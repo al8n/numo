@@ -99,9 +99,13 @@ mod tests;
 /// digit counts, such as formatting and conversions (see [`Layout`]).
 ///
 /// The constants and methods defined for each storage, such as [`ZERO`](Self::ZERO) and
-/// [`checked_add`](Self::checked_add), reach generic code through traits: [`FixedDecimal`] for
-/// every storage, [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`] for each sign, and
-/// [`DecimalOne`] for [`ONE`](Self::ONE), while [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
+/// [`checked_add`](Self::checked_add), reach generic code through traits in two layers. The
+/// general layer is [`FixedDecimal`] for every storage, [`SignedFixedDecimal`] and
+/// [`UnsignedFixedDecimal`] for each sign, and [`DecimalOne`] for the types that hold one. It
+/// requires `Clone` but not `Copy`, and its functions `zero`, `max_value`, `min_value` and `one`
+/// return [`ZERO`](Self::ZERO), [`MAX`](Self::MAX), [`MIN`](Self::MIN) and [`ONE`](Self::ONE).
+/// The const layer, [`ConstFixedDecimal`] and [`ConstDecimalOne`], adds `Copy` and these
+/// constants, which a generic `const fn` can read. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
 /// [`DivRound`] carry the bounds of the methods between decimal types. Because the implementations
 /// are per storage, code generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`,
 /// which `R: Storage` and `(I, F): Layout<R>` do not imply. Every type also has the constants
