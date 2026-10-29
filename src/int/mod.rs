@@ -200,6 +200,18 @@ macro_rules! native {
         value.abs()
       }
 
+      /// `|value|` as an unsigned integer, which also holds `|MIN|`.
+      #[inline]
+      pub(crate) const fn unsigned_abs(value: $int) -> $uint {
+        value.unsigned_abs()
+      }
+
+      /// `-1`, `0` or `1` as the sign of `value`.
+      #[inline]
+      pub(crate) const fn signum(value: $int) -> $int {
+        value.signum()
+      }
+
       /// Writes the decimal digits of `|value|` to the end of `buf`, without leading zeros (zero
       /// is a single `0`), and returns the index of the first digit.
       #[inline]
@@ -342,6 +354,12 @@ macro_rules! native {
     #[inline]
     pub(crate) const fn is_positive(value: $int) -> bool {
       value > 0
+    }
+
+    /// Returns `true` if `value` is one.
+    #[inline]
+    pub(crate) const fn is_one(value: $int) -> bool {
+      value == 1
     }
 
     #[inline]

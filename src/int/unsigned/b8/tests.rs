@@ -211,3 +211,16 @@ fn arithmetic_of_9_to_16_bits_against_structured_operands() {
     }
   }
 }
+
+/// `is_one` of every value of one and of two limbs, or under Miri of every 7th.
+#[test]
+fn one_of_every_value() {
+  let step = if cfg!(miri) { 7 } else { 1 };
+  for value in (0..=u16::MAX).step_by(step) {
+    assert_eq!(is_one(&value.to_le_bytes()), value == 1, "{value}");
+    if let Ok(limb) = u8::try_from(value) {
+      assert_eq!(is_one(&[limb]), value == 1, "{value}");
+    }
+  }
+  assert!(!is_one::<0>(&[]));
+}

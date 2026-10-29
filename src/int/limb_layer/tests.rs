@@ -684,8 +684,9 @@ macro_rules! limb_layer_tests {
           );
           assert!(fits_bits(&result, bits), "{lhs} {op} {rhs} in {bits} bits");
         };
-        let zero = BigInt::ZERO;
+        let (zero, one) = (BigInt::ZERO, BigInt::from(1u8));
         for (a, limbs_a) in samples.iter().zip(&limbs) {
+          assert_eq!(is_one(limbs_a), *a == one, "{a}");
           check(-a, overflowing_neg_bits(limbs_a, bits), &zero, '-', a);
           for (b, limbs_b) in samples.iter().zip(&limbs) {
             for (exact, op, computed) in [
@@ -1204,8 +1205,15 @@ macro_rules! limb_layer_tests {
           );
           assert!(fits_bits(&result, bits), "{lhs} {op} {rhs} in {bits} bits");
         };
-        let zero = BigInt::ZERO;
+        let (zero, one) = (BigInt::ZERO, BigInt::from(1u8));
         for (a, limbs_a) in samples.iter().zip(&limbs) {
+          assert_eq!(is_one(limbs_a), *a == one, "{a}");
+          let sign = if *a < zero { -1 } else { i8::from(*a > zero) };
+          assert_eq!(
+            bigint::from_limbs(&signum(limbs_a), true),
+            BigInt::from(sign),
+            "{a}"
+          );
           check(-a, overflowing_neg_bits(limbs_a, bits), &zero, '-', a);
           for (b, limbs_b) in samples.iter().zip(&limbs) {
             for (exact, op, computed) in [
@@ -1506,6 +1514,7 @@ macro_rules! native_oracle {
         let limbs_a: [Limb; $n] = limbs_of(a);
         assert_eq!(is_zero(&limbs_a), a == 0);
         assert_eq!(is_positive(&limbs_a), a > 0);
+        assert_eq!(is_one(&limbs_a), a == 1);
         let (negated, borrow) = a.overflowing_neg();
         assert_eq!(
           overflowing_neg_bits(&limbs_a, bits),
@@ -1610,6 +1619,8 @@ macro_rules! native_oracle {
           assert_eq!(neg(&limbs_a), limbs_of(-a));
           assert_eq!(abs(&limbs_a), limbs_of(a.abs()));
         }
+        assert_eq!(is_one(&limbs_a), a == 1);
+        assert_eq!(signum(&limbs_a), limbs_of(a.signum()));
         let (negated, overflow) = a.overflowing_neg();
         assert_eq!(
           overflowing_neg_bits(&limbs_a, bits),

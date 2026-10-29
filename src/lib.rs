@@ -286,7 +286,7 @@ pub use typenum;
 pub use aliases::*;
 pub use decimal::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
 pub use integer::{
-  ArrayInteger, CheckedOps, FixedInteger, FromLimbs, Int, NativeInteger, OverflowingOps,
+  ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, Int, NativeInteger, OverflowingOps,
   SaturatingOps, SignedFixedInteger, StrictOps, TryNewError, Uint, UnsignedFixedInteger,
   WrappingOps,
 };

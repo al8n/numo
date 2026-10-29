@@ -9,9 +9,11 @@ use core::{
 
 pub use error::TryNewError;
 pub use traits::{
-  ArrayInteger, CheckedOps, FixedInteger, FromLimbs, NativeInteger, OverflowingOps, SaturatingOps,
-  SignedFixedInteger, StrictOps, UnsignedFixedInteger, WrappingOps,
+  ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, NativeInteger, OverflowingOps,
+  SaturatingOps, SignedFixedInteger, StrictOps, UnsignedFixedInteger, WrappingOps,
 };
+
+use typenum::{IsGreater, NonZero, True, U1};
 
 use crate::{
   int,
@@ -215,7 +217,8 @@ impl<B, R> Int<B, R> {
 
 // The constants are generic over the storage. `BITS` needs only the width relation, so every
 // storage has it; the values need a storage that holds them inline, and come from the storage's
-// own constants for each width, which its sealed trait carries.
+// own constants for each width, which its sealed trait carries. `ONE` also needs a width that
+// holds one.
 impl<B: FitsBits<R>, R: UintRepr> Uint<B, R> {
   /// The number of bits, `Bits`.
   pub const BITS: u32 = B::U32;
@@ -232,6 +235,11 @@ impl<B: FitsBits<R>, R: InlineUintRepr> Uint<B, R> {
   pub const MAX: Self = Self::wrap(<R::Width<B> as UintWidth<R>>::MAX);
 }
 
+impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> Uint<B, R> {
+  /// One. Zero bits hold only zero, so `Uint` of zero bits has no `ONE`.
+  pub const ONE: Self = Self::wrap(R::ONE);
+}
+
 impl<B: FitsBits<R>, R: IntRepr> Int<B, R> {
   /// The number of bits, `Bits`, including the sign bit.
   pub const BITS: u32 = B::U32;
@@ -246,6 +254,12 @@ impl<B: FitsBits<R>, R: InlineIntRepr> Int<B, R> {
 
   /// The largest value, `2^(Bits - 1) - 1`, or zero for zero bits.
   pub const MAX: Self = Self::wrap(<R::Width<B> as IntWidth<R>>::MAX);
+}
+
+impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: InlineIntRepr> Int<B, R> {
+  /// One. One bit holds only -1 and 0, and zero bits only 0, so `Int` of fewer than two bits has
+  /// no `ONE`.
+  pub const ONE: Self = Self::wrap(R::ONE);
 }
 
 /// Generates the `const fn`s of [`Uint`] and [`Int`] over the arrays of each limb type, written
@@ -308,6 +322,7 @@ macro_rules! array_integers {
       wrapping_table!(inherent_items![unsigned, $lower, &]);
       saturating_table!(Uint, inherent_items![unsigned, $lower, &]);
       strict_table!(inherent_items![unsigned, $lower, &]);
+      uint_sign_table!(inherent_items![unsigned, $lower, &]);
     }
 
     impl<B, const N: usize> Uint<B, [$limb; N]> {
@@ -390,6 +405,7 @@ macro_rules! array_integers {
       wrapping_table!(inherent_items![signed, $upper, &]);
       saturating_table!(Int, inherent_items![signed, $upper, &]);
       strict_table!(inherent_items![signed, $upper, &]);
+      int_sign_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
     }
 
     impl<B, const N: usize> Int<B, [$limb; N]> {
@@ -620,6 +636,7 @@ macro_rules! native_integers {
       wrapping_table!(inherent_items![$uint]);
       saturating_table!(Uint, inherent_items![$uint]);
       strict_table!(inherent_items![$uint]);
+      uint_sign_table!(inherent_items![$uint]);
     }
 
     impl<B> Uint<B, $uint> {
@@ -672,6 +689,7 @@ macro_rules! native_integers {
       wrapping_table!(inherent_items![$int]);
       saturating_table!(Int, inherent_items![$int]);
       strict_table!(inherent_items![$int]);
+      int_sign_table!(inherent_items![$int, Uint<B, $uint>]);
     }
 
     impl<B> Int<B, $int> {

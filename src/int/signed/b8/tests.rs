@@ -232,3 +232,21 @@ fn arithmetic_of_9_to_16_bits_against_structured_operands() {
     }
   }
 }
+
+/// `is_one` and `signum` of every value of one and of two limbs against `i8` and `i16`, or under
+/// Miri of every 7th.
+#[test]
+fn one_and_sign_of_every_value() {
+  let step = if cfg!(miri) { 7 } else { 1 };
+  for value in (i16::MIN..=i16::MAX).step_by(step) {
+    let limbs = value.to_le_bytes();
+    assert_eq!(is_one(&limbs), value == 1, "{value}");
+    assert_eq!(signum(&limbs), value.signum().to_le_bytes(), "{value}");
+    if let Ok(narrow) = i8::try_from(value) {
+      assert_eq!(is_one(&[narrow as u8]), value == 1, "{value}");
+      assert_eq!(signum(&[narrow as u8]), [narrow.signum() as u8], "{value}");
+    }
+  }
+  assert!(!is_one::<0>(&[]));
+  assert_eq!(signum::<0>(&[]), [0u8; 0]);
+}

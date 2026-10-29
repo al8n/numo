@@ -137,6 +137,10 @@ mod sealed {
     /// Zero.
     const ZERO: Self;
 
+    /// One. `Uint` reads it only for a width of at least one bit, which an array of no limbs does
+    /// not hold, and whose `ONE` fails to evaluate.
+    const ONE: Self;
+
     /// The constants of `Uint<B, Self>` that depend on the width `B`.
     type Width<B: FitsBits<Self>>: UintWidth<Self>;
   }
@@ -145,6 +149,10 @@ mod sealed {
   pub trait InlineIntConsts: IntRepr + Copy {
     /// Zero.
     const ZERO: Self;
+
+    /// One. `Int` reads it only for a width of at least two bits, which an array of no limbs does
+    /// not hold, and whose `ONE` fails to evaluate.
+    const ONE: Self;
 
     /// The constants of `Int<B, Self>` that depend on the width `B`.
     type Width<B: FitsBits<Self>>: IntWidth<Self>;
@@ -254,6 +262,9 @@ mod sealed {
     /// `-self` modulo `2^bits`, and whether `self` is not zero. Requires `bits` to be at most the
     /// bits of the storage and the value to have `bits` bits.
     fn overflowing_neg_bits(&self, bits: u32, token: Token) -> (Self, bool);
+
+    /// Returns `true` if the value is one.
+    fn is_one(&self, token: Token) -> bool;
   }
 
   /// Seals [`IntRepr`](super::IntRepr) and gives the trait implementations of [`Int`](crate::Int)
@@ -262,6 +273,10 @@ mod sealed {
   /// As for [`UintCore`], each method takes a [`Token`]. They rely on the width invariant of
   /// `Int`: the representation, read as a two's complement integer, equals the value.
   pub trait IntCore: Sized {
+    /// The storage of the absolute value of a value as an unsigned integer, which also holds the
+    /// absolute value of the smallest value: [`IntRepr::Unsigned`](super::IntRepr::Unsigned).
+    type Magnitude;
+
     /// Zero.
     fn zero(token: Token) -> Self;
 
@@ -309,6 +324,15 @@ mod sealed {
     /// bits, as it is only for the smallest value. Requires `bits` to be at most the bits of the
     /// storage and the value to have `bits` bits.
     fn overflowing_neg_bits(&self, bits: u32, token: Token) -> (Self, bool);
+
+    /// Returns `true` if the value is one.
+    fn is_one(&self, token: Token) -> bool;
+
+    /// `-1`, `0` or `1` as the sign of the value.
+    fn signum(&self, token: Token) -> Self;
+
+    /// The absolute value as an unsigned integer, which has the bits of the value.
+    fn unsigned_abs(&self, token: Token) -> Self::Magnitude;
   }
 }
 
@@ -419,7 +443,7 @@ pub trait UintRepr: Eq + UintCore {}
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
 )]
-pub trait IntRepr: Eq + IntCore {
+pub trait IntRepr: Eq + IntCore<Magnitude = <Self as IntRepr>::Unsigned> {
   /// The storage of [`Uint`](crate::Uint) of the same size: `u8` for `i8`, `u16` for `i16`, and so
   /// on, and the same array for an array of limbs.
   type Unsigned: UintRepr;
@@ -428,19 +452,21 @@ pub trait IntRepr: Eq + IntCore {
 /// A storage of [`Uint`](crate::Uint) that holds the value inline, so that the integer is `Copy`: a
 /// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`.
 ///
-/// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger), [`UnsignedFixedInteger`](crate::UnsignedFixedInteger)
-/// and [`SaturatingOps`](crate::SaturatingOps), for every `Repr` that implements this trait. The
-/// default storages of [`BitWidth`] are inline. This trait is sealed and cannot be implemented
-/// outside this crate.
+/// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and `ONE` from one bit, and
+/// implements [`FixedInteger`](crate::FixedInteger),
+/// [`UnsignedFixedInteger`](crate::UnsignedFixedInteger) and
+/// [`SaturatingOps`](crate::SaturatingOps), and [`HasOne`](crate::HasOne) from one bit, for every
+/// `Repr` that implements this trait. The default storages of [`BitWidth`] are inline. This trait
+/// is sealed and cannot be implemented outside this crate.
 pub trait InlineUintRepr: UintRepr + Copy + InlineUintConsts {}
 
 /// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
 /// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`.
 ///
-/// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger), [`SignedFixedInteger`](crate::SignedFixedInteger) and
-/// [`SaturatingOps`](crate::SaturatingOps), for every `Repr` that implements this trait. The
+/// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and `ONE` from two bits, and
+/// implements [`FixedInteger`](crate::FixedInteger),
+/// [`SignedFixedInteger`](crate::SignedFixedInteger) and [`SaturatingOps`](crate::SaturatingOps),
+/// and [`HasOne`](crate::HasOne) from two bits, for every `Repr` that implements this trait. The
 /// default storages of [`BitWidth`] are inline. This trait is sealed and cannot be implemented
 /// outside this crate.
 pub trait InlineIntRepr: IntRepr + Copy + InlineIntConsts {}
@@ -506,6 +532,11 @@ macro_rules! array_storage {
       fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
         unsigned::$lower::overflowing_neg_bits(self, bits)
       }
+
+      #[inline]
+      fn is_one(&self, _: Token) -> bool {
+        unsigned::$lower::is_one(self)
+      }
     }
 
     impl<const N: usize> IntRepr for [$limb; N] {
@@ -513,6 +544,8 @@ macro_rules! array_storage {
     }
 
     impl<const N: usize> IntCore for [$limb; N] {
+      type Magnitude = Self;
+
       #[inline]
       fn zero(_: Token) -> Self {
         [0; N]
@@ -581,12 +614,28 @@ macro_rules! array_storage {
       fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
         signed::$upper::overflowing_neg_bits(self, bits)
       }
+
+      #[inline]
+      fn is_one(&self, _: Token) -> bool {
+        signed::$upper::is_one(self)
+      }
+
+      #[inline]
+      fn signum(&self, _: Token) -> Self {
+        signed::$upper::signum(self)
+      }
+
+      #[inline]
+      fn unsigned_abs(&self, _: Token) -> Self {
+        signed::$upper::unsigned_abs(self)
+      }
     }
 
     impl<const N: usize> InlineUintRepr for [$limb; N] {}
 
     impl<const N: usize> InlineUintConsts for [$limb; N] {
       const ZERO: Self = [0; N];
+      const ONE: Self = unsigned::$lower::one();
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
     }
@@ -599,6 +648,7 @@ macro_rules! array_storage {
 
     impl<const N: usize> InlineIntConsts for [$limb; N] {
       const ZERO: Self = [0; N];
+      const ONE: Self = unsigned::$lower::one();
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
     }
@@ -680,6 +730,11 @@ macro_rules! native_storage {
       fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
         int::$uint::overflowing_neg_bits(*self, bits)
       }
+
+      #[inline]
+      fn is_one(&self, _: Token) -> bool {
+        int::$uint::is_one(*self)
+      }
     }
 
     impl IntRepr for $int {
@@ -687,6 +742,8 @@ macro_rules! native_storage {
     }
 
     impl IntCore for $int {
+      type Magnitude = $uint;
+
       #[inline]
       fn zero(_: Token) -> Self {
         0
@@ -748,12 +805,30 @@ macro_rules! native_storage {
       fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
         int::$int::overflowing_neg_bits(*self, bits)
       }
+
+      #[inline]
+      fn is_one(&self, _: Token) -> bool {
+        int::$int::is_one(*self)
+      }
+
+      // The layer is named by its path: method syntax on `self`, a `&$int`, would find these
+      // methods, which take `&self`, before the inherent methods of the same names.
+      #[inline]
+      fn signum(&self, _: Token) -> Self {
+        int::$int::signum(*self)
+      }
+
+      #[inline]
+      fn unsigned_abs(&self, _: Token) -> $uint {
+        int::$int::unsigned_abs(*self)
+      }
     }
 
     impl InlineUintRepr for $uint {}
 
     impl InlineUintConsts for $uint {
       const ZERO: Self = 0;
+      const ONE: Self = 1;
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
     }
@@ -766,6 +841,7 @@ macro_rules! native_storage {
 
     impl InlineIntConsts for $int {
       const ZERO: Self = 0;
+      const ONE: Self = 1;
 
       type Width<B: FitsBits<Self>> = Width<B, Self>;
     }

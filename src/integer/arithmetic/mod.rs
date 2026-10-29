@@ -1,8 +1,9 @@
 //! The arithmetic of [`Uint`](crate::Uint) and [`Int`](crate::Int): the method tables of the
 //! overflowing, checked, wrapping, saturating and strict addition, subtraction, multiplication and
-//! negation, and the panics of the strict methods.
+//! negation, of the carrying addition and the borrowing subtraction of `Uint`, and of the absolute
+//! value and the sign of `Int`, and the panics of the strict methods.
 //!
-//! Each storage computes the overflowing methods at the width `Bits`, and the other families are
+//! Each storage computes the overflowing methods at the width `Bits`, and most other methods are
 //! derived from them. The tables pass their rows to the callbacks of `tables`, for the inherent
 //! `const fn`s of each storage and for the generic implementations of the traits, so their bodies
 //! name the panics by the full path `$crate::integer::arithmetic::overflow`.
@@ -256,8 +257,138 @@ macro_rules! strict_table {
   };
 }
 
-/// The panics of the strict methods, with the messages of the native integers.
+/// Passes the carrying addition and the borrowing subtraction of `Uint` to `$callback`, after the
+/// tokens of `$args`.
+macro_rules! uint_sign_table {
+  ($callback:ident! $args:tt) => {
+    $callback! { $args
+      /// Addition with a carry: `self + rhs + carry` wrapped to the range of the type, and whether
+      /// the exact sum is outside that range.
+      fn carrying_add(&self, rhs: &Self, carry: bool) -> (Self, bool) {
+        let (sum, overflow) = self.overflowing_add(rhs);
+        if carry {
+          // Adding one subtracts `MAX`, which is `-1` modulo `2^Bits`, and overflows exactly when
+          // the sum is `MAX`, which is when the subtraction does not borrow. At zero bits, which
+          // hold no one, a carry always overflows.
+          let (sum, borrow) = sum.overflowing_sub(&Self::MAX);
+          (sum, overflow || !borrow)
+        } else {
+          (sum, overflow)
+        }
+      }
+
+      /// Subtraction with a borrow: `self - rhs - borrow` wrapped to the range of the type, and
+      /// whether the exact difference is negative.
+      fn borrowing_sub(&self, rhs: &Self, borrow: bool) -> (Self, bool) {
+        let (difference, overflow) = self.overflowing_sub(rhs);
+        if borrow {
+          // Subtracting one adds `MAX`, which is `-1` modulo `2^Bits`, and overflows exactly when
+          // the difference is zero, which is when the addition does not carry. At zero bits, which
+          // hold no one, a borrow always overflows.
+          let (difference, carry) = difference.overflowing_add(&Self::MAX);
+          (difference, overflow || !carry)
+        } else {
+          (difference, overflow)
+        }
+      }
+    }
+  };
+}
+
+/// Passes the absolute value, the sign and the saturating negation of `Int` to `$callback`, after
+/// the tokens of `$args`.
+macro_rules! int_sign_table {
+  ($callback:ident! $args:tt) => {
+    $callback! { $args
+      /// Saturating negation: `-self`, or `MAX` if the negation is outside the range of the type,
+      /// as it is for `MIN`, unless `Bits` is zero and `MIN` is zero.
+      fn saturating_neg(&self) -> Self {
+        match self.overflowing_neg() {
+          (negated, false) => negated,
+          (_, true) => Self::MAX,
+        }
+      }
+
+      /// Overflowing absolute value: `|self|` wrapped to the range of the type, and whether it is
+      /// outside that range, as it is for `MIN`, unless `Bits` is zero and `MIN` is zero. `MIN`
+      /// wraps to itself.
+      fn overflowing_abs(&self) -> (Self, bool) {
+        if self.is_negative() {
+          self.overflowing_neg()
+        } else {
+          (*self, false)
+        }
+      }
+
+      /// Checked absolute value: `|self|`, or `None` if it is outside the range of the type, as it
+      /// is for `MIN`, unless `Bits` is zero and `MIN` is zero.
+      fn checked_abs(&self) -> Option<Self> {
+        match self.overflowing_abs() {
+          (abs, false) => Some(abs),
+          (_, true) => None,
+        }
+      }
+
+      /// Wrapping absolute value: `|self|` modulo `2^Bits`, within the range of the type; `MIN`
+      /// wraps to itself.
+      fn wrapping_abs(&self) -> Self {
+        self.overflowing_abs().0
+      }
+
+      /// Saturating absolute value: `|self|`, or `MAX` if it is outside the range of the type, as
+      /// it is for `MIN`, unless `Bits` is zero and `MIN` is zero.
+      fn saturating_abs(&self) -> Self {
+        match self.overflowing_abs() {
+          (abs, false) => abs,
+          (_, true) => Self::MAX,
+        }
+      }
+
+      /// Strict absolute value: `|self|`, which panics on overflow whatever the `overflow-checks`
+      /// setting.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the absolute value is outside the range of the type, as it is for `MIN`,
+      /// unless `Bits` is zero and `MIN` is zero.
+      #[track_caller]
+      fn strict_abs(&self) -> Self {
+        match self.overflowing_abs() {
+          (abs, false) => abs,
+          (_, true) => $crate::integer::arithmetic::overflow::neg(),
+        }
+      }
+
+      /// The absolute value, `|self|`. The absolute value of `MIN`, unless `Bits` is zero and
+      /// `MIN` is zero, is outside the range of the type: the method then panics or returns `MIN`,
+      /// as `overflow-checks` decides for the native integers.
+      #[track_caller]
+      fn abs(&self) -> Self {
+        match self.overflowing_abs() {
+          (abs, false) => abs,
+          (abs, true) => {
+            $crate::integer::arithmetic::overflow::forward_neg();
+            abs
+          }
+        }
+      }
+
+      /// The sign of the value: -1 if it is negative, zero if it is zero, and one if it is
+      /// positive.
+      fn signum(&self) -> Self = prim value signum(self);
+
+      /// The absolute value, `|self|`, as the unsigned integer of the same width, which also holds
+      /// the absolute value of `MIN`.
+      fn unsigned_abs(&self) -> Self::Unsigned = prim unsigned unsigned_abs(self);
+    }
+  };
+}
+
+/// The panics of the strict methods, with the messages of the native integers, and the overflow of
+/// a native operation, which follows the `overflow-checks` setting.
 pub(super) mod overflow {
+  use core::hint::black_box;
+
   /// Panics as the native `strict_add` does.
   #[cold]
   #[track_caller]
@@ -284,6 +415,14 @@ pub(super) mod overflow {
   #[track_caller]
   pub(crate) const fn neg() -> ! {
     panic!("attempt to negate with overflow")
+  }
+
+  /// Repeats the overflow of a native negation, which panics with the message of the native
+  /// integers when `overflow-checks` is on and does nothing otherwise.
+  #[inline]
+  #[track_caller]
+  pub(crate) const fn forward_neg() {
+    let _ = -black_box(i8::MIN);
   }
 }
 

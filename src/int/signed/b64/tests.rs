@@ -42,6 +42,8 @@ fn samples() -> Vec<i128> {
 fn full_width_arithmetic_matches_i64_and_i128() {
   for a in samples() {
     let limbs_a = from_i128(a);
+    assert_eq!(is_one(&limbs_a), a == 1);
+    assert_eq!(signum(&limbs_a), from_i128(a.signum()));
     let (negated, overflow) = a.overflowing_neg();
     assert_eq!(
       overflowing_neg_bits(&limbs_a, 128),

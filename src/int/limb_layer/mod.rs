@@ -73,6 +73,13 @@ macro_rules! limb_layer {
       !is_zero(value)
     }
 
+    /// Returns `true` if `value` is one, which no limbs hold.
+    #[inline]
+    pub(crate) const fn is_one<const N: usize>(value: &[Limb; N]) -> bool {
+      // `one` needs a limb to set.
+      N > 0 && eq(value, &one())
+    }
+
     /// Compares the unsigned integers formed by the limbs below index `top`. Requires `top <= N`.
     pub(crate) const fn cmp_below<const N: usize>(
       lhs: &[Limb; N],
@@ -766,6 +773,24 @@ macro_rules! limb_layer {
     #[inline]
     pub(crate) const fn is_positive<const N: usize>(value: &[Limb; N]) -> bool {
       !is_negative(value) && !is_zero(value)
+    }
+
+    /// Returns `true` if `value` is one, which no limbs hold.
+    #[inline]
+    pub(crate) const fn is_one<const N: usize>(value: &[Limb; N]) -> bool {
+      $unsigned::is_one(value)
+    }
+
+    /// `-1`, `0` or `1` as the sign of `value`.
+    pub(crate) const fn signum<const N: usize>(value: &[Limb; N]) -> [Limb; N] {
+      if is_negative(value) {
+        [Limb::MAX; N]
+      } else if $unsigned::is_zero(value) {
+        [0; N]
+      } else {
+        // A positive value has a limb, which `one` sets.
+        $unsigned::one()
+      }
     }
 
     /// Compares `lhs` and `rhs`: the top limbs as `SignedLimb`, then the others as `Limb`, most

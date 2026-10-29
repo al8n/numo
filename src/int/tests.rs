@@ -665,6 +665,14 @@ mod arithmetic_bits {
           bigint::structured_patterns(bits)
         };
         for &a in lefts.iter().step_by(step) {
+          let signed = bigint::to_signed(a, bits);
+          assert_eq!(int::$uint::is_one(a as $uint), a == 1);
+          assert_eq!(int::$int::is_one(signed as $int), signed == 1);
+          assert_eq!(int::$int::signum(signed as $int), signed.signum() as $int);
+          assert_eq!(
+            int::$int::unsigned_abs(signed as $int),
+            signed.unsigned_abs() as $uint
+          );
           for &b in &rights {
             let [sum, difference, product, negated] = unsigned_results(a, b, bits);
             let (x, y) = (a as $uint, b as $uint);
@@ -751,6 +759,9 @@ mod arithmetic_bits {
         for a in &samples {
           if signed {
             let x = i128::try_from(a).expect("in range");
+            assert_eq!(int::i128::is_one(x), x == 1);
+            assert_eq!(int::i128::signum(x), x.signum());
+            assert_eq!(int::i128::unsigned_abs(x), x.unsigned_abs());
             let big = |(value, overflow): (i128, bool)| (BigInt::from(value), overflow);
             check(
               -a,
@@ -771,6 +782,7 @@ mod arithmetic_bits {
             }
           } else {
             let x = u128::try_from(a).expect("in range");
+            assert_eq!(int::u128::is_one(x), x == 1);
             let big = |(value, overflow): (u128, bool)| (BigInt::from(value), overflow);
             check(
               -a,

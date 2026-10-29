@@ -130,6 +130,7 @@ fn two_limbs_match_u128() {
 fn full_width_arithmetic_matches_u64_and_u128() {
   for a in samples() {
     let limbs_a = from_u128(a);
+    assert_eq!(is_one(&limbs_a), a == 1);
     let (negated, borrow) = a.overflowing_neg();
     assert_eq!(
       overflowing_neg_bits(&limbs_a, 128),

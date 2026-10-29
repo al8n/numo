@@ -10,6 +10,8 @@ use core::{
   hash::Hash,
 };
 
+use typenum::{IsGreater, NonZero, True, U1};
+
 use sealed::Sealed;
 
 use super::{Int, TryNewError, Uint};
@@ -75,10 +77,14 @@ pub trait FixedInteger: Sealed + Copy + Eq + Ord + Hash + Debug + Display + Defa
 
 /// An unsigned integer of a fixed number of bits: [`Uint`].
 ///
+/// The carrying addition and the borrowing subtraction are the inherent methods of the same names,
+/// which a concrete type reaches without this trait, also in constant contexts.
+///
 /// ```
 /// use numo::{
 ///   BitWidth, FixedInteger, Uint, UnsignedFixedInteger,
 ///   typenum::{U7, U200},
+///   u7,
 /// };
 ///
 /// // The smallest unsigned value is zero.
@@ -92,12 +98,28 @@ pub trait FixedInteger: Sealed + Copy + Eq + Ord + Hash + Debug + Display + Defa
 ///
 /// assert!(is_min(smallest::<U7>()) && is_min(smallest::<U200>()));
 /// assert!(!is_min(numo::u256::MAX));
+///
+/// // Two numbers of two digits each, the least significant digit first.
+/// fn sum<B: BitWidth>(a: [Uint<B>; 2], b: [Uint<B>; 2]) -> ([Uint<B>; 2], bool) {
+///   let (low, carry) = a[0].carrying_add(&b[0], false);
+///   let (high, carry) = a[1].carrying_add(&b[1], carry);
+///   ([low, high], carry)
+/// }
+///
+/// let (digits, overflow) = sum([u7::MAX, u7::new(5)], [u7::new(1), u7::new(2)]);
+/// assert_eq!((digits, overflow), ([u7::ZERO, u7::new(8)], false));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait UnsignedFixedInteger: Sealed + Sized {}
+pub trait UnsignedFixedInteger: Sealed + Sized {
+  uint_sign_table!(trait_items![]);
+}
 
 /// A signed integer of a fixed number of bits, in two's complement: [`Int`].
+///
+/// The sign queries, the absolute value in its forms, `saturating_neg`, `signum` and
+/// `unsigned_abs` are the inherent methods of the same names, which a concrete type reaches without
+/// this trait, also in constant contexts.
 ///
 /// ```
 /// use numo::{
@@ -114,8 +136,14 @@ pub trait UnsignedFixedInteger: Sealed + Sized {}
 ///   Uint::<B>::MAX
 /// }
 ///
+/// // The distance from zero, which also holds that of `MIN`.
+/// fn distance<B: BitWidth>(value: Int<B>) -> Uint<B> {
+///   value.unsigned_abs()
+/// }
+///
 /// assert_eq!(negatives(&[i256::MIN, i256::ZERO, i256::MAX]), 1);
 /// assert_eq!(unsigned_max(Int::<U7>::MIN), Uint::<U7>::MAX);
+/// assert_eq!(distance(Int::<U7>::MIN), Uint::<U7>::new(64));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
@@ -125,6 +153,38 @@ pub trait SignedFixedInteger: Sealed + Sized {
   type Unsigned;
 
   signed_query_table!(trait_items![]);
+  int_sign_table!(trait_items![]);
+}
+
+/// An integer that holds one: [`Uint`] of at least one bit and [`Int`] of at least two bits, over a
+/// native integer or an array of limbs.
+///
+/// `ONE` is the inherent constant of the same name, which a concrete type reaches without this
+/// trait, also in constant contexts. Zero bits hold only zero, so `Uint` of zero bits has no `ONE`,
+/// rather than one that is zero, and one bit holds only -1 and 0, so `Int` of fewer than two bits
+/// has none either. Generic code over `B: BitWidth` adds `B: NonZero` for `Uint<B>`, or
+/// `B: IsGreater<U1, Output = True>` for `Int<B>`.
+///
+/// ```
+/// use numo::{BitWidth, CheckedOps, HasOne, Uint, typenum::NonZero, u7};
+///
+/// fn successor<B: BitWidth + NonZero>(value: Uint<B>) -> Option<Uint<B>> {
+///   value.checked_add(&Uint::<B>::ONE)
+/// }
+///
+/// fn is_unit<T: HasOne>(value: T) -> bool {
+///   value == T::ONE
+/// }
+///
+/// assert_eq!(successor(u7::new(126)), Some(u7::MAX));
+/// assert_eq!(successor(u7::MAX), None);
+/// assert!(is_unit(u7::ONE) && !is_unit(u7::MAX));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait HasOne: FixedInteger {
+  /// One.
+  const ONE: Self;
 }
 
 /// An integer stored in a native integer: [`Uint`] over `u8`, `u16`, `u32`, `u64` or `u128`, and
@@ -361,12 +421,23 @@ impl<B: FitsBits<R>, R: InlineIntRepr> FixedInteger for Int<B, R> {
   integer_query_table!(generic_items![]);
 }
 
-impl<B: FitsBits<R>, R: InlineUintRepr> UnsignedFixedInteger for Uint<B, R> {}
+impl<B: FitsBits<R>, R: InlineUintRepr> UnsignedFixedInteger for Uint<B, R> {
+  uint_sign_table!(generic_items![]);
+}
 
 impl<B: FitsBits<R>, R: InlineIntRepr> SignedFixedInteger for Int<B, R> {
   type Unsigned = Uint<B, <R as IntRepr>::Unsigned>;
 
   signed_query_table!(generic_items![]);
+  int_sign_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> HasOne for Uint<B, R> {
+  const ONE: Self = Self::ONE;
+}
+
+impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: InlineIntRepr> HasOne for Int<B, R> {
+  const ONE: Self = Self::ONE;
 }
 
 impl<B, L, const N: usize> ArrayInteger for Uint<B, [L; N]>
