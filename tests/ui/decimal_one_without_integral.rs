@@ -4,7 +4,7 @@ use numo::{
 };
 
 fn one<T: DecimalOne>() -> T {
-  T::ONE
+  T::one()
 }
 
 fn main() {

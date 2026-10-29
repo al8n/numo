@@ -12,8 +12,8 @@ use typenum::{And, Diff, Max, Maximum, Sum};
 
 pub use error::{ConvertError, DivideError, ParseError, ParseErrorKind, QuantizeError};
 pub use traits::{
-  ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal, SignedFixedDecimal,
-  UnsignedFixedDecimal, WidenTo,
+  ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal,
+  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 
 use crate::{
@@ -121,7 +121,7 @@ mod tests;
 /// where
 ///   Decimal<I, F, R>: FixedDecimal,
 /// {
-///   let zero = Decimal::<I, F, R>::ZERO;
+///   let zero = Decimal::<I, F, R>::zero();
 ///   let sum = values.iter().try_fold(zero, |sum, value| sum.checked_add(value))?;
 ///   let digits = Decimal::<I, F, R>::FRACTION as usize;
 ///   Some(format!("{sum:.digits$}"))

@@ -7,8 +7,8 @@ use typenum::{
 };
 
 use super::{
-  ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal, SignedFixedDecimal,
-  UnsignedFixedDecimal, WidenTo,
+  ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal,
+  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 use crate::{
   ConvertError, Decimal, DivideError, ParseErrorKind, QuantizeError, RoundingMode,
@@ -21,7 +21,7 @@ use crate::{
 /// Zero, the limits, and one, two and 25 units in the last place, also negated for a signed
 /// storage.
 fn samples<T: FixedDecimal>() -> Vec<T> {
-  let mut values = Vec::from([T::ZERO, T::MIN, T::MAX]);
+  let mut values = Vec::from([T::zero(), T::min_value(), T::max_value()]);
   for units in [1, 2, 25] {
     values.push(format!("{units}e-{}", T::FRACTION).parse().unwrap());
     if T::SIGNED {
@@ -39,8 +39,9 @@ fn signed<T: SignedFixedDecimal>() {}
 fn unsigned<T: UnsignedFixedDecimal>() {}
 
 /// Asserts that the constants, the storage and the methods of [`FixedDecimal`] are the inherent
-/// ones for each type, on the values of [`samples`], and that the digit counts are those of the
-/// type.
+/// ones for each type, on the values of [`samples`], that its functions `zero`, `max_value` and
+/// `min_value` and the constants of [`ConstFixedDecimal`] are the inherent constants, that the
+/// default is zero, and that the digit counts are those of the type.
 macro_rules! assert_fixed {
   ($(Decimal<$integral:ty, $fraction:ty, $repr:ty>),+ $(,)?) => {$({
     type T = Decimal<$integral, $fraction, $repr>;
@@ -49,9 +50,13 @@ macro_rules! assert_fixed {
     assert_eq!(<T as FixedDecimal>::FRACTION, T::FRACTION);
     assert_eq!(<T as FixedDecimal>::DIGITS, T::DIGITS);
     assert_eq!(<T as FixedDecimal>::SIGNED, T::SIGNED);
-    assert_eq!(<T as FixedDecimal>::ZERO, T::ZERO);
-    assert_eq!(<T as FixedDecimal>::MAX, T::MAX);
-    assert_eq!(<T as FixedDecimal>::MIN, T::MIN);
+    assert_eq!(<T as FixedDecimal>::zero(), T::ZERO);
+    assert_eq!(<T as FixedDecimal>::max_value(), T::MAX);
+    assert_eq!(<T as FixedDecimal>::min_value(), T::MIN);
+    assert_eq!(<T as ConstFixedDecimal>::ZERO, T::ZERO);
+    assert_eq!(<T as ConstFixedDecimal>::MAX, T::MAX);
+    assert_eq!(<T as ConstFixedDecimal>::MIN, T::MIN);
+    assert_eq!(T::default(), <T as FixedDecimal>::zero());
     assert_eq!(T::INTEGRAL, <$integral as Unsigned>::U32);
     assert_eq!(T::FRACTION, <$fraction as Unsigned>::U32);
     assert_eq!(T::DIGITS, T::INTEGRAL + T::FRACTION);
@@ -145,11 +150,13 @@ macro_rules! assert_unsigned {
   })+};
 }
 
-/// Asserts that [`DecimalOne::ONE`] is the inherent `ONE`, which is one, for each type.
+/// Asserts that [`DecimalOne::one`] and [`ConstDecimalOne::ONE`] are the inherent `ONE`, which is
+/// one, for each type.
 macro_rules! assert_one {
   ($($ty:ty),+ $(,)?) => {$(
-    assert_eq!(<$ty as DecimalOne>::ONE, <$ty>::ONE);
-    assert_eq!(<$ty as DecimalOne>::ONE.to_string(), "1");
+    assert_eq!(<$ty as DecimalOne>::one(), <$ty>::ONE);
+    assert_eq!(<$ty as ConstDecimalOne>::ONE, <$ty>::ONE);
+    assert_eq!(<$ty as DecimalOne>::one().to_string(), "1");
   )+};
 }
 
@@ -217,10 +224,11 @@ fn one_is_the_inherent_one() {
   );
 }
 
-/// Uses only what the bound `T: FixedDecimal` gives: `Default`, `FromStr`, `Display`, `Debug`,
-/// `Hash` and `Ord`.
+/// Uses only what the bound `T: FixedDecimal` gives: `Clone`, `Default`, `FromStr`, `Display`,
+/// `Debug`, `Hash`, `Ord`, zero and the limits. A value that is used again is borrowed or cloned,
+/// never copied.
 fn check_supertraits<T: FixedDecimal>() {
-  assert_eq!(T::default(), T::ZERO);
+  assert_eq!(T::default(), T::zero());
   let value: T = "1.5".parse().unwrap();
   assert_eq!(format!("{value:.3}"), "1.500");
   assert_eq!(format!("{value:?}"), "1.5");
@@ -230,11 +238,11 @@ fn check_supertraits<T: FixedDecimal>() {
   );
   let state = RandomState::new();
   assert_eq!(
-    state.hash_one(value),
+    state.hash_one(&value),
     state.hash_one("1.50".parse::<T>().unwrap())
   );
-  assert!(T::MIN <= T::ZERO && T::ZERO < value && value < T::MAX);
-  assert_eq!(value.max(T::ZERO), value);
+  assert!(T::min_value() <= T::zero() && T::zero() < value && value < T::max_value());
+  assert_eq!(value.clone().max(T::zero()), value);
 }
 
 #[test]
@@ -245,11 +253,83 @@ fn supertraits_through_the_bound() {
   check_supertraits::<Decimal<U60, U18, u320>>();
 }
 
+/// Uses the general layer through the bound `T: FixedDecimal` alone and clones each value that it
+/// uses again, so it compiles only because the general layer does not require `Copy`. Returns the
+/// sum, the smallest and the largest of the values, and the largest rebuilt from its coefficient.
+fn without_copy<T: FixedDecimal>(values: &[T]) -> (Option<T>, T, T, Option<T>) {
+  let sum = values
+    .iter()
+    .try_fold(T::zero(), |sum, value| sum.checked_add(value));
+  let smallest = values.iter().fold(T::max_value(), |smallest, value| {
+    smallest.min(value.clone())
+  });
+  let largest = values
+    .iter()
+    .fold(T::min_value(), |largest, value| largest.max(value.clone()));
+  let rebuilt = T::from_repr(largest.clone().repr());
+  (sum, smallest, largest, rebuilt)
+}
+
+#[test]
+fn general_layer_without_copy() {
+  type Price = Decimal<U10, U8>;
+  type Amount = Decimal<U10, U9, u64>;
+  type Wide = Decimal<U38, U38, i256>;
+
+  let prices: [Price; 3] = ["1.5", "-0.25", "64250.5"].map(|text| text.parse().unwrap());
+  assert_eq!(
+    without_copy(&prices),
+    (
+      Some("64251.75".parse().unwrap()),
+      prices[1],
+      prices[2],
+      Some(prices[2])
+    )
+  );
+  // Without values, the sum is zero, the smallest is `MAX` and the largest is `MIN`, which is zero
+  // for an unsigned storage.
+  assert_eq!(
+    without_copy::<Amount>(&[]),
+    (
+      Some(Amount::ZERO),
+      Amount::MAX,
+      Amount::ZERO,
+      Some(Amount::ZERO)
+    )
+  );
+  assert_eq!(
+    without_copy(&[Wide::MAX; 2]),
+    (None, Wide::MAX, Wide::MAX, Some(Wide::MAX))
+  );
+}
+
+/// Reads the constants of the const layer in a generic `const fn`, which cannot call the functions
+/// of the general layer.
+const fn constants<T: ConstDecimalOne>() -> [T; 4] {
+  [T::MIN, T::ZERO, T::ONE, T::MAX]
+}
+
+#[test]
+fn const_layer_in_constant_contexts() {
+  type Price = Decimal<U10, U8>;
+  type Supply = Decimal<U59, U18, u256>;
+
+  const PRICES: [Price; 4] = constants();
+  const SUPPLIES: [Supply; 4] = constants();
+  assert_eq!(PRICES, [Price::MIN, Price::ZERO, Price::ONE, Price::MAX]);
+  assert_eq!(
+    SUPPLIES,
+    [Supply::ZERO, Supply::ZERO, Supply::ONE, Supply::MAX]
+  );
+}
+
 /// In code bounded by [`SignedFixedDecimal`], `-x` and `x.neg()` on a value call `Neg::neg`, while
-/// `x.neg()` on a reference and the path through the trait call [`SignedFixedDecimal::neg`].
+/// `x.neg()` on a reference and the path through the trait call [`SignedFixedDecimal::neg`]. The
+/// bound does not require `Copy`, so the value is cloned for the first negation that takes it.
 fn negations<T: SignedFixedDecimal>(x: T) -> [T; 4] {
   let by_reference = &x;
-  [-x, x.neg(), by_reference.neg(), SignedFixedDecimal::neg(&x)]
+  let (on_reference, through_trait) = (by_reference.neg(), SignedFixedDecimal::neg(&x));
+  [-x.clone(), x.neg(), on_reference, through_trait]
 }
 
 #[test]
@@ -267,7 +347,7 @@ fn product<P: ExactMul<Q, Output = O>, Q, O>() {}
 
 /// The total of the products of the pairs, through the bound `FixedDecimal` of `Output`.
 fn total<P: ExactMul<Q>, Q>(pairs: &[(P, Q)]) -> Option<P::Output> {
-  pairs.iter().try_fold(P::Output::ZERO, |sum, (lhs, rhs)| {
+  pairs.iter().try_fold(P::Output::zero(), |sum, (lhs, rhs)| {
     sum.checked_add(&lhs.exact_mul(rhs))
   })
 }
@@ -506,7 +586,8 @@ fn div_round_is_the_inherent_one() {
 }
 
 /// Every trait of both families and `Neg` are in scope at once: no call below is ambiguous
-/// (E0034), on concrete types or in code bounded by either family.
+/// (E0034), on concrete types or in code bounded by either family, with the decimal traits of both
+/// layers in one bound.
 mod collisions {
   use core::ops::Neg;
 
@@ -517,20 +598,39 @@ mod collisions {
     reason = "every trait is in scope, as in code that imports all of them"
   )]
   use crate::{
-    ArrayInteger, CheckedOps, ConvertTo, Decimal, DecimalOne, DivRound, ExactMul, FixedDecimal,
-    FixedInteger, FromLimbs, HasOne, NativeInteger, OverflowingOps, SaturatingOps,
-    SignedFixedDecimal, SignedFixedInteger, StrictOps, UncheckedOps, UnsignedFixedDecimal,
-    UnsignedFixedInteger, WidenTo, WrappingOps, i256, u256,
+    ArrayInteger, CheckedOps, ConstDecimalOne, ConstFixedDecimal, ConvertTo, Decimal, DecimalOne,
+    DivRound, ExactMul, FixedDecimal, FixedInteger, FromLimbs, HasOne, NativeInteger,
+    OverflowingOps, SaturatingOps, SignedFixedDecimal, SignedFixedInteger, StrictOps, UncheckedOps,
+    UnsignedFixedDecimal, UnsignedFixedInteger, WidenTo, WrappingOps, i256, u256,
   };
 
   type Price = Decimal<U10, U8>;
   type Amount = Decimal<U10, U8, u64>;
 
-  fn signed_decimal<T>(x: &T) -> (Option<T>, bool, bool, T, T)
+  /// Zero, the limits and one through the functions and the constants, and the default.
+  fn decimal_values<T>() -> [T; 9]
   where
-    T: FixedDecimal + SignedFixedDecimal + DecimalOne,
+    T: FixedDecimal + ConstFixedDecimal + DecimalOne + ConstDecimalOne,
+  {
+    [
+      T::zero(),
+      T::ZERO,
+      T::min_value(),
+      T::MIN,
+      T::max_value(),
+      T::MAX,
+      T::one(),
+      T::ONE,
+      T::default(),
+    ]
+  }
+
+  fn signed_decimal<T>(x: &T) -> (Option<T>, Option<T>, bool, bool, T, T)
+  where
+    T: FixedDecimal + ConstFixedDecimal + SignedFixedDecimal + DecimalOne + ConstDecimalOne,
   {
     (
+      x.checked_add(&T::one()),
       x.checked_add(&T::ONE),
       x.is_zero(),
       x.is_negative(),
@@ -539,11 +639,15 @@ mod collisions {
     )
   }
 
-  fn unsigned_decimal<T>(x: &T) -> (Option<T>, bool)
+  fn unsigned_decimal<T>(x: &T) -> (Option<T>, Option<T>, bool)
   where
-    T: FixedDecimal + UnsignedFixedDecimal + DecimalOne,
+    T: FixedDecimal + ConstFixedDecimal + UnsignedFixedDecimal + DecimalOne + ConstDecimalOne,
   {
-    (x.checked_add(&T::ONE), x.is_zero())
+    (
+      x.checked_add(&T::one()),
+      x.checked_add(&T::ONE),
+      x.is_zero(),
+    )
   }
 
   fn signed_integer<T>(x: &T) -> (Option<T>, bool, bool, T, T)
@@ -590,22 +694,47 @@ mod collisions {
   fn shared_names_resolve() {
     let price: Price = "-1.5".parse().unwrap();
     let concrete = (
+      price.checked_add(&Price::one()),
       price.checked_add(&Price::ONE),
       price.is_zero(),
       price.is_negative(),
       price.neg(),
       price.abs(),
     );
-    assert_eq!(
-      concrete,
-      (Some("-0.5".parse().unwrap()), false, true, -price, -price)
-    );
+    let next = Some("-0.5".parse().unwrap());
+    assert_eq!(concrete, (next, next, false, true, -price, -price));
     assert_eq!(signed_decimal(&price), concrete);
 
+    let concrete = [
+      Price::zero(),
+      Price::ZERO,
+      Price::min_value(),
+      Price::MIN,
+      Price::max_value(),
+      Price::MAX,
+      Price::one(),
+      Price::ONE,
+      Price::default(),
+    ];
+    let (zero, min, max, one) = (Price::ZERO, Price::MIN, Price::MAX, Price::ONE);
+    assert_eq!(concrete, [zero, zero, min, min, max, max, one, one, zero]);
+    assert_eq!(decimal_values::<Price>(), concrete);
+
     let amount: Amount = "1.5".parse().unwrap();
-    let concrete = (amount.checked_add(&Amount::ONE), amount.is_zero());
-    assert_eq!(concrete, (Some("2.5".parse().unwrap()), false));
+    let concrete = (
+      amount.checked_add(&Amount::one()),
+      amount.checked_add(&Amount::ONE),
+      amount.is_zero(),
+    );
+    let next = Some("2.5".parse().unwrap());
+    assert_eq!(concrete, (next, next, false));
     assert_eq!(unsigned_decimal(&amount), concrete);
+
+    let (zero, max, one) = (Amount::ZERO, Amount::MAX, Amount::ONE);
+    assert_eq!(
+      decimal_values::<Amount>(),
+      [zero, zero, zero, zero, max, max, one, one, zero]
+    );
 
     let int = i256::ONE.neg();
     let concrete = (

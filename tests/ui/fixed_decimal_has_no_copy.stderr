@@ -1,0 +1,23 @@
+error[E0382]: use of moved value: `value`
+ --> tests/ui/fixed_decimal_has_no_copy.rs:5:18
+  |
+4 | fn repr_and_value<T: FixedDecimal>(value: T) -> (T::Repr, T) {
+  |                                    ----- move occurs because `value` has type `T`, which does not implement the `Copy` trait
+5 |   (value.repr(), value)
+  |          ------  ^^^^^ value used here after move
+  |          |
+  |          `value` moved due to this method call
+  |
+note: `numo::FixedDecimal::repr` takes ownership of the receiver `self`, which moves `value`
+ --> src/decimal/traits/mod.rs
+  |
+  |   fn repr(self) -> Self::Repr;
+  |           ^^^^
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+  |
+5 |   (value.clone().repr(), value)
+  |         ++++++++
+help: consider further restricting type parameter `T` with trait `Copy`
+  |
+4 | fn repr_and_value<T: FixedDecimal + Copy>(value: T) -> (T::Repr, T) {
+  |                                   ++++++

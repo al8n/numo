@@ -3,8 +3,8 @@ use core::{ops::Neg, str::FromStr};
 use typenum::NonZero;
 
 use super::{
-  Decimal, DecimalOne, FixedDecimal, ParseError, QuantizeError, SignedFixedDecimal,
-  UnsignedFixedDecimal, parse,
+  ConstDecimalOne, ConstFixedDecimal, Decimal, DecimalOne, FixedDecimal, ParseError, QuantizeError,
+  SignedFixedDecimal, UnsignedFixedDecimal, parse,
 };
 use crate::{
   i192, i256, i320, i384, i448, i512, int, layout::Layout, rounding::RoundingMode, u192, u256,
@@ -52,7 +52,8 @@ macro_rules! storage_decimal {
       }
     }
 
-    // The constants and methods are the inherent ones, which `Self::` names first.
+    // The constants and methods are the inherent ones, which `Self::` names first, and the
+    // functions without an inherent counterpart return the inherent constants.
     impl<I, F> FixedDecimal for Decimal<I, F, $repr>
     where
       (I, F): Layout<$repr>,
@@ -61,9 +62,6 @@ macro_rules! storage_decimal {
       const FRACTION: u32 = Self::FRACTION;
       const DIGITS: u32 = Self::DIGITS;
       const SIGNED: bool = Self::SIGNED;
-      const ZERO: Self = Self::ZERO;
-      const MAX: Self = Self::MAX;
-      const MIN: Self = Self::MIN;
 
       type Repr = $repr;
 
@@ -75,6 +73,21 @@ macro_rules! storage_decimal {
       #[inline]
       fn from_repr(repr: $repr) -> Option<Self> {
         Self::from_repr(repr)
+      }
+
+      #[inline]
+      fn zero() -> Self {
+        Self::ZERO
+      }
+
+      #[inline]
+      fn max_value() -> Self {
+        Self::MAX
+      }
+
+      #[inline]
+      fn min_value() -> Self {
+        Self::MIN
       }
 
       #[inline]
@@ -108,7 +121,27 @@ macro_rules! storage_decimal {
       }
     }
 
+    impl<I, F> ConstFixedDecimal for Decimal<I, F, $repr>
+    where
+      (I, F): Layout<$repr>,
+    {
+      const ZERO: Self = Self::ZERO;
+      const MAX: Self = Self::MAX;
+      const MIN: Self = Self::MIN;
+    }
+
     impl<I, F> DecimalOne for Decimal<I, F, $repr>
+    where
+      I: NonZero,
+      (I, F): Layout<$repr>,
+    {
+      #[inline]
+      fn one() -> Self {
+        Self::ONE
+      }
+    }
+
+    impl<I, F> ConstDecimalOne for Decimal<I, F, $repr>
     where
       I: NonZero,
       (I, F): Layout<$repr>,

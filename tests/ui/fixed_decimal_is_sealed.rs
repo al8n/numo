@@ -25,9 +25,6 @@ impl FixedDecimal for Local {
   const FRACTION: u32 = 0;
   const DIGITS: u32 = 1;
   const SIGNED: bool = false;
-  const ZERO: Self = Self;
-  const MAX: Self = Self;
-  const MIN: Self = Self;
 
   type Repr = u8;
 
@@ -37,6 +34,18 @@ impl FixedDecimal for Local {
 
   fn from_repr(_: u8) -> Option<Self> {
     Some(Self)
+  }
+
+  fn zero() -> Self {
+    Self
+  }
+
+  fn max_value() -> Self {
+    Self
+  }
+
+  fn min_value() -> Self {
+    Self
   }
 
   fn is_zero(&self) -> bool {

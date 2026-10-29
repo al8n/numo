@@ -318,8 +318,9 @@ pub use typenum;
 
 pub use aliases::*;
 pub use decimal::{
-  ConvertError, ConvertTo, Decimal, DecimalOne, DivRound, DivideError, ExactMul, FixedDecimal,
-  ParseError, ParseErrorKind, QuantizeError, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalOne, DivRound,
+  DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError,
+  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 pub use integer::{
   ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, Int, NativeInteger, OverflowingOps,

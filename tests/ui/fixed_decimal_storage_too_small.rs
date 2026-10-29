@@ -1,7 +1,7 @@
 use numo::{Decimal, FixedDecimal, typenum::U10};
 
 fn zero<T: FixedDecimal>() -> T {
-  T::ZERO
+  T::zero()
 }
 
 fn main() {

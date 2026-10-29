@@ -1,10 +1,16 @@
 //! The traits that [`Decimal`] implements for generic code.
 //!
-//! Each trait mirrors inherent items of the same names, which concrete types reach without the
-//! trait. [`FixedDecimal`], the sign traits and [`DecimalOne`] have one implementation for each
+//! The traits on one decimal type form two layers. The general layer, [`FixedDecimal`], the sign
+//! traits and [`DecimalOne`], requires `Clone` but not `Copy`, and has zero, the limits and one as
+//! the functions `zero`, `max_value`, `min_value` and `one`, which return the inherent constants
+//! `ZERO`, `MAX`, `MIN` and `ONE`; its other items mirror inherent items of the same names, which
+//! concrete types reach without the trait. The const layer, [`ConstFixedDecimal`] and
+//! [`ConstDecimalOne`], adds `Copy` and the constants themselves, which are the inherent constants
+//! and which a generic `const fn` can read. Each of these traits has one implementation for each
 //! storage, which `storage_decimal!` emits next to the inherent items. [`ExactMul`], [`WidenTo`],
-//! [`ConvertTo`] and [`DivRound`], which relate two or three decimal types, each have a single
-//! implementation for every combination of them, with the bounds of the inherent method it calls.
+//! [`ConvertTo`] and [`DivRound`], which relate two or three decimal types, mirror inherent methods
+//! of the same names, and each has a single implementation for every combination of them, with the
+//! bounds of the inherent method it calls.
 
 use core::{
   fmt::{Debug, Display},
@@ -48,13 +54,20 @@ mod sealed {
 
 /// An exact fixed-point decimal number: [`Decimal`] over any storage.
 ///
-/// The constants and methods are the inherent items of the same names, which a concrete type
-/// reaches without this trait, also in constant contexts. Generic code reaches them through this
-/// trait, which `Decimal<I, F, R>` implements for each storage `R` where `(I, F): Layout<R>`; a
-/// method call needs the trait in scope. Because the implementations are per storage, code
-/// generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`, which `R: Storage`
-/// and `(I, F): Layout<R>` do not imply. The supertraits give generic code comparison, hashing,
-/// formatting, parsing through `FromStr` and `Default`, which is zero.
+/// [`zero`](Self::zero), [`max_value`](Self::max_value) and [`min_value`](Self::min_value) return
+/// the inherent constants `ZERO`, `MAX` and `MIN`, and have no inherent counterparts; the other
+/// constants and methods are the inherent items of the same names, which a concrete type reaches
+/// without this trait, also in constant contexts. This trait requires `Clone` rather than `Copy`,
+/// so generic code bounded by it alone clones a value that it uses again; [`ConstFixedDecimal`]
+/// adds `Copy` and the constants `ZERO`, `MAX` and `MIN`. Generic code reaches the items through
+/// this trait, which `Decimal<I, F, R>` implements for each storage `R` where `(I, F): Layout<R>`;
+/// a method call needs the trait in scope. Because the implementations are per storage, code
+/// generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and
+/// `(I, F): Layout<R>` do not imply. The supertraits give generic code cloning, comparison,
+/// hashing, formatting, parsing through `FromStr` and `Default`, which is zero. The functions
+/// `zero`, `max_value` and `min_value`, and [`one`](DecimalOne::one), have the names of those of
+/// `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by traits of both crates
+/// names the trait in the path, as in `FixedDecimal::zero()`.
 ///
 /// ```
 /// use numo::{
@@ -64,7 +77,12 @@ mod sealed {
 ///
 /// // The sum of the values, or `None` if it is outside the range of the type.
 /// fn total<T: FixedDecimal>(values: &[T]) -> Option<T> {
-///   values.iter().try_fold(T::ZERO, |sum, value| sum.checked_add(value))
+///   values.iter().try_fold(T::zero(), |sum, value| sum.checked_add(value))
+/// }
+///
+/// // Whether a value is one of the limits of its type.
+/// fn is_limit<T: FixedDecimal>(value: &T) -> bool {
+///   *value == T::min_value() || *value == T::max_value()
 /// }
 ///
 /// // The text of a value with every fraction digit of its type.
@@ -79,6 +97,8 @@ mod sealed {
 /// let prices: [Price; 2] = ["64250.5".parse()?, "0.25".parse()?];
 /// assert_eq!(total(&prices), Some("64250.75".parse()?));
 /// assert_eq!(total(&[Price::MAX, Price::MAX]), None);
+/// assert!(is_limit(&Price::MIN) && !is_limit(&prices[0]));
+/// assert!(is_limit(&Fee::ZERO));
 /// assert_eq!(padded(&prices[1]), "0.25000000");
 /// assert_eq!(padded(&"1.5".parse::<Fee>()?), "1.50");
 /// assert!(!<Fee as FixedDecimal>::SIGNED);
@@ -87,7 +107,7 @@ mod sealed {
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait FixedDecimal:
-  Sealed + Copy + Eq + Ord + Hash + Debug + Display + Default + FromStr<Err = ParseError>
+  Sealed + Clone + Eq + Ord + Hash + Debug + Display + Default + FromStr<Err = ParseError>
 {
   /// The number of integral digits, `Integral`.
   const INTEGRAL: u32;
@@ -101,15 +121,6 @@ pub trait FixedDecimal:
   /// `true` for a signed storage, whose values can be negative, and `false` for an unsigned one.
   const SIGNED: bool;
 
-  /// Zero.
-  const ZERO: Self;
-
-  /// The largest value, `10^Integral - 10^-Fraction`: every digit is `9`.
-  const MAX: Self;
-
-  /// The smallest value: `-MAX` for a signed storage, and zero for an unsigned one.
-  const MIN: Self;
-
   /// The storage of the coefficient, `Repr`.
   type Repr: Storage;
 
@@ -121,6 +132,19 @@ pub trait FixedDecimal:
   /// if `repr` is outside the range of the type.
   #[must_use]
   fn from_repr(repr: Self::Repr) -> Option<Self>;
+
+  /// Returns zero.
+  #[must_use]
+  fn zero() -> Self;
+
+  /// Returns the largest value, `10^Integral - 10^-Fraction`: every digit is `9`.
+  #[must_use]
+  fn max_value() -> Self;
+
+  /// Returns the smallest value: the largest value negated for a signed storage, and zero for an
+  /// unsigned one.
+  #[must_use]
+  fn min_value() -> Self;
 
   /// Returns `true` if the value is zero.
   #[must_use]
@@ -151,6 +175,57 @@ pub trait FixedDecimal:
   /// Returns `true` if `self` is a multiple of `step`, as [`Decimal::is_multiple_of`] describes.
   #[must_use]
   fn is_multiple_of(&self, step: &Self) -> bool;
+}
+
+/// An exact fixed-point decimal number whose zero and limits are constants: [`Decimal`] over any
+/// storage.
+///
+/// `ZERO`, `MAX` and `MIN` are the inherent constants of the same names, which a concrete type
+/// reaches without this trait, also in constant contexts. Generic code reads them through this
+/// trait as `T::ZERO`, `T::MAX` and `T::MIN`, also in a generic `const fn`, which cannot call
+/// [`zero`](FixedDecimal::zero), [`max_value`](FixedDecimal::max_value) or
+/// [`min_value`](FixedDecimal::min_value) because trait methods are not `const`. The supertrait
+/// `Copy` lets generic code use a value again without cloning it. `Decimal<I, F, R>` implements
+/// this trait for each storage `R` where `(I, F): Layout<R>`, as it implements [`FixedDecimal`].
+///
+/// ```
+/// use numo::{
+///   ConstFixedDecimal, Decimal,
+///   typenum::{U2, U8, U10},
+/// };
+///
+/// // The smallest value, zero and the largest value, in a constant context.
+/// const fn limits<T: ConstFixedDecimal>() -> [T; 3] {
+///   [T::MIN, T::ZERO, T::MAX]
+/// }
+///
+/// // The coefficient and the value, which `Copy` keeps after `repr` takes it.
+/// fn with_repr<T: ConstFixedDecimal>(value: T) -> (T::Repr, T) {
+///   (value.repr(), value)
+/// }
+///
+/// type Price = Decimal<U10, U8>;
+/// type Fee = Decimal<U10, U2, u64>;
+///
+/// const PRICES: [Price; 3] = limits();
+/// const FEES: [Fee; 3] = limits();
+/// assert_eq!(PRICES, [Price::MIN, Price::ZERO, Price::MAX]);
+/// assert_eq!(FEES, [Fee::ZERO, Fee::ZERO, Fee::MAX]);
+/// let price: Price = "1.5".parse()?;
+/// assert_eq!(with_repr(price), (150_000_000, price));
+/// # Ok::<(), numo::ParseError>(())
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait ConstFixedDecimal: FixedDecimal + Copy {
+  /// Zero.
+  const ZERO: Self;
+
+  /// The largest value, `10^Integral - 10^-Fraction`: every digit is `9`.
+  const MAX: Self;
+
+  /// The smallest value: `-MAX` for a signed storage, and zero for an unsigned one.
+  const MIN: Self;
 }
 
 /// A decimal number with a signed storage: [`Decimal`] over `i8`, `i16`, `i32`, `i64`, `i128`,
@@ -207,8 +282,8 @@ pub trait SignedFixedDecimal: FixedDecimal + Neg<Output = Self> {
 /// [`u320`](crate::u320), [`u384`](crate::u384), [`u448`](crate::u448) or [`u512`](crate::u512).
 ///
 /// This trait has no items of its own. As a bound, it states that values are never negative, so
-/// that [`MIN`](FixedDecimal::MIN) is zero and [`checked_sub`](FixedDecimal::checked_sub) returns
-/// `None` below zero.
+/// that [`min_value`](FixedDecimal::min_value) returns zero and
+/// [`checked_sub`](FixedDecimal::checked_sub) returns `None` below zero.
 ///
 /// ```
 /// use numo::{
@@ -235,11 +310,13 @@ pub trait UnsignedFixedDecimal: FixedDecimal {}
 /// A decimal number that holds one: [`Decimal`] with at least one integral digit, over any
 /// storage.
 ///
-/// `ONE` is the inherent constant of the same name, which a concrete type reaches without this
-/// trait, also in constant contexts. One needs an integral digit, so a type whose `Integral` is
-/// zero has no `ONE`, rather than one that is out of range. `Decimal<I, F, R>` implements this
-/// trait for each storage `R` where `I: NonZero` and `(I, F): Layout<R>`. It is separate from the
-/// integer trait [`HasOne`](crate::HasOne), which also requires `Product`.
+/// [`one`](Self::one) returns the inherent constant `ONE` and has no inherent counterpart; a
+/// concrete type reaches `ONE` without this trait, also in constant contexts, and
+/// [`ConstDecimalOne`] gives it to generic code as a constant. One needs an integral digit, so a
+/// type whose `Integral` is zero has no `ONE`, rather than one that is out of range.
+/// `Decimal<I, F, R>` implements this trait for each storage `R` where `I: NonZero` and
+/// `(I, F): Layout<R>`. It is separate from the integer trait [`HasOne`](crate::HasOne), which
+/// also requires `Product`.
 ///
 /// ```
 /// use numo::{
@@ -249,19 +326,53 @@ pub trait UnsignedFixedDecimal: FixedDecimal {}
 ///
 /// // The value plus one, or `None` if the sum is outside the range of the type.
 /// fn successor<T: DecimalOne>(value: &T) -> Option<T> {
-///   value.checked_add(&T::ONE)
+///   value.checked_add(&T::one())
 /// }
 ///
 /// type Price = Decimal<U10, U8>;
 ///
 /// assert_eq!(successor(&"1.5".parse::<Price>()?), Some("2.5".parse()?));
 /// assert_eq!(successor(&Price::MAX), None);
-/// assert_eq!(<Decimal<U2, U2, u16> as DecimalOne>::ONE.to_string(), "1");
+/// assert_eq!(<Decimal<U2, U2, u16> as DecimalOne>::one().to_string(), "1");
 /// # Ok::<(), numo::ParseError>(())
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait DecimalOne: FixedDecimal {
+  /// Returns one.
+  #[must_use]
+  fn one() -> Self;
+}
+
+/// A decimal number that holds one as a constant: [`Decimal`] with at least one integral digit,
+/// over any storage.
+///
+/// `ONE` is the inherent constant of the same name, which a concrete type reaches without this
+/// trait, also in constant contexts. Generic code reads it through this trait as `T::ONE`, also in
+/// a generic `const fn`, which cannot call [`one`](DecimalOne::one). `Decimal<I, F, R>` implements
+/// this trait for each storage `R` where `I: NonZero` and `(I, F): Layout<R>`, as it implements
+/// [`DecimalOne`].
+///
+/// ```
+/// use numo::{
+///   ConstDecimalOne, Decimal,
+///   typenum::{U8, U10},
+/// };
+///
+/// // Zero and one, in a constant context.
+/// const fn units<T: ConstDecimalOne>() -> [T; 2] {
+///   [T::ZERO, T::ONE]
+/// }
+///
+/// type Price = Decimal<U10, U8>;
+///
+/// const UNITS: [Price; 2] = units();
+/// assert_eq!(UNITS, [Price::ZERO, Price::ONE]);
+/// assert_eq!(UNITS[1].to_string(), "1");
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait ConstDecimalOne: DecimalOne + ConstFixedDecimal {
   /// One.
   const ONE: Self;
 }
@@ -284,7 +395,7 @@ pub trait DecimalOne: FixedDecimal {
 ///
 /// // The total of the products of the pairs, or `None` if it is outside the range of the product.
 /// fn notional<P: ExactMul<Q>, Q>(fills: &[(P, Q)]) -> Option<P::Output> {
-///   fills.iter().try_fold(P::Output::ZERO, |sum, (price, quantity)| {
+///   fills.iter().try_fold(P::Output::zero(), |sum, (price, quantity)| {
 ///     sum.checked_add(&price.exact_mul(quantity))
 ///   })
 /// }
