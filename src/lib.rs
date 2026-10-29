@@ -308,7 +308,10 @@ mod bigint;
 pub use typenum;
 
 pub use aliases::*;
-pub use decimal::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
+pub use decimal::{
+  ConvertError, Decimal, DivideError, FixedDecimal, HasDecimalOne, ParseError, ParseErrorKind,
+  QuantizeError, SignedFixedDecimal, UnsignedFixedDecimal,
+};
 pub use integer::{
   ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, Int, NativeInteger, OverflowingOps,
   SaturatingOps, SignedFixedInteger, StrictOps, TryNewError, Uint, UncheckedOps,

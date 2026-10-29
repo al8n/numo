@@ -1,0 +1,29 @@
+error[E0277]: the trait bound `UTerm: numo::typenum::NonZero` is not satisfied
+  --> tests/ui/has_decimal_one_without_integral.rs:12:20
+   |
+12 |   let _one = one::<Decimal<U0, U2>>();
+   |                    ^^^^^^^^^^^^^^^ the trait `numo::typenum::NonZero` is not implemented for `UTerm`
+   |
+help: the following other types implement trait `numo::typenum::NonZero`
+  --> $CARGO/typenum-$VERSION/src/uint.rs
+   |
+   | impl<U: Unsigned, B: Bit> NonZero for UInt<U, B> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `UInt<U, B>`
+   |
+  ::: $CARGO/typenum-$VERSION/src/int.rs
+   |
+   | impl<U: Unsigned + NonZero> NonZero for PInt<U> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `PInt<U>`
+   | impl<U: Unsigned + NonZero> NonZero for NInt<U> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NInt<U>`
+   |
+  ::: $CARGO/typenum-$VERSION/src/bit.rs
+   |
+   | impl NonZero for B1 {}
+   | ^^^^^^^^^^^^^^^^^^^ `B1`
+   = note: required for `Decimal<UTerm, UInt<UInt<UTerm, B1>, B0>, i8>` to implement `HasDecimalOne`
+note: required by a bound in `one`
+  --> tests/ui/has_decimal_one_without_integral.rs:6:11
+   |
+ 6 | fn one<T: HasDecimalOne>() -> T {
+   |           ^^^^^^^^^^^^^ required by this bound in `one`

@@ -11,6 +11,7 @@ use core::{
 use typenum::{And, Diff, Max, Maximum, Sum};
 
 pub use error::{ConvertError, DivideError, ParseError, ParseErrorKind, QuantizeError};
+pub use traits::{FixedDecimal, HasDecimalOne, SignedFixedDecimal, UnsignedFixedDecimal};
 
 use crate::{
   int,
@@ -25,6 +26,7 @@ mod error;
 mod format;
 mod parse;
 mod storage;
+mod traits;
 
 #[cfg(test)]
 mod tests;
