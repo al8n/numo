@@ -98,6 +98,43 @@ mod tests;
 /// compare or hash them, and adds `(I, F): Layout<R>` only where it uses items that depend on the
 /// digit counts, such as formatting and conversions (see [`Layout`]).
 ///
+/// The constants and methods defined for each storage, such as [`ZERO`](Self::ZERO) and
+/// [`checked_add`](Self::checked_add), reach generic code through traits: [`FixedDecimal`] for
+/// every storage, [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`] for each sign, and
+/// [`HasDecimalOne`] for [`ONE`](Self::ONE), while [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
+/// [`DivRound`] carry the bounds of the methods between decimal types. Because the implementations
+/// are per storage, code generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`,
+/// which `R: Storage` and `(I, F): Layout<R>` do not imply. Every type also has the constants
+/// [`INTEGRAL`](Self::INTEGRAL), [`FRACTION`](Self::FRACTION) and [`DIGITS`](Self::DIGITS), its
+/// digit counts, and [`SIGNED`](Self::SIGNED), whether its storage is signed, for generic code that
+/// derives a display scale or a step from the fraction digits of the type:
+///
+/// ```
+/// use numo::{
+///   Decimal, FixedDecimal,
+///   typenum::{U2, U8, U10},
+/// };
+///
+/// // The total of the values with every fraction digit of the type, or `None` if it is outside the
+/// // range of the type.
+/// fn total<I, F, R>(values: &[Decimal<I, F, R>]) -> Option<String>
+/// where
+///   Decimal<I, F, R>: FixedDecimal,
+/// {
+///   let zero = Decimal::<I, F, R>::ZERO;
+///   let sum = values.iter().try_fold(zero, |sum, value| sum.checked_add(value))?;
+///   let digits = Decimal::<I, F, R>::FRACTION as usize;
+///   Some(format!("{sum:.digits$}"))
+/// }
+///
+/// let prices: [Decimal<U10, U8>; 2] = ["64250.5".parse()?, "0.25".parse()?];
+/// assert_eq!(total(&prices).as_deref(), Some("64250.75000000"));
+/// let fees: [Decimal<U10, U2, u64>; 2] = ["0.5".parse()?, "1".parse()?];
+/// assert_eq!(total(&fees).as_deref(), Some("1.50"));
+/// assert_eq!(total(&[Decimal::<U10, U2, u64>::MAX; 2]), None);
+/// # Ok::<(), numo::ParseError>(())
+/// ```
+///
 /// # Operations
 ///
 /// Every operation is exact: it returns the exact result or reports failure, and nothing rounds,

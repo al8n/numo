@@ -99,6 +99,12 @@ fn main() -> Result<(), ParseError> {
   unsigned storage as `OutOfRange`.
 - Methods that depend only on the storage are `const fn`, so constants can be parsed and computed
   at compile time.
+- The constants `INTEGRAL`, `FRACTION` and `DIGITS` give the digit counts of a type, and `SIGNED`
+  whether its storage is signed. Sealed traits give generic code the same items: `FixedDecimal`,
+  with the constants, the queries and the arithmetic of every storage, `SignedFixedDecimal` and
+  `UnsignedFixedDecimal` for each sign, and `HasDecimalOne`, with `ONE`, each implemented for every
+  storage, and `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound` for the methods between decimal
+  types. Code generic over `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`.
 - `parse` accepts ASCII text with an optional sign, point and exponent, and `_` separators as in
   Rust literals: the numeric strings of the General Decimal Arithmetic specification and every
   form that `f64` parses, such as `-1.5`, `+.5`, `5.`, `2.5E-3` and `1_000`. Infinity and NaN are

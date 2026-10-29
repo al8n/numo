@@ -38,6 +38,15 @@
 //! `f64` parses, and rejects infinity, NaN and digits that do not fit; formatting writes the
 //! shortest exact text. See [`Decimal`] for the details.
 //!
+//! Every decimal type has the constants `INTEGRAL`, `FRACTION` and `DIGITS`, its digit counts, and
+//! `SIGNED`, whether its storage is signed. Generic code reaches the constants and methods through
+//! traits: [`FixedDecimal`], with the constants, the queries and the arithmetic of every storage,
+//! [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`], for each sign, and [`HasDecimalOne`], with
+//! `ONE`, each with one implementation for every storage, and [`ExactMul`], [`WidenTo`],
+//! [`ConvertTo`] and [`DivRound`], with the methods between decimal types. Code generic over the
+//! storage adds the bound `Decimal<I, F, R>: FixedDecimal`. The traits are not `const`, so constant
+//! contexts use the inherent `const fn`s.
+//!
 //! # Wide storage
 //!
 //! Up to 38 digits, `Repr` is a native integer. Beyond that, up to 153 digits, it is one of the
