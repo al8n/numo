@@ -11,7 +11,10 @@ use core::{
 use typenum::{And, Diff, Max, Maximum, Sum};
 
 pub use error::{ConvertError, DivideError, ParseError, ParseErrorKind, QuantizeError};
-pub use traits::{FixedDecimal, HasDecimalOne, SignedFixedDecimal, UnsignedFixedDecimal};
+pub use traits::{
+  ConvertTo, DivRound, ExactMul, FixedDecimal, HasDecimalOne, SignedFixedDecimal,
+  UnsignedFixedDecimal, WidenTo,
+};
 
 use crate::{
   int,

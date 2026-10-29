@@ -2,13 +2,16 @@ use core::hash::BuildHasher;
 use std::{collections::hash_map::RandomState, format, string::ToString, vec::Vec};
 
 use typenum::{
-  U0, U1, U2, U4, U5, U8, U9, U10, U17, U18, U19, U38, U40, U59, U60, U78, U97, U116, U135, U154,
-  Unsigned,
+  U0, U1, U2, U4, U5, U8, U9, U10, U11, U12, U16, U17, U18, U19, U20, U21, U22, U26, U38, U40, U50,
+  U58, U59, U60, U78, U96, U97, U116, U135, U154, Unsigned,
 };
 
-use super::{FixedDecimal, HasDecimalOne, SignedFixedDecimal, UnsignedFixedDecimal};
+use super::{
+  ConvertTo, DivRound, ExactMul, FixedDecimal, HasDecimalOne, SignedFixedDecimal,
+  UnsignedFixedDecimal, WidenTo,
+};
 use crate::{
-  Decimal, ParseErrorKind, QuantizeError, RoundingMode,
+  ConvertError, Decimal, DivideError, ParseErrorKind, QuantizeError, RoundingMode,
   bigint::MODES,
   i192, i256, i320, i384, i448, i512,
   layout::{StorageCore, Token},
@@ -259,6 +262,249 @@ fn negations_agree() {
   }
 }
 
+/// Compiles only if the product of `P` and `Q` is `O`.
+fn product<P: ExactMul<Q, Output = O>, Q, O>() {}
+
+/// The total of the products of the pairs, through the bound `FixedDecimal` of `Output`.
+fn total<P: ExactMul<Q>, Q>(pairs: &[(P, Q)]) -> Option<P::Output> {
+  pairs.iter().try_fold(P::Output::ZERO, |sum, (lhs, rhs)| {
+    sum.checked_add(&lhs.exact_mul(rhs))
+  })
+}
+
+#[test]
+fn exact_mul_is_the_inherent_one() {
+  type Price = Decimal<U10, U8>;
+  type Quantity = Decimal<U12, U8>;
+  type Volume = Decimal<U10, U9, u64>;
+  type Lots = Decimal<U11, U8, u64>;
+  type Large = Decimal<U19, U19>;
+  type Supply = Decimal<U40, U17, u192>;
+
+  // The product of two unsigned storages is unsigned, and any other product is signed.
+  product::<Price, Quantity, Decimal<U22, U16>>();
+  product::<Volume, Lots, Decimal<U21, U17, u128>>();
+  product::<Volume, Quantity, Decimal<U22, U17, i192>>();
+  product::<Quantity, Volume, Decimal<U22, U17, i192>>();
+  product::<Large, Large, Decimal<U38, U38, i256>>();
+  product::<Supply, Volume, Decimal<U50, U26, u256>>();
+
+  for lhs in [
+    Price::MIN,
+    Price::ZERO,
+    Price::MAX,
+    "64250.5".parse().unwrap(),
+  ] {
+    for rhs in [Quantity::MIN, Quantity::MAX, "-0.0015".parse().unwrap()] {
+      assert_eq!(
+        ExactMul::exact_mul(&lhs, &rhs),
+        lhs.exact_mul(&rhs),
+        "{lhs} * {rhs}"
+      );
+    }
+  }
+  for lhs in [Volume::ZERO, Volume::MAX, "64250.5".parse().unwrap()] {
+    for rhs in [Lots::ZERO, Lots::MAX, "0.0015".parse().unwrap()] {
+      assert_eq!(
+        ExactMul::exact_mul(&lhs, &rhs),
+        lhs.exact_mul(&rhs),
+        "{lhs} * {rhs}"
+      );
+    }
+    for rhs in [Quantity::MIN, Quantity::MAX] {
+      assert_eq!(
+        ExactMul::exact_mul(&lhs, &rhs),
+        lhs.exact_mul(&rhs),
+        "{lhs} * {rhs}"
+      );
+    }
+  }
+  for lhs in [Large::MIN, Large::MAX, "-1e18".parse().unwrap()] {
+    for rhs in [Large::MIN, Large::MAX, "1e-19".parse().unwrap()] {
+      assert_eq!(
+        ExactMul::exact_mul(&lhs, &rhs),
+        lhs.exact_mul(&rhs),
+        "{lhs} * {rhs}"
+      );
+    }
+  }
+  for lhs in [Supply::MAX, "1.5".parse().unwrap()] {
+    assert_eq!(
+      ExactMul::exact_mul(&lhs, &Volume::MAX),
+      lhs.exact_mul(&Volume::MAX),
+      "{lhs}"
+    );
+  }
+
+  let fills: [(Price, Quantity); 2] = [
+    ("64250.5".parse().unwrap(), "0.0015".parse().unwrap()),
+    ("64251".parse().unwrap(), "0.001".parse().unwrap()),
+  ];
+  assert_eq!(total(&fills), Some("160.62675".parse().unwrap()));
+  assert_eq!(total(&[(Large::MAX, Large::MAX); 2]), None);
+}
+
+#[test]
+fn widen_is_the_inherent_one() {
+  type Small = Decimal<U2, U4>;
+  type Fee = Decimal<U2, U4, u32>;
+  type Large = Decimal<U38, U38, i256>;
+  type Supply = Decimal<U60, U18, u320>;
+
+  for value in [
+    Small::MIN,
+    Small::ZERO,
+    Small::MAX,
+    "-12.5".parse().unwrap(),
+  ] {
+    let widened: Decimal<U10, U8, i128> = WidenTo::widen(value);
+    assert_eq!(widened, value.widen(), "{value}");
+  }
+  // An unsigned storage widens to a signed one.
+  for value in [Fee::ZERO, Fee::MAX, "12.5".parse().unwrap()] {
+    let widened: Decimal<U10, U8> = WidenTo::widen(value);
+    assert_eq!(widened, value.widen(), "{value}");
+  }
+  for value in [Large::MIN, Large::MAX, "-1e-38".parse().unwrap()] {
+    let widened: Decimal<U58, U38, i320> = WidenTo::widen(value);
+    assert_eq!(widened, value.widen(), "{value}");
+  }
+  for value in [Supply::ZERO, Supply::MAX, "1.5".parse().unwrap()] {
+    let widened: Decimal<U96, U18, u384> = WidenTo::widen(value);
+    assert_eq!(widened, value.widen(), "{value}");
+  }
+}
+
+#[test]
+fn convert_to_is_the_inherent_one() {
+  type Amount = Decimal<U10, U4>;
+  type Narrow = Decimal<U2, U2>;
+  type Large = Decimal<U38, U38, i256>;
+  type Price = Decimal<U10, U8>;
+  type Supply = Decimal<U60, U18, u320>;
+
+  for value in [
+    Amount::MIN,
+    Amount::ZERO,
+    Amount::MAX,
+    "-12.5".parse().unwrap(),
+    "1.2345".parse().unwrap(),
+    "-0.005".parse().unwrap(),
+    "99.995".parse().unwrap(),
+  ] {
+    let converted: Result<Narrow, _> = ConvertTo::try_convert(value);
+    assert_eq!(converted, value.try_convert(), "{value}");
+    for mode in MODES {
+      let rounded: Result<Narrow, _> = ConvertTo::round_to(value, mode);
+      assert_eq!(rounded, value.round_to(mode), "{value}, {mode:?}");
+    }
+  }
+  for value in [
+    Large::MIN,
+    Large::MAX,
+    "-64250.5".parse().unwrap(),
+    "1e-30".parse().unwrap(),
+  ] {
+    let converted: Result<Price, _> = ConvertTo::try_convert(value);
+    assert_eq!(converted, value.try_convert(), "{value}");
+    let unsigned: Result<Supply, _> = ConvertTo::try_convert(value);
+    assert_eq!(unsigned, value.try_convert(), "{value}");
+    for mode in MODES {
+      let rounded: Result<Price, _> = ConvertTo::round_to(value, mode);
+      assert_eq!(rounded, value.round_to(mode), "{value}, {mode:?}");
+    }
+  }
+
+  let amount: Amount = "123".parse().unwrap();
+  assert_eq!(
+    ConvertTo::<Narrow>::try_convert(amount),
+    Err(ConvertError::OutOfRange)
+  );
+  let amount: Amount = "1.2345".parse().unwrap();
+  assert_eq!(
+    ConvertTo::<Narrow>::try_convert(amount),
+    Err(ConvertError::Inexact)
+  );
+  assert_eq!(
+    ConvertTo::<Narrow>::round_to(amount, RoundingMode::Up),
+    Ok("1.24".parse().unwrap())
+  );
+  let negative: Large = "-0.5".parse().unwrap();
+  assert_eq!(
+    ConvertTo::<Supply>::try_convert(negative),
+    Err(ConvertError::OutOfRange)
+  );
+}
+
+#[test]
+fn div_round_is_the_inherent_one() {
+  type Budget = Decimal<U12, U2>;
+  type Price = Decimal<U10, U8>;
+  type Quantity = Decimal<U12, U8, i128>;
+  type Large = Decimal<U19, U19>;
+  type Wide = Decimal<U38, U38, i256>;
+
+  for budget in [
+    Budget::MIN,
+    Budget::ZERO,
+    Budget::MAX,
+    "1000".parse().unwrap(),
+  ] {
+    for price in [
+      Price::ZERO,
+      Price::MIN,
+      Price::MAX,
+      "64250.5".parse().unwrap(),
+      "-0.00000001".parse().unwrap(),
+    ] {
+      for mode in MODES {
+        let quotient: Result<Quantity, _> = DivRound::div_round(&budget, &price, mode);
+        assert_eq!(
+          quotient,
+          budget.div_round(&price, mode),
+          "{budget} / {price}, {mode:?}"
+        );
+      }
+    }
+  }
+  // An intermediate of 39 digits, in an `i192`, and one of 76 digits, in an `i256`.
+  let divisor: Decimal<U1, U1> = "0.7".parse().unwrap();
+  for value in [Large::MIN, Large::MAX, "1e-19".parse().unwrap()] {
+    for mode in MODES {
+      let quotient: Result<Decimal<U20, U19>, _> = DivRound::div_round(&value, &divisor, mode);
+      assert_eq!(
+        quotient,
+        value.div_round(&divisor, mode),
+        "{value}, {mode:?}"
+      );
+    }
+  }
+  for value in [Wide::MIN, Wide::MAX, "-1e-38".parse().unwrap()] {
+    for price in [Price::MAX, "0.00000001".parse().unwrap()] {
+      for mode in MODES {
+        let quotient: Result<Decimal<U40, U20, i256>, _> =
+          DivRound::div_round(&value, &price, mode);
+        assert_eq!(
+          quotient,
+          value.div_round(&price, mode),
+          "{value} / {price}, {mode:?}"
+        );
+      }
+    }
+  }
+
+  let budget: Budget = "1000".parse().unwrap();
+  assert_eq!(
+    DivRound::<Price, Quantity>::div_round(&budget, &Price::ZERO, RoundingMode::Down),
+    Err(DivideError::DivisionByZero)
+  );
+  let tick: Price = "0.00000001".parse().unwrap();
+  assert_eq!(
+    DivRound::<Price, Price>::div_round(&budget, &tick, RoundingMode::Down),
+    Err(DivideError::OutOfRange)
+  );
+}
+
 /// Every trait of both families and `Neg` are in scope at once: no call below is ambiguous
 /// (E0034), on concrete types or in code bounded by either family.
 mod collisions {
@@ -271,9 +517,10 @@ mod collisions {
     reason = "every trait is in scope, as in code that imports all of them"
   )]
   use crate::{
-    ArrayInteger, CheckedOps, Decimal, FixedDecimal, FixedInteger, FromLimbs, HasDecimalOne,
-    HasOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedDecimal, SignedFixedInteger,
-    StrictOps, UncheckedOps, UnsignedFixedDecimal, UnsignedFixedInteger, WrappingOps, i256, u256,
+    ArrayInteger, CheckedOps, ConvertTo, Decimal, DivRound, ExactMul, FixedDecimal, FixedInteger,
+    FromLimbs, HasDecimalOne, HasOne, NativeInteger, OverflowingOps, SaturatingOps,
+    SignedFixedDecimal, SignedFixedInteger, StrictOps, UncheckedOps, UnsignedFixedDecimal,
+    UnsignedFixedInteger, WidenTo, WrappingOps, i256, u256,
   };
 
   type Price = Decimal<U10, U8>;
