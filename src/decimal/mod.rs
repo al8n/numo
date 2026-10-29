@@ -751,11 +751,11 @@ where
 
 impl<I, F, R> Clone for Decimal<I, F, R>
 where
-  R: Copy,
+  R: Clone,
 {
   #[inline]
   fn clone(&self) -> Self {
-    *self
+    Self::from_coeff(self.repr.clone())
   }
 }
 
