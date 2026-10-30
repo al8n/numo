@@ -327,6 +327,63 @@ pub(crate) fn next_power_of_two(value: &BigInt) -> BigInt {
   }
 }
 
+/// `a / b` rounded down, for the values of up to 64 bits that `i128` checks quickly. Requires
+/// `b != 0`.
+pub(crate) fn floor_div(a: i128, b: i128) -> i128 {
+  let (quotient, remainder) = (a / b, a % b);
+  if remainder != 0 && (remainder < 0) != (b < 0) {
+    quotient - 1
+  } else {
+    quotient
+  }
+}
+
+/// `a / b` rounded up, as [`floor_div`]. Requires `b != 0`.
+pub(crate) fn ceil_div(a: i128, b: i128) -> i128 {
+  -floor_div(-a, b)
+}
+
+/// `ceil(a / b) * b`, as [`next_multiple_of`] for `i128`. Requires `b != 0`.
+pub(crate) fn next_multiple(a: i128, b: i128) -> i128 {
+  ceil_div(a, b) * b
+}
+
+/// `value^exp` wrapped to the range of `bits` bits from `min` to `max`, at most 64 bits, and
+/// whether it is outside that range, as [`pow_bits`] for `i128`.
+pub(crate) fn pow_wrapped(value: i128, exp: u32, bits: u32, min: i128, max: i128) -> (i128, bool) {
+  let modulus = 1i128 << bits;
+  // The power modulo `2^128`, and so modulo `2^bits`, moved into the range.
+  let residue = (value as u128).wrapping_pow(exp) as i128 & (modulus - 1);
+  let wrapped = (residue - min).rem_euclid(modulus) + min;
+  // A power that `i128` does not hold is outside every range of 64 bits.
+  let outside = value
+    .checked_pow(exp)
+    .is_none_or(|exact| exact < min || max < exact);
+  (wrapped, outside)
+}
+
+/// The `n`th root of `value`, rounded toward zero, as [`BigInt::nth_root`] for `i128`. Requires
+/// `n >= 1`, and `n` odd for a negative `value`.
+pub(crate) fn nth_root(value: i128, n: u32) -> i128 {
+  let magnitude = value.unsigned_abs();
+  // The largest `root` with `root^n <= magnitude`, by bisection from `low^n <= magnitude` and
+  // `high^n > magnitude`.
+  let (mut low, mut high) = (0u128, magnitude + 1);
+  while high - low > 1 {
+    let middle = low + (high - low) / 2;
+    if middle
+      .checked_pow(n)
+      .is_some_and(|power| power <= magnitude)
+    {
+      low = middle;
+    } else {
+      high = middle;
+    }
+  }
+  let root = i128::try_from(low).expect("a root of an i128");
+  if value < 0 { -root } else { root }
+}
+
 /// The widths at which the arithmetic of a width is checked in `limbs` limbs of `limb_bits` bits:
 /// every width from zero to `limb_bits * limbs` for limbs of at most 16 bits, and otherwise, or
 /// under Miri, zero, one, two and the widths next to each multiple of `limb_bits`.
