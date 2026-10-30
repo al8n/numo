@@ -14,15 +14,15 @@ pub(super) struct Digits {
   pub(super) scale: u32,
 }
 
-/// Validates `input` for a decimal with `integral` integral and `fraction` fraction digits, and a
-/// `-` sign only if `signed`, and locates the digits of its coefficient.
+/// Validates `input` for a decimal with `integral` integral and `fraction` fraction digits, and
+/// negative values only if `signed`, and locates the digits of its coefficient.
 ///
 /// The grammar is the one documented on `parse`. Errors are reported in priority order: `Empty`;
-/// `InvalidSyntax` if the whole input does not match the grammar, or if it starts with `-` and
-/// `signed` is `false`; `NotFinite` for an infinity or a NaN; `OutOfRange` if, after the exponent
-/// moves the point, the integral part has more than `integral` digits after its leading zeros;
-/// `Inexact` if a nonzero digit then falls beyond the first `fraction` fraction digits. Runs in
-/// linear time and constant space.
+/// `InvalidSyntax` if the whole input does not match the grammar; `NotFinite` for an infinity or a
+/// NaN; `Negative` if the input starts with `-` and `signed` is `false`, whatever the magnitude;
+/// `OutOfRange` if, after the exponent moves the point, the integral part has more than `integral`
+/// digits after its leading zeros; `Inexact` if a nonzero digit then falls beyond the first
+/// `fraction` fraction digits. Runs in linear time and constant space.
 pub(super) const fn scan(
   input: &[u8],
   integral: u32,
@@ -35,9 +35,6 @@ pub(super) const fn scan(
   }
 
   let negative = input[0] == b'-';
-  if negative && !signed {
-    return Err(ParseError::new(ParseErrorKind::InvalidSyntax));
-  }
   let mut pos = if negative || input[0] == b'+' { 1 } else { 0 };
 
   // A finite number starts with a digit or a point; anything else must be an infinity or a NaN.
@@ -120,6 +117,12 @@ pub(super) const fn scan(
   }
   if pos < len {
     return Err(ParseError::new(ParseErrorKind::InvalidSyntax));
+  }
+
+  // The input is a finite number. An unsigned target holds no negative value, not even zero, so
+  // the sign is decided before the value.
+  if negative && !signed {
+    return Err(ParseError::new(ParseErrorKind::Negative));
   }
 
   if end == 0 {

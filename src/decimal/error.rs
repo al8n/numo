@@ -26,6 +26,7 @@ impl fmt::Display for ParseError {
       ParseErrorKind::Empty => "cannot parse decimal from empty string",
       ParseErrorKind::InvalidSyntax => "invalid decimal syntax",
       ParseErrorKind::NotFinite => "decimal cannot represent infinity or NaN",
+      ParseErrorKind::Negative => "decimal is negative, and the target type is unsigned",
       ParseErrorKind::OutOfRange => "decimal out of range of the target type",
       ParseErrorKind::Inexact => "decimal cannot be represented exactly in the target type",
     })
@@ -43,12 +44,17 @@ impl core::error::Error for ParseError {}
 pub enum ParseErrorKind {
   /// The input is empty.
   Empty,
-  /// The input does not match the grammar of [`Decimal::parse`](crate::Decimal::parse), or the
-  /// target has an unsigned storage and the input starts with `-`.
+  /// The input does not match the grammar of [`Decimal::parse`](crate::Decimal::parse).
   InvalidSyntax,
   /// The input is an infinity or a NaN, such as `inf`, `-Infinity`, `NaN` or `sNaN`, which a
   /// decimal cannot represent.
   NotFinite,
+  /// The target has an unsigned storage, and the input is `-` followed by a finite number: one
+  /// that the type holds, zero included, so `-0`, `-0.0` and `-0e5` are negative, or one that is
+  /// out of range or inexact for it. A `-` followed by anything else, such as a second sign, is
+  /// [`InvalidSyntax`](Self::InvalidSyntax), and a negative infinity or NaN is
+  /// [`NotFinite`](Self::NotFinite).
+  Negative,
   /// Once the exponent has moved the point, the integral part has more than `Integral` digits
   /// after its leading zeros.
   OutOfRange,

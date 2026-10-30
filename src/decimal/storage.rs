@@ -572,15 +572,16 @@ macro_rules! storage_decimal {
       ///
       /// The input is ASCII text in the following grammar, in which letters match in either case.
       /// It accepts the numeric strings of the General Decimal Arithmetic specification, every
-      /// form that [`f64`] parses with [`FromStr`], and `_` separators as in Rust literals, except
-      /// that the number has no `-` sign: as for the unsigned integers of the standard library, a
-      /// leading `-` is rejected, even in `-0` or `-inf`. The sign of the exponent may be `-`.
+      /// form that [`f64`] parses with [`FromStr`], and `_` separators as in Rust literals. The
+      /// storage holds no negative value, so a number with a leading `-` is rejected as
+      /// [`Negative`](crate::ParseErrorKind::Negative), even `-0`, while the sign of the exponent
+      /// may be `-`.
       ///
       /// ```text
-      /// number     = ["+"] (finite / nonfinite)
+      /// number     = [sign] (finite / nonfinite)
+      /// sign       = "+" / "-"
       /// finite     = (digits ["." [digits]] / "." digits) [exponent]
       /// exponent   = ("e" / "E") [sign] exp-digits
-      /// sign       = "+" / "-"
       /// digits     = DIGIT *(DIGIT / "_")
       /// exp-digits = *"_" DIGIT *(DIGIT / "_")
       /// nonfinite  = "inf" / "infinity" / ["s"] "nan" *DIGIT
@@ -611,12 +612,15 @@ macro_rules! storage_decimal {
       /// 1. [`Empty`](crate::ParseErrorKind::Empty): the input is empty. Whitespace alone is
       ///    invalid syntax.
       /// 2. [`InvalidSyntax`](crate::ParseErrorKind::InvalidSyntax): the input does not match
-      ///    the grammar, which includes every input that starts with `-`. The whole input is
-      ///    checked before its value, so `1e999_x` is invalid syntax rather than out of range.
-      /// 3. [`NotFinite`](crate::ParseErrorKind::NotFinite): the input is an infinity or a NaN.
-      /// 4. [`OutOfRange`](crate::ParseErrorKind::OutOfRange): once the exponent has moved the
+      ///    the grammar. The whole input is checked before its value, so `1e999_x` is invalid
+      ///    syntax rather than out of range, and `-1e999_x` rather than negative.
+      /// 3. [`NotFinite`](crate::ParseErrorKind::NotFinite): the input is an infinity or a NaN,
+      ///    with either sign.
+      /// 4. [`Negative`](crate::ParseErrorKind::Negative): the input starts with `-`, whatever
+      ///    the magnitude, so `-0` and `-1e999` are both negative.
+      /// 5. [`OutOfRange`](crate::ParseErrorKind::OutOfRange): once the exponent has moved the
       ///    point, the integral part has more than `Integral` digits after its leading zeros.
-      /// 5. [`Inexact`](crate::ParseErrorKind::Inexact): once the exponent has moved the point,
+      /// 6. [`Inexact`](crate::ParseErrorKind::Inexact): once the exponent has moved the point,
       ///    a fraction digit beyond the first `Fraction` is not `0`.
       ///
       /// # Examples
@@ -633,10 +637,12 @@ macro_rules! storage_decimal {
       ///
       /// let kind = |text| D::parse(text).map_err(|err| err.kind());
       /// assert_eq!(kind(""), Err(ParseErrorKind::Empty));
-      /// assert_eq!(kind("-0"), Err(ParseErrorKind::InvalidSyntax));
-      /// assert_eq!(kind("-inf"), Err(ParseErrorKind::InvalidSyntax));
       /// assert_eq!(kind("1e9_x"), Err(ParseErrorKind::InvalidSyntax));
+      /// assert_eq!(kind("--1"), Err(ParseErrorKind::InvalidSyntax));
       /// assert_eq!(kind("inf"), Err(ParseErrorKind::NotFinite));
+      /// assert_eq!(kind("-inf"), Err(ParseErrorKind::NotFinite));
+      /// assert_eq!(kind("-0"), Err(ParseErrorKind::Negative));
+      /// assert_eq!(kind("-1e9"), Err(ParseErrorKind::Negative));
       /// assert_eq!(kind("1e1"), Err(ParseErrorKind::OutOfRange));
       /// assert_eq!(kind("0.05"), Err(ParseErrorKind::Inexact));
       /// // Out of range and inexact at once.

@@ -675,15 +675,10 @@ fn parse_nonfinite() {
         Some(ParseErrorKind::NotFinite),
         "input {input:?}"
       );
-      // An unsigned storage rejects a leading `-` first.
-      let unsigned = if sign == "-" {
-        ParseErrorKind::InvalidSyntax
-      } else {
-        ParseErrorKind::NotFinite
-      };
+      // An infinity or a NaN is not a negative number, whatever its sign.
       assert_eq!(
         parse_kind::<D2x2u16>(&input),
-        Some(unsigned),
+        Some(ParseErrorKind::NotFinite),
         "input {input:?}"
       );
     }
@@ -908,17 +903,23 @@ fn parse_error_priority() {
     parse_kind::<D2x2>("NaN1_2"),
     Some(ParseErrorKind::InvalidSyntax)
   );
-  // An unsigned storage rejects a leading `-` before anything else.
+  // An unsigned storage decides the sign once the syntax and the finiteness are, before range and
+  // exactness.
   assert_eq!(
     parse_kind::<D2x2u16>("inf"),
     Some(ParseErrorKind::NotFinite)
   );
-  for input in ["-inf", "-NaN", "-1e999", "-1e-999", "-0e5"] {
-    assert_eq!(
-      parse_kind::<D2x2u16>(input),
-      Some(ParseErrorKind::InvalidSyntax),
-      "input {input:?}"
-    );
+  for (input, kind) in [
+    ("-1e999_x", ParseErrorKind::InvalidSyntax),
+    ("-0.0x", ParseErrorKind::InvalidSyntax),
+    ("-inf", ParseErrorKind::NotFinite),
+    ("-NaN", ParseErrorKind::NotFinite),
+    ("-1e999", ParseErrorKind::Negative),
+    ("-1e-999", ParseErrorKind::Negative),
+    ("-123.456", ParseErrorKind::Negative),
+    ("-0e5", ParseErrorKind::Negative),
+  ] {
+    assert_eq!(parse_kind::<D2x2u16>(input), Some(kind), "input {input:?}");
   }
   // Out of range and inexact at once reports out of range.
   assert_eq!(
@@ -1935,10 +1936,26 @@ fn unsigned_parse() {
     Ok(10u128.pow(37))
   );
 
-  // A leading `-` is invalid syntax, even for zero, and syntax comes before range and exactness.
+  // A `-` before a finite number is negative, even for zero and whatever the range and exactness
+  // of the magnitude. Before anything else it is invalid syntax, and before an infinity or a NaN
+  // not finite.
   for input in [
-    "-", "-0", "-0.0", "-00", "-1", "-0.01", "-99.99", "-100", "-0.001", "-.5", "--1", "-+1",
-    "-0e5", "-0e-5", "-1e-1", "-1e5", "-inf", "-nan", "-sNaN1",
+    "-0", "-0.0", "-00", "-.0", "-0.", "-0e5", "-0e-5", "-0_0.0_0", "-1", "-0.01", "-99.99", "-5.",
+    "-.5", "-1e-1", "-100", "-1e5", "-0.001", "-1e-999", "-1e999",
+  ] {
+    assert_eq!(
+      parse_kind::<D2x2u16>(input),
+      Some(ParseErrorKind::Negative),
+      "input {input:?}"
+    );
+    assert_eq!(
+      input.parse::<D2x2u16>().map_err(|err| err.kind()),
+      Err(ParseErrorKind::Negative),
+      "input {input:?}"
+    );
+  }
+  for input in [
+    "-", "--1", "-+1", "+-1", "-x", "-1x", "- 1", "-1 ", "-_1", "-e5", "-.", "-1e", "-1e999_x",
   ] {
     assert_eq!(
       parse_kind::<D2x2u16>(input),
@@ -1946,6 +1963,20 @@ fn unsigned_parse() {
       "input {input:?}"
     );
   }
+  for input in ["-inf", "-Infinity", "-nan", "-sNaN1"] {
+    assert_eq!(
+      parse_kind::<D2x2u16>(input),
+      Some(ParseErrorKind::NotFinite),
+      "input {input:?}"
+    );
+  }
+  // The error names no digit of the input.
+  let err = D10x9u64::parse("-7351946").unwrap_err();
+  assert!(err.kind().is_negative());
+  assert_eq!(
+    err.to_string(),
+    "decimal is negative, and the target type is unsigned"
+  );
   assert_eq!(parse_kind::<D2x2u16>(""), Some(ParseErrorKind::Empty));
   assert_eq!(
     parse_kind::<D2x2u16>("100"),
@@ -1989,7 +2020,11 @@ fn unsigned_parse() {
   );
   assert_eq!(
     parse_kind::<D38x0u128>(&format!("-{}", nines(38))),
-    Some(ParseErrorKind::InvalidSyntax)
+    Some(ParseErrorKind::Negative)
+  );
+  assert_eq!(
+    parse_kind::<D38x0u128>(&format!("-{}", nines(39))),
+    Some(ParseErrorKind::Negative)
   );
 }
 
@@ -2058,7 +2093,7 @@ fn unsigned_methods_in_const_context() {
   assert_eq!(COEFF, 1);
   assert_eq!(
     REJECTED.map_err(|err| err.kind()),
-    Err(ParseErrorKind::InvalidSyntax)
+    Err(ParseErrorKind::Negative)
   );
 }
 
@@ -2542,11 +2577,11 @@ fn wide_parse_and_display_at_the_limits() {
   assert_eq!(D96x0u320::parse(&nines(96)), Ok(D96x0u320::MAX));
   assert_eq!(
     parse_kind::<D96x0u320>(&format!("-{}", nines(96))),
-    Some(ParseErrorKind::InvalidSyntax)
+    Some(ParseErrorKind::Negative)
   );
   assert_eq!(
     parse_kind::<D96x0u320>("-0"),
-    Some(ParseErrorKind::InvalidSyntax)
+    Some(ParseErrorKind::Negative)
   );
   assert_eq!(D77x0u256::parse(&nines(77)), Ok(D77x0u256::MAX));
   assert_eq!(
@@ -2583,7 +2618,11 @@ fn wide_parse_and_display_at_the_limits() {
   );
   assert_eq!(
     parse_kind::<D154x0u512>("-0"),
-    Some(ParseErrorKind::InvalidSyntax)
+    Some(ParseErrorKind::Negative)
+  );
+  assert_eq!(
+    parse_kind::<D154x0u512>(&format!("-{}", nines(155))),
+    Some(ParseErrorKind::Negative)
   );
   assert_eq!(
     format!("{:>160}", D153x0::MIN),
@@ -4342,7 +4381,10 @@ mod with_serde {
       &[Token::Str("0.001")],
       "decimal cannot be represented exactly in the target type",
     );
-    assert_de_tokens_error::<D1x1u8>(&[Token::Str("-1")], "invalid decimal syntax");
+    assert_de_tokens_error::<D1x1u8>(
+      &[Token::Str("-1")],
+      "decimal is negative, and the target type is unsigned",
+    );
   }
 
   #[test]

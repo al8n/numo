@@ -213,9 +213,9 @@ mod tests;
 /// [`parse`](Self::parse) and [`FromStr`](core::str::FromStr) accept ASCII text with an optional
 /// sign, point and exponent, and `_` separators as in Rust literals: the numeric strings of the
 /// General Decimal Arithmetic specification and every form that [`f64`] parses, such as `-1.5`,
-/// `+.5`, `5.`, `2.5E-3` and `1_000`. An unsigned `Repr` rejects a leading `-`. Infinity and NaN
-/// are recognized and reported as [`NotFinite`](crate::ParseErrorKind::NotFinite), because a
-/// decimal is always finite. The value must fit exactly: once the exponent has moved the point,
+/// `+.5`, `5.`, `2.5E-3` and `1_000`. An unsigned `Repr` rejects a negative number, even `-0`, as
+/// [`Negative`](crate::ParseErrorKind::Negative). Infinity and NaN are recognized and reported as
+/// [`NotFinite`](crate::ParseErrorKind::NotFinite), because a decimal is always finite. The value must fit exactly: once the exponent has moved the point,
 /// digits beyond `Integral` and `Fraction` are accepted only when they are leading or trailing
 /// zeros; anything else is an error, never a rounded value. See [`parse`](Self::parse) for the
 /// grammar.
