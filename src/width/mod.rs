@@ -557,9 +557,10 @@ where
 /// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
 /// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
-/// [`UncheckedOps`](crate::UncheckedOps), and the operators `+`, `-` and `*` on two references, as
-/// in `&a + &b`, for every `Repr` that implements this trait. This trait is sealed and cannot be
-/// implemented outside this crate.
+/// [`UncheckedOps`](crate::UncheckedOps), the math traits [`IntegerMath`](crate::IntegerMath) and
+/// [`UnsignedMath`](crate::UnsignedMath), and the operators `+`, `-`, `*`, `/` and `%` on two
+/// references, as in `&a + &b`, for every `Repr` that implements this trait. This trait is sealed
+/// and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
   note = "`Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`"
@@ -574,9 +575,10 @@ pub trait UintRepr: Eq + UintCore {}
 /// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
 /// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
-/// [`UncheckedOps`](crate::UncheckedOps), the operators `+`, `-` and `*` on two references, as in
-/// `&a + &b`, and the negation `-` of a reference, for every `Repr` that implements this trait.
-/// This trait is sealed and cannot be implemented outside this crate.
+/// [`UncheckedOps`](crate::UncheckedOps), the math traits [`IntegerMath`](crate::IntegerMath) and
+/// [`SignedMath`](crate::SignedMath), the operators `+`, `-`, `*`, `/` and `%` on two references,
+/// as in `&a + &b`, and the negation `-` of a reference, for every `Repr` that implements this
+/// trait. This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
@@ -588,14 +590,14 @@ pub trait IntRepr: Eq + IntCore<Magnitude = <Self as IntRepr>::Unsigned> {
 }
 
 /// A storage of [`Uint`](crate::Uint) that holds the value in place, so that the integers have the
-/// compound assignment operators `+=`, `-=` and `*=`.
+/// compound assignment operators `+=`, `-=`, `*=`, `/=` and `%=`.
 ///
 /// Every storage of this crate implements it: the native unsigned integers and the arrays of
 /// limbs. This trait is sealed and cannot be implemented outside this crate.
 pub trait UintReprMut: UintRepr + MutableRepr {}
 
 /// A storage of [`Int`](crate::Int) that holds the value in place, so that the integers have the
-/// compound assignment operators `+=`, `-=` and `*=`.
+/// compound assignment operators `+=`, `-=`, `*=`, `/=` and `%=`.
 ///
 /// Every storage of this crate implements it: the native signed integers and the arrays of limbs.
 /// This trait is sealed and cannot be implemented outside this crate.
@@ -606,7 +608,8 @@ pub trait IntReprMut: IntRepr + MutableRepr {}
 ///
 /// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
 /// [`FixedInteger`](crate::FixedInteger) and [`ConstFixedInteger`](crate::ConstFixedInteger), with
-/// the operators `+`, `-` and `*` and `Sum`, [`UnsignedFixedInteger`](crate::UnsignedFixedInteger)
+/// the operators `+`, `-`, `*`, `/` and `%` and `Sum`,
+/// [`UnsignedFixedInteger`](crate::UnsignedFixedInteger)
 /// and [`SaturatingOps`](crate::SaturatingOps), and from one bit it has the constant `ONE` and
 /// implements [`IntegerOne`](crate::IntegerOne) and [`ConstIntegerOne`](crate::ConstIntegerOne),
 /// with `Product`, for every `Repr` that implements this trait. The default storages of
@@ -618,7 +621,8 @@ pub trait InlineUintRepr: UintReprMut + Copy + InlineUintConsts {}
 ///
 /// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
 /// [`FixedInteger`](crate::FixedInteger) and [`ConstFixedInteger`](crate::ConstFixedInteger), with
-/// the operators `+`, `-` and `*` and `Sum`, [`SignedFixedInteger`](crate::SignedFixedInteger),
+/// the operators `+`, `-`, `*`, `/` and `%` and `Sum`,
+/// [`SignedFixedInteger`](crate::SignedFixedInteger),
 /// with the operator `-`, and [`SaturatingOps`](crate::SaturatingOps), and from two bits it has the
 /// constant `ONE` and implements [`IntegerOne`](crate::IntegerOne) and
 /// [`ConstIntegerOne`](crate::ConstIntegerOne), with `Product`, for every `Repr` that implements

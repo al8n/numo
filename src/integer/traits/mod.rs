@@ -431,8 +431,10 @@ pub trait FromLimbs: ArrayInteger {
   fn from_limbs(limbs: Self::Array) -> Self;
 }
 
-/// Overflowing addition, subtraction, multiplication and negation: the result wrapped to the range
-/// of the type, and whether the exact result is outside that range.
+/// Overflowing addition, subtraction, multiplication, negation, division, remainder and
+/// exponentiation: the result wrapped to the range of the type, and whether the exact result is
+/// outside that range. The division and the remainder, rounded toward zero and Euclidean, panic on
+/// a zero divisor.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -455,8 +457,9 @@ pub trait OverflowingOps: Sealed + Sized {
   overflowing_table!(trait_items![]);
 }
 
-/// Checked addition, subtraction, multiplication and negation, which return `None` when the exact
-/// result is outside the range of the type.
+/// Checked addition, subtraction, multiplication, negation, division, remainder and exponentiation,
+/// the next multiple and the exact division, which return `None` when the exact result is outside
+/// the range of the type, or for a zero divisor, or when an exact division leaves a remainder.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -479,7 +482,8 @@ pub trait CheckedOps: Sealed + Sized {
   checked_table!(trait_items![]);
 }
 
-/// Wrapping addition, subtraction, multiplication and negation, modulo `2^Bits`.
+/// Wrapping addition, subtraction, multiplication, negation, division, remainder and
+/// exponentiation, modulo `2^Bits`. The division and the remainder panic on a zero divisor.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -503,8 +507,9 @@ pub trait WrappingOps: Sealed + Sized {
   wrapping_table!(trait_items![]);
 }
 
-/// Saturating addition, subtraction and multiplication, which return the bound of the range of the
-/// type that the exact result passes.
+/// Saturating addition, subtraction, multiplication, division and exponentiation, which return the
+/// bound of the range of the type that the exact result passes. The division panics on a zero
+/// divisor.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -527,8 +532,9 @@ pub trait SaturatingOps: Sealed + Sized {
   saturating_table!(Uint, trait_items![]);
 }
 
-/// Strict addition, subtraction, multiplication and negation, which panic when the exact result is
-/// outside the range of the type, whatever the `overflow-checks` setting.
+/// Strict addition, subtraction, multiplication, negation, division, remainder and exponentiation,
+/// which panic when the exact result is outside the range of the type, and on a zero divisor,
+/// whatever the `overflow-checks` setting.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -552,7 +558,8 @@ pub trait StrictOps: Sealed + Sized {
 }
 
 /// Unchecked addition, subtraction and multiplication, which assume that the exact result is in
-/// the range of the type.
+/// the range of the type, and unchecked exact division, which also assumes that the divisor
+/// divides the value.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const unsafe fn`s of the same names, which a concrete type reaches without this trait, also in

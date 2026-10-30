@@ -1043,9 +1043,9 @@ macro_rules! int_math_table {
   };
 }
 
-/// Passes the unchecked addition, subtraction and multiplication of `Uint` and `Int` to
-/// `$callback`, after the tokens of `$args`, for the traits alone: each storage writes out its
-/// inherent `unchecked_*` methods.
+/// Passes the unchecked addition, subtraction, multiplication and exact division of `Uint` and
+/// `Int` to `$callback`, after the tokens of `$args`, for the traits alone: each storage writes out
+/// its inherent `unchecked_*` methods.
 macro_rules! unchecked_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
