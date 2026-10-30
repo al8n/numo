@@ -35,6 +35,9 @@ pub(crate) trait Limb: Copy {
 
   /// The limb whose bytes, least significant first, are `bytes`. Requires `BITS / 8` bytes.
   fn from_le_slice(bytes: &[u8]) -> Self;
+
+  /// The limb as a `u128`, which holds every limb.
+  fn to_u128(self) -> u128;
 }
 
 macro_rules! limb {
@@ -51,6 +54,10 @@ macro_rules! limb {
 
       fn from_le_slice(bytes: &[u8]) -> Self {
         $limb::from_le_bytes(bytes.try_into().expect("the bytes of one limb"))
+      }
+
+      fn to_u128(self) -> u128 {
+        u128::from(self)
       }
     }
   )+};

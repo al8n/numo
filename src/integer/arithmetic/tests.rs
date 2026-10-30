@@ -1696,3 +1696,163 @@ fn bit_width_gives_the_unchecked_methods() {
 
   at!(U0, U1, U7, U8, U64, U65, U128, U129, U200, U1024);
 }
+
+/// How thoroughly the sweeps of the division and of the powers check: every value and pair that is
+/// cheap enough in an optimized build, which runs them fast; fewer in an unoptimized build, which
+/// every feature combination and every sanitizer of the tests runs; and the fewest under Miri.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, derive_more::IsVariant)]
+enum Tier {
+  /// Under Miri.
+  Miri,
+  /// In an unoptimized build, with debug assertions.
+  Debug,
+  /// In an optimized build.
+  Full,
+}
+
+/// The tier of this build. `--cfg all_tests` does not raise it: the sanitizers that set that flag
+/// run unoptimized code.
+fn tier() -> Tier {
+  if cfg!(miri) {
+    Tier::Miri
+  } else if cfg!(debug_assertions) {
+    Tier::Debug
+  } else {
+    Tier::Full
+  }
+}
+
+/// The value of the integer of at most 128 bits in `limbs`, least significant first, read in two's
+/// complement if `signed`.
+fn value_of_limbs<L: bigint::Limb, const N: usize>(limbs: &[L; N], signed: bool) -> i128 {
+  let bits = L::BITS * N as u32;
+  let mut value = 0u128;
+  for (i, &limb) in limbs.iter().enumerate() {
+    value |= limb.to_u128() << (L::BITS * i as u32);
+  }
+  if signed && 0 < bits && bits < 128 {
+    // The arithmetic shift copies the top bit of the limbs into the bits above them.
+    ((value << (128 - bits)) as i128) >> (128 - bits)
+  } else {
+    value as i128
+  }
+}
+
+/// The pairs of values of up to 8 bits that a sweep checks, as [`every_pair`] gives them: in a
+/// storage that every tier checks, `primary`, every pair in an optimized build, every 7th pair in
+/// an unoptimized one and every 251st under Miri; in another storage, every 7th pair, and none under
+/// Miri.
+fn small_pairs(bits: u32, signed: bool, primary: bool) -> Vec<(i128, i128)> {
+  let step = match (tier(), primary) {
+    (Tier::Full, true) => 1,
+    (Tier::Full | Tier::Debug, _) => 7,
+    (Tier::Miri, true) => 251,
+    (Tier::Miri, false) => return Vec::new(),
+  };
+  every_pair(bits, signed, step)
+}
+
+/// The values of up to 8 bits that a sweep checks, as [`every_value`] gives them: every value, or
+/// under Miri every 61st in a storage that it checks, `primary`, and none in another.
+fn small_values(bits: u32, signed: bool, primary: bool) -> Vec<i128> {
+  match (tier(), primary) {
+    (Tier::Miri, true) => every_value(bits, signed, 61),
+    (Tier::Miri, false) => Vec::new(),
+    _ => every_value(bits, signed, 1),
+  }
+}
+
+/// The pairs of values of 9 to 16 bits that a sweep checks: as many as the tier takes, `2^12` in an
+/// optimized build, `2^10` in an unoptimized one and `2^6` under Miri, at an odd step through the
+/// pairs, counted as [`every_pair`] counts them, near their number divided by the golden ratio, so
+/// that both values of the pairs spread over the range; and the pairs of the values of [`ends`].
+fn large_pairs(bits: u32, signed: bool) -> Vec<(i128, i128)> {
+  let count: i128 = match tier() {
+    Tier::Full => 1 << 12,
+    Tier::Debug => 1 << 10,
+    Tier::Miri => 1 << 6,
+  };
+  let (min, max) = range(bits, signed);
+  let size = max - min + 1;
+  let pairs = size * size;
+  // `pairs * (sqrt(5) - 1) / 2`, from the fraction in 64 bits.
+  let step = ((pairs as u128 * 0x9e37_79b9_7f4a_7c15) >> 64) as i128 | 1;
+  let mut sampled: Vec<(i128, i128)> = (0..count.min(pairs))
+    .map(|k| {
+      let pair = k * step % pairs;
+      (min + pair / size, min + pair % size)
+    })
+    .collect();
+  let ends = ends(bits, signed);
+  sampled.extend(ends.iter().flat_map(|&a| ends.iter().map(move |&b| (a, b))));
+  sampled.sort_unstable();
+  sampled.dedup();
+  sampled
+}
+
+/// The values of 9 to 16 bits that a sweep checks, as [`every_value`] gives them: every 7th value
+/// in an optimized build, every 61st in an unoptimized one, and every 251st under Miri.
+fn large_values(bits: u32, signed: bool) -> Vec<i128> {
+  let step = match tier() {
+    Tier::Full => 7,
+    Tier::Debug => 61,
+    Tier::Miri => 251,
+  };
+  every_value(bits, signed, step)
+}
+
+/// Checks `Uint` and `Int` of the width `$width`, `$bits` bits, in one storage with `$sweep!`, at
+/// the pairs or values that `$samples` gives for the width and the sign: `native` in `$uint` and
+/// `$int`, and `array` in `[$limb; $n]`.
+macro_rules! sweep_storage {
+  ($sweep:ident, $samples:expr, native $width:ty, $bits:expr, $uint:ident, $int:ident) => {{
+    let samples = $samples;
+    $sweep!(
+      Uint<$width, $uint>,
+      $bits,
+      false,
+      samples($bits, false),
+      |v| Uint::<$width, $uint>::new(v as $uint),
+      |x| x.value() as i128
+    );
+    $sweep!(
+      Int<$width, $int>,
+      $bits,
+      true,
+      samples($bits, true),
+      |v| Int::<$width, $int>::new(v as $int),
+      |x| x.value() as i128
+    );
+  }};
+  ($sweep:ident, $samples:expr, array $width:ty, $bits:expr, [$limb:ident; $n:literal]) => {{
+    let samples = $samples;
+    $sweep!(
+      Uint<$width, [$limb; $n]>,
+      $bits,
+      false,
+      samples($bits, false),
+      |v| Uint::<$width, [$limb; $n]>::checked_from_limbs(limbs_of(v)).expect("in range"),
+      |x| value_of_limbs(x.as_limbs(), false)
+    );
+    $sweep!(
+      Int<$width, [$limb; $n]>,
+      $bits,
+      true,
+      samples($bits, true),
+      |v| Int::<$width, [$limb; $n]>::checked_from_limbs(limbs_of(v)).expect("in range"),
+      |x| value_of_limbs(x.as_limbs(), true)
+    );
+  }};
+}
+
+/// Asserts that `$value` panics with the message `$message` and reports the line of the outermost
+/// macro invocation that leads to it, in this file, as `line!` does.
+macro_rules! panics_here {
+  ($value:expr, $message:expr) => {{
+    let expected = Some(($message.clone(), file!().to_string(), line!()));
+    assert_eq!(panic_of(|| $value), expected, "{}", stringify!($value));
+  }};
+}
+
+mod division;
+mod powers;
