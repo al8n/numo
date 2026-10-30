@@ -14,7 +14,7 @@ use core::{
   fmt::{Debug, Display},
   hash::Hash,
   iter::{Product, Sum},
-  ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+  ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -50,7 +50,9 @@ mod sealed {
 /// this trait, which the bound `B: BitWidth` provides on `Uint<B>` and `Int<B>`; a method call
 /// needs the trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`. The
 /// supertraits give generic code the operators `+`, `-` and `*`, their compound assignments and
-/// `Sum`, which on overflow panic or wrap as `overflow-checks` decides, as for the native integers.
+/// `Sum`, which on overflow panic or wrap as `overflow-checks` decides, and `/` and `%` and their
+/// compound assignments, which panic on a zero divisor and on overflow in every build, as for the
+/// native integers.
 /// The functions `zero`, `min_value` and `max_value`, and [`one`](IntegerOne::one), have the names
 /// of those of `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by traits of
 /// both crates names the trait in the path, as in `FixedInteger::zero()`.
@@ -100,9 +102,13 @@ pub trait FixedInteger:
   + Add<Output = Self>
   + Sub<Output = Self>
   + Mul<Output = Self>
+  + Div<Output = Self>
+  + Rem<Output = Self>
   + AddAssign
   + SubAssign
   + MulAssign
+  + DivAssign
+  + RemAssign
   + Sum
 {
   /// The number of bits, `Bits`.

@@ -1,27 +1,31 @@
 //! The arithmetic of [`Uint`](crate::Uint) and [`Int`](crate::Int): the method tables of the
-//! overflowing, checked, wrapping, saturating and strict addition, subtraction, multiplication and
-//! negation, of the carrying addition and the borrowing subtraction of `Uint`, of the absolute
-//! value and the sign of `Int`, and of the unchecked arithmetic of the traits, the panics of the
-//! strict methods, and the operators, `Sum` and `Product`.
+//! overflowing, checked, wrapping, saturating and strict addition, subtraction, multiplication,
+//! negation, division, remainder and power, of the carrying addition and the borrowing subtraction
+//! of `Uint`, of the absolute value and the sign of `Int`, of the unchecked arithmetic of the
+//! traits, and of the integer functions without an overflow prefix, such as the Euclidean and
+//! rounded division, the roots and the logarithms; the panics; and the operators, `Sum` and
+//! `Product`.
 //!
 //! Each storage computes the overflowing methods at the width `Bits`, and most other methods are
 //! derived from them. The tables pass their rows to the callbacks of `tables`, for the inherent
 //! `const fn`s of each storage and for the generic implementations of the traits, so their bodies
-//! name the panics by the full path `$crate::integer::arithmetic::overflow`. The unchecked tables
-//! serve only the traits, whose bodies compute the overflowing method and check its flag with a
-//! debug assertion: they never call the inherent `unchecked_*` methods, which each storage writes
-//! out with their unsafe blocks. The operators are implemented once for every storage, over
-//! `OverflowingOps`, and repeat an overflow in a native operation, so that `overflow-checks`
-//! decides whether they panic, as for the native integers.
+//! name the panics by the full paths `$crate::integer::arithmetic::overflow` and
+//! `$crate::integer::arithmetic::domain`. The unchecked tables serve only the traits, whose bodies
+//! compute the overflowing or the checked method and check it with a debug assertion: they never
+//! call the inherent `unchecked_*` methods, which each storage writes out with their unsafe blocks.
+//! The operators are implemented once for every storage: `+`, `-`, `*` and the negation over
+//! `OverflowingOps`, repeating an overflow in a native operation, so that `overflow-checks` decides
+//! whether they panic, and `/` and `%` over `StrictOps`, which panic in every build, as for the
+//! native integers.
 
 use core::{
   iter::{Product, Sum},
-  ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+  ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
 
-use super::{Int, OverflowingOps, Uint};
+use super::{Int, OverflowingOps, StrictOps, Uint};
 use crate::{
   layout::Token,
   width::{FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntReprMut, UintRepr, UintReprMut},
@@ -1378,6 +1382,97 @@ binary_operator!(
 binary_operator!(
   Int: IntRepr, InlineIntRepr, IntReprMut;
   Mul mul, MulAssign mul_assign, overflowing_mul, overflowing_mul_bits, forward_mul
+);
+
+/// Implements the division operator `$op`, `/` or `%`, in its four forms of values and references,
+/// and its compound assignment `$assign` for a value and a reference, with the strict method
+/// `$strict` of the same operation: as for the native integers, a zero divisor and an overflow
+/// panic whatever the `overflow-checks` setting, and nothing wraps. The form on two references is
+/// implemented for every storage, `$repr`; the forms with an owned operand, for a storage that
+/// holds the value inline, `$inline`, pass references to it; and the compound assignments, for a
+/// storage that holds the value in place, `$repr_mut`, store the result after the division, so that
+/// a panic leaves their target unchanged.
+macro_rules! division_operator {
+  (
+    $type:ident: $repr:ident, $inline:ident, $repr_mut:ident;
+    $op:ident $method:ident,
+    $assign:ident $assign_method:ident,
+    $strict:ident
+  ) => {
+    impl<B: FitsBits<R>, R: $inline> $op for $type<B, R> {
+      type Output = Self;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: Self) -> Self {
+        $op::$method(&self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $inline> $op<&$type<B, R>> for $type<B, R> {
+      type Output = Self;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: &Self) -> Self {
+        $op::$method(&self, rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $inline> $op<$type<B, R>> for &$type<B, R> {
+      type Output = $type<B, R>;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: $type<B, R>) -> $type<B, R> {
+        $op::$method(self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $repr> $op<&$type<B, R>> for &$type<B, R> {
+      type Output = $type<B, R>;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: &$type<B, R>) -> $type<B, R> {
+        StrictOps::$strict(self, rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $repr_mut> $assign for $type<B, R> {
+      #[inline]
+      #[track_caller]
+      fn $assign_method(&mut self, rhs: Self) {
+        $assign::$assign_method(self, &rhs);
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $repr_mut> $assign<&$type<B, R>> for $type<B, R> {
+      #[inline]
+      #[track_caller]
+      fn $assign_method(&mut self, rhs: &Self) {
+        let result = StrictOps::$strict(&*self, rhs);
+        *self = result;
+      }
+    }
+  };
+}
+
+division_operator!(
+  Uint: UintRepr, InlineUintRepr, UintReprMut;
+  Div div, DivAssign div_assign, strict_div
+);
+division_operator!(
+  Uint: UintRepr, InlineUintRepr, UintReprMut;
+  Rem rem, RemAssign rem_assign, strict_rem
+);
+division_operator!(
+  Int: IntRepr, InlineIntRepr, IntReprMut;
+  Div div, DivAssign div_assign, strict_div
+);
+division_operator!(
+  Int: IntRepr, InlineIntRepr, IntReprMut;
+  Rem rem, RemAssign rem_assign, strict_rem
 );
 
 // As for the binary operators, the negation of a reference computes for every storage, and the

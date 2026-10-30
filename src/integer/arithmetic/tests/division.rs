@@ -915,3 +915,116 @@ fn math_division_in_constant_contexts() {
   assert_eq!(ZERO_BITS, (U0::ZERO, U0::ZERO, true));
   assert_eq!(ONE_BIT, (I1::ZERO, Uint::<U1, u8>::ONE, Some(I1::ZERO)));
 }
+
+/// Checks `/` and `%` of `$ty`, whose values `$from` creates from an `i128`, at each pair of
+/// `$pairs` where the checked division returns a value: the operators in their four forms of
+/// values and references and their compound assignments with a value and with a reference give
+/// the results of the checked division and remainder.
+macro_rules! sweep_operators {
+  ($sign:ident; $ty:ty, $bits:expr, $pairs:expr, $from:expr, $value:expr, $magnitude:expr) => {{
+    let from: fn(i128) -> $ty = $from;
+    for (a, b) in $pairs {
+      let (x, y) = (from(a), from(b));
+      if let (Some(quotient), Some(remainder)) = (x.checked_div(&y), x.checked_rem(&y)) {
+        assert_eq!([x / y, x / &y, &x / y, &x / &y], [quotient; 4], "{a} / {b}");
+        assert_eq!(
+          [x % y, x % &y, &x % y, &x % &y],
+          [remainder; 4],
+          "{a} % {b}"
+        );
+        let (mut by_value, mut by_reference) = (x, x);
+        by_value /= y;
+        by_reference /= &y;
+        assert_eq!([by_value, by_reference], [quotient; 2], "{a} /= {b}");
+        let (mut by_value, mut by_reference) = (x, x);
+        by_value %= y;
+        by_reference %= &y;
+        assert_eq!([by_value, by_reference], [remainder; 2], "{a} %= {b}");
+      }
+    }
+  }};
+}
+
+/// Checks the division operators at the width `B`, `bits` bits, at most 8, in `u8` and `i8` and in
+/// `[u8; 2]`, at the pairs of [`small_pairs`] for a storage that every tier checks.
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn operators_of_small_widths<B>(bits: u32)
+where
+  B: FitsBits<u8> + FitsBits<i8> + FitsBits<[u8; 2]>,
+{
+  let pairs = |bits, signed| small_pairs(bits, signed, true);
+  sweep_storage!(sweep_operators, pairs, native B, bits, u8, i8);
+  sweep_storage!(sweep_operators, pairs, array B, bits, [u8; 2]);
+}
+
+/// Wherever the checked division returns a value, `/`, `%`, `/=` and `%=` in every form give its
+/// results, at every width up to 8 bits in a native integer and in an array.
+#[test]
+fn division_operators_match_the_checked_methods() {
+  operators_of_small_widths::<U0>(0);
+  operators_of_small_widths::<U1>(1);
+  operators_of_small_widths::<U2>(2);
+  operators_of_small_widths::<U7>(7);
+  operators_of_small_widths::<U8>(8);
+}
+
+/// `/`, `%`, `/=` and `%=` panic on a zero divisor and on `MIN / -1` in every build, with the
+/// messages of the native operators, through every form, and report the caller, as the native
+/// operators do; a panicking compound assignment leaves its target unchanged. At a partial and at
+/// the full width of a native integer and of an array, at zero bits and at one signed bit.
+#[test]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn division_operators_panic_in_every_build() {
+  let messages = native_division_messages();
+  // `$x / $y` and `$x % $y` panic with `$div` and `$rem`.
+  macro_rules! operator_panics {
+    ($x:expr, $y:expr, $div:expr, $rem:expr) => {{
+      let (x, y, div, rem) = ($x, $y, &$div, &$rem);
+      panics_here!(x / y, div);
+      panics_here!(x / &y, div);
+      panics_here!(&x / y, div);
+      panics_here!(&x / &y, div);
+      panics_here!(x % y, rem);
+      panics_here!(x % &y, rem);
+      panics_here!(&x % y, rem);
+      panics_here!(&x % &y, rem);
+      let mut target = x;
+      panics_here!(target /= y, div);
+      panics_here!(target /= &y, div);
+      panics_here!(target %= y, rem);
+      panics_here!(target %= &y, rem);
+      assert_eq!(target, x);
+    }};
+  }
+  let [div_by_zero, rem_by_zero, div_overflow, rem_overflow] = messages;
+  type I7 = Int<U7, i8>;
+  type I200 = Int<U200, [u64; 4]>;
+  type I1 = Int<U1, [u8; 1]>;
+  operator_panics!(u7::MAX, u7::ZERO, div_by_zero, rem_by_zero);
+  operator_panics!(u256::MAX, u256::ZERO, div_by_zero, rem_by_zero);
+  operator_panics!(I7::MIN, I7::ZERO, div_by_zero, rem_by_zero);
+  operator_panics!(
+    Int::<U8, i8>::MAX,
+    Int::<U8, i8>::ZERO,
+    div_by_zero,
+    rem_by_zero
+  );
+  operator_panics!(I200::MAX, I200::ZERO, div_by_zero, rem_by_zero);
+  operator_panics!(
+    Uint::<U0, u8>::ZERO,
+    Uint::<U0, u8>::ZERO,
+    div_by_zero,
+    rem_by_zero
+  );
+  operator_panics!(I7::MIN, -I7::ONE, div_overflow, rem_overflow);
+  operator_panics!(
+    Int::<U8, i8>::MIN,
+    -Int::<U8, i8>::ONE,
+    div_overflow,
+    rem_overflow
+  );
+  operator_panics!(I200::MIN, -I200::ONE, div_overflow, rem_overflow);
+  operator_panics!(i256::MIN, -i256::ONE, div_overflow, rem_overflow);
+  // One bit holds only -1 and 0, so -1 is `MIN`.
+  operator_panics!(I1::MIN, I1::MIN, div_overflow, rem_overflow);
+}

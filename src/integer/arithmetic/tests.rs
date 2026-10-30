@@ -2,7 +2,7 @@ use core::{
   fmt::Debug,
   hint::black_box,
   iter::{Product, Sum},
-  ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+  ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
 };
 use std::{
   boxed::Box,
@@ -1382,10 +1382,19 @@ fn arithmetic_trait_surface() {
     T: FixedInteger + Product + for<'a> Sum<&'a T> + for<'a> Product<&'a T>,
     T: for<'a> Add<&'a T, Output = T> + for<'a> Sub<&'a T, Output = T>,
     T: for<'a> Mul<&'a T, Output = T>,
+    T: for<'a> Div<&'a T, Output = T> + for<'a> Rem<&'a T, Output = T>,
     T: for<'a> AddAssign<&'a T> + for<'a> SubAssign<&'a T> + for<'a> MulAssign<&'a T>,
+    T: for<'a> DivAssign<&'a T> + for<'a> RemAssign<&'a T>,
     for<'a> &'a T: Add<T, Output = T> + Sub<T, Output = T> + Mul<T, Output = T>,
+    for<'a> &'a T: Div<T, Output = T> + Rem<T, Output = T>,
     for<'a, 'b> &'a T: Add<&'b T, Output = T> + Sub<&'b T, Output = T> + Mul<&'b T, Output = T>,
+    for<'a, 'b> &'a T: Div<&'b T, Output = T> + Rem<&'b T, Output = T>,
   {
+  }
+  // `FixedInteger` gives the operators on values and their compound assignments with values.
+  fn fixed_operators<T: FixedInteger>() {
+    fn division<T: Div<Output = T> + Rem<Output = T> + DivAssign + RemAssign>() {}
+    division::<T>();
   }
   fn negation<T: Neg<Output = T>>()
   where
@@ -1399,6 +1408,8 @@ fn arithmetic_trait_surface() {
     signed::<Int<B>>();
     constants::<Uint<B>>();
     constants::<Int<B>>();
+    fixed_operators::<Uint<B>>();
+    fixed_operators::<Int<B>>();
   }
   fn unsigned_one<B: BitWidth + NonZero>() {
     integer_one::<Uint<B>>();
@@ -1561,6 +1572,12 @@ fn generic_operators<B: BitWidth + NonZero + IsGreater<U1, Output = True>>() {
   assert_eq!(six.to_string(), "6");
   assert_eq!((six - &three).to_string(), "3");
   assert_eq!((&six * &two).to_string(), "12");
+  assert_eq!((six / &(three + two)).to_string(), "1");
+  assert_eq!((&six % three).to_string(), "0");
+  let mut quotient = six;
+  quotient /= two;
+  quotient %= &two;
+  assert_eq!(quotient.to_string(), "1");
   assert_eq!([one, two, three].iter().sum::<Uint<B>>(), six);
   assert_eq!([two, three].into_iter().product::<Uint<B>>(), six);
 
@@ -1572,6 +1589,8 @@ fn generic_operators<B: BitWidth + NonZero + IsGreater<U1, Output = True>>() {
   value *= -&one;
   assert_eq!(value.to_string(), "3");
   assert_eq!((minus_three * minus_three).to_string(), "9");
+  assert_eq!((minus_three / (one + one)).to_string(), "-1");
+  assert_eq!((&minus_three % &(one + one)).to_string(), "-1");
   assert_eq!([minus_three, one, one].into_iter().sum::<Int<B>>(), -one);
   assert_eq!([minus_three, -one].iter().product::<Int<B>>(), value);
 }
@@ -1595,17 +1614,17 @@ fn bit_width_gives_the_operators() {
 fn reference_operators_need_only_the_storage_trait() {
   use crate::{FitsBits, IntRepr, UintRepr, i7, i256, u7, u256};
 
-  fn unsigned<B: FitsBits<R>, R: UintRepr>(a: Uint<B, R>, b: Uint<B, R>) -> [Uint<B, R>; 3] {
-    [&a + &b, &a - &b, &a * &b]
+  fn unsigned<B: FitsBits<R>, R: UintRepr>(a: Uint<B, R>, b: Uint<B, R>) -> [Uint<B, R>; 5] {
+    [&a + &b, &a - &b, &a * &b, &a / &b, &a % &b]
   }
 
-  fn signed<B: FitsBits<R>, R: IntRepr>(a: Int<B, R>, b: Int<B, R>) -> [Int<B, R>; 4] {
-    [&a + &b, &a - &b, &a * &b, -&a]
+  fn signed<B: FitsBits<R>, R: IntRepr>(a: Int<B, R>, b: Int<B, R>) -> [Int<B, R>; 6] {
+    [&a + &b, &a - &b, &a * &b, &a / &b, &a % &b, -&a]
   }
 
   assert_eq!(
     unsigned(u7::new(10), u7::new(3)),
-    [u7::new(13), u7::new(7), u7::new(30)]
+    [u7::new(13), u7::new(7), u7::new(30), u7::new(3), u7::ONE]
   );
   let (ten, three) = (
     u256::from_limbs([10, 0, 0, 0]),
@@ -1613,11 +1632,18 @@ fn reference_operators_need_only_the_storage_trait() {
   );
   assert_eq!(
     unsigned(ten, three).map(|value| value.to_string()),
-    ["13", "7", "30"]
+    ["13", "7", "30", "3", "1"]
   );
   assert_eq!(
     signed(i7::new(-10), i7::new(3)),
-    [i7::new(-7), i7::new(-13), i7::new(-30), i7::new(10)]
+    [
+      i7::new(-7),
+      i7::new(-13),
+      i7::new(-30),
+      i7::new(-3),
+      i7::new(-1),
+      i7::new(10)
+    ]
   );
   let (minus_ten, three) = (
     -i256::from_limbs([10, 0, 0, 0]),
@@ -1625,7 +1651,7 @@ fn reference_operators_need_only_the_storage_trait() {
   );
   assert_eq!(
     signed(minus_ten, three).map(|value| value.to_string()),
-    ["-7", "-13", "-30", "10"]
+    ["-7", "-13", "-30", "-3", "-1", "10"]
   );
 }
 
