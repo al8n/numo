@@ -766,6 +766,312 @@ macro_rules! limb_layer_tests {
     fn division_by_zero_panics() {
       let _ = div_rem(&[1, 2, 3], &[0; 3]);
     }
+
+    /// Checks the functions of a width that divide, round a quotient or relate two values, on `a`
+    /// and `b` of `bits` bits, in `N` limbs `x` and `y`, against `num-bigint`: each result is the
+    /// exact one, or that wrapped to the width with its overflow flag, and has the width. A zero
+    /// divisor gives `None`.
+    fn check_division_bits<const N: usize>(
+      a: &BigInt,
+      x: &[Limb; N],
+      b: &BigInt,
+      y: &[Limb; N],
+      bits: u32,
+    ) {
+      let (min, max) = (bigint::min(bits, false), bigint::max(bits, false));
+      let big = |limbs: &[Limb; N]| bigint::from_limbs(limbs, false);
+      let zero = BigInt::ZERO;
+      assert_eq!(
+        big(&midpoint(x, y)),
+        (a + b) / 2u8,
+        "midpoint of {a} and {b}"
+      );
+      let difference = if a < b { b - a } else { a - b };
+      assert_eq!(big(&abs_diff(x, y)), difference, "|{a} - {b}|");
+      let multiple = if *b == zero {
+        *a == zero
+      } else {
+        a % b == zero
+      };
+      assert_eq!(is_multiple_of(x, y), multiple, "{a} % {b}");
+      if *b == zero {
+        assert_eq!(div_rem_bits(x, y, bits), None);
+        assert_eq!(div_rem_euclid_bits(x, y, bits), None);
+        assert_eq!(div_floor_bits(x, y, bits), None);
+        assert_eq!(div_ceil_bits(x, y, bits), None);
+        assert_eq!(next_multiple_of_bits(x, y, bits), None);
+        assert_eq!(checked_div_exact_bits(x, y, bits), None);
+        return;
+      }
+      let (quotient, remainder) = (a / b, a % b);
+      let division = div_rem_bits(x, y, bits).expect("a nonzero divisor");
+      assert_eq!(
+        (big(&division.0), big(&division.1), division.2),
+        (quotient.clone(), remainder.clone(), false),
+        "{a} / {b} in {bits} bits"
+      );
+      assert_eq!(div_rem_euclid_bits(x, y, bits), Some(division));
+      let rounded =
+        |result: Option<([Limb; N], bool)>| result.map(|(value, flag)| (big(&value), flag));
+      assert_eq!(
+        rounded(div_floor_bits(x, y, bits)),
+        Some((bigint::div_floor(a, b), false)),
+        "floor({a} / {b})"
+      );
+      assert_eq!(
+        rounded(div_ceil_bits(x, y, bits)),
+        Some((bigint::div_ceil(a, b), false)),
+        "ceil({a} / {b})"
+      );
+      let next = bigint::next_multiple_of(a, b);
+      let (value, overflow) = next_multiple_of_bits(x, y, bits).expect("a nonzero divisor");
+      assert_eq!(
+        (big(&value), overflow),
+        (bigint::wrap(&next, bits, &min), next > max),
+        "the multiple of {b} from {a} in {bits} bits"
+      );
+      assert!(fits_bits(&value, bits), "{value:x?} in {bits} bits");
+      assert_eq!(
+        checked_div_exact_bits(x, y, bits).map(|exact| big(&exact)),
+        (remainder == zero).then_some(quotient),
+        "{a} / {b} exactly"
+      );
+    }
+
+    /// The bases at which the logarithms of `N` limbs are checked: those below 2, which have none,
+    /// powers of two, ten, bases of one limb and of two, and the largest value.
+    fn bases<const N: usize>() -> Vec<(BigInt, [Limb; N])> {
+      let one = BigInt::from(1u8);
+      let limb = &one << B;
+      let candidates = [
+        BigInt::ZERO,
+        one.clone(),
+        BigInt::from(2u8),
+        BigInt::from(3u8),
+        BigInt::from(7u8),
+        BigInt::from(10u8),
+        BigInt::from(16u8),
+        BigInt::from(259u16),
+        BigInt::from(1000u16),
+        &limb - 1u8,
+        limb.clone(),
+        &limb + 3u8,
+        bigint::from_limbs(&[Limb::MAX; N], false),
+      ];
+      candidates
+        .into_iter()
+        .filter_map(|base| bigint::to_limbs_of(&base, false).map(|limbs| (base, limbs)))
+        .collect()
+    }
+
+    /// Checks the powers, roots and logarithms of `a`, of `bits` bits, in `N` limbs `x`, and its
+    /// next power of two, against `num-bigint`.
+    fn check_powers_bits<const N: usize>(a: &BigInt, x: &[Limb; N], bits: u32) {
+      let (min, max) = (bigint::min(bits, false), bigint::max(bits, false));
+      let big = |limbs: &[Limb; N]| bigint::from_limbs(limbs, false);
+      let exps = [
+        0,
+        1,
+        2,
+        3,
+        bits.saturating_sub(1),
+        bits,
+        bits + 1,
+        2 * bits + 1,
+      ];
+      for exp in exps.into_iter().chain([u32::MAX - 1, u32::MAX]) {
+        let (value, overflow) = overflowing_pow_bits(x, exp, bits);
+        assert_eq!(
+          (big(&value), overflow),
+          bigint::pow_bits(a, exp, bits, &min, &max),
+          "{a}^{exp} in {bits} bits"
+        );
+        assert!(fits_bits(&value, bits), "{a}^{exp} in {bits} bits");
+      }
+      assert_eq!(big(&isqrt(x)), a.sqrt(), "the square root of {a}");
+      assert_eq!(checked_isqrt(x), Some(isqrt(x)));
+      assert_eq!(checked_nth_root(x, 0), None);
+      for n in [1, 2, 3, 4, 7, bits, bits + 1, u32::MAX] {
+        if n > 0 {
+          assert_eq!(big(&nth_root(x, n)), a.nth_root(n), "the root {n} of {a}");
+          assert_eq!(checked_nth_root(x, n), Some(nth_root(x, n)));
+        }
+      }
+      let log2 = (*a > BigInt::ZERO).then(|| u32::try_from(a.bits() - 1).expect("a width"));
+      assert_eq!(checked_ilog2(x), log2, "log2({a})");
+      assert_eq!(
+        checked_ilog10(x),
+        bigint::ilog(a, &BigInt::from(10u8)),
+        "log10({a})"
+      );
+      for (base, limbs) in bases::<N>() {
+        assert_eq!(
+          checked_ilog(x, &limbs),
+          bigint::ilog(a, &base),
+          "log({a}) to the base {base}"
+        );
+      }
+      let power = bigint::next_power_of_two(a);
+      let (value, overflow) = next_power_of_two_bits(x, bits);
+      assert_eq!(
+        (big(&value), overflow),
+        (bigint::wrap(&power, bits, &min), power > max),
+        "the power of two from {a} in {bits} bits"
+      );
+    }
+
+    /// Checks the division, the powers, the roots and the logarithms of each width of `N` limbs
+    /// against `num-bigint`, at the values of `bigint::arithmetic_samples` and their pairs.
+    fn division_and_powers_against_big_integers<const N: usize>() {
+      let mut rng = Rng(0xd1f1_5eed ^ N as u64);
+      for bits in widths::<N>() {
+        let (min, max) = (bigint::min(bits, false), bigint::max(bits, false));
+        // No limbs hold only zero, from which nothing random is drawn.
+        let samples = bigint::arithmetic_samples(bits, B, &min, &max, || match N {
+          0 => BigInt::ZERO,
+          _ => bigint::from_limbs(&rng.limbs::<N>(), false),
+        });
+        let limbs: Vec<[Limb; N]> = samples
+          .iter()
+          .map(|value| bigint::to_limbs_of(value, false).expect("in range"))
+          .collect();
+        for (a, x) in samples.iter().zip(&limbs) {
+          check_powers_bits(a, x, bits);
+          for (b, y) in samples.iter().zip(&limbs) {
+            check_division_bits(a, x, b, y, bits);
+          }
+        }
+      }
+    }
+
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn division_and_powers_of_a_width_match_big_integers() {
+      division_and_powers_against_big_integers::<0>();
+      division_and_powers_against_big_integers::<1>();
+      division_and_powers_against_big_integers::<2>();
+      division_and_powers_against_big_integers::<3>();
+    }
+
+    /// Checks the roots of `[Limb::MAX; N]`, which take the most Newton steps of `N` limbs, and of
+    /// the perfect squares, cubes and fifth powers of `N` limbs with their neighbors, against
+    /// `num-bigint`.
+    fn roots_against_big_integers<const N: usize>() {
+      // Above 4096 bits, which only limbs of more than 64 bits reach here, the values take no
+      // path that narrower ones do not, and the time grows faster than the width.
+      if B as usize * N > 4096 {
+        return;
+      }
+      let largest = bigint::from_limbs(&[Limb::MAX; N], false);
+      let one = BigInt::from(1u8);
+      let mut values = vec![largest.clone()];
+      for root in [
+        BigInt::from(3u8),
+        BigInt::from(10u8),
+        BigInt::from(Limb::MAX),
+        &one << B,
+      ] {
+        for n in [2, 3, 5] {
+          let power = root.pow(n);
+          values.extend([&power - 1u8, power.clone(), &power + 1u8]);
+        }
+      }
+      for value in values.into_iter().filter(|value| *value <= largest) {
+        let limbs: [Limb; N] = bigint::to_limbs_of(&value, false).expect("in range");
+        assert_eq!(
+          bigint::from_limbs(&isqrt(&limbs), false),
+          value.sqrt(),
+          "{value}"
+        );
+        // Degrees of more than one limb of 8 bits, which `nth_root` takes in limbs, and degrees
+        // above the logarithm, whose root is one.
+        for n in [2, 3, 5, 64, 255, 256, 300, 511, 1000, u32::MAX] {
+          assert_eq!(
+            bigint::from_limbs(&nth_root(&limbs, n), false),
+            value.nth_root(n),
+            "the root {n} of {value}"
+          );
+        }
+      }
+    }
+
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn roots_match_big_integers() {
+      roots_against_big_integers::<1>();
+      roots_against_big_integers::<2>();
+      roots_against_big_integers::<3>();
+      roots_against_big_integers::<4>();
+      roots_against_big_integers::<8>();
+      roots_against_big_integers::<64>();
+    }
+
+    /// Checks the logarithms of `N` limbs at the powers of ten and the values below them, and at
+    /// `[Limb::MAX; N]` to the bases of [`bases`], against `num-bigint`.
+    fn logarithms_against_big_integers<const N: usize>() {
+      let largest = bigint::from_limbs(&[Limb::MAX; N], false);
+      let ten: [Limb; N] = bigint::to_limbs_of(&BigInt::from(10u8), false).expect("ten");
+      for exp in bigint::exponents_by(bigint::max_exp(&largest), Limb::MAX.ilog10()) {
+        let power: [Limb; N] = bigint::to_limbs_of(&bigint::pow10(exp), false).expect("in range");
+        assert_eq!(checked_ilog10(&power), Some(exp), "log10(10^{exp})");
+        assert_eq!(checked_ilog(&power, &ten), Some(exp), "log10(10^{exp})");
+        if exp > 0 {
+          let below = overflowing_sub(&power, &one()).0;
+          assert_eq!(checked_ilog10(&below), Some(exp - 1), "log10(10^{exp} - 1)");
+        }
+      }
+      for (base, limbs) in bases::<N>() {
+        assert_eq!(
+          checked_ilog(&[Limb::MAX; N], &limbs),
+          bigint::ilog(&largest, &base),
+          "log({largest}) to the base {base}"
+        );
+      }
+    }
+
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn logarithms_match_big_integers() {
+      logarithms_against_big_integers::<1>();
+      logarithms_against_big_integers::<2>();
+      logarithms_against_big_integers::<3>();
+      logarithms_against_big_integers::<8>();
+    }
+
+    /// No limbs hold only zero: every divisor is zero, so every division gives `None`; zero is a
+    /// multiple of zero; `0^0`, one, and the power of two of zero overflow zero bits; and zero has
+    /// no logarithm.
+    #[test]
+    fn no_limbs_divide_nothing() {
+      const NONE: [Limb; 0] = [];
+      assert_eq!(div_rem_bits(&NONE, &NONE, 0), None);
+      assert_eq!(div_rem_euclid_bits(&NONE, &NONE, 0), None);
+      assert_eq!(div_floor_bits(&NONE, &NONE, 0), None);
+      assert_eq!(div_ceil_bits(&NONE, &NONE, 0), None);
+      assert_eq!(next_multiple_of_bits(&NONE, &NONE, 0), None);
+      assert_eq!(checked_div_exact_bits(&NONE, &NONE, 0), None);
+      assert!(is_multiple_of(&NONE, &NONE));
+      assert_eq!(overflowing_pow_bits(&NONE, 0, 0), (NONE, true));
+      assert_eq!(overflowing_pow_bits(&NONE, 5, 0), (NONE, false));
+      assert_eq!(next_power_of_two_bits(&NONE, 0), (NONE, true));
+      assert_eq!((isqrt(&NONE), nth_root(&NONE, 3)), (NONE, NONE));
+      assert_eq!(
+        (midpoint(&NONE, &NONE), abs_diff(&NONE, &NONE)),
+        (NONE, NONE)
+      );
+      assert_eq!(checked_ilog2(&NONE), None);
+      assert_eq!(checked_ilog10(&NONE), None);
+      assert_eq!(checked_ilog(&NONE, &NONE), None);
+    }
   };
   (signed unsigned: $unsigned:ident) => {
     use core::cmp::Ordering;
@@ -1280,6 +1586,258 @@ macro_rules! limb_layer_tests {
       powers_of_ten::<2>();
       powers_of_ten::<3>();
       powers_of_ten::<8>();
+    }
+
+    /// Checks the functions of a width that divide, round a quotient or relate two values, on `a`
+    /// and `b` of `bits` bits, in `N` limbs `x` and `y` of two's complement, against `num-bigint`:
+    /// each result is the exact one, or that wrapped to the width with its overflow flag, as for
+    /// `MIN / -1`, and has the width; the absolute difference is unsigned. A zero divisor gives
+    /// `None`.
+    fn check_division_bits<const N: usize>(
+      a: &BigInt,
+      x: &[Limb; N],
+      b: &BigInt,
+      y: &[Limb; N],
+      bits: u32,
+    ) {
+      let (min, max) = (bigint::min(bits, true), bigint::max(bits, true));
+      let big = |limbs: &[Limb; N]| bigint::from_limbs(limbs, true);
+      // `exact` wrapped to the width, and whether it is outside the range.
+      let wrapped = |exact: &BigInt| {
+        (
+          bigint::wrap(exact, bits, &min),
+          *exact < min || max < *exact,
+        )
+      };
+      let zero = BigInt::ZERO;
+      // `/` rounds toward zero.
+      assert_eq!(
+        big(&midpoint(x, y)),
+        (a + b) / 2u8,
+        "midpoint of {a} and {b}"
+      );
+      let difference = if a < b { b - a } else { a - b };
+      assert_eq!(
+        bigint::from_limbs(&abs_diff(x, y), false),
+        difference,
+        "|{a} - {b}|"
+      );
+      if *b == zero {
+        assert_eq!(div_rem_bits(x, y, bits), None);
+        assert_eq!(div_rem_euclid_bits(x, y, bits), None);
+        assert_eq!(div_floor_bits(x, y, bits), None);
+        assert_eq!(div_ceil_bits(x, y, bits), None);
+        assert_eq!(next_multiple_of_bits(x, y, bits), None);
+        assert_eq!(checked_div_exact_bits(x, y, bits), None);
+        return;
+      }
+      let (quotient, remainder) = (a / b, a % b);
+      let (truncated, overflow) = wrapped(&quotient);
+      let division = div_rem_bits(x, y, bits).expect("a nonzero divisor");
+      assert_eq!(
+        (big(&division.0), big(&division.1), division.2),
+        (truncated, remainder.clone(), overflow),
+        "{a} / {b} in {bits} bits"
+      );
+      assert!(fits_bits(&division.0, bits), "{a} / {b} in {bits} bits");
+      let (euclid_quotient, euclid_remainder) = bigint::div_rem_euclid(a, b);
+      let (euclid, euclid_overflow) = wrapped(&euclid_quotient);
+      let division = div_rem_euclid_bits(x, y, bits).expect("a nonzero divisor");
+      assert_eq!(
+        (big(&division.0), big(&division.1), division.2),
+        (euclid, euclid_remainder, euclid_overflow),
+        "{a} / {b} in {bits} bits, Euclidean"
+      );
+      assert!(fits_bits(&division.0, bits), "{a} / {b} in {bits} bits");
+      for (name, result, exact) in [
+        ("floor", div_floor_bits(x, y, bits), bigint::div_floor(a, b)),
+        ("ceiling", div_ceil_bits(x, y, bits), bigint::div_ceil(a, b)),
+        (
+          "next multiple",
+          next_multiple_of_bits(x, y, bits),
+          bigint::next_multiple_of(a, b),
+        ),
+      ] {
+        let (value, flag) = result.expect("a nonzero divisor");
+        assert_eq!(
+          (big(&value), flag),
+          wrapped(&exact),
+          "the {name} of {a} and {b} in {bits} bits"
+        );
+        assert!(fits_bits(&value, bits), "the {name} of {a} and {b}");
+      }
+      assert_eq!(
+        checked_div_exact_bits(x, y, bits).map(|exact| big(&exact)),
+        (remainder == zero && !overflow).then_some(quotient),
+        "{a} / {b} exactly"
+      );
+    }
+
+    /// The bases at which the logarithms of `N` limbs are checked: negative ones and those below 2,
+    /// which have none, powers of two, ten, bases of one limb and of two, and the largest value.
+    fn bases<const N: usize>() -> Vec<(BigInt, [Limb; N])> {
+      let one = BigInt::from(1u8);
+      let limb = &one << B;
+      let candidates = [
+        BigInt::from(-2),
+        BigInt::from(-1),
+        BigInt::ZERO,
+        one.clone(),
+        BigInt::from(2u8),
+        BigInt::from(3u8),
+        BigInt::from(10u8),
+        BigInt::from(16u8),
+        BigInt::from(259u16),
+        BigInt::from(1000u16),
+        &limb - 1u8,
+        limb.clone(),
+        &limb + 3u8,
+        bigint::from_limbs(&max_of_bits::<N>(B * N as u32), true),
+      ];
+      candidates
+        .into_iter()
+        .filter_map(|base| bigint::to_limbs_of(&base, true).map(|limbs| (base, limbs)))
+        .collect()
+    }
+
+    /// Checks the powers, roots and logarithms of `a`, of `bits` bits, in `N` limbs `x` of two's
+    /// complement, against `num-bigint`: a negative value has a root of every odd degree, rounded
+    /// toward zero, and no square root or logarithm.
+    fn check_powers_bits<const N: usize>(a: &BigInt, x: &[Limb; N], bits: u32) {
+      let (min, max) = (bigint::min(bits, true), bigint::max(bits, true));
+      let big = |limbs: &[Limb; N]| bigint::from_limbs(limbs, true);
+      let exps = [
+        0,
+        1,
+        2,
+        3,
+        bits.saturating_sub(1),
+        bits,
+        bits + 1,
+        2 * bits + 1,
+      ];
+      for exp in exps.into_iter().chain([u32::MAX - 1, u32::MAX]) {
+        let (value, overflow) = overflowing_pow_bits(x, exp, bits);
+        assert_eq!(
+          (big(&value), overflow),
+          bigint::pow_bits(a, exp, bits, &min, &max),
+          "{a}^{exp} in {bits} bits"
+        );
+        assert!(fits_bits(&value, bits), "{a}^{exp} in {bits} bits");
+      }
+      let negative = *a < BigInt::ZERO;
+      assert_eq!(
+        checked_isqrt(x).map(|root| big(&root)),
+        (!negative).then(|| a.sqrt()),
+        "the square root of {a}"
+      );
+      assert_eq!(checked_nth_root(x, 0), None);
+      for n in [1, 2, 3, 4, 7, bits, bits + 1, u32::MAX] {
+        if n > 0 {
+          assert_eq!(
+            checked_nth_root(x, n).map(|root| big(&root)),
+            (!negative || n % 2 == 1).then(|| a.nth_root(n)),
+            "the root {n} of {a}"
+          );
+        }
+      }
+      let log2 = (*a > BigInt::ZERO).then(|| u32::try_from(a.bits() - 1).expect("a width"));
+      assert_eq!(checked_ilog2(x), log2, "log2({a})");
+      assert_eq!(
+        checked_ilog10(x),
+        bigint::ilog(a, &BigInt::from(10u8)),
+        "log10({a})"
+      );
+      for (base, limbs) in bases::<N>() {
+        assert_eq!(
+          checked_ilog(x, &limbs),
+          bigint::ilog(a, &base),
+          "log({a}) to the base {base}"
+        );
+      }
+    }
+
+    /// Checks the division, the powers, the roots and the logarithms of each width of `N` limbs
+    /// against `num-bigint`, at the values of `bigint::arithmetic_samples` and their pairs.
+    fn division_and_powers_against_big_integers<const N: usize>() {
+      let mut rng = Rng(0xd1f1_51a1 ^ N as u64);
+      for bits in widths::<N>() {
+        let (min, max) = (bigint::min(bits, true), bigint::max(bits, true));
+        // No limbs hold only zero, from which nothing random is drawn.
+        let samples = bigint::arithmetic_samples(bits, B, &min, &max, || match N {
+          0 => BigInt::ZERO,
+          _ => bigint::from_limbs(&rng.signed::<N>(), true),
+        });
+        let limbs: Vec<[Limb; N]> = samples
+          .iter()
+          .map(|value| bigint::to_limbs_of(value, true).expect("in range"))
+          .collect();
+        for (a, x) in samples.iter().zip(&limbs) {
+          check_powers_bits(a, x, bits);
+          for (b, y) in samples.iter().zip(&limbs) {
+            check_division_bits(a, x, b, y, bits);
+          }
+        }
+      }
+    }
+
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn division_and_powers_of_a_width_match_big_integers() {
+      division_and_powers_against_big_integers::<0>();
+      division_and_powers_against_big_integers::<1>();
+      division_and_powers_against_big_integers::<2>();
+      division_and_powers_against_big_integers::<3>();
+    }
+
+    /// `MIN / -1` overflows at the full width, where the division of the magnitudes would not
+    /// accept it, and at a partial width, where the storage holds the quotient: both wrap to `MIN`
+    /// with the remainder zero. One bit holds only -1 and 0, so `-1 / -1` overflows, `-1` to an
+    /// even power overflows, and every other division by -1 is exact.
+    fn division_by_minus_one<const N: usize>() {
+      let minus_one = [Limb::MAX; N];
+      for bits in [1, B * N as u32 - 1, B * N as u32] {
+        let min = min_of_bits::<N>(bits);
+        assert_eq!(
+          div_rem_bits(&min, &minus_one, bits),
+          Some((min, [0; N], true))
+        );
+        assert_eq!(
+          div_rem_euclid_bits(&min, &minus_one, bits),
+          Some((min, [0; N], true))
+        );
+        assert_eq!(div_floor_bits(&min, &minus_one, bits), Some((min, true)));
+        assert_eq!(div_ceil_bits(&min, &minus_one, bits), Some((min, true)));
+        assert_eq!(
+          next_multiple_of_bits(&min, &minus_one, bits),
+          Some((min, false))
+        );
+        assert_eq!(checked_div_exact_bits(&min, &minus_one, bits), None);
+        let above = overflowing_add_bits(&min, &super::$unsigned::one(), bits).0;
+        if bits > 1 {
+          let quotient = Some((max_of_bits::<N>(bits), [0; N], false));
+          assert_eq!(div_rem_bits(&above, &minus_one, bits), quotient);
+        }
+      }
+      assert_eq!(overflowing_pow_bits(&minus_one, 0, 1), (minus_one, true));
+      assert_eq!(overflowing_pow_bits(&minus_one, 2, 1), (minus_one, true));
+      assert_eq!(overflowing_pow_bits(&minus_one, 3, 1), (minus_one, false));
+      assert_eq!(
+        div_rem_bits(&[0; N], &minus_one, 1),
+        Some(([0; N], [0; N], false))
+      );
+      assert_eq!(checked_div_exact_bits(&[0; N], &minus_one, 1), Some([0; N]));
+    }
+
+    #[test]
+    fn division_by_minus_one_for_every_width() {
+      division_by_minus_one::<1>();
+      division_by_minus_one::<2>();
+      division_by_minus_one::<3>();
+      division_by_minus_one::<8>();
     }
   };
 }

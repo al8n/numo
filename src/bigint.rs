@@ -234,6 +234,99 @@ pub(crate) fn wrap(exact: &BigInt, bits: u32, min: &BigInt) -> BigInt {
   }
 }
 
+/// The quotient and the remainder of `a / b` with the remainder at least zero, as the Euclidean
+/// division of the native integers gives them. Requires `b != 0`.
+pub(crate) fn div_rem_euclid(a: &BigInt, b: &BigInt) -> (BigInt, BigInt) {
+  // `/` and `%` round toward zero, so the remainder has the sign of `a`.
+  let (quotient, remainder) = (a / b, a % b);
+  if remainder.sign() != Sign::Minus {
+    (quotient, remainder)
+  } else if b.sign() == Sign::Minus {
+    (quotient + 1u8, remainder - b)
+  } else {
+    (quotient - 1u8, remainder + b)
+  }
+}
+
+/// `a / b` rounded down. Requires `b != 0`.
+pub(crate) fn div_floor(a: &BigInt, b: &BigInt) -> BigInt {
+  let (quotient, remainder) = (a / b, a % b);
+  if remainder.sign() != Sign::NoSign && remainder.sign() != b.sign() {
+    quotient - 1u8
+  } else {
+    quotient
+  }
+}
+
+/// `a / b` rounded up. Requires `b != 0`.
+pub(crate) fn div_ceil(a: &BigInt, b: &BigInt) -> BigInt {
+  -div_floor(&-a, b)
+}
+
+/// For a positive `b`, the smallest multiple of `b` at least `a`, and for a negative `b`, the
+/// largest multiple of `b` at most `a`: `ceil(a / b) * b` for both. Requires `b != 0`.
+pub(crate) fn next_multiple_of(a: &BigInt, b: &BigInt) -> BigInt {
+  div_ceil(a, b) * b
+}
+
+/// `value^exp` wrapped to the range of `bits` bits from `min` to `max`, and whether it is outside
+/// that range.
+pub(crate) fn pow_bits(
+  value: &BigInt,
+  exp: u32,
+  bits: u32,
+  min: &BigInt,
+  max: &BigInt,
+) -> (BigInt, bool) {
+  let magnitude_bits = value.magnitude().bits();
+  // A magnitude of at least 2^k has a power of at least `2^(k * exp)`, outside the range once
+  // `k * exp >= bits`; otherwise the exact power has fewer than `bits + exp` bits.
+  if magnitude_bits >= 2 && (magnitude_bits - 1) * u64::from(exp) >= u64::from(bits) {
+    let modulus = BigInt::from(1u8) << bits;
+    let residue = value.modpow(&BigInt::from(exp), &modulus);
+    (wrap(&residue, bits, min), true)
+  } else {
+    let exact = value.pow(exp);
+    (wrap(&exact, bits, min), exact < *min || *max < exact)
+  }
+}
+
+/// The logarithm of `value` to the base `base`, rounded down, or `None` if `value` is not positive
+/// or `base` is below 2.
+pub(crate) fn ilog(value: &BigInt, base: &BigInt) -> Option<u32> {
+  if value.sign() != Sign::Plus || *base < BigInt::from(2u8) {
+    return None;
+  }
+  // A floating-point estimate, which the powers below correct to the exact logarithm.
+  let mut log = (log2(value) / log2(base)).floor() as u32;
+  while log > 0 && base.pow(log) > *value {
+    log -= 1;
+  }
+  while base.pow(log + 1) <= *value {
+    log += 1;
+  }
+  Some(log)
+}
+
+/// An estimate of the base-2 logarithm of `value`, which is positive, from its top 64 bits.
+fn log2(value: &BigInt) -> f64 {
+  let shift = value.bits().saturating_sub(64);
+  let top = (value.magnitude() >> shift)
+    .iter_u64_digits()
+    .next()
+    .unwrap_or(0);
+  shift as f64 + (top as f64).log2()
+}
+
+/// The smallest power of two at least `value`, which is not negative.
+pub(crate) fn next_power_of_two(value: &BigInt) -> BigInt {
+  if *value <= BigInt::from(1u8) {
+    BigInt::from(1u8)
+  } else {
+    BigInt::from(1u8) << (value - 1u8).bits()
+  }
+}
+
 /// The widths at which the arithmetic of a width is checked in `limbs` limbs of `limb_bits` bits:
 /// every width from zero to `limb_bits * limbs` for limbs of at most 16 bits, and otherwise, or
 /// under Miri, zero, one, two and the widths next to each multiple of `limb_bits`.
