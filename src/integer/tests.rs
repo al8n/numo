@@ -13,9 +13,9 @@ use typenum::{
 };
 
 use crate::{
-  ArrayInteger, BitWidth, FixedInteger, Int, Limbs, TryNewError, Uint, bigint, i7, i192, i256,
-  i320, i384, i448, i512, i768, i1024, i2048, i4096, int::DIGIT_BUF_LEN, u7, u192, u256, u320,
-  u384, u448, u512, u768, u1024, u2048, u4096,
+  ArrayInteger, BitWidth, ConstFixedInteger, FixedInteger, Int, Limbs, TryNewError, Uint, bigint,
+  i7, i192, i256, i320, i384, i448, i512, i768, i1024, i2048, i4096, int::DIGIT_BUF_LEN, u7, u192,
+  u256, u320, u384, u448, u512, u768, u1024, u2048, u4096,
 };
 
 /// Records the calls that a `Hash` implementation makes.
@@ -1794,8 +1794,8 @@ fn assert_same_text(value: &dyn Text, reference: &dyn Text) {
 /// calls, the queries that `queries` compares, and the order of every pair.
 fn assert_array_agrees<N, A, L, const K: usize>(natives: &[N], signed: bool, queries: fn(&N, &A))
 where
-  N: FixedInteger,
-  A: FixedInteger + ArrayInteger<Array = [L; K]>,
+  N: ConstFixedInteger,
+  A: ConstFixedInteger + ArrayInteger<Array = [L; K]>,
   L: bigint::Limb + Debug + PartialEq,
 {
   let limbs = |value: &N| -> [L; K] {
@@ -1911,11 +1911,14 @@ mod zero_bits {
     FillsRepr, FitsBits, FromLimbs, NativeInteger, SignedFixedInteger, UnsignedFixedInteger, i0, u0,
   };
 
-  /// Checks, through [`FixedInteger`], what every integer of zero bits shares: each constant is
-  /// zero, every value equals and compares equal to zero, the hash writes nothing, and the text is
-  /// that of zero under each flag.
-  fn check_fixed<T: FixedInteger>() {
+  /// Checks, through [`ConstFixedInteger`], what every integer of zero bits shares: each constant
+  /// and each of the functions `zero`, `min_value` and `max_value` is zero, every value equals and
+  /// compares equal to zero, the hash writes nothing, and the text is that of zero under each flag.
+  fn check_fixed<T: ConstFixedInteger>() {
     assert_eq!(T::BITS, 0);
+    assert_eq!(<T as FixedInteger>::zero(), T::ZERO);
+    assert_eq!(<T as FixedInteger>::min_value(), T::ZERO);
+    assert_eq!(<T as FixedInteger>::max_value(), T::ZERO);
     for value in [T::ZERO, T::MIN, T::MAX, T::default()] {
       assert_eq!(value, T::ZERO);
       assert!(value.is_zero());
@@ -1929,13 +1932,13 @@ mod zero_bits {
   }
 
   /// As [`check_fixed`], for an unsigned integer.
-  fn check_unsigned<T: FixedInteger + UnsignedFixedInteger>() {
+  fn check_unsigned<T: ConstFixedInteger + UnsignedFixedInteger>() {
     check_fixed::<T>();
   }
 
   /// As [`check_fixed`], and the sign queries of [`SignedFixedInteger`]: zero is neither negative
   /// nor positive.
-  fn check_signed<T: FixedInteger + SignedFixedInteger>() {
+  fn check_signed<T: ConstFixedInteger + SignedFixedInteger>() {
     check_fixed::<T>();
     for value in [T::ZERO, T::MIN, T::MAX, T::default()] {
       assert!(!value.is_negative() && !value.is_positive());
@@ -1967,7 +1970,7 @@ mod zero_bits {
   /// none of `rejected` makes a value.
   fn check_array<T, L, const N: usize>(zero: [L; N], rejected: &[[L; N]])
   where
-    T: FixedInteger + ArrayInteger<Array = [L; N]>,
+    T: ConstFixedInteger + ArrayInteger<Array = [L; N]>,
     L: Copy + Debug + PartialEq,
   {
     let value = T::checked_from_limbs(zero).expect("the limbs of zero");

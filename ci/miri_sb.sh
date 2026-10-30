@@ -25,9 +25,18 @@ export RUSTFLAGS="--cfg test_$CONFIG_FLAGS"
 # Libtest runs each test on a thread of its own, and Miri rarely lets a thread reuse the addresses
 # that another thread freed. On a 32-bit target, the lib tests then use up the address space of one
 # process, so they run in several processes there, each with a fresh address space: one for each
-# group of modules below, and a last one for every test outside the groups.
+# group of modules below, in order, and a last one for every test outside the groups. Each group
+# skips the groups before it, so a later group may be a prefix of an earlier one: `integer::tests::`
+# runs the tests that `integer::tests::int_` and `integer::tests::uint_` did not, and `integer::`
+# those that the four groups before it did not. The arithmetic group runs first, so that its result,
+# and the message of a failure in it, arrives early in the job.
 if rustc --print cfg --target "$TARGET" | grep -qx 'target_pointer_width="32"'; then
   filters=(
+    integer::arithmetic::
+    integer::tests::int_
+    integer::tests::uint_
+    integer::tests::
+    integer::
     decimal::
     int::tests::
     int::half_limbs::
@@ -41,11 +50,10 @@ if rustc --print cfg --target "$TARGET" | grep -qx 'target_pointer_width="32"'; 
     int::signed::b16::
     int::signed::b32::
     int::signed::b128::
-    integer::
   )
   skips=()
   for filter in "${filters[@]}"; do
-    cargo miri test --tests --target "$TARGET" --lib -- "$filter"
+    cargo miri test --tests --target "$TARGET" --lib -- "$filter" "${skips[@]}"
     skips+=(--skip "$filter")
   done
   cargo miri test --tests --target "$TARGET" --lib -- "${skips[@]}"

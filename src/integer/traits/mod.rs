@@ -1,7 +1,12 @@
 //! The traits that [`Uint`] and [`Int`] implement for their storages.
 //!
-//! Each trait mirrors inherent items of the same names, which concrete types reach without the
-//! trait, also in constant contexts. Generic code reaches them through the traits, which have one
+//! Zero, the limits and one reach generic code in two layers. The general layer, [`FixedInteger`]
+//! and [`IntegerOne`], requires `Clone` but not `Copy` and has them as the functions `zero`,
+//! `min_value`, `max_value` and `one`, which return the inherent constants `ZERO`, `MIN`, `MAX` and
+//! `ONE`. The const layer, [`ConstFixedInteger`] and [`ConstIntegerOne`], adds `Copy` and the
+//! constants themselves, which a generic `const fn` can read. Every other item of the traits
+//! mirrors the inherent item of the same name, which a concrete type reaches without the trait,
+//! also in constant contexts. Generic code reaches the items through the traits, which have one
 //! implementation for every storage of a kind: the bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
 //! every trait that their default storages implement.
 
@@ -33,15 +38,22 @@ mod sealed {
   impl<B, R> Sealed for crate::Int<B, R> {}
 }
 
-/// An integer of a fixed number of bits that holds its value inline: [`Uint`] and [`Int`] over a
-/// native integer or an array of limbs.
+/// An integer of a fixed number of bits: [`Uint`] and [`Int`] over a native integer or an array of
+/// limbs.
 ///
-/// The constants and methods are the inherent items of the same names, which a concrete type
-/// reaches without this trait, also in constant contexts. Generic code reaches them through this
-/// trait, which the bound `B: BitWidth` provides on `Uint<B>` and `Int<B>`; a method call needs the
-/// trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`. The supertraits
-/// give generic code the operators `+`, `-` and `*`, their compound assignments and `Sum`, which
-/// on overflow panic or wrap as `overflow-checks` decides, as for the native integers.
+/// [`zero`](Self::zero), [`min_value`](Self::min_value) and [`max_value`](Self::max_value) return
+/// the inherent constants `ZERO`, `MIN` and `MAX`, and have no inherent counterparts; the other
+/// constants and methods are the inherent items of the same names, which a concrete type reaches
+/// without this trait, also in constant contexts. This trait requires `Clone` rather than `Copy`,
+/// so generic code bounded by it alone clones a value that it uses again; [`ConstFixedInteger`]
+/// adds `Copy` and the constants `ZERO`, `MIN` and `MAX`. Generic code reaches the items through
+/// this trait, which the bound `B: BitWidth` provides on `Uint<B>` and `Int<B>`; a method call
+/// needs the trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`. The
+/// supertraits give generic code the operators `+`, `-` and `*`, their compound assignments and
+/// `Sum`, which on overflow panic or wrap as `overflow-checks` decides, as for the native integers.
+/// The functions `zero`, `min_value` and `max_value`, and [`one`](IntegerOne::one), have the names
+/// of those of `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by traits of
+/// both crates names the trait in the path, as in `FixedInteger::zero()`.
 ///
 /// ```
 /// use numo::{
@@ -50,7 +62,7 @@ mod sealed {
 /// };
 ///
 /// fn is_max<T: FixedInteger>(value: T) -> bool {
-///   value == T::MAX
+///   value == T::max_value()
 /// }
 ///
 /// fn zeros<B: BitWidth>(values: &[Uint<B>]) -> usize {
@@ -58,19 +70,27 @@ mod sealed {
 /// }
 ///
 /// fn total<T: FixedInteger>(values: &[T]) -> T {
-///   values.iter().copied().sum()
+///   values.iter().cloned().sum()
+/// }
+///
+/// // The largest of the values, or the smallest value of the type if there are none.
+/// fn largest<T: FixedInteger>(values: &[T]) -> T {
+///   values.iter().fold(T::min_value(), |largest, value| largest.max(value.clone()))
 /// }
 ///
 /// assert!(is_max(u256::MAX) && is_max(Int::<U7>::MAX) && !is_max(Uint::<U7>::ZERO));
 /// assert_eq!(zeros(&[Uint::<U200>::ZERO, Uint::<U200>::MAX, Uint::<U200>::MIN]), 2);
 /// assert_eq!(<Int<U7> as FixedInteger>::BITS, 7);
 /// assert_eq!(total(&[Int::<U7>::new(50), Int::<U7>::new(-20)]), Int::<U7>::new(30));
+/// assert_eq!(total::<Int<U7>>(&[]), <Int<U7> as FixedInteger>::zero());
+/// assert_eq!(largest(&[Int::<U7>::new(-20), Int::<U7>::new(30)]), Int::<U7>::new(30));
+/// assert_eq!(largest::<Int<U7>>(&[]), Int::<U7>::MIN);
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait FixedInteger:
   Sealed
-  + Copy
+  + Clone
   + Eq
   + Ord
   + Hash
@@ -88,6 +108,58 @@ pub trait FixedInteger:
   /// The number of bits, `Bits`.
   const BITS: u32;
 
+  /// Returns zero.
+  #[must_use]
+  fn zero() -> Self;
+
+  /// Returns the smallest value.
+  #[must_use]
+  fn min_value() -> Self;
+
+  /// Returns the largest value.
+  #[must_use]
+  fn max_value() -> Self;
+
+  integer_query_table!(trait_items![]);
+}
+
+/// An integer of a fixed number of bits whose zero and limits are constants: [`Uint`] and [`Int`]
+/// over a native integer or an array of limbs.
+///
+/// `ZERO`, `MIN` and `MAX` are the inherent constants of the same names, which a concrete type
+/// reaches without this trait, also in constant contexts. Generic code reads them through this
+/// trait as `T::ZERO`, `T::MIN` and `T::MAX`, also in a generic `const fn`, which cannot call
+/// [`zero`](FixedInteger::zero), [`min_value`](FixedInteger::min_value) or
+/// [`max_value`](FixedInteger::max_value) because trait methods are not `const`. The supertrait
+/// `Copy` lets generic code use a value again without cloning it. The bound `B: BitWidth` provides
+/// this trait on `Uint<B>` and `Int<B>`, as it provides [`FixedInteger`].
+///
+/// ```
+/// use numo::{
+///   ConstFixedInteger, Int, Uint,
+///   typenum::U7,
+///   u7,
+/// };
+///
+/// // The smallest value, zero and the largest value, in a constant context.
+/// const fn limits<T: ConstFixedInteger>() -> [T; 3] {
+///   [T::MIN, T::ZERO, T::MAX]
+/// }
+///
+/// // The sum of a value and itself, which `Copy` keeps after the first use.
+/// fn doubled<T: ConstFixedInteger>(value: T) -> T {
+///   value + value
+/// }
+///
+/// const SIGNED: [Int<U7>; 3] = limits();
+/// const UNSIGNED: [Uint<U7>; 3] = limits();
+/// assert_eq!(SIGNED, [Int::<U7>::MIN, Int::<U7>::ZERO, Int::<U7>::MAX]);
+/// assert_eq!(UNSIGNED, [Uint::<U7>::ZERO, Uint::<U7>::ZERO, Uint::<U7>::MAX]);
+/// assert_eq!(doubled(u7::new(50)), u7::new(100));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait ConstFixedInteger: FixedInteger + Copy {
   /// Zero.
   const ZERO: Self;
 
@@ -96,8 +168,6 @@ pub trait FixedInteger:
 
   /// The largest value.
   const MAX: Self;
-
-  integer_query_table!(trait_items![]);
 }
 
 /// An unsigned integer of a fixed number of bits: [`Uint`].
@@ -187,26 +257,27 @@ pub trait SignedFixedInteger: Sealed + Sized + Neg<Output = Self> {
 /// An integer that holds one: [`Uint`] of at least one bit and [`Int`] of at least two bits, over a
 /// native integer or an array of limbs.
 ///
-/// `ONE` is the inherent constant of the same name, which a concrete type reaches without this
-/// trait, also in constant contexts. Zero bits hold only zero, so `Uint` of zero bits has no `ONE`,
-/// rather than one that is zero, and one bit holds only -1 and 0, so `Int` of fewer than two bits
-/// has none either, and neither has `Product`, which multiplies from `ONE`. Generic code over
-/// `B: BitWidth` adds `B: NonZero` for `Uint<B>`, or `B: IsGreater<U1, Output = True>` for
-/// `Int<B>`.
+/// [`one`](Self::one) returns the inherent constant `ONE` and has no inherent counterpart; a
+/// concrete type reaches `ONE` without this trait, also in constant contexts, and
+/// [`ConstIntegerOne`] gives it to generic code as a constant. Zero bits hold only zero, so `Uint`
+/// of zero bits has no `ONE`, rather than one that is zero, and one bit holds only -1 and 0, so
+/// `Int` of fewer than two bits has none either, and neither implements this trait or `Product`,
+/// which multiplies from `one`. Generic code over `B: BitWidth` adds `B: NonZero` for `Uint<B>`, or
+/// `B: IsGreater<U1, Output = True>` for `Int<B>`.
 ///
 /// ```
-/// use numo::{BitWidth, CheckedOps, HasOne, Uint, typenum::NonZero, u7};
+/// use numo::{BitWidth, CheckedOps, IntegerOne, Uint, typenum::NonZero, u7};
 ///
 /// fn successor<B: BitWidth + NonZero>(value: Uint<B>) -> Option<Uint<B>> {
 ///   value.checked_add(&Uint::<B>::ONE)
 /// }
 ///
-/// fn is_unit<T: HasOne>(value: T) -> bool {
-///   value == T::ONE
+/// fn is_unit<T: IntegerOne>(value: T) -> bool {
+///   value == T::one()
 /// }
 ///
-/// fn product<T: HasOne>(values: &[T]) -> T {
-///   values.iter().copied().product()
+/// fn product<T: IntegerOne>(values: &[T]) -> T {
+///   values.iter().cloned().product()
 /// }
 ///
 /// assert_eq!(successor(u7::new(126)), Some(u7::MAX));
@@ -216,13 +287,51 @@ pub trait SignedFixedInteger: Sealed + Sized + Neg<Output = Self> {
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait HasOne: FixedInteger + Product {
+pub trait IntegerOne: FixedInteger + Product {
+  /// Returns one.
+  #[must_use]
+  fn one() -> Self;
+}
+
+/// An integer that holds one as a constant: [`Uint`] of at least one bit and [`Int`] of at least
+/// two bits, over a native integer or an array of limbs.
+///
+/// `ONE` is the inherent constant of the same name, which a concrete type reaches without this
+/// trait, also in constant contexts. Generic code reads it through this trait as `T::ONE`, also in
+/// a generic `const fn`, which cannot call [`one`](IntegerOne::one). The widths that hold one are
+/// those of [`IntegerOne`], and every integer that implements it implements this trait too.
+///
+/// ```
+/// use numo::{ConstIntegerOne, Int, Uint, typenum::U7};
+///
+/// // Zero and one, in a constant context.
+/// const fn units<T: ConstIntegerOne>() -> [T; 2] {
+///   [T::ZERO, T::ONE]
+/// }
+///
+/// // The value plus one, which `Copy` keeps usable after the addition.
+/// fn successor<T: ConstIntegerOne>(value: T) -> (T, T) {
+///   (value + T::ONE, value)
+/// }
+///
+/// const SIGNED: [Int<U7>; 2] = units();
+/// const UNSIGNED: [Uint<U7>; 2] = units();
+/// assert_eq!(SIGNED, [Int::<U7>::ZERO, Int::<U7>::ONE]);
+/// assert_eq!(UNSIGNED, [Uint::<U7>::ZERO, Uint::<U7>::ONE]);
+/// assert_eq!(successor(Uint::<U7>::new(5)), (Uint::<U7>::new(6), Uint::<U7>::new(5)));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait ConstIntegerOne: IntegerOne + ConstFixedInteger {
   /// One.
   const ONE: Self;
 }
 
 /// An integer stored in a native integer: [`Uint`] over `u8`, `u16`, `u32`, `u64` or `u128`, and
 /// [`Int`] over `i8`, `i16`, `i32`, `i64` or `i128`.
+///
+/// This trait requires [`ConstFixedInteger`], so generic code bounded by it has `Copy` and the
+/// constants.
 ///
 /// ```
 /// use numo::{Int, NativeInteger, Uint, typenum::U7};
@@ -237,7 +346,7 @@ pub trait HasOne: FixedInteger + Product {
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait NativeInteger: FixedInteger {
+pub trait NativeInteger: ConstFixedInteger {
   /// The native integer that holds the value.
   type Native;
 
@@ -466,23 +575,60 @@ pub trait UncheckedOps: Sealed + Sized {
   unchecked_table!(trait_items![]);
 }
 
-// The constants are the inherent constants, which `Self::` names first.
+// The constants and methods are the inherent ones, which `Self::` names first, and the functions
+// without an inherent counterpart return the inherent constants.
 impl<B: FitsBits<R>, R: InlineUintRepr> FixedInteger for Uint<B, R> {
   const BITS: u32 = Self::BITS;
-  const ZERO: Self = Self::ZERO;
-  const MIN: Self = Self::MIN;
-  const MAX: Self = Self::MAX;
+
+  #[inline]
+  fn zero() -> Self {
+    Self::ZERO
+  }
+
+  #[inline]
+  fn min_value() -> Self {
+    Self::MIN
+  }
+
+  #[inline]
+  fn max_value() -> Self {
+    Self::MAX
+  }
 
   integer_query_table!(generic_items![]);
 }
 
 impl<B: FitsBits<R>, R: InlineIntRepr> FixedInteger for Int<B, R> {
   const BITS: u32 = Self::BITS;
+
+  #[inline]
+  fn zero() -> Self {
+    Self::ZERO
+  }
+
+  #[inline]
+  fn min_value() -> Self {
+    Self::MIN
+  }
+
+  #[inline]
+  fn max_value() -> Self {
+    Self::MAX
+  }
+
+  integer_query_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: InlineUintRepr> ConstFixedInteger for Uint<B, R> {
   const ZERO: Self = Self::ZERO;
   const MIN: Self = Self::MIN;
   const MAX: Self = Self::MAX;
+}
 
-  integer_query_table!(generic_items![]);
+impl<B: FitsBits<R>, R: InlineIntRepr> ConstFixedInteger for Int<B, R> {
+  const ZERO: Self = Self::ZERO;
+  const MIN: Self = Self::MIN;
+  const MAX: Self = Self::MAX;
 }
 
 impl<B: FitsBits<R>, R: InlineUintRepr> UnsignedFixedInteger for Uint<B, R> {
@@ -497,11 +643,27 @@ impl<B: FitsBits<R>, R: InlineIntRepr> SignedFixedInteger for Int<B, R> {
   signed_unchecked_table!(generic_items![]);
 }
 
-impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> HasOne for Uint<B, R> {
+impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> IntegerOne for Uint<B, R> {
+  #[inline]
+  fn one() -> Self {
+    Self::ONE
+  }
+}
+
+impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: InlineIntRepr> IntegerOne for Int<B, R> {
+  #[inline]
+  fn one() -> Self {
+    Self::ONE
+  }
+}
+
+impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> ConstIntegerOne for Uint<B, R> {
   const ONE: Self = Self::ONE;
 }
 
-impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: InlineIntRepr> HasOne for Int<B, R> {
+impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: InlineIntRepr> ConstIntegerOne
+  for Int<B, R>
+{
   const ONE: Self = Self::ONE;
 }
 

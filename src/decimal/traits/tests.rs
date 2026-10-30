@@ -598,10 +598,11 @@ mod collisions {
     reason = "every trait is in scope, as in code that imports all of them"
   )]
   use crate::{
-    ArrayInteger, CheckedOps, ConstDecimalOne, ConstFixedDecimal, ConvertTo, Decimal, DecimalOne,
-    DivRound, ExactMul, FixedDecimal, FixedInteger, FromLimbs, HasOne, NativeInteger,
-    OverflowingOps, SaturatingOps, SignedFixedDecimal, SignedFixedInteger, StrictOps, UncheckedOps,
-    UnsignedFixedDecimal, UnsignedFixedInteger, WidenTo, WrappingOps, i256, u256,
+    ArrayInteger, CheckedOps, ConstDecimalOne, ConstFixedDecimal, ConstFixedInteger,
+    ConstIntegerOne, ConvertTo, Decimal, DecimalOne, DivRound, ExactMul, FixedDecimal,
+    FixedInteger, FromLimbs, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps,
+    SignedFixedDecimal, SignedFixedInteger, StrictOps, UncheckedOps, UnsignedFixedDecimal,
+    UnsignedFixedInteger, WidenTo, WrappingOps, i256, u256,
   };
 
   type Price = Decimal<U10, U8>;
@@ -611,6 +612,24 @@ mod collisions {
   fn decimal_values<T>() -> [T; 9]
   where
     T: FixedDecimal + ConstFixedDecimal + DecimalOne + ConstDecimalOne,
+  {
+    [
+      T::zero(),
+      T::ZERO,
+      T::min_value(),
+      T::MIN,
+      T::max_value(),
+      T::MAX,
+      T::one(),
+      T::ONE,
+      T::default(),
+    ]
+  }
+
+  /// Zero, the limits and one through the functions and the constants, and the default.
+  fn integer_values<T>() -> [T; 9]
+  where
+    T: FixedInteger + ConstFixedInteger + IntegerOne + ConstIntegerOne,
   {
     [
       T::zero(),
@@ -653,8 +672,10 @@ mod collisions {
   fn signed_integer<T>(x: &T) -> (Option<T>, bool, bool, T, T)
   where
     T: FixedInteger
+      + ConstFixedInteger
       + SignedFixedInteger
-      + HasOne
+      + IntegerOne
+      + ConstIntegerOne
       + OverflowingOps
       + CheckedOps
       + WrappingOps
@@ -676,8 +697,10 @@ mod collisions {
   fn unsigned_integer<T>(x: &T) -> (Option<T>, bool)
   where
     T: FixedInteger
+      + ConstFixedInteger
       + UnsignedFixedInteger
-      + HasOne
+      + IntegerOne
+      + ConstIntegerOne
       + OverflowingOps
       + CheckedOps
       + WrappingOps
@@ -754,5 +777,35 @@ mod collisions {
     let concrete = (uint.checked_add(&u256::ONE), uint.is_zero());
     assert_eq!(concrete, (Some(u256::from_limbs([2, 0, 0, 0])), false));
     assert_eq!(unsigned_integer(&uint), concrete);
+
+    let concrete = [
+      u256::zero(),
+      u256::ZERO,
+      u256::min_value(),
+      u256::MIN,
+      u256::max_value(),
+      u256::MAX,
+      u256::one(),
+      u256::ONE,
+      u256::default(),
+    ];
+    let (zero, max, one) = (u256::ZERO, u256::MAX, u256::ONE);
+    assert_eq!(concrete, [zero, zero, zero, zero, max, max, one, one, zero]);
+    assert_eq!(integer_values::<u256>(), concrete);
+
+    let concrete = [
+      i256::zero(),
+      i256::ZERO,
+      i256::min_value(),
+      i256::MIN,
+      i256::max_value(),
+      i256::MAX,
+      i256::one(),
+      i256::ONE,
+      i256::default(),
+    ];
+    let (zero, min, max, one) = (i256::ZERO, i256::MIN, i256::MAX, i256::ONE);
+    assert_eq!(concrete, [zero, zero, min, min, max, max, one, one, zero]);
+    assert_eq!(integer_values::<i256>(), concrete);
   }
 }

@@ -477,23 +477,24 @@ pub trait IntReprMut: IntRepr + MutableRepr {}
 /// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`.
 ///
 /// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger), with the operators `+`, `-` and `*` and `Sum`,
-/// [`UnsignedFixedInteger`](crate::UnsignedFixedInteger) and
-/// [`SaturatingOps`](crate::SaturatingOps), and from one bit it has the constant `ONE` and
-/// implements [`HasOne`](crate::HasOne), with `Product`, for every `Repr` that implements this
-/// trait. The default storages of [`BitWidth`] are inline. This trait is sealed and cannot be
-/// implemented outside this crate.
+/// [`FixedInteger`](crate::FixedInteger) and [`ConstFixedInteger`](crate::ConstFixedInteger), with
+/// the operators `+`, `-` and `*` and `Sum`, [`UnsignedFixedInteger`](crate::UnsignedFixedInteger)
+/// and [`SaturatingOps`](crate::SaturatingOps), and from one bit it has the constant `ONE` and
+/// implements [`IntegerOne`](crate::IntegerOne) and [`ConstIntegerOne`](crate::ConstIntegerOne),
+/// with `Product`, for every `Repr` that implements this trait. The default storages of
+/// [`BitWidth`] are inline. This trait is sealed and cannot be implemented outside this crate.
 pub trait InlineUintRepr: UintReprMut + Copy + InlineUintConsts {}
 
 /// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
 /// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`.
 ///
 /// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger), with the operators `+`, `-` and `*` and `Sum`,
-/// [`SignedFixedInteger`](crate::SignedFixedInteger), with the operator `-`, and
-/// [`SaturatingOps`](crate::SaturatingOps), and from two bits it has the constant `ONE` and
-/// implements [`HasOne`](crate::HasOne), with `Product`, for every `Repr` that implements this
-/// trait. The default storages of [`BitWidth`] are inline. This trait is sealed and cannot be
+/// [`FixedInteger`](crate::FixedInteger) and [`ConstFixedInteger`](crate::ConstFixedInteger), with
+/// the operators `+`, `-` and `*` and `Sum`, [`SignedFixedInteger`](crate::SignedFixedInteger),
+/// with the operator `-`, and [`SaturatingOps`](crate::SaturatingOps), and from two bits it has the
+/// constant `ONE` and implements [`IntegerOne`](crate::IntegerOne) and
+/// [`ConstIntegerOne`](crate::ConstIntegerOne), with `Product`, for every `Repr` that implements
+/// this trait. The default storages of [`BitWidth`] are inline. This trait is sealed and cannot be
 /// implemented outside this crate.
 pub trait InlineIntRepr: IntReprMut + Copy + InlineIntConsts {}
 
@@ -992,12 +993,13 @@ limb_arrays!(
 /// Generic code with the bound `B: BitWidth` gets `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Debug`,
 /// `Display` and `Default` on `Uint<B>` and `Int<B>`, their constants `BITS`, `ZERO`, `MIN` and
 /// `MAX`, as in `Uint::<B>::MAX`, the operators, and the integer traits, such as
-/// [`FixedInteger`](crate::FixedInteger) and [`CheckedOps`](crate::CheckedOps), whose methods it
-/// calls with the trait in scope. `ONE` needs a width that holds one: `B: NonZero` for `Uint<B>`,
-/// and `B: IsGreater<U1, Output = True>` for `Int<B>`. The methods of the traits are not `const`,
-/// and the inherent `const fn`s belong to each storage, so a constant context calls them on a
-/// concrete type, such as `Uint<U7>`, or an alias. This trait is sealed and cannot be implemented
-/// outside this crate.
+/// [`FixedInteger`](crate::FixedInteger), [`ConstFixedInteger`](crate::ConstFixedInteger) and
+/// [`CheckedOps`](crate::CheckedOps), whose methods it calls with the trait in scope. `ONE` and
+/// the traits [`IntegerOne`](crate::IntegerOne) and [`ConstIntegerOne`](crate::ConstIntegerOne)
+/// need a width that holds one: `B: NonZero` for `Uint<B>`, and `B: IsGreater<U1, Output = True>`
+/// for `Int<B>`. The methods of the traits are not `const`, and the inherent `const fn`s belong to
+/// each storage, so a constant context calls them on a concrete type, such as `Uint<U7>`, or an
+/// alias. This trait is sealed and cannot be implemented outside this crate.
 ///
 /// ```
 /// use numo::{
