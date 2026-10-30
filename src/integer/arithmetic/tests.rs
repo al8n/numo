@@ -1670,8 +1670,9 @@ fn values_of<T>(bits: u32, signed: bool, from: impl Fn(i128) -> T) -> Vec<T> {
 /// `UncheckedOps` and `SignedFixedInteger`: each is called only where the checked method returns
 /// a value, and both paths must return that value. Each operation must be called at least once,
 /// so that the check cannot pass where the checked methods return no value: zero, which every set
-/// of values here holds, gives each operation a call, and at zero bits each is called exactly once,
-/// on zero.
+/// of values here holds, gives each operation but the exact division a call, and at zero bits each
+/// of these is called exactly once, on zero. The exact division needs a nonzero divisor, which
+/// every width but zero bits holds, so it is not called at zero bits, whose only divisor is zero.
 macro_rules! check_unchecked {
   (@neg $x:ident, $calls:ident) => {
     if let Some(negated) = $x.checked_neg() {
