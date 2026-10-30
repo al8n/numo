@@ -1360,9 +1360,9 @@ fn bit_width_gives_one_and_product() {
 
 /// The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` the families, `IntegerMath`, the traits of
 /// each sign and `UnsignedMath` and `SignedMath`, with their operators, the constants of the const
-/// layer, and with a width that holds one,
-/// `IntegerOne`, `ConstIntegerOne` and `Product`. Every storage is updated in place, and
-/// representative storages have every form of the operators, of `Sum` and of `Product`.
+/// layer, and with a width that holds one, `IntegerOne`, `ConstIntegerOne` and `Product`. Every
+/// storage is updated in place, and representative storages have every form of the operators, of
+/// `Sum` and of `Product`.
 #[test]
 fn arithmetic_trait_surface() {
   fn families<T>()
