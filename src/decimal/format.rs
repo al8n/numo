@@ -17,7 +17,8 @@ struct Parts<'a> {
   leading_zeros: usize,
   /// Fraction digits from the magnitude, ending at the last nonzero digit.
   fraction: &'a str,
-  /// Zeros after `fraction` requested by the precision.
+  /// Zeros after `fraction` requested by the precision, or by the scale of a
+  /// [`Scaled`](crate::Scaled).
   trailing_zeros: usize,
   /// The marker and value of the exponent of scientific notation, as in `e-4`, after the digits.
   exponent: Option<&'a str>,
@@ -69,12 +70,15 @@ impl Parts<'_> {
 ///
 /// The shortest exact form is padded like an integer: `+` adds a sign to non-negative values, `0`
 /// pads with zeros after the sign, and otherwise the fill character pads to the width with the
-/// requested alignment, right by default. The precision is the minimum number of fraction digits.
+/// requested alignment, right by default. `min_fraction` is the minimum number of fraction digits:
+/// a shorter fraction is padded with zeros, which are written in chunks. The precision of `f` is
+/// not read; the caller passes it in `min_fraction`.
 pub(super) fn write(
   f: &mut Formatter<'_>,
   negative: bool,
   digits: &[u8],
   fraction: usize,
+  min_fraction: usize,
 ) -> fmt::Result {
   let (integral, fraction_digits, leading_zeros) = match digits.len().checked_sub(fraction) {
     Some(integral_len) if integral_len > 0 => {
@@ -93,9 +97,7 @@ pub(super) fn write(
     len => (leading_zeros, &fraction_digits[..len]),
   };
   let shown = leading_zeros + fraction_digits.len();
-  let trailing_zeros = f
-    .precision()
-    .map_or(0, |precision| precision.saturating_sub(shown));
+  let trailing_zeros = min_fraction.saturating_sub(shown);
 
   let sign = if negative {
     Some('-')

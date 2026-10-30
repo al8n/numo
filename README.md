@@ -79,7 +79,7 @@ fn main() -> Result<(), ParseError> {
   154. The type has the size, alignment and ABI of `Repr`.
 - With a signed `Repr`, the range is symmetric and `Neg` is implemented. With an unsigned `Repr`,
   values run from zero to `MAX`, there is no negation, `checked_sub` returns `None` below zero,
-  and parsing rejects a leading `-`, even in `-0`.
+  and parsing rejects a negative number as `Negative`, even `-0`.
 - Zero digits, more than 154 digits, or a `Repr` that is too small are rejected during type
   checking. With the default `Repr`, zero or more than 153 digits fail wherever the type is
   written; with an explicit `Repr`, the type's constants and constructors fail, so no value of it
@@ -114,6 +114,40 @@ fn main() -> Result<(), ParseError> {
   not fit is `OutOfRange` or `Inexact`, never rounded.
 - `Display` writes the shortest exact text, without an exponent, and `{:e}` and `{:E}` write it in
   scientific notation, such as `6.42505e4`. Format precision pads with zeros but never rounds.
+
+## `Scaled`
+
+A `Decimal` writes the shortest exact text, so `0.00100000` reads as `0.001` and writes back as
+`0.001`. `Scaled<D>` keeps the scale of the text beside the decimal, the number of fraction digits
+that the text showed, for code that must write a text back as it came. It parses with the grammar
+of `Decimal::parse`, in a `const fn` of each storage and through `FromStr`, writes at least as many
+fraction digits as its scale, and compares, orders and hashes by value only. Every decimal trait is
+implemented for it over any decimal, so generic code takes a `Scaled` and a bare decimal alike: a
+sum takes the larger scale, an exact product the sum of the scales, and a rounded value or a
+quotient the fraction digits of its target type. A scale above 255 is `ScaleTooLarge`, which only
+the `parse` of `Scaled` reports.
+
+```rust
+use numo::{
+  Decimal, FixedDecimal, ParseError, Scaled,
+  typenum::{U8, U10},
+};
+
+type Price = Scaled<Decimal<U10, U8>>;
+
+fn main() -> Result<(), ParseError> {
+  let price: Price = "64250.50000".parse()?;
+  assert_eq!(price.to_string(), "64250.50000");
+  assert_eq!(price.scale(), 5);
+
+  // The scale is presentation only, and a sum takes the larger one.
+  assert_eq!(price, "64250.5".parse()?);
+  let tick: Price = "0.10".parse()?;
+  assert_eq!(price.checked_add(&tick).unwrap().to_string(), "64250.60000");
+
+  Ok(())
+}
+```
 
 ## Wide storage
 

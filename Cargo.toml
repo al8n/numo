@@ -45,7 +45,10 @@ serde_core = { version = "1", default-features = false, optional = true }
 bigdecimal = "0.4"
 criterion = "0.8"
 num-bigint = "0.5"
+postcard = { version = "1", features = ["use-std"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
+# `serde` with its derive, renamed because the crate has a feature named `serde`.
+serde_full = { package = "serde", version = "1", features = ["derive"] }
 serde_json = "1"
 serde_test = "1"
 trybuild = "1"

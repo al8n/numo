@@ -12,17 +12,20 @@ pub(super) struct Digits {
   /// The coefficient is the integer formed by the digits between `start` and `end`, times
   /// `10^scale`.
   pub(super) scale: u32,
+  /// The scale of the text: the number of fraction digits written, not counting `_`, minus the
+  /// exponent, and at least 0; `None` if it is above 255.
+  pub(super) text_scale: Option<u8>,
 }
 
-/// Validates `input` for a decimal with `integral` integral and `fraction` fraction digits, and a
-/// `-` sign only if `signed`, and locates the digits of its coefficient.
+/// Validates `input` for a decimal with `integral` integral and `fraction` fraction digits, and
+/// negative values only if `signed`, and locates the digits of its coefficient.
 ///
 /// The grammar is the one documented on `parse`. Errors are reported in priority order: `Empty`;
-/// `InvalidSyntax` if the whole input does not match the grammar, or if it starts with `-` and
-/// `signed` is `false`; `NotFinite` for an infinity or a NaN; `OutOfRange` if, after the exponent
-/// moves the point, the integral part has more than `integral` digits after its leading zeros;
-/// `Inexact` if a nonzero digit then falls beyond the first `fraction` fraction digits. Runs in
-/// linear time and constant space.
+/// `InvalidSyntax` if the whole input does not match the grammar; `NotFinite` for an infinity or a
+/// NaN; `Negative` if the input starts with `-` and `signed` is `false`, whatever the magnitude;
+/// `OutOfRange` if, after the exponent moves the point, the integral part has more than `integral`
+/// digits after its leading zeros; `Inexact` if a nonzero digit then falls beyond the first
+/// `fraction` fraction digits. Runs in linear time and constant space.
 pub(super) const fn scan(
   input: &[u8],
   integral: u32,
@@ -35,9 +38,6 @@ pub(super) const fn scan(
   }
 
   let negative = input[0] == b'-';
-  if negative && !signed {
-    return Err(ParseError::new(ParseErrorKind::InvalidSyntax));
-  }
   let mut pos = if negative || input[0] == b'+' { 1 } else { 0 };
 
   // A finite number starts with a digit or a point; anything else must be an infinity or a NaN.
@@ -122,6 +122,26 @@ pub(super) const fn scan(
     return Err(ParseError::new(ParseErrorKind::InvalidSyntax));
   }
 
+  // The input is a finite number. An unsigned target holds no negative value, not even zero, so
+  // the sign is decided before the value.
+  if negative && !signed {
+    return Err(ParseError::new(ParseErrorKind::Negative));
+  }
+
+  // The digit counts are at most `isize::MAX` and the exponent's magnitude at most `u64::MAX`, so
+  // `i128` holds every intermediate result below.
+  let exponent = if exponent_negative {
+    -(exponent as i128)
+  } else {
+    exponent as i128
+  };
+  // A saturated exponent gives a scale above 255 or below 0 as the exact one would.
+  let text_scale = match (digits - integral_digits) as i128 - exponent {
+    scale if scale <= 0 => Some(0),
+    scale if scale <= u8::MAX as i128 => Some(scale as u8),
+    _ => None,
+  };
+
   if end == 0 {
     // Zero, whatever the sign and the exponent.
     return Ok(Digits {
@@ -129,19 +149,14 @@ pub(super) const fn scan(
       start,
       end,
       scale: 0,
+      text_scale,
     });
   }
 
   // After the exponent moves it, the point follows the first `point` digits of the mantissa, or
   // precedes them by `-point` zeros. The integral part then has `point - leading_zeros` digits
   // after its leading zeros, and the last nonzero digit is fraction digit
-  // `significant_end - point`. The digit counts are at most `isize::MAX` and the exponent's
-  // magnitude at most `u64::MAX`, so `i128` holds every intermediate result.
-  let exponent = if exponent_negative {
-    -(exponent as i128)
-  } else {
-    exponent as i128
-  };
+  // `significant_end - point`.
   let point = exponent + integral_digits as i128;
   if point - leading_zeros as i128 > integral as i128 {
     return Err(ParseError::new(ParseErrorKind::OutOfRange));
@@ -156,6 +171,7 @@ pub(super) const fn scan(
     start,
     end,
     scale: scale as u32,
+    text_scale,
   })
 }
 

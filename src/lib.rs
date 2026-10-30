@@ -35,8 +35,8 @@
 //! [`div_round`](Decimal::div_round) divides into any decimal type, while
 //! [`is_multiple_of`](Decimal::is_multiple_of) checks a value against a step without rounding it.
 //! Parsing accepts decimal and exponent notation with `_` separators, including every form that
-//! `f64` parses, and rejects infinity, NaN and digits that do not fit; formatting writes the
-//! shortest exact text. See [`Decimal`] for the details.
+//! `f64` parses, and rejects infinity, NaN, a negative number for an unsigned storage and digits
+//! that do not fit; formatting writes the shortest exact text. See [`Decimal`] for the details.
 //!
 //! Every decimal type has the constants `INTEGRAL`, `FRACTION` and `DIGITS`, its digit counts, and
 //! `SIGNED`, whether its storage is signed. Generic code reaches the constants and methods through
@@ -49,6 +49,37 @@
 //! [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] have the methods between decimal
 //! types. Code generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`. The trait
 //! methods are not `const`, so constant contexts call the inherent `const fn`s.
+//!
+//! # The scale of a text
+//!
+//! A decimal's text depends only on its value, so `0.00100000` reads as `0.001` and writes back
+//! as `0.001`. [`Scaled<D>`](Scaled) keeps the scale of the text beside the decimal, the number of
+//! fraction digits that the text showed, for code that must write a text back as it came. It reads
+//! the grammar of [`parse`](Decimal::parse), writes at least as many fraction digits as its scale,
+//! and compares, orders and hashes by value only. Every decimal trait is implemented for it over
+//! any decimal, so generic code takes a `Scaled` and a bare decimal alike: a sum takes the larger
+//! scale, an exact product the sum of the scales, and a rounded value or a quotient the fraction
+//! digits of its target type. Code generic over the decimal `D` adds the bound
+//! `Scaled<D>: FixedDecimal`.
+//!
+//! ```
+//! use numo::{
+//!   Decimal, FixedDecimal, Scaled,
+//!   typenum::{U8, U10},
+//! };
+//!
+//! type Price = Scaled<Decimal<U10, U8>>;
+//!
+//! let price: Price = "64250.50000".parse()?;
+//! assert_eq!(price.to_string(), "64250.50000");
+//! assert_eq!(price.scale(), 5);
+//!
+//! // The scale is presentation only, and a sum takes the larger one.
+//! assert_eq!(price, "64250.5".parse()?);
+//! let tick: Price = "0.10".parse()?;
+//! assert_eq!(price.checked_add(&tick).unwrap().to_string(), "64250.60000");
+//! # Ok::<(), numo::ParseError>(())
+//! ```
 //!
 //! # Wide storage
 //!
@@ -213,7 +244,7 @@
 //!
 //! # `serde`
 //!
-//! The `serde` feature implements `Serialize` and `Deserialize` for [`Decimal`] and
+//! The `serde` feature implements `Serialize` and `Deserialize` for [`Decimal`], [`Scaled`] and
 //! [`RoundingMode`]. The impls are written against `serde_core`, whose traits `serde` re-exports
 //! from version 1.0.220 on, so they need a build whose `serde` is 1.0.220 or later; an older
 //! `serde` defines traits of its own. The feature enables `serde_core` without its default
@@ -225,8 +256,16 @@
 //! rejects a number, so a decimal never passes through a binary floating-point value, which would
 //! change `16.7` to the nearest `f64`. Nor is the coefficient written alone: it depends on the
 //! number of fraction digits, and read back into a type with another number it would be off by a
-//! power of ten. A rounding mode is written as its lowercase name, such as `"halfeven"`, and
-//! read from a name of any case, with the words of a half mode optionally separated.
+//! power of ten. A `Scaled` is written as its text with its scale and read with the scale of the
+//! text, in the same way. A rounding mode is written as its lowercase name, such as `"halfeven"`,
+//! and read from a name of any case, with the words of a half mode optionally separated.
+//!
+//! No error of reading a decimal or a `Scaled` names the rejected input. Every input but a string,
+//! such as a number, gets the fixed message `expected a decimal value as a string`, which also
+//! replaces any error of the format that would describe the input. Every other error of the format,
+//! such as the end of the input, an I/O error or a missing field, passes through unchanged, and a
+//! string that does not parse reports its [`ParseError`]. This covers decimal values only: reading
+//! a rounding mode reports the rejected name and the accepted ones.
 //!
 //! # `arbitrary`, `proptest` and `quickcheck`
 //!
@@ -335,7 +374,7 @@ pub use typenum;
 pub use aliases::*;
 pub use decimal::{
   ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalOne, DivRound,
-  DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError,
+  DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError, Scaled,
   SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 pub use integer::{

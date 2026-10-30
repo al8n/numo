@@ -247,7 +247,7 @@ fn significant_digits(text: &str) -> usize {
 }
 
 /// The coefficient that `input` denotes for `integral` and `fraction` digits, where only a signed
-/// storage accepts a leading `-`.
+/// storage accepts a negative number and an unsigned one reports it as `Negative`.
 ///
 /// The crate scans the input once, byte by byte, and tracks digit positions. This reference splits
 /// the text with string methods instead, and computes the value with big-integer powers of ten.
@@ -261,7 +261,6 @@ fn oracle_parse(
     return Err(ParseErrorKind::Empty);
   }
   let (negative, body) = match input.strip_prefix('-') {
-    Some(_) if !signed => return Err(ParseErrorKind::InvalidSyntax),
     Some(rest) => (true, rest),
     None => (false, input.strip_prefix('+').unwrap_or(input)),
   };
@@ -318,6 +317,12 @@ fn oracle_parse(
       }
     }
   };
+
+  // The input is a finite number, which an unsigned storage rejects when it is negative, whatever
+  // its value.
+  if negative && !signed {
+    return Err(ParseErrorKind::Negative);
+  }
 
   let mantissa: BigInt = format!("{integral_text}{fraction_text}")
     .replace('_', "")
@@ -904,13 +909,13 @@ suite!(d1x30: Decimal<U1, U30>, i128, signed, integral = 1, fraction = 30);
 /// share a mistake unnoticed.
 #[test]
 fn hand_computed_examples() {
-  use ParseErrorKind::{Empty, Inexact, InvalidSyntax, NotFinite, OutOfRange};
+  use ParseErrorKind::{Empty, Inexact, InvalidSyntax, Negative, NotFinite, OutOfRange};
 
   type Signed = Decimal<U4, U4>;
   type Unsigned = Decimal<U4, U4, u32>;
 
   // Coefficients for four integral and four fraction digits. An unsigned storage gives the same
-  // result, except that it rejects every input that starts with `-`.
+  // result, except that a finite number with a leading `-` is negative, whatever its value.
   let cases: &[(&str, Result<i64, ParseErrorKind>)] = &[
     ("", Err(Empty)),
     (" ", Err(InvalidSyntax)),
@@ -940,6 +945,8 @@ fn hand_computed_examples() {
     ("12345", Err(OutOfRange)),
     ("0.00001", Err(Inexact)),
     ("12345.00001", Err(OutOfRange)),
+    ("-12345", Err(OutOfRange)),
+    ("-0.00001", Err(Inexact)),
     ("inf", Err(NotFinite)),
     ("-Infinity", Err(NotFinite)),
     ("+sNaN", Err(NotFinite)),
@@ -954,18 +961,19 @@ fn hand_computed_examples() {
     (".", Err(InvalidSyntax)),
     ("+", Err(InvalidSyntax)),
     ("-", Err(InvalidSyntax)),
+    ("--1", Err(InvalidSyntax)),
     ("e5", Err(InvalidSyntax)),
     ("1e", Err(InvalidSyntax)),
     ("1e+", Err(InvalidSyntax)),
     ("1,5", Err(InvalidSyntax)),
     ("0x1", Err(InvalidSyntax)),
     ("1e999_x", Err(InvalidSyntax)),
+    ("-1e999_x", Err(InvalidSyntax)),
   ];
   for &(input, expected) in cases {
-    let unsigned = if input.starts_with('-') {
-      Err(InvalidSyntax)
-    } else {
-      expected
+    let unsigned = match expected {
+      Ok(_) | Err(OutOfRange | Inexact) if input.starts_with('-') => Err(Negative),
+      other => other,
     };
     let expected = expected.map(BigInt::from);
     let unsigned = unsigned.map(BigInt::from);
@@ -1413,9 +1421,31 @@ proptest! {
         "input {:?}",
         input
       );
+      prop_assert!(
+        !matches!(unsigned_result, Err(ParseErrorKind::InvalidSyntax)),
+        "input {:?}",
+        input
+      );
+    }
+
+    // The unsigned storage gives the result of the signed one, except that a finite number with a
+    // leading `-` is negative, whatever its value.
+    let negative = input.starts_with('-')
+      && matches!(
+        signed_result,
+        Ok(_) | Err(ParseErrorKind::OutOfRange | ParseErrorKind::Inexact)
+      );
+    if negative {
       prop_assert_eq!(
-        matches!(unsigned_result, Err(ParseErrorKind::InvalidSyntax)),
-        input.starts_with('-'),
+        unsigned_result,
+        Err(ParseErrorKind::Negative),
+        "input {:?}",
+        input
+      );
+    } else {
+      prop_assert_eq!(
+        unsigned_result.map(|value| i128::from(value.repr())),
+        signed_result.map(|value| i128::from(value.repr())),
         "input {:?}",
         input
       );

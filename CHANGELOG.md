@@ -20,9 +20,14 @@ FEATURES
     The flags work as for `Display`, and the precision is the minimum number of mantissa fraction
     digits, so it never rounds, unlike the precision of the primitive types.
   - Unsigned storages from `u8` to `u128`, named explicitly (`u64` holds 19 digits, one more than
-    `i64`): values are never negative, parsing rejects a leading `-`, and `checked_sub` returns
-    `None` below zero. The product of two unsigned storages is unsigned, `widen` never converts a
-    signed storage to an unsigned one, and `try_convert` reports a negative value as `OutOfRange`.
+    `i64`): values are never negative, parsing reports a negative number as
+    `ParseErrorKind::Negative`, and `checked_sub` returns `None` below zero. The product of two
+    unsigned storages is unsigned, `widen` never converts a signed storage to an unsigned one, and
+    `try_convert` reports a negative value as `OutOfRange`.
+  - `ParseErrorKind::Negative`, for `-` followed by a finite number read into an unsigned storage,
+    whatever its magnitude, `-0` included. `-` alone, a second sign and other invalid text after
+    the sign are `InvalidSyntax`, and `-inf` is `NotFinite`. The kind comes after `NotFinite` and
+    before `OutOfRange`, as the sign is decided after the syntax and before the value.
   - Wide storages: `i192`, `i256`, `i320`, `i384`, `i448` and `i512` hold 57, 76, 96, 115, 134 and
     153 digits, and `u192`, `u256`, `u320`, `u384`, `u448` and `u512` hold 57, 77, 96, 115, 134 and
     154, so any uint256 amount fits `Decimal<U60, U18, u320>`. They have the same constants,
@@ -50,6 +55,27 @@ FEATURES
     which implements `FixedDecimal`. Because the implementations are per storage, code generic over
     `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`. The trait methods are not
     `const`; constant contexts use the inherent `const fn`s.
+- `Scaled<D>`: a decimal with the scale of its text, the number of fraction digits that the text
+  showed, for code that must write a text back as it came.
+  - A `const fn` `parse` for each storage and `FromStr` read the grammar of `Decimal::parse` and
+    keep the scale: the fraction digits written, not counting `_`, minus the exponent, and at least
+    0, which may exceed the fraction digits of the decimal. A scale above 255 is the new
+    `ParseErrorKind::ScaleTooLarge`, which only a text that `Decimal::parse` accepts can give, and
+    which `Decimal::parse` never reports.
+  - `Display` writes at least as many fraction digits as the scale, or the precision where it is
+    larger, never rounded and without allocation; with scale 0 it writes what the decimal writes.
+    `Debug` shows the scale, while equality, ordering and hashing compare the value only.
+  - `const fn` `new`, `value` and `scale`, and `into_value` and `into_parts`. `From` and `Default`
+    give scale 0.
+  - Every decimal trait, implemented once for every decimal that implements it, so that generic
+    code takes a `Scaled` and a bare decimal alike: `FixedDecimal`, `ConstFixedDecimal`, the sign
+    traits, `DecimalOne` and `ConstDecimalOne`, and `ExactMul`, `WidenTo`, `ConvertTo` and
+    `DivRound` between `Scaled` types, with no mixed implementations. Sums take the larger scale,
+    exact products the sum of the scales, saturating at 255, quantized values the scale of the
+    step, widened and exactly converted values their own, rounded values and quotients the
+    fraction digits of their target type, and zero, the limits, one and a value made from a
+    coefficient scale 0. A concrete `Scaled<Decimal<I, F, R>>` needs no bound; code generic over
+    the decimal `D` adds the bound `Scaled<D>: FixedDecimal`.
 - `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown` and
   `HalfEven`. Rounding happens only where a mode is given, for native and wide storages alike:
   - `round_to` converts to any decimal type as `try_convert` does, but rounds dropped fraction
@@ -65,9 +91,12 @@ FEATURES
     only when both storages are unsigned.
   - `const fn` `is_multiple_of` checks a value against a step without rounding it.
 - The `serde` feature: `Decimal` is written as its text and read from a string, never from a number,
-  in every format, and `RoundingMode` as its lowercase name, read leniently, without allocation. The
-  impls use `serde_core`, so they need `serde` 1.0.220 or later in the build; the feature enables no
-  feature of any other crate.
+  in every format, `Scaled` likewise with the scale of its text, and `RoundingMode` as its lowercase
+  name, read leniently, without allocation. No error of reading a decimal or a `Scaled` names the
+  rejected input: every input but a string gets the fixed message
+  `expected a decimal value as a string`, which also replaces a format error that would describe
+  the input, while every other format error keeps its category. The impls use `serde_core`, so they
+  need `serde` 1.0.220 or later in the build; the feature enables no feature of any other crate.
 - The `arbitrary`, `proptest` and `quickcheck` features: the `Arbitrary` trait of each crate for
   `Decimal` and `RoundingMode`, for fuzzing and property tests on a target with `std`. One generator
   serves all three: an edge value one time in eight (zero, one unit in the last place, one, `MAX`,

@@ -3,8 +3,8 @@ use core::{ops::Neg, str::FromStr};
 use typenum::NonZero;
 
 use super::{
-  ConstDecimalOne, ConstFixedDecimal, Decimal, DecimalOne, FixedDecimal, ParseError, QuantizeError,
-  SignedFixedDecimal, UnsignedFixedDecimal, parse,
+  ConstDecimalOne, ConstFixedDecimal, Decimal, DecimalOne, FixedDecimal, ParseError,
+  ParseErrorKind, QuantizeError, Scaled, SignedFixedDecimal, UnsignedFixedDecimal, parse,
 };
 use crate::{
   i192, i256, i320, i384, i448, i512, int, layout::Layout, rounding::RoundingMode, u192, u256,
@@ -12,9 +12,10 @@ use crate::{
 };
 
 /// Implements the constants, `const fn` methods and traits that depend only on the storage, for
-/// each listed storage with its sign, `signed` or `unsigned`, and its kind, `native` or `wide`.
-/// The kind selects how a coefficient goes to the storage's module in `int`, and how the examples
-/// import the storage and spell its coefficients.
+/// each listed storage with its sign, `signed` or `unsigned`, and its kind, `native` or `wide`,
+/// and the parsing of a [`Scaled`] over a decimal of the storage. The kind selects how a
+/// coefficient goes to the storage's module in `int`, and how the examples import the storage and
+/// spell its coefficients.
 macro_rules! storage_decimal {
   ($($repr:ident: $sign:ident $kind:ident),+ $(,)?) => {$(
     storage_decimal!(@by $sign $repr $kind);
@@ -46,6 +47,80 @@ macro_rules! storage_decimal {
       type Err = ParseError;
 
       /// Parses a decimal from text; see [`parse`](Self::parse).
+      #[inline]
+      fn from_str(s: &str) -> Result<Self, ParseError> {
+        Self::parse(s)
+      }
+    }
+
+    impl<I, F> Scaled<Decimal<I, F, $repr>>
+    where
+      (I, F): Layout<$repr>,
+    {
+      /// Parses a decimal and the scale of its text, exactly.
+      ///
+      /// The text is read as [`Decimal::parse`] reads it, with the same grammar, value and
+      /// errors. The scale is the number of fraction digits written, not counting `_`, minus the
+      /// exponent, and at least 0: `2.50` and `250e-2` have scale 2, and `1E+2` has scale 0. It
+      /// may exceed `Fraction`, so a type with one fraction digit keeps `2.5000` with scale 4.
+      ///
+      /// Runs in linear time and constant space.
+      ///
+      /// # Errors
+      ///
+      /// The kinds that `Decimal::parse` reports, in its order, and then
+      /// [`ScaleTooLarge`](crate::ParseErrorKind::ScaleTooLarge) if the scale is above 255. The
+      /// value is decided first, so a text with more than 255 fraction digits that the type cannot
+      /// hold reports why it cannot.
+      ///
+      /// # Examples
+      ///
+      /// ```
+      #[doc = storage_decimal!(@use "Decimal, ParseErrorKind, Scaled", $sign $kind $repr)]
+      ///
+      #[doc = concat!("type S = Scaled<Decimal<U1, U1, ", stringify!($repr), ">>;")]
+      ///
+      /// let price = S::parse("2.50")?;
+      /// assert_eq!(price.to_string(), "2.50");
+      /// assert_eq!(price.scale(), 2);
+      /// assert_eq!(S::parse("250e-2")?.to_string(), "2.50");
+      /// assert_eq!(S::parse("2.5000")?.to_string(), "2.5000");
+      ///
+      /// let kind = |text: &str| S::parse(text).map_err(|err| err.kind());
+      /// assert_eq!(kind("1e1"), Err(ParseErrorKind::OutOfRange));
+      /// assert_eq!(kind(&format!("0.{}", "0".repeat(255))).map(|zero| zero.scale()), Ok(255));
+      /// assert_eq!(kind(&format!("0.{}", "0".repeat(256))), Err(ParseErrorKind::ScaleTooLarge));
+      /// # Ok::<(), numo::ParseError>(())
+      /// ```
+      pub const fn parse(s: &str) -> Result<Self, ParseError> {
+        let input = s.as_bytes();
+        let digits = match parse::scan(
+          input,
+          Decimal::<I, F, $repr>::INTEGRAL,
+          Decimal::<I, F, $repr>::FRACTION,
+          Decimal::<I, F, $repr>::SIGNED,
+        ) {
+          Ok(digits) => digits,
+          Err(err) => return Err(err),
+        };
+        match digits.text_scale {
+          // The path names the storage: each storage has its own `from_digits`.
+          Some(scale) => Ok(Self::new(
+            Decimal::<I, F, $repr>::from_digits(input, &digits),
+            scale,
+          )),
+          None => Err(ParseError::new(ParseErrorKind::ScaleTooLarge)),
+        }
+      }
+    }
+
+    impl<I, F> FromStr for Scaled<Decimal<I, F, $repr>>
+    where
+      (I, F): Layout<$repr>,
+    {
+      type Err = ParseError;
+
+      /// Parses a decimal and the scale of its text; see [`parse`](Self::parse).
       #[inline]
       fn from_str(s: &str) -> Result<Self, ParseError> {
         Self::parse(s)
@@ -157,13 +232,13 @@ macro_rules! storage_decimal {
     {
       /// Reads a decimal from a string in the syntax of [`parse`](Self::parse), in every format.
       /// Any other input, such as a number, is rejected, so a decimal never passes through a
-      /// binary floating-point value; a string that does not parse reports its
-      /// [`ParseError`](crate::ParseError).
+      /// binary floating-point value, with a fixed message that names nothing of the input; a
+      /// string that does not parse reports its [`ParseError`](crate::ParseError).
       fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
       where
         D: serde_core::Deserializer<'de>,
       {
-        deserializer.deserialize_str(crate::serde::TextVisitor::new())
+        crate::serde::deserialize_text(deserializer)
       }
     }
   )+};
@@ -326,17 +401,21 @@ macro_rules! storage_decimal {
       /// ```
       pub const fn parse(s: &str) -> Result<Self, ParseError> {
         let input = s.as_bytes();
-        let digits = match parse::scan(input, Self::INTEGRAL, Self::FRACTION, true) {
-          Ok(digits) => digits,
-          Err(err) => return Err(err),
-        };
+        match parse::scan(input, Self::INTEGRAL, Self::FRACTION, true) {
+          Ok(digits) => Ok(Self::from_digits(input, &digits)),
+          Err(err) => Err(err),
+        }
+      }
+
+      /// Builds the value whose coefficient `scan` located in `input`.
+      const fn from_digits(input: &[u8], digits: &parse::Digits) -> Self {
         let mut coeff =
           int::$repr::push_digits($($by)* int::$repr::ZERO, input, digits.start, digits.end);
         coeff = int::$repr::mul_pow10($($by)* coeff, digits.scale);
         if digits.negative {
           coeff = int::$repr::neg($($by)* coeff);
         }
-        Ok(Self::from_coeff(coeff))
+        Self::from_coeff(coeff)
       }
 
       /// Adds two values, returning `None` if the sum is outside the range of the type.
@@ -572,15 +651,16 @@ macro_rules! storage_decimal {
       ///
       /// The input is ASCII text in the following grammar, in which letters match in either case.
       /// It accepts the numeric strings of the General Decimal Arithmetic specification, every
-      /// form that [`f64`] parses with [`FromStr`], and `_` separators as in Rust literals, except
-      /// that the number has no `-` sign: as for the unsigned integers of the standard library, a
-      /// leading `-` is rejected, even in `-0` or `-inf`. The sign of the exponent may be `-`.
+      /// form that [`f64`] parses with [`FromStr`], and `_` separators as in Rust literals. The
+      /// storage holds no negative value, so a number with a leading `-` is rejected as
+      /// [`Negative`](crate::ParseErrorKind::Negative), even `-0`, while the sign of the exponent
+      /// may be `-`.
       ///
       /// ```text
-      /// number     = ["+"] (finite / nonfinite)
+      /// number     = [sign] (finite / nonfinite)
+      /// sign       = "+" / "-"
       /// finite     = (digits ["." [digits]] / "." digits) [exponent]
       /// exponent   = ("e" / "E") [sign] exp-digits
-      /// sign       = "+" / "-"
       /// digits     = DIGIT *(DIGIT / "_")
       /// exp-digits = *"_" DIGIT *(DIGIT / "_")
       /// nonfinite  = "inf" / "infinity" / ["s"] "nan" *DIGIT
@@ -611,12 +691,15 @@ macro_rules! storage_decimal {
       /// 1. [`Empty`](crate::ParseErrorKind::Empty): the input is empty. Whitespace alone is
       ///    invalid syntax.
       /// 2. [`InvalidSyntax`](crate::ParseErrorKind::InvalidSyntax): the input does not match
-      ///    the grammar, which includes every input that starts with `-`. The whole input is
-      ///    checked before its value, so `1e999_x` is invalid syntax rather than out of range.
-      /// 3. [`NotFinite`](crate::ParseErrorKind::NotFinite): the input is an infinity or a NaN.
-      /// 4. [`OutOfRange`](crate::ParseErrorKind::OutOfRange): once the exponent has moved the
+      ///    the grammar. The whole input is checked before its value, so `1e999_x` is invalid
+      ///    syntax rather than out of range, and `-1e999_x` rather than negative.
+      /// 3. [`NotFinite`](crate::ParseErrorKind::NotFinite): the input is an infinity or a NaN,
+      ///    with either sign.
+      /// 4. [`Negative`](crate::ParseErrorKind::Negative): the input starts with `-`, whatever
+      ///    the magnitude, so `-0` and `-1e999` are both negative.
+      /// 5. [`OutOfRange`](crate::ParseErrorKind::OutOfRange): once the exponent has moved the
       ///    point, the integral part has more than `Integral` digits after its leading zeros.
-      /// 5. [`Inexact`](crate::ParseErrorKind::Inexact): once the exponent has moved the point,
+      /// 6. [`Inexact`](crate::ParseErrorKind::Inexact): once the exponent has moved the point,
       ///    a fraction digit beyond the first `Fraction` is not `0`.
       ///
       /// # Examples
@@ -633,10 +716,12 @@ macro_rules! storage_decimal {
       ///
       /// let kind = |text| D::parse(text).map_err(|err| err.kind());
       /// assert_eq!(kind(""), Err(ParseErrorKind::Empty));
-      /// assert_eq!(kind("-0"), Err(ParseErrorKind::InvalidSyntax));
-      /// assert_eq!(kind("-inf"), Err(ParseErrorKind::InvalidSyntax));
       /// assert_eq!(kind("1e9_x"), Err(ParseErrorKind::InvalidSyntax));
+      /// assert_eq!(kind("--1"), Err(ParseErrorKind::InvalidSyntax));
       /// assert_eq!(kind("inf"), Err(ParseErrorKind::NotFinite));
+      /// assert_eq!(kind("-inf"), Err(ParseErrorKind::NotFinite));
+      /// assert_eq!(kind("-0"), Err(ParseErrorKind::Negative));
+      /// assert_eq!(kind("-1e9"), Err(ParseErrorKind::Negative));
       /// assert_eq!(kind("1e1"), Err(ParseErrorKind::OutOfRange));
       /// assert_eq!(kind("0.05"), Err(ParseErrorKind::Inexact));
       /// // Out of range and inexact at once.
@@ -645,13 +730,18 @@ macro_rules! storage_decimal {
       /// ```
       pub const fn parse(s: &str) -> Result<Self, ParseError> {
         let input = s.as_bytes();
-        let digits = match parse::scan(input, Self::INTEGRAL, Self::FRACTION, false) {
-          Ok(digits) => digits,
-          Err(err) => return Err(err),
-        };
+        match parse::scan(input, Self::INTEGRAL, Self::FRACTION, false) {
+          Ok(digits) => Ok(Self::from_digits(input, &digits)),
+          Err(err) => Err(err),
+        }
+      }
+
+      /// Builds the value whose coefficient `scan` located in `input`, which is not negative:
+      /// `scan` rejects a negative number for an unsigned storage.
+      const fn from_digits(input: &[u8], digits: &parse::Digits) -> Self {
         let coeff =
           int::$repr::push_digits($($by)* int::$repr::ZERO, input, digits.start, digits.end);
-        Ok(Self::from_coeff(int::$repr::mul_pow10($($by)* coeff, digits.scale)))
+        Self::from_coeff(int::$repr::mul_pow10($($by)* coeff, digits.scale))
       }
 
       /// Adds two values, returning `None` if the sum is outside the range of the type.

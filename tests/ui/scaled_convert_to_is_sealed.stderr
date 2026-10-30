@@ -1,0 +1,22 @@
+error[E0277]: the trait bound `Scaled<Decimal<UInt<UTerm, B1>, UTerm, i8>>: numo::decimal::traits::sealed::SealedPair<Local>` is not satisfied
+ --> tests/ui/scaled_convert_to_is_sealed.rs:9:27
+  |
+9 | impl ConvertTo<Local> for Scaled<Decimal<U1, U0>> {
+  |                           ^^^^^^^^^^^^^^^^^^^^^^^ the trait `numo::decimal::traits::sealed::SealedPair<Local>` is not implemented for `Scaled<Decimal<UInt<UTerm, B1>, UTerm, i8>>`
+  |
+help: the trait `SealedPair<Local>` is not implemented for `Scaled<Decimal<UInt<UTerm, B1>, UTerm, i8>>`
+      but trait `SealedPair<Scaled<_>>` is implemented for it
+ --> src/decimal/traits/mod.rs
+  |
+  |   impl<D, D2> SealedPair<super::Scaled<D2>> for super::Scaled<D> {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: for that trait implementation, expected `Scaled<_>`, found `Local`
+note: required by a bound in `ConvertTo`
+ --> src/decimal/traits/mod.rs
+  |
+  | pub trait ConvertTo<T>: SealedPair<T> {
+  |                         ^^^^^^^^^^^^^ required by this bound in `ConvertTo`
+  = note: `ConvertTo` is a "sealed trait", because to implement it you also need to implement `numo::decimal::traits::sealed::SealedPair`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+  = help: the following types implement the trait:
+            numo::Decimal<I, F, R>
+            numo::Scaled<D>
