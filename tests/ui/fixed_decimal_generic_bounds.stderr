@@ -1,0 +1,5 @@
+error[E0599]: no method named `is_zero` found for reference `&Decimal<I, F, R>` in the current scope
+  --> tests/ui/fixed_decimal_generic_bounds.rs:10:9
+   |
+10 |   value.is_zero()
+   |         ^^^^^^^ method not found in `&Decimal<I, F, R>`

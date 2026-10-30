@@ -1,0 +1,43 @@
+error[E0277]: the trait bound `Decimal<UInt<UTerm, B1>, UTerm, i8>: numo::decimal::traits::sealed::SealedPair<Local>` is not satisfied
+  --> tests/ui/exact_mul_is_sealed.rs:12:3
+   |
+12 |   fn exact_mul(&self, _: &Local) -> Self::Output {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `numo::decimal::traits::sealed::SealedPair<Local>` is not implemented for `Decimal<UInt<UTerm, B1>, UTerm, i8>`
+   |
+help: the trait `SealedPair<Local>` is not implemented for `Decimal<UInt<UTerm, B1>, UTerm, i8>`
+      but trait `SealedPair<Decimal<_, _, _>>` is implemented for it
+  --> src/decimal/traits/mod.rs
+   |
+   |   impl<I, F, R, I2, F2, R2> SealedPair<super::Decimal<I2, F2, R2>> for super::Decimal<I, F, R> {}
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `Decimal<_, _, _>`, found `Local`
+note: required by a bound in `ExactMul`
+  --> src/decimal/traits/mod.rs
+   |
+   | pub trait ExactMul<Rhs = Self>: SealedPair<Rhs> {
+   |                                 ^^^^^^^^^^^^^^^ required by this bound in `ExactMul`
+   = note: `ExactMul` is a "sealed trait", because to implement it you also need to implement `numo::decimal::traits::sealed::SealedPair`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+   = help: the following type implements the trait:
+             numo::Decimal<I, F, R>
+
+error[E0277]: the trait bound `Decimal<UInt<UTerm, B1>, UTerm, i8>: numo::decimal::traits::sealed::SealedPair<Local>` is not satisfied
+ --> tests/ui/exact_mul_is_sealed.rs:9:26
+  |
+9 | impl ExactMul<Local> for Decimal<U1, U0> {
+  |                          ^^^^^^^^^^^^^^^ the trait `numo::decimal::traits::sealed::SealedPair<Local>` is not implemented for `Decimal<UInt<UTerm, B1>, UTerm, i8>`
+  |
+help: the trait `SealedPair<Local>` is not implemented for `Decimal<UInt<UTerm, B1>, UTerm, i8>`
+      but trait `SealedPair<Decimal<_, _, _>>` is implemented for it
+ --> src/decimal/traits/mod.rs
+  |
+  |   impl<I, F, R, I2, F2, R2> SealedPair<super::Decimal<I2, F2, R2>> for super::Decimal<I, F, R> {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: for that trait implementation, expected `Decimal<_, _, _>`, found `Local`
+note: required by a bound in `ExactMul`
+ --> src/decimal/traits/mod.rs
+  |
+  | pub trait ExactMul<Rhs = Self>: SealedPair<Rhs> {
+  |                                 ^^^^^^^^^^^^^^^ required by this bound in `ExactMul`
+  = note: `ExactMul` is a "sealed trait", because to implement it you also need to implement `numo::decimal::traits::sealed::SealedPair`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+  = help: the following type implements the trait:
+            numo::Decimal<I, F, R>

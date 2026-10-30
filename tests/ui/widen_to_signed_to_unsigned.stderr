@@ -1,0 +1,28 @@
+error[E0277]: `widen` cannot convert from a signed storage to an unsigned storage
+  --> tests/ui/widen_to_signed_to_unsigned.rs:13:47
+   |
+13 |   let _unsigned: Decimal<U2, U4, u32> = widen(Decimal::<U2, U2>::ZERO);
+   |                                         ----- ^^^^^^^^^^^^^^^^^^^^^^^ the trait `WidenRepr<u32>` is not implemented for `i16`
+   |                                         |
+   |                                         required by a bound introduced by this call
+   |
+   = note: use `try_convert` for a conversion that can fail
+   = note: the compiler writes `u192`, `u256`, `u320`, `u384`, `u448` and `u512` as `Uint` with the limbs `[u64; 3]`, `[u64; 4]`, `[u64; 5]`, `[u64; 6]`, `[u64; 7]` and `[u64; 8]`, and `i192`, `i256`, `i320`, `i384`, `i448` and `i512` as `Int` with the same limbs
+   = help: `i16` implements trait `WidenRepr<Target>`:
+             WidenRepr<i128>
+             WidenRepr<i16>
+             WidenRepr<i32>
+             WidenRepr<i64>
+             WidenRepr<i8>
+             WidenRepr<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>
+             WidenRepr<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>
+             WidenRepr<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>
+             WidenRepr<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>
+             WidenRepr<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>
+             WidenRepr<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>
+   = note: required for `Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UTerm, B1>, B0>, i16>` to implement `WidenTo<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, u32>>`
+note: required by a bound in `widen`
+  --> tests/ui/widen_to_signed_to_unsigned.rs:6:13
+   |
+ 6 | fn widen<T: WidenTo<U>, U>(value: T) -> U {
+   |             ^^^^^^^^^^ required by this bound in `widen`

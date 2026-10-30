@@ -2,7 +2,10 @@ use core::{ops::Neg, str::FromStr};
 
 use typenum::NonZero;
 
-use super::{Decimal, ParseError, QuantizeError, parse};
+use super::{
+  ConstDecimalOne, ConstFixedDecimal, Decimal, DecimalOne, FixedDecimal, ParseError, QuantizeError,
+  SignedFixedDecimal, UnsignedFixedDecimal, parse,
+};
 use crate::{
   i192, i256, i320, i384, i448, i512, int, layout::Layout, rounding::RoundingMode, u192, u256,
   u320, u384, u448, u512,
@@ -47,6 +50,103 @@ macro_rules! storage_decimal {
       fn from_str(s: &str) -> Result<Self, ParseError> {
         Self::parse(s)
       }
+    }
+
+    // The constants and methods are the inherent ones, which `Self::` names first, and the
+    // functions without an inherent counterpart return the inherent constants.
+    impl<I, F> FixedDecimal for Decimal<I, F, $repr>
+    where
+      (I, F): Layout<$repr>,
+    {
+      const INTEGRAL: u32 = Self::INTEGRAL;
+      const FRACTION: u32 = Self::FRACTION;
+      const DIGITS: u32 = Self::DIGITS;
+      const SIGNED: bool = Self::SIGNED;
+
+      type Repr = $repr;
+
+      #[inline]
+      fn repr(self) -> $repr {
+        Self::repr(self)
+      }
+
+      #[inline]
+      fn from_repr(repr: $repr) -> Option<Self> {
+        Self::from_repr(repr)
+      }
+
+      #[inline]
+      fn zero() -> Self {
+        Self::ZERO
+      }
+
+      #[inline]
+      fn max_value() -> Self {
+        Self::MAX
+      }
+
+      #[inline]
+      fn min_value() -> Self {
+        Self::MIN
+      }
+
+      #[inline]
+      fn is_zero(&self) -> bool {
+        Self::is_zero(self)
+      }
+
+      #[inline]
+      fn is_positive(&self) -> bool {
+        Self::is_positive(self)
+      }
+
+      #[inline]
+      fn checked_add(&self, rhs: &Self) -> Option<Self> {
+        Self::checked_add(self, rhs)
+      }
+
+      #[inline]
+      fn checked_sub(&self, rhs: &Self) -> Option<Self> {
+        Self::checked_sub(self, rhs)
+      }
+
+      #[inline]
+      fn quantize(&self, step: &Self, mode: RoundingMode) -> Result<Self, QuantizeError> {
+        Self::quantize(self, step, mode)
+      }
+
+      #[inline]
+      fn is_multiple_of(&self, step: &Self) -> bool {
+        Self::is_multiple_of(self, step)
+      }
+    }
+
+    impl<I, F> ConstFixedDecimal for Decimal<I, F, $repr>
+    where
+      (I, F): Layout<$repr>,
+    {
+      const ZERO: Self = Self::ZERO;
+      const MAX: Self = Self::MAX;
+      const MIN: Self = Self::MIN;
+    }
+
+    impl<I, F> DecimalOne for Decimal<I, F, $repr>
+    where
+      I: NonZero,
+      (I, F): Layout<$repr>,
+    {
+      #[inline]
+      fn one() -> Self {
+        Self::ONE
+      }
+    }
+
+    impl<I, F> ConstDecimalOne for Decimal<I, F, $repr>
+    where
+      I: NonZero,
+      (I, F): Layout<$repr>,
+    {
+      const ONE: Self = Self::ONE;
     }
 
     #[cfg(feature = "serde")]
@@ -99,6 +199,9 @@ macro_rules! storage_decimal {
 
       /// The smallest value, `-MAX`.
       pub const MIN: Self = Self::from_coeff(Self::MIN_COEFF);
+
+      /// Whether the storage is signed: `true`, so values can be negative.
+      pub const SIGNED: bool = true;
 
       const fn in_range(coeff: $($by)* $repr) -> bool {
         int::$repr::le($($by)* Self::MIN_COEFF, coeff)
@@ -381,6 +484,26 @@ macro_rules! storage_decimal {
         Self::neg(&self)
       }
     }
+
+    impl<I, F> SignedFixedDecimal for Decimal<I, F, $repr>
+    where
+      (I, F): Layout<$repr>,
+    {
+      #[inline]
+      fn is_negative(&self) -> bool {
+        Self::is_negative(self)
+      }
+
+      #[inline]
+      fn neg(&self) -> Self {
+        Self::neg(self)
+      }
+
+      #[inline]
+      fn abs(&self) -> Self {
+        Self::abs(self)
+      }
+    }
   };
 
   (@unsigned $repr:ident $kind:ident [$($by:tt)*]) => {
@@ -402,6 +525,9 @@ macro_rules! storage_decimal {
 
       /// The smallest value, zero.
       pub const MIN: Self = Self::ZERO;
+
+      /// Whether the storage is signed: `false`, so values are never negative.
+      pub const SIGNED: bool = false;
 
       const fn in_range(coeff: $($by)* $repr) -> bool {
         int::$repr::le(coeff, $($by)* Self::MAX_COEFF)
@@ -626,6 +752,8 @@ macro_rules! storage_decimal {
         int::$repr::is_zero($($by)* remainder)
       }
     }
+
+    impl<I, F> UnsignedFixedDecimal for Decimal<I, F, $repr> where (I, F): Layout<$repr> {}
   };
 
   // The imports of an example, the listed items of the crate and the storage, in `rustfmt` order.

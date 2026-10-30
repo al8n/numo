@@ -1,0 +1,48 @@
+error[E0277]: a `Decimal` must have between 1 and 153 digits in total
+  --> tests/ui/exact_mul_too_many_digits.rs:13:26
+   |
+13 |   let _product = product(&max, &max);
+   |                  ------- ^^^^ `Integral + Fraction` is zero or greater than 153
+   |                  |
+   |                  required by a bound introduced by this call
+   |
+   = help: the trait `DigitCount` is not implemented for `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B1>, B0>, B1>, B0>`
+   = note: an explicit `u512` storage holds up to 154 digits, as in `Decimal<I, F, u512>`
+   = help: the following other types implement trait `DigitCount`:
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B1>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B1>, B0>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B1>, B1>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B1>, B0>, B0>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B1>, B0>, B1>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B1>, B1>, B0>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B1>, B1>, B1>
+           and $N others
+   = note: required for `B0` to implement `Pick<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B1>, B0>, B1>, B0>>`
+   = note: required for `Decimal<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B1>, B0>, B1>, UTerm, numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>` to implement `ExactMul`
+note: required by a bound in `product`
+  --> tests/ui/exact_mul_too_many_digits.rs:6:15
+   |
+ 6 | fn product<A: ExactMul<B>, B>(lhs: &A, rhs: &B) -> A::Output {
+   |               ^^^^^^^^^^^ required by this bound in `product`
+
+error[E0277]: a `Decimal` must have between 1 and 153 digits in total
+  --> tests/ui/exact_mul_too_many_digits.rs:13:18
+   |
+13 |   let _product = product(&max, &max);
+   |                  ^^^^^^^^^^^^^^^^^^^ `Integral + Fraction` is zero or greater than 153
+   |
+   = help: the trait `DigitCount` is not implemented for `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B1>, B0>, B1>, B0>`
+   = note: an explicit `u512` storage holds up to 154 digits, as in `Decimal<I, F, u512>`
+   = help: the following other types implement trait `DigitCount`:
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B1>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B1>, B0>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B1>, B1>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B1>, B0>, B0>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B1>, B0>, B1>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B1>, B1>, B0>
+             UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B1>, B1>, B1>
+           and $N others
+   = note: required for `B0` to implement `Pick<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B1>, B0>, B1>, B0>>`
+   = note: required for `Decimal<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B1>, B0>, B1>, UTerm, numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>` to implement `ExactMul`

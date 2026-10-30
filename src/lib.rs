@@ -38,6 +38,18 @@
 //! `f64` parses, and rejects infinity, NaN and digits that do not fit; formatting writes the
 //! shortest exact text. See [`Decimal`] for the details.
 //!
+//! Every decimal type has the constants `INTEGRAL`, `FRACTION` and `DIGITS`, its digit counts, and
+//! `SIGNED`, whether its storage is signed. Generic code reaches the constants and methods through
+//! traits in two layers, each with one implementation for every storage. The general layer,
+//! [`FixedDecimal`], with the digit counts, the queries, the arithmetic and the functions `zero`,
+//! `max_value` and `min_value`, [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`], for each sign,
+//! and [`DecimalOne`], with `one`, requires `Clone` but not `Copy`; its functions return the
+//! inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The const layer, [`ConstFixedDecimal`] and
+//! [`ConstDecimalOne`], adds `Copy` and these constants, which a generic `const fn` can read.
+//! [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] have the methods between decimal
+//! types. Code generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`. The trait
+//! methods are not `const`, so constant contexts call the inherent `const fn`s.
+//!
 //! # Wide storage
 //!
 //! Up to 38 digits, `Repr` is a native integer. Beyond that, up to 153 digits, it is one of the
@@ -308,7 +320,11 @@ mod bigint;
 pub use typenum;
 
 pub use aliases::*;
-pub use decimal::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
+pub use decimal::{
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalOne, DivRound,
+  DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError,
+  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
+};
 pub use integer::{
   ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, Int, NativeInteger, OverflowingOps,
   SaturatingOps, SignedFixedInteger, StrictOps, TryNewError, Uint, UncheckedOps,

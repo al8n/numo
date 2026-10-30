@@ -11,6 +11,10 @@ use core::{
 use typenum::{And, Diff, Max, Maximum, Sum};
 
 pub use error::{ConvertError, DivideError, ParseError, ParseErrorKind, QuantizeError};
+pub use traits::{
+  ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal,
+  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
+};
 
 use crate::{
   int,
@@ -25,6 +29,7 @@ mod error;
 mod format;
 mod parse;
 mod storage;
+mod traits;
 
 #[cfg(test)]
 mod tests;
@@ -92,6 +97,47 @@ mod tests;
 /// code can store and pass `Decimal<I, F, R>` values without any. It needs `R: Storage` to copy,
 /// compare or hash them, and adds `(I, F): Layout<R>` only where it uses items that depend on the
 /// digit counts, such as formatting and conversions (see [`Layout`]).
+///
+/// The constants and methods defined for each storage, such as [`ZERO`](Self::ZERO) and
+/// [`checked_add`](Self::checked_add), reach generic code through traits in two layers. The
+/// general layer is [`FixedDecimal`] for every storage, [`SignedFixedDecimal`] and
+/// [`UnsignedFixedDecimal`] for each sign, and [`DecimalOne`] for the types that hold one. It
+/// requires `Clone` but not `Copy`, and its functions `zero`, `max_value`, `min_value` and `one`
+/// return [`ZERO`](Self::ZERO), [`MAX`](Self::MAX), [`MIN`](Self::MIN) and [`ONE`](Self::ONE).
+/// The const layer, [`ConstFixedDecimal`] and [`ConstDecimalOne`], adds `Copy` and these
+/// constants, which a generic `const fn` can read. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
+/// [`DivRound`] carry the bounds of the methods between decimal types. Because the implementations
+/// are per storage, code generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`,
+/// which `R: Storage` and `(I, F): Layout<R>` do not imply. Every type also has the constants
+/// [`INTEGRAL`](Self::INTEGRAL), [`FRACTION`](Self::FRACTION) and [`DIGITS`](Self::DIGITS), its
+/// digit counts, and [`SIGNED`](Self::SIGNED), whether its storage is signed, for generic code that
+/// derives a display scale or a step from the fraction digits of the type:
+///
+/// ```
+/// use numo::{
+///   Decimal, FixedDecimal,
+///   typenum::{U2, U8, U10},
+/// };
+///
+/// // The total of the values with every fraction digit of the type, or `None` if it is outside the
+/// // range of the type.
+/// fn total<I, F, R>(values: &[Decimal<I, F, R>]) -> Option<String>
+/// where
+///   Decimal<I, F, R>: FixedDecimal,
+/// {
+///   let zero = Decimal::<I, F, R>::zero();
+///   let sum = values.iter().try_fold(zero, |sum, value| sum.checked_add(value))?;
+///   let digits = Decimal::<I, F, R>::FRACTION as usize;
+///   Some(format!("{sum:.digits$}"))
+/// }
+///
+/// let prices: [Decimal<U10, U8>; 2] = ["64250.5".parse()?, "0.25".parse()?];
+/// assert_eq!(total(&prices).as_deref(), Some("64250.75000000"));
+/// let fees: [Decimal<U10, U2, u64>; 2] = ["0.5".parse()?, "1".parse()?];
+/// assert_eq!(total(&fees).as_deref(), Some("1.50"));
+/// assert_eq!(total(&[Decimal::<U10, U2, u64>::MAX; 2]), None);
+/// # Ok::<(), numo::ParseError>(())
+/// ```
 ///
 /// # Operations
 ///
@@ -275,9 +321,14 @@ impl<I, F, R> Decimal<I, F, R>
 where
   (I, F): Layout<R>,
 {
-  const INTEGRAL: u32 = <(I, F) as LayoutDigits<R>>::INTEGRAL;
-  const FRACTION: u32 = <(I, F) as LayoutDigits<R>>::FRACTION;
-  const DIGITS: u32 = <(I, F) as LayoutDigits<R>>::DIGITS;
+  /// The number of integral digits, `Integral`.
+  pub const INTEGRAL: u32 = <(I, F) as LayoutDigits<R>>::INTEGRAL;
+
+  /// The number of fraction digits, `Fraction`.
+  pub const FRACTION: u32 = <(I, F) as LayoutDigits<R>>::FRACTION;
+
+  /// The total number of digits, `Integral + Fraction`.
+  pub const DIGITS: u32 = <(I, F) as LayoutDigits<R>>::DIGITS;
 }
 
 // Not `const`: storage-generic code calls trait methods, which cannot be `const` (E0015).
@@ -704,11 +755,11 @@ where
 
 impl<I, F, R> Clone for Decimal<I, F, R>
 where
-  R: Copy,
+  R: Clone,
 {
   #[inline]
   fn clone(&self) -> Self {
-    *self
+    Self::from_coeff(self.repr.clone())
   }
 }
 

@@ -182,6 +182,14 @@ fn constants() {
   assert_eq!(D19x19::MIN, -D19x19::MAX);
   assert_eq!(Price::default(), Price::ZERO);
   assert_eq!(D0x2::default(), D0x2::ZERO);
+
+  assert_eq!(Price::INTEGRAL, 10);
+  assert_eq!(Price::FRACTION, 8);
+  assert_eq!(Price::DIGITS, 18);
+  assert_eq!(D0x2::INTEGRAL, 0);
+  assert_eq!(D0x2::DIGITS, 2);
+  assert_eq!(D38x0::FRACTION, 0);
+  assert_eq!([Price::SIGNED, WidePrice::SIGNED, D1x1::SIGNED], [true; 3]);
 }
 
 #[test]
@@ -1848,6 +1856,15 @@ fn unsigned_constants() {
   assert_eq!(D38x0u128::ONE.repr(), 1);
   assert_eq!(D10x9u64::default(), D10x9u64::ZERO);
   assert_eq!(D0x2u8::default(), D0x2u8::ZERO);
+
+  assert_eq!(D10x9u64::INTEGRAL, 10);
+  assert_eq!(D10x9u64::FRACTION, 9);
+  assert_eq!(D10x9u64::DIGITS, 19);
+  assert_eq!(D0x2u8::INTEGRAL, 0);
+  assert_eq!(
+    [D10x9u64::SIGNED, D1x1u8::SIGNED, D19x19u128::SIGNED],
+    [false; 3]
+  );
 }
 
 #[test]
@@ -2369,6 +2386,16 @@ fn wide_constants() {
   assert_eq!(D0x153::MAX.to_string(), format!("0.{}", nines(153)));
   assert_eq!(D154x0u512::MAX.to_string(), nines(154));
   assert_eq!(D154x0u512::MIN, D154x0u512::ZERO);
+
+  assert_eq!(TokenAmount::INTEGRAL, 60);
+  assert_eq!(TokenAmount::FRACTION, 18);
+  assert_eq!(TokenAmount::DIGITS, 78);
+  assert_eq!(D0x153::DIGITS, 153);
+  assert_eq!(D154x0u512::DIGITS, 154);
+  assert_eq!(
+    [D58x18::SIGNED, D96x0u320::SIGNED, D154x0u512::SIGNED],
+    [true, false, false]
+  );
 }
 
 #[test]
