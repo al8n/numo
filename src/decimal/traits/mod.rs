@@ -315,8 +315,8 @@ pub trait UnsignedFixedDecimal: FixedDecimal {}
 /// [`ConstDecimalOne`] gives it to generic code as a constant. One needs an integral digit, so a
 /// type whose `Integral` is zero has no `ONE`, rather than one that is out of range.
 /// `Decimal<I, F, R>` implements this trait for each storage `R` where `I: NonZero` and
-/// `(I, F): Layout<R>`. It is separate from the integer trait [`HasOne`](crate::HasOne), which
-/// also requires `Product`.
+/// `(I, F): Layout<R>`. It is separate from the integer trait [`IntegerOne`](crate::IntegerOne),
+/// which also requires `Product`.
 ///
 /// ```
 /// use numo::{

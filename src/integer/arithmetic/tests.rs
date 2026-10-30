@@ -23,9 +23,9 @@ use typenum::{
 };
 
 use crate::{
-  BitWidth, CheckedOps, FitsBits, FixedInteger, HasOne, Int, IntReprMut, OverflowingOps,
-  SaturatingOps, SignedFixedInteger, StrictOps, Uint, UintReprMut, UncheckedOps,
-  UnsignedFixedInteger, WrappingOps, bigint, i7, i256, u7, u256, u4096,
+  BitWidth, CheckedOps, ConstFixedInteger, ConstIntegerOne, FitsBits, FixedInteger, Int,
+  IntReprMut, IntegerOne, OverflowingOps, SaturatingOps, SignedFixedInteger, StrictOps, Uint,
+  UintReprMut, UncheckedOps, UnsignedFixedInteger, WrappingOps, bigint, i7, i256, u7, u256, u4096,
 };
 
 /// The smallest and the largest value of `bits` bits, unsigned or in two's complement.
@@ -378,9 +378,10 @@ fn every_pair_of_one_and_zero_bits() {
   check_storage!(array U0, 0, [u64; 2], 1);
 }
 
-/// `ONE` is the storage's one, and the constant of `HasOne` is the inherent one, from one bit for
-/// `Uint` and from two bits for `Int`. Zero bits, which have no `ONE`, overflow on a carry and on a
-/// borrow, and negate `MIN`, which is zero, to itself.
+/// `ONE` is the storage's one, and the constant of `ConstIntegerOne` and the function of
+/// `IntegerOne` are the inherent one, from one bit for `Uint` and from two bits for `Int`. Zero
+/// bits, which have no `ONE`, overflow on a carry and on a borrow, and negate `MIN`, which is zero,
+/// to itself.
 #[test]
 fn one_and_zero_bits() {
   assert_eq!(Uint::<U1, u8>::ONE.value(), 1);
@@ -391,10 +392,26 @@ fn one_and_zero_bits() {
   assert_eq!(Int::<U7, i128>::ONE.value(), 1);
   assert_eq!(Int::<U2, [u16; 1]>::ONE.to_limbs(), [1]);
   assert_eq!(Int::<U8, [u8; 3]>::ONE.to_limbs(), [1, 0, 0]);
-  assert_eq!(<Uint<U1, u8> as HasOne>::ONE, Uint::<U1, u8>::ONE);
-  assert_eq!(<Uint<U7, [u8; 2]> as HasOne>::ONE, Uint::<U7, [u8; 2]>::ONE);
-  assert_eq!(<Int<U2, i8> as HasOne>::ONE, Int::<U2, i8>::ONE);
-  assert_eq!(<Int<U8, [u8; 3]> as HasOne>::ONE, Int::<U8, [u8; 3]>::ONE);
+  assert_eq!(<Uint<U1, u8> as ConstIntegerOne>::ONE, Uint::<U1, u8>::ONE);
+  assert_eq!(
+    <Uint<U7, [u8; 2]> as ConstIntegerOne>::ONE,
+    Uint::<U7, [u8; 2]>::ONE
+  );
+  assert_eq!(<Int<U2, i8> as ConstIntegerOne>::ONE, Int::<U2, i8>::ONE);
+  assert_eq!(
+    <Int<U8, [u8; 3]> as ConstIntegerOne>::ONE,
+    Int::<U8, [u8; 3]>::ONE
+  );
+  assert_eq!(<Uint<U1, u8> as IntegerOne>::one(), Uint::<U1, u8>::ONE);
+  assert_eq!(
+    <Uint<U7, [u8; 2]> as IntegerOne>::one(),
+    Uint::<U7, [u8; 2]>::ONE
+  );
+  assert_eq!(<Int<U2, i8> as IntegerOne>::one(), Int::<U2, i8>::ONE);
+  assert_eq!(
+    <Int<U8, [u8; 3]> as IntegerOne>::one(),
+    Int::<U8, [u8; 3]>::ONE
+  );
   assert!(Uint::<U7, u8>::ONE.is_one() && Int::<U7, [u8; 1]>::ONE.is_one());
 
   type U = Uint<U0, u8>;
@@ -1167,9 +1184,9 @@ fn bit_width_gives_one_and_product() {
 }
 
 /// The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` the families and the traits of each sign,
-/// with their operators, and with a width that holds one, `HasOne` and `Product`. Every storage is
-/// updated in place, and representative storages have every form of the operators, of `Sum` and
-/// of `Product`.
+/// with their operators, the constants of the const layer, and with a width that holds one,
+/// `IntegerOne`, `ConstIntegerOne` and `Product`. Every storage is updated in place, and
+/// representative storages have every form of the operators, of `Sum` and of `Product`.
 #[test]
 fn arithmetic_trait_surface() {
   fn families<T>()
@@ -1179,7 +1196,9 @@ fn arithmetic_trait_surface() {
   }
   fn unsigned<T: FixedInteger + UnsignedFixedInteger>() {}
   fn signed<T: FixedInteger + SignedFixedInteger + Neg<Output = T>>() {}
-  fn has_one<T: HasOne>() {}
+  fn constants<T: FixedInteger + ConstFixedInteger>() {}
+  fn integer_one<T: IntegerOne>() {}
+  fn const_integer_one<T: ConstIntegerOne>() {}
   fn mutable<U: UintReprMut, S: IntReprMut>() {}
   fn operators<T>()
   where
@@ -1201,12 +1220,16 @@ fn arithmetic_trait_surface() {
     families::<Int<B>>();
     unsigned::<Uint<B>>();
     signed::<Int<B>>();
+    constants::<Uint<B>>();
+    constants::<Int<B>>();
   }
   fn unsigned_one<B: BitWidth + NonZero>() {
-    has_one::<Uint<B>>();
+    integer_one::<Uint<B>>();
+    const_integer_one::<Uint<B>>();
   }
   fn signed_one<B: BitWidth + IsGreater<U1, Output = True>>() {
-    has_one::<Int<B>>();
+    integer_one::<Int<B>>();
+    const_integer_one::<Int<B>>();
   }
 
   width::<U0>();

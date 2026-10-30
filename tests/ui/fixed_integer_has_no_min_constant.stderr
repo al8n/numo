@@ -1,0 +1,17 @@
+error[E0599]: no associated function or constant named `MIN` found for type parameter `T` in the current scope
+ --> tests/ui/fixed_integer_has_no_min_constant.rs:6:6
+  |
+5 | fn smallest<T: FixedInteger>() -> T {
+  |             - associated function or constant `MIN` not found for this type parameter
+6 |   T::MIN
+  |      ^^^ associated function or constant not found in `T`
+  |
+  = help: items from traits can only be used if the type parameter is bounded by the trait
+help: the following traits define an item `MIN`, perhaps you need to restrict type parameter `T` with one of them:
+  |
+5 | fn smallest<T: FixedInteger + ConstFixedDecimal>() -> T {
+  |                             +++++++++++++++++++
+5 | fn smallest<T: FixedInteger + ConstFixedInteger>() -> T {
+  |                             +++++++++++++++++++
+5 | fn smallest<T: FixedInteger + numo::width::sealed::IntWidth</* R */>>() -> T {
+  |                             ++++++++++++++++++++++++++++++++++++++++

@@ -130,14 +130,18 @@
 //! `checked_*` method would return `Some`.
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
-//! storage of a kind: [`FixedInteger`], with the constants, `is_zero`, `is_one` and the operators,
-//! [`UnsignedFixedInteger`] and [`SignedFixedInteger`], with the methods of each sign, [`HasOne`],
-//! with `ONE`, the families [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`],
-//! [`StrictOps`] and [`UncheckedOps`], and for the construction of each kind [`NativeInteger`],
-//! [`ArrayInteger`] and [`FromLimbs`]. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
-//! [`FixedInteger`], the sign traits and the families, and `HasOne` with a width that holds one.
-//! The traits are not `const`, so constant contexts use the inherent `const fn`s, which a concrete
-//! type reaches without importing a trait.
+//! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,
+//! `is_one`, the operators and the functions `zero`, `min_value` and `max_value`, and
+//! [`IntegerOne`], with `one`, requires `Clone` but not `Copy`; its functions return the inherent
+//! constants `ZERO`, `MIN`, `MAX` and `ONE`. The const layer, [`ConstFixedInteger`] and
+//! [`ConstIntegerOne`], adds `Copy` and these constants, which a generic `const fn` can read.
+//! [`UnsignedFixedInteger`] and [`SignedFixedInteger`] have the methods of each sign, the families
+//! [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`], [`StrictOps`] and
+//! [`UncheckedOps`] the arithmetic, and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`] the
+//! construction of each kind. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` both layers of
+//! [`FixedInteger`], the sign traits and the families, and [`IntegerOne`] and [`ConstIntegerOne`]
+//! with a width that holds one. The trait methods are not `const`, so constant contexts call the
+//! inherent `const fn`s, which a concrete type reaches without importing a trait.
 //!
 //! ```
 //! use numo::{
@@ -326,9 +330,9 @@ pub use decimal::{
   SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 pub use integer::{
-  ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, Int, NativeInteger, OverflowingOps,
-  SaturatingOps, SignedFixedInteger, StrictOps, TryNewError, Uint, UncheckedOps,
-  UnsignedFixedInteger, WrappingOps,
+  ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs, Int,
+  IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger, StrictOps,
+  TryNewError, Uint, UncheckedOps, UnsignedFixedInteger, WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

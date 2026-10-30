@@ -1,0 +1,21 @@
+error[E0382]: use of moved value: `value`
+ --> tests/ui/fixed_integer_has_no_copy.rs:5:11
+  |
+4 | fn twice<T: FixedInteger>(value: T) -> T {
+  |                           ----- move occurs because `value` has type `T`, which does not implement the `Copy` trait
+5 |   value + value
+  |   --------^^^^^
+  |   |       |
+  |   |       value used here after move
+  |   `value` moved due to usage in operator
+  |
+note: calling this operator moves the left-hand side
+ --> $RUST/core/src/ops/arith.rs
+help: consider cloning the value if the performance cost is acceptable
+  |
+5 |   value.clone() + value
+  |        ++++++++
+help: consider further restricting type parameter `T` with trait `Copy`
+  |
+4 | fn twice<T: FixedInteger + Copy>(value: T) -> T {
+  |                          ++++++

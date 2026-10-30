@@ -9,8 +9,9 @@ use core::{
 
 pub use error::TryNewError;
 pub use traits::{
-  ArrayInteger, CheckedOps, FixedInteger, FromLimbs, HasOne, NativeInteger, OverflowingOps,
-  SaturatingOps, SignedFixedInteger, StrictOps, UncheckedOps, UnsignedFixedInteger, WrappingOps,
+  ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs,
+  IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger, StrictOps,
+  UncheckedOps, UnsignedFixedInteger, WrappingOps,
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
