@@ -1802,10 +1802,36 @@ fn unchecked_methods_return_the_checked_results_in_wide_storages() {
 }
 
 /// Code over `B: BitWidth` reaches the `unchecked_*` methods through `UncheckedOps` and
-/// `SignedFixedInteger`, which `check_unchecked!` calls at every pair of `unsigned` and `signed`.
+/// `SignedFixedInteger`, which `check_unchecked!` calls at every pair of `unsigned` and `signed`,
+/// and `unchecked_div_exact` through `UncheckedOps`, which [`unchecked_exact_divisions`] calls at
+/// least once for each sign at every width but zero bits, where every divisor is zero.
 fn unchecked_over_the_width<B: BitWidth>(unsigned: Vec<Uint<B>>, signed: Vec<Int<B>>) {
+  let calls = [
+    unchecked_exact_divisions(&unsigned),
+    unchecked_exact_divisions(&signed),
+  ];
+  assert_eq!(calls.contains(&0), Uint::<B>::BITS == 0, "calls: {calls:?}");
   check_unchecked!(unsigned);
   check_unchecked!(signed, neg);
+}
+
+/// Calls `unchecked_div_exact` through `UncheckedOps` at every pair of `values` where
+/// `checked_div_exact` returns a value, which both must return, and returns the number of calls.
+fn unchecked_exact_divisions<T: CheckedOps + UncheckedOps + PartialEq + Debug>(
+  values: &[T],
+) -> usize {
+  let mut calls = 0;
+  for x in values {
+    for y in values {
+      if let Some(quotient) = x.checked_div_exact(y) {
+        // SAFETY: `checked_div_exact` returns `Some`, the precondition of `unchecked_div_exact`.
+        let result = unsafe { x.unchecked_div_exact(y) };
+        assert_eq!(result, quotient, "{x:?} / {y:?} exactly");
+        calls += 1;
+      }
+    }
+  }
+  calls
 }
 
 /// The `unchecked_*` methods in code over `B: BitWidth`, at widths of each kind of default storage,
