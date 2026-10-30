@@ -98,11 +98,11 @@ macro_rules! core_tests {
           }
         }
         // Rounding by positive divisors, for fewer pairs under Miri, which runs big integers
-        // slowly.
-        let stride = if cfg!(miri) { 4 } else { 1 };
-        let divisors: Vec<$int> =
-          samples.iter().copied().filter(|&b| b > 0).step_by(stride).collect();
-        for &a in samples.iter().step_by(stride) {
+        // slowly: every fourth sample, with the first, the last, zero and the units.
+        let thinned =
+          |samples: Vec<$int>| bigint::thin_by(samples, 4, bigint::Sample::is_unit_or_zero);
+        let divisors = thinned(samples.iter().copied().filter(|&b| b > 0).collect());
+        for &a in &thinned(samples.clone()) {
           for &b in &divisors {
             let (big_a, big_b) = (BigInt::from(a), BigInt::from(b));
             for mode in bigint::MODES {
@@ -474,11 +474,14 @@ macro_rules! wide_tests {
           }
         }
         // Rounding by positive divisors, for fewer pairs under Miri, which runs big integers
-        // slowly.
-        let stride = if cfg!(miri) { 3 } else { 1 };
-        for &(a, ref big_a) in samples.iter().step_by(stride) {
-          let divisors = samples.iter().filter(|(_, big_b)| big_b.sign() == Sign::Plus);
-          for &(b, ref big_b) in divisors.step_by(stride) {
+        // slowly: every third sample, with the first, the last, zero and the units.
+        let thinned = |samples: Vec<(Wide, BigInt)>| {
+          bigint::thin_by(samples, 3, |(_, big)| bigint::Sample::is_unit_or_zero(big))
+        };
+        let positive = samples.iter().filter(|(_, big_b)| big_b.sign() == Sign::Plus);
+        let divisors = thinned(positive.cloned().collect());
+        for &(a, ref big_a) in &thinned(samples.clone()) {
+          for &(b, ref big_b) in &divisors {
             let truncated = big_a / big_b;
             for mode in bigint::MODES {
               let (rounded, remainder, away) = wide::round_div(&a, &b, mode);
@@ -645,10 +648,33 @@ mod arithmetic_bits {
     ]
   }
 
+  /// The bit patterns of `bits` bits, at most 64, that a stride may skip: the limits of the
+  /// unsigned and of the two's complement reading, the patterns next to them, and those of -1, 0
+  /// and 1.
+  fn end_patterns(bits: u32) -> Vec<u128> {
+    if bits == 0 {
+      return vec![0];
+    }
+    let (max, min) = (u128::MAX >> (128 - bits), 1u128 << (bits - 1));
+    [
+      0,
+      1,
+      max - 1,
+      max,
+      min.wrapping_sub(2),
+      min - 1,
+      min,
+      min + 1,
+    ]
+    .into_iter()
+    .filter(|&pattern| pattern <= max)
+    .collect()
+  }
+
   /// Checks the arithmetic of each width of `$widths` in the unsigned layer `$uint` and the signed
   /// layer `$int`, for `bits` bits at most 64: every value of up to `$every` bits against every
-  /// other, or under Miri every 61st pair, and otherwise every value against the structured
-  /// operands of the width, or under Miri every 61st value against them.
+  /// other, and otherwise the structured operands of the width against each other. Under Miri, only
+  /// every 61st left operand and the patterns of the ends.
   macro_rules! check_native {
     ($uint:ident, $int:ident, $widths:expr, $every:expr) => {{
       let step = if cfg!(miri) { 61 } else { 1 };
@@ -664,7 +690,8 @@ mod arithmetic_bits {
         } else {
           bigint::structured_patterns(bits)
         };
-        for &a in lefts.iter().step_by(step) {
+        let lefts = bigint::with_ends(lefts.into_iter().step_by(step), end_patterns(bits));
+        for &a in &lefts {
           let signed = bigint::to_signed(a, bits);
           assert_eq!(int::$uint::is_one(a as $uint), a == 1);
           assert_eq!(int::$int::is_one(signed as $int), signed == 1);

@@ -31,11 +31,16 @@ fn groups_of_eight_limbs_match_the_u64_layer() {
 }
 
 /// Every pair of one-limb values against `u8`, and every value against `u8` and the native lower
-/// layer for `u8`, or under Miri, which runs them slowly, every 61st pair and every 7th value.
+/// layer for `u8`, or under Miri, which runs them slowly, every 61st pair and every 7th value, with
+/// the limits and the values next to them, which a stride may skip, and their pairs.
 #[test]
 fn every_one_limb_value_matches_u8() {
   let (pair_step, value_step) = if cfg!(miri) { (61, 7) } else { (1, 1) };
-  for pair in (0..=u16::MAX).step_by(pair_step) {
+  let ends = [0, 1, u8::MAX - 1, u8::MAX];
+  let end_pairs = ends
+    .iter()
+    .flat_map(|&a| ends.iter().map(move |&b| u16::from_le_bytes([a, b])));
+  for pair in bigint::with_ends((0..=u16::MAX).step_by(pair_step), end_pairs) {
     let [a, b] = pair.to_le_bytes();
     assert_eq!(cmp(&[a], &[b]), a.cmp(&b));
     assert_eq!(le(&[a], &[b]), a <= b);
@@ -63,7 +68,7 @@ fn every_one_limb_value_matches_u8() {
       }
     }
   }
-  for a in (0..=u8::MAX).step_by(value_step) {
+  for a in bigint::with_ends((0..=u8::MAX).step_by(value_step), ends) {
     assert_eq!(is_zero(&[a]), a == 0);
     assert_eq!(is_positive(&[a]), a > 0);
     // Up to two exponents beyond the largest power of ten that a `u8` holds, `10^2`.
@@ -176,8 +181,18 @@ fn check_negation_bits(a: u32, bits: u32) {
   );
 }
 
+/// The values of `bits` bits, at most 16, that a stride may skip: the limits and the values next
+/// to them.
+fn ends_of(bits: u32) -> Vec<u32> {
+  let max: u32 = (1 << bits) - 1;
+  [0, 1, max.saturating_sub(1), max]
+    .into_iter()
+    .filter(|&value| value <= max)
+    .collect()
+}
+
 /// Every pair of values of each width from zero to 8 bits, in one and in two limbs, against `i64`,
-/// or under Miri every 61st pair.
+/// or under Miri every 61st pair and the pairs of the ends.
 #[test]
 fn arithmetic_of_every_pair_up_to_8_bits() {
   let step = if cfg!(miri) { 61 } else { 1 };
@@ -186,14 +201,18 @@ fn arithmetic_of_every_pair_up_to_8_bits() {
     for a in 0..count {
       check_negation_bits(a, bits);
     }
-    for pair in (0..count * count).step_by(step) {
+    let ends = ends_of(bits);
+    let end_pairs = ends
+      .iter()
+      .flat_map(|&a| ends.iter().map(move |&b| a * count + b));
+    for pair in bigint::with_ends((0..count * count).step_by(step), end_pairs) {
       check_arithmetic_bits(pair / count, pair % count, bits);
     }
   }
 }
 
 /// Every value of each width from 9 to 16 bits, in two limbs, against the structured operands of
-/// that width, against `i64`, or under Miri every 61st value at 9 and 16 bits.
+/// that width, against `i64`, or under Miri every 61st value and the ends at 9 and 16 bits.
 #[test]
 fn arithmetic_of_9_to_16_bits_against_structured_operands() {
   let (widths, step) = if cfg!(miri) {
@@ -203,7 +222,7 @@ fn arithmetic_of_9_to_16_bits_against_structured_operands() {
   };
   for bits in widths {
     let operands = bigint::structured_patterns(bits);
-    for a in (0..1 << bits).step_by(step) {
+    for a in bigint::with_ends((0..1 << bits).step_by(step), ends_of(bits)) {
       check_negation_bits(a, bits);
       for &b in &operands {
         check_arithmetic_bits(a, b as u32, bits);
@@ -212,11 +231,12 @@ fn arithmetic_of_9_to_16_bits_against_structured_operands() {
   }
 }
 
-/// `is_one` of every value of one and of two limbs, or under Miri of every 7th.
+/// `is_one` of every value of one and of two limbs, or under Miri of every 7th and of the ends.
 #[test]
 fn one_of_every_value() {
   let step = if cfg!(miri) { 7 } else { 1 };
-  for value in (0..=u16::MAX).step_by(step) {
+  let ends = ends_of(16).into_iter().map(|value| value as u16);
+  for value in bigint::with_ends((0..=u16::MAX).step_by(step), ends) {
     assert_eq!(is_one(&value.to_le_bytes()), value == 1, "{value}");
     if let Ok(limb) = u8::try_from(value) {
       assert_eq!(is_one(&[limb]), value == 1, "{value}");

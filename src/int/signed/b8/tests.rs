@@ -14,11 +14,18 @@ native_oracle!(signed eight_limbs_match_i64, i64, 8);
 native_oracle!(signed sixteen_limbs_match_i128, i128, 16);
 
 /// Every pair of one-limb values against `i8`, and every value against `i8` and the native upper
-/// layer for `i8`, or under Miri, which runs them slowly, every 61st pair and every 7th value.
+/// layer for `i8`, or under Miri, which runs them slowly, every 61st pair and every 7th value, with
+/// the limits, the values next to them, -1, 0 and 1, which a stride may skip, and their pairs.
 #[test]
 fn every_one_limb_value_matches_i8() {
   let (pair_step, value_step) = if cfg!(miri) { (61, 7) } else { (1, 1) };
-  for pair in (0..=u16::MAX).step_by(pair_step) {
+  let ends: Vec<i8> = ends_of(8).into_iter().map(|value| value as i8).collect();
+  let end_pairs = ends.iter().flat_map(|&a| {
+    ends
+      .iter()
+      .map(move |&b| u16::from_le_bytes([a as u8, b as u8]))
+  });
+  for pair in bigint::with_ends((0..=u16::MAX).step_by(pair_step), end_pairs) {
     let [limb_a, limb_b] = pair.to_le_bytes();
     let (a, b) = (limb_a as i8, limb_b as i8);
     assert_eq!(cmp(&[limb_a], &[limb_b]), a.cmp(&b));
@@ -53,7 +60,7 @@ fn every_one_limb_value_matches_i8() {
       }
     }
   }
-  for a in (i8::MIN..=i8::MAX).step_by(value_step) {
+  for a in bigint::with_ends((i8::MIN..=i8::MAX).step_by(value_step), ends) {
     let limbs_a = [a as u8];
     assert_eq!(is_negative(&limbs_a), a < 0);
     assert_eq!(is_positive(&limbs_a), a > 0);
@@ -193,8 +200,19 @@ fn values_of(bits: u32) -> core::ops::RangeInclusive<i32> {
   }
 }
 
+/// The values of `bits` bits, at most 16, that a stride may skip: the limits, the values next to
+/// them, -1, 0 and 1.
+fn ends_of(bits: u32) -> Vec<i32> {
+  let range = values_of(bits);
+  let (min, max) = (*range.start(), *range.end());
+  [min, min + 1, -1, 0, 1, max - 1, max]
+    .into_iter()
+    .filter(|value| range.contains(value))
+    .collect()
+}
+
 /// Every pair of values of each width from zero to 8 bits, in one and in two limbs, against `i64`,
-/// or under Miri every 61st pair.
+/// or under Miri every 61st pair and the pairs of the ends.
 #[test]
 fn arithmetic_of_every_pair_up_to_8_bits() {
   let step = if cfg!(miri) { 61 } else { 1 };
@@ -203,15 +221,17 @@ fn arithmetic_of_every_pair_up_to_8_bits() {
       check_negation_bits(a, bits);
     }
     let pairs = values_of(bits).flat_map(|a| values_of(bits).map(move |b| (a, b)));
-    for (a, b) in pairs.step_by(step) {
+    let ends = ends_of(bits);
+    let end_pairs = ends.iter().flat_map(|&a| ends.iter().map(move |&b| (a, b)));
+    for (a, b) in bigint::with_ends(pairs.step_by(step), end_pairs) {
       check_arithmetic_bits(a, b, bits);
     }
   }
 }
 
 /// Every value of each width from 9 to 16 bits, in two limbs, against the structured operands of
-/// that width read in two's complement, against `i64`, or under Miri every 61st value at 9 and 16
-/// bits.
+/// that width read in two's complement, against `i64`, or under Miri every 61st value and the ends
+/// at 9 and 16 bits.
 #[test]
 fn arithmetic_of_9_to_16_bits_against_structured_operands() {
   let (widths, step) = if cfg!(miri) {
@@ -224,7 +244,7 @@ fn arithmetic_of_9_to_16_bits_against_structured_operands() {
       .into_iter()
       .map(|pattern| bigint::to_signed(pattern, bits) as i32)
       .collect();
-    for a in values_of(bits).step_by(step) {
+    for a in bigint::with_ends(values_of(bits).step_by(step), ends_of(bits)) {
       check_negation_bits(a, bits);
       for &b in &operands {
         check_arithmetic_bits(a, b, bits);
@@ -234,11 +254,12 @@ fn arithmetic_of_9_to_16_bits_against_structured_operands() {
 }
 
 /// `is_one` and `signum` of every value of one and of two limbs against `i8` and `i16`, or under
-/// Miri of every 7th.
+/// Miri of every 7th and of the ends.
 #[test]
 fn one_and_sign_of_every_value() {
   let step = if cfg!(miri) { 7 } else { 1 };
-  for value in (i16::MIN..=i16::MAX).step_by(step) {
+  let ends = ends_of(16).into_iter().map(|value| value as i16);
+  for value in bigint::with_ends((i16::MIN..=i16::MAX).step_by(step), ends) {
     let limbs = value.to_le_bytes();
     assert_eq!(is_one(&limbs), value == 1, "{value}");
     assert_eq!(signum(&limbs), value.signum().to_le_bytes(), "{value}");

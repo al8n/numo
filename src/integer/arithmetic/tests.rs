@@ -44,6 +44,47 @@ fn wrap(exact: i128, bits: u32, signed: bool) -> (i128, bool) {
   (wrapped, exact < min || max < exact)
 }
 
+/// The values of `bits` bits that a stride may skip and every sweep checks: the limits, the values
+/// next to them, -1, 0 and 1, where they are in range.
+fn ends(bits: u32, signed: bool) -> Vec<i128> {
+  let (min, max) = range(bits, signed);
+  let mut ends: Vec<i128> = [min, min + 1, -1, 0, 1, max - 1, max]
+    .into_iter()
+    .filter(|value| (min..=max).contains(value))
+    .collect();
+  ends.sort_unstable();
+  ends.dedup();
+  ends
+}
+
+/// The values of `bits` bits that a sweep checks, in order: every `step`th value from the smallest,
+/// and the values of [`ends`].
+fn every_value(bits: u32, signed: bool, step: usize) -> Vec<i128> {
+  let (min, max) = range(bits, signed);
+  let mut values: Vec<i128> = (min..=max).step_by(step).collect();
+  values.extend(ends(bits, signed));
+  values.sort_unstable();
+  values.dedup();
+  values
+}
+
+/// The pairs of values of `bits` bits that a sweep checks, in order: every `step`th pair, counted
+/// from `(min, min)` with the second value varying fastest, and every pair of the values of
+/// [`ends`], such as `(MIN, -1)`, `(MIN, 0)` and `(MAX, MAX)`.
+fn every_pair(bits: u32, signed: bool, step: usize) -> Vec<(i128, i128)> {
+  let (min, max) = range(bits, signed);
+  let count = max - min + 1;
+  let mut pairs: Vec<(i128, i128)> = (0..count * count)
+    .step_by(step)
+    .map(|pair| (min + pair / count, min + pair % count))
+    .collect();
+  let ends = ends(bits, signed);
+  pairs.extend(ends.iter().flat_map(|&a| ends.iter().map(move |&b| (a, b))));
+  pairs.sort_unstable();
+  pairs.dedup();
+  pairs
+}
+
 /// `value` in `N` limbs of type `L`, least significant first, in two's complement. Requires the
 /// limbs to have at most 128 bits.
 fn limbs_of<L: bigint::Limb, const N: usize>(value: i128) -> [L; N] {
@@ -66,14 +107,15 @@ macro_rules! both {
 /// Checks the values of `$ty`, of `$bits` bits, created by `$from` from their value: the
 /// overflowing, checked, wrapping, saturating and strict methods, through the inherent `const fn`s
 /// and the traits, against the exact results wrapped to the width. Every value and every `$step`th
-/// pair, or under Miri every 7th value and every 61st pair.
+/// pair, or under Miri every 7th value and every 61st pair, with the ends that `every_value` and
+/// `every_pair` keep.
 macro_rules! check_every_pair {
   ($ty:ty, $bits:expr, $signed:expr, $step:expr, $from:expr) => {{
     let from: fn(i128) -> $ty = $from;
     let (bits, signed) = ($bits, $signed);
     let (min, max) = range(bits, signed);
     let (value_step, pair_step) = if cfg!(miri) { (7, 61) } else { (1, $step) };
-    for a in (min..=max).step_by(value_step) {
+    for a in every_value(bits, signed, value_step) {
       let x = from(a);
       let (negated, overflow) = wrap(-a, bits, signed);
       assert_eq!(
@@ -99,9 +141,7 @@ macro_rules! check_every_pair {
         );
       }
     }
-    let count = max - min + 1;
-    for pair in (0..count * count).step_by(pair_step) {
-      let (a, b) = (min + pair / count, min + pair % count);
+    for (a, b) in every_pair(bits, signed, pair_step) {
       let (x, y) = (from(a), from(b));
       for (exact, (value, overflow), checked, wrapping, saturating) in [
         (
@@ -172,19 +212,17 @@ macro_rules! check_every_pair {
 /// Checks the values of `$ty`, unsigned, of `$bits` bits, created by `$from` from their value:
 /// `is_one`, and the carrying addition and the borrowing subtraction with and without a carry,
 /// through the inherent `const fn`s and the traits, against the exact results wrapped to the
-/// width. Every value and every `$step`th pair, or under Miri every 7th value and every 61st pair.
+/// width. Every value and every `$step`th pair, or under Miri every 7th value and every 61st pair,
+/// with the ends that `every_value` and `every_pair` keep.
 macro_rules! check_unsigned_methods {
   ($ty:ty, $bits:expr, $step:expr, $from:expr) => {{
     let from: fn(i128) -> $ty = $from;
     let bits = $bits;
-    let (min, max) = range(bits, false);
     let (value_step, pair_step) = if cfg!(miri) { (7, 61) } else { (1, $step) };
-    for a in (min..=max).step_by(value_step) {
+    for a in every_value(bits, false, value_step) {
       assert_eq!(both!(FixedInteger::is_one(&from(a))), a == 1, "{a}");
     }
-    let count = max - min + 1;
-    for pair in (0..count * count).step_by(pair_step) {
-      let (a, b) = (min + pair / count, min + pair % count);
+    for (a, b) in every_pair(bits, false, pair_step) {
       let (x, y) = (from(a), from(b));
       for carry in [false, true] {
         let c = i128::from(carry);
@@ -206,16 +244,17 @@ macro_rules! check_unsigned_methods {
 }
 
 /// Checks every value of `$ty`, signed, of `$bits` bits, created by `$from` from its value, or
-/// under Miri every 7th value: `is_one`, the absolute value in every form, the saturating
-/// negation, `signum` and `unsigned_abs`, whose result `$unsigned` creates, through the inherent
-/// `const fn`s and the traits, against the exact results wrapped to the width.
+/// under Miri every 7th value and the ends that `every_value` keeps: `is_one`, the absolute value
+/// in every form, the saturating negation, `signum` and `unsigned_abs`, whose result `$unsigned`
+/// creates, through the inherent `const fn`s and the traits, against the exact results wrapped to
+/// the width.
 macro_rules! check_signed_methods {
   ($ty:ty, $bits:expr, $from:expr, $unsigned:expr) => {{
     let from: fn(i128) -> $ty = $from;
     let bits = $bits;
     let (min, max) = range(bits, true);
     let step = if cfg!(miri) { 7 } else { 1 };
-    for a in (min..=max).step_by(step) {
+    for a in every_value(bits, true, step) {
       let x = from(a);
       assert_eq!(both!(FixedInteger::is_one(&x)), a == 1, "{a}");
       let (abs, overflow) = wrap(a.abs(), bits, true);
@@ -270,15 +309,13 @@ macro_rules! check_signed_methods {
 /// sum, the difference or the product is in range, the operator in its four forms of values and
 /// references, its compound assignment with a value and with a reference, and for the sum `Sum`
 /// over values and over references give the result of the checked method. Every `$step`th pair, or
-/// under Miri every 61st pair.
+/// under Miri every 61st pair, with the ends that `every_pair` keeps.
 macro_rules! check_operators {
   ($ty:ty, $bits:expr, $signed:expr, $step:expr, $from:expr) => {{
     let from: fn(i128) -> $ty = $from;
-    let (min, max) = range($bits, $signed);
     let step = if cfg!(miri) { 61 } else { $step };
-    let count = max - min + 1;
-    for pair in (0..count * count).step_by(step) {
-      let (x, y) = (from(min + pair / count), from(min + pair % count));
+    for (a, b) in every_pair($bits, $signed, step) {
+      let (x, y) = (from(a), from(b));
       check_operators!(@op x, y, +, +=, x.checked_add(&y));
       check_operators!(@op x, y, -, -=, x.checked_sub(&y));
       check_operators!(@op x, y, *, *=, x.checked_mul(&y));
@@ -376,6 +413,35 @@ fn every_pair_of_one_and_zero_bits() {
   check_storage!(array U0, 0, [u8; 1], 1);
   check_storage!(array U0, 0, [u32; 1], 1);
   check_storage!(array U0, 0, [u64; 2], 1);
+}
+
+/// The sweeps keep the ends of the range under any stride, as under Miri: one signed bit keeps -1
+/// and 0, the only operand of a legal negation, and wider ranges keep the limits, -1, 0 and 1, and
+/// their pairs, such as `(MIN, -1)` and `(MAX, MAX)`.
+#[test]
+fn sampling_keeps_the_ends() {
+  assert_eq!(every_value(0, true, 7), [0]);
+  assert_eq!(every_value(1, true, 7), [-1, 0]);
+  assert_eq!(
+    every_pair(1, true, 61),
+    [(-1, -1), (-1, 0), (0, -1), (0, 0)]
+  );
+  for (bits, signed) in [(2, true), (7, true), (7, false), (8, true), (8, false)] {
+    let (min, max) = range(bits, signed);
+    let values = every_value(bits, signed, 7);
+    let pairs = every_pair(bits, signed, 61);
+    let ends = ends(bits, signed);
+    assert!(ends.contains(&min) && ends.contains(&max) && ends.contains(&0));
+    assert_eq!(ends.contains(&-1), signed);
+    for &a in &ends {
+      assert!(values.contains(&a), "{a} in {bits} bits");
+      for &b in &ends {
+        assert!(pairs.contains(&(a, b)), "({a}, {b}) in {bits} bits");
+      }
+    }
+    assert!(values.is_sorted() && pairs.is_sorted());
+    assert!(values.iter().all(|value| (min..=max).contains(value)));
+  }
 }
 
 /// `ONE` is the storage's one, and the constant of `ConstIntegerOne` and the function of
@@ -1000,11 +1066,13 @@ fn overflow_panics_report_the_caller() {
 
 /// `-` on values and references, and `Product` over values and references, give the results of
 /// `checked_neg` and `checked_mul` where these are `Some`, for every value and pair of 7 bits in a
-/// native integer and in an array of one byte, or under Miri every 7th.
+/// native integer and in an array of one byte, or under Miri every 7th value, with the ends that
+/// `every_value` keeps, against every value.
 #[test]
 fn negation_and_products_match_the_checked_methods() {
   let step = if cfg!(miri) { 7 } else { 1 };
-  for a in (-64..=63).step_by(step) {
+  for a in every_value(7, true, step) {
+    let a = a as i8;
     let native = i7::new(a);
     let array = Int::<U7, [u8; 1]>::checked_from_limbs(limbs_of(a.into())).expect("7 bits");
     if let Some(negated) = native.checked_neg() {
@@ -1023,9 +1091,9 @@ fn negation_and_products_match_the_checked_methods() {
       }
     }
   }
-  for a in (0..=127u8).step_by(step) {
+  for a in every_value(7, false, step) {
     for b in 0..=127 {
-      let (x, y) = (u7::new(a), u7::new(b));
+      let (x, y) = (u7::new(a as u8), u7::new(b));
       if let Some(product) = x.checked_mul(&y) {
         assert_eq!([x, y].into_iter().product::<u7>(), product);
         assert_eq!([x, y].iter().product::<u7>(), product);
@@ -1453,19 +1521,22 @@ fn reference_operators_need_only_the_storage_trait() {
 }
 
 /// The values of `bits` bits that `from` creates from their value: every value, or under Miri every
-/// 7th.
-fn every_value<T>(bits: u32, signed: bool, from: impl Fn(i128) -> T) -> Vec<T> {
-  let (min, max) = range(bits, signed);
+/// 7th value and the ends that `every_value` keeps.
+fn values_of<T>(bits: u32, signed: bool, from: impl Fn(i128) -> T) -> Vec<T> {
   let step = if cfg!(miri) { 7 } else { 1 };
-  (min..=max).step_by(step).map(from).collect()
+  every_value(bits, signed, step)
+    .into_iter()
+    .map(from)
+    .collect()
 }
 
 /// Checks the `unchecked_*` methods at every pair of `$values`, and with `neg` `unchecked_neg` at
 /// every value, against the checked methods, through the inherent methods and through the traits,
 /// `UncheckedOps` and `SignedFixedInteger`: each is called only where the checked method returns
 /// a value, and both paths must return that value. Each operation must be called at least once,
-/// so that the check cannot pass where the checked methods return no value; at zero bits, each is
-/// called exactly once, on zero.
+/// so that the check cannot pass where the checked methods return no value: zero, which every set
+/// of values here holds, gives each operation a call, and at zero bits each is called exactly once,
+/// on zero.
 macro_rules! check_unchecked {
   (@neg $x:ident, $calls:ident) => {
     if let Some(negated) = $x.checked_neg() {
@@ -1514,20 +1585,20 @@ macro_rules! check_unchecked {
 /// every value and every pair: `native` in `$uint` and `$int`, and `array` in `[$limb; $n]`.
 macro_rules! check_unchecked_storage {
   (native $width:ty, $bits:expr, $uint:ident, $int:ident) => {{
-    check_unchecked!(every_value($bits, false, |v| Uint::<$width, $uint>::new(
+    check_unchecked!(values_of($bits, false, |v| Uint::<$width, $uint>::new(
       v as $uint
     )));
     check_unchecked!(
-      every_value($bits, true, |v| Int::<$width, $int>::new(v as $int)),
+      values_of($bits, true, |v| Int::<$width, $int>::new(v as $int)),
       neg
     );
   }};
   (array $width:ty, $bits:expr, [$limb:ident; $n:literal]) => {{
-    check_unchecked!(every_value($bits, false, |v| {
+    check_unchecked!(values_of($bits, false, |v| {
       Uint::<$width, [$limb; $n]>::checked_from_limbs(limbs_of(v)).expect("in range")
     }));
     check_unchecked!(
-      every_value($bits, true, |v| {
+      values_of($bits, true, |v| {
         Int::<$width, [$limb; $n]>::checked_from_limbs(limbs_of(v)).expect("in range")
       }),
       neg

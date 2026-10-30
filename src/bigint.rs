@@ -11,7 +11,10 @@ use core::{
 use num_bigint::{BigInt, Sign};
 use std::{vec, vec::Vec};
 
-use crate::RoundingMode;
+use crate::{
+  FitsBits, FixedInteger, InlineIntRepr, InlineUintRepr, Int, RoundingMode, SignedFixedInteger,
+  Uint,
+};
 
 /// An unsigned integer type that holds the limbs of an array, least significant first.
 pub(crate) trait Limb: Copy {
@@ -252,8 +255,8 @@ pub(crate) fn arithmetic_widths(limb_bits: u32, limbs: usize) -> Vec<u32> {
 /// The values from `min` to `max`, the range of `bits` bits, at which the arithmetic of a width is
 /// checked for limbs of `limb_bits` bits: the limits and the values next to them and to zero, the
 /// powers `±2^k` and the values next to them for `k` next to the limb boundaries and to `bits`, and
-/// values from `random`, wrapped to the range. Under Miri, fewer random values and every third
-/// value.
+/// values from `random`, wrapped to the range. Under Miri, fewer random values, and the values that
+/// [`thin`] keeps.
 pub(crate) fn arithmetic_samples(
   bits: u32,
   limb_bits: u32,
@@ -347,10 +350,91 @@ pub(crate) fn to_signed(pattern: u128, bits: u32) -> i128 {
   }
 }
 
-/// `samples`, or every third of them under Miri, which runs big-integer arithmetic slowly.
-pub(crate) fn thin<T>(samples: Vec<T>) -> Vec<T> {
-  let step = if cfg!(miri) { 3 } else { 1 };
-  samples.into_iter().step_by(step).collect()
+/// A sample that [`thin`] keeps when it is zero or a unit, which a stride may skip.
+pub(crate) trait Sample {
+  /// Whether the sample is zero, one or minus one; for limbs, whether they are all zeros, one or
+  /// all ones.
+  fn is_unit_or_zero(&self) -> bool;
+}
+
+impl Sample for BigInt {
+  fn is_unit_or_zero(&self) -> bool {
+    self.magnitude().bits() <= 1
+  }
+}
+
+macro_rules! sample {
+  (unsigned $($int:ident),+) => {$(
+    impl Sample for $int {
+      fn is_unit_or_zero(&self) -> bool {
+        *self <= 1
+      }
+    }
+  )+};
+  (signed $($int:ident),+) => {$(
+    impl Sample for $int {
+      fn is_unit_or_zero(&self) -> bool {
+        (-1..=1).contains(self)
+      }
+    }
+  )+};
+}
+
+sample!(unsigned u8, u16, u32, u64, u128);
+sample!(signed i8, i16, i32, i64, i128);
+
+impl<L: Limb + PartialEq, const N: usize> Sample for [L; N] {
+  fn is_unit_or_zero(&self) -> bool {
+    let above_first_are_zero = self.iter().skip(1).all(|&limb| limb == L::ZERO);
+    let first = self.first().copied().unwrap_or(L::ZERO);
+    (above_first_are_zero && (first == L::ZERO || first == L::ONE))
+      || self.iter().all(|&limb| limb == L::MAX)
+  }
+}
+
+impl<B: FitsBits<R>, R: InlineUintRepr> Sample for Uint<B, R> {
+  fn is_unit_or_zero(&self) -> bool {
+    FixedInteger::is_zero(self) || FixedInteger::is_one(self)
+  }
+}
+
+impl<B: FitsBits<R>, R: InlineIntRepr> Sample for Int<B, R> {
+  fn is_unit_or_zero(&self) -> bool {
+    // The sign is the value exactly for -1, 0 and 1.
+    SignedFixedInteger::signum(self) == *self
+  }
+}
+
+/// `samples`, or under Miri, which runs big-integer arithmetic slowly, every third of them, as
+/// [`thin_by`] keeps them.
+pub(crate) fn thin<T: Sample>(samples: Vec<T>) -> Vec<T> {
+  thin_by(samples, 3, T::is_unit_or_zero)
+}
+
+/// `samples`, or under Miri every `step`th of them, the first, the last and every sample for which
+/// `keep` returns `true`, such as zero and the units, which a stride may skip.
+pub(crate) fn thin_by<T>(samples: Vec<T>, step: usize, keep: impl Fn(&T) -> bool) -> Vec<T> {
+  if !cfg!(miri) {
+    return samples;
+  }
+  let last = samples.len().saturating_sub(1);
+  samples
+    .into_iter()
+    .enumerate()
+    .filter(|(i, sample)| i % step == 0 || *i == last || keep(sample))
+    .map(|(_, sample)| sample)
+    .collect()
+}
+
+/// The values of `strided` and of `ends`, which a stride may skip, sorted and without duplicates.
+pub(crate) fn with_ends<T: Ord>(
+  strided: impl IntoIterator<Item = T>,
+  ends: impl IntoIterator<Item = T>,
+) -> Vec<T> {
+  let mut values: Vec<T> = strided.into_iter().chain(ends).collect();
+  values.sort_unstable();
+  values.dedup();
+  values
 }
 
 /// Bit patterns of `N` limbs of type `L`: zero, all ones, and for each bit index `k`, bit `k`

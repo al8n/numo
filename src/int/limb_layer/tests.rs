@@ -1307,8 +1307,8 @@ macro_rules! other_limb_tests {
       values
     }
 
-    /// The samples that `T` holds, or under Miri every third of them.
-    fn samples_of<T: TryFrom<u128>>() -> Vec<T> {
+    /// The samples that `T` holds, or under Miri every third of them, as `bigint::thin` keeps them.
+    fn samples_of<T: TryFrom<u128> + bigint::Sample>() -> Vec<T> {
       bigint::thin(
         samples()
           .into_iter()
@@ -1470,8 +1470,8 @@ macro_rules! other_limb_tests {
       values
     }
 
-    /// The samples that `T` holds, or under Miri every third of them.
-    fn samples_of<T: TryFrom<i128>>() -> Vec<T> {
+    /// The samples that `T` holds, or under Miri every third of them, as `bigint::thin` keeps them.
+    fn samples_of<T: TryFrom<i128> + bigint::Sample>() -> Vec<T> {
       bigint::thin(
         samples()
           .into_iter()
