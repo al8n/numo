@@ -157,13 +157,13 @@ macro_rules! storage_decimal {
     {
       /// Reads a decimal from a string in the syntax of [`parse`](Self::parse), in every format.
       /// Any other input, such as a number, is rejected, so a decimal never passes through a
-      /// binary floating-point value; a string that does not parse reports its
-      /// [`ParseError`](crate::ParseError).
+      /// binary floating-point value, with a fixed message that names nothing of the input; a
+      /// string that does not parse reports its [`ParseError`](crate::ParseError).
       fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
       where
         D: serde_core::Deserializer<'de>,
       {
-        deserializer.deserialize_str(crate::serde::TextVisitor::new())
+        crate::serde::deserialize_text(deserializer)
       }
     }
   )+};

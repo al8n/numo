@@ -220,6 +220,13 @@
 //! power of ten. A rounding mode is written as its lowercase name, such as `"halfeven"`, and
 //! read from a name of any case, with the words of a half mode optionally separated.
 //!
+//! No error of reading a decimal names the rejected input. Every input but a string, such as a
+//! number, gets the fixed message `expected a decimal value as a string`, which also replaces any
+//! error of the format that would describe the input. Every other error of the format, such as the
+//! end of the input, an I/O error or a missing field, passes through unchanged, and a string that
+//! does not parse reports its [`ParseError`]. This covers decimal values only: reading a rounding
+//! mode reports the rejected name and the accepted ones.
+//!
 //! # `arbitrary`, `proptest` and `quickcheck`
 //!
 //! The `arbitrary`, `proptest` and `quickcheck` features implement the `Arbitrary` trait of each

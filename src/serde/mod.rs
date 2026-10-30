@@ -4,8 +4,14 @@
 //! The traits come from `serde_core`, which `serde` 1.0.220 and later re-export. There is no
 //! branch on `is_human_readable`: a binary format writes the same text, because a coefficient read
 //! back with another number of fraction digits would be off by a power of ten.
+//!
+//! No error of reading a decimal names the rejected input: [`deserialize_text`] replaces a format
+//! error that describes it with a fixed message and passes every other one through with its
+//! category. This covers decimal values only: reading a rounding mode reports the rejected name
+//! and the accepted ones.
 
 use core::{
+  cell::Cell,
   fmt::{self, Write as _},
   marker::PhantomData,
   str::FromStr,
@@ -13,7 +19,7 @@ use core::{
 
 use serde_core::{
   Deserialize, Deserializer, Serialize, Serializer,
-  de::{self, Visitor},
+  de::{self, EnumAccess, MapAccess, SeqAccess, Visitor},
   ser,
 };
 
@@ -21,6 +27,9 @@ use crate::{
   Decimal, ParseError, RoundingMode, int,
   layout::{Layout, Storage},
 };
+
+#[cfg(test)]
+mod tests;
 
 /// Length of a buffer that holds the text of any decimal. The widest texts are those of
 /// `Decimal<U0, U154, u512>::MAX`, `0.` and 154 digits, and `Decimal<U0, U153, i512>::MIN`, `-0.`
@@ -69,31 +78,127 @@ where
   }
 }
 
-/// Reads a decimal of type `T` from a string with its `FromStr`, which every storage implements
-/// with `parse`.
-pub(crate) struct TextVisitor<T>(PhantomData<T>);
+/// The message of every input that is not a string, which names nothing of the input.
+const EXPECTED: &str = "expected a decimal value as a string";
 
-impl<T> TextVisitor<T> {
-  pub(crate) const fn new() -> Self {
-    Self(PhantomData)
+/// Reads a decimal of type `T` from a string with its `FromStr`, which every decimal type
+/// implements with `parse`, and rejects every other kind of input with [`EXPECTED`].
+///
+/// A format error whose construction consulted the visitor's description of the expected input is
+/// replaced with [`EXPECTED`] too: serde builds that way every error that names a rejected input,
+/// with `invalid_type`, `invalid_value` or `invalid_length`. Every other format error, such as the
+/// end of the input, an I/O error, invalid UTF-8 or a missing field, passes through unchanged, with
+/// its category. A string that does not parse reports its [`ParseError`], which names no input
+/// either.
+pub(crate) fn deserialize_text<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+  T: FromStr<Err = ParseError>,
+  D: Deserializer<'de>,
+{
+  let consulted = Cell::new(false);
+  let visitor = TextVisitor {
+    consulted: &consulted,
+    marker: PhantomData,
+  };
+  match deserializer.deserialize_str(visitor) {
+    Ok(Ok(value)) => Ok(value),
+    // The parse error leaves the format as a value, so that nothing the format does with the
+    // errors of a visitor can make it a format error, which could be replaced.
+    Ok(Err(error)) => Err(de::Error::custom(error)),
+    Err(_) if consulted.get() => Err(de::Error::custom(EXPECTED)),
+    Err(error) => Err(error),
   }
 }
 
-impl<T> Visitor<'_> for TextVisitor<T>
+/// Reads the text of a decimal of type `T` and parses it, and rejects every other kind of input
+/// with [`EXPECTED`]. `consulted` records whether the format asked for the description of the
+/// expected input.
+struct TextVisitor<'a, T> {
+  consulted: &'a Cell<bool>,
+  marker: PhantomData<T>,
+}
+
+impl<T> TextVisitor<'_, T> {
+  fn reject<E: de::Error>() -> Result<Result<T, ParseError>, E> {
+    Err(E::custom(EXPECTED))
+  }
+}
+
+/// Implements the visit methods of inputs that carry a value, other than a string, as rejections.
+macro_rules! reject_inputs {
+  ($($method:ident($input:ty)),+ $(,)?) => {$(
+    fn $method<E: de::Error>(self, _: $input) -> Result<Self::Value, E> {
+      Self::reject()
+    }
+  )+};
+}
+
+impl<'de, T> Visitor<'de> for TextVisitor<'_, T>
 where
   T: FromStr<Err = ParseError>,
 {
-  type Value = T;
+  type Value = Result<T, ParseError>;
 
   fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("a decimal number as a string")
+    self.consulted.set(true);
+    f.write_str("a decimal value as a string")
   }
 
-  fn visit_str<E>(self, text: &str) -> Result<T, E>
+  fn visit_str<E>(self, text: &str) -> Result<Self::Value, E>
   where
     E: de::Error,
   {
-    text.parse().map_err(E::custom)
+    Ok(text.parse())
+  }
+
+  // Every other kind of input is rejected below. `visit_borrowed_str` reads through `visit_str`,
+  // and `visit_string` and `visit_byte_buf`, which `serde_core` has only with `alloc`, read
+  // through `visit_str` and `visit_bytes`.
+  reject_inputs! {
+    visit_bool(bool),
+    visit_i8(i8),
+    visit_i16(i16),
+    visit_i32(i32),
+    visit_i64(i64),
+    visit_i128(i128),
+    visit_u8(u8),
+    visit_u16(u16),
+    visit_u32(u32),
+    visit_u64(u64),
+    visit_u128(u128),
+    visit_f32(f32),
+    visit_f64(f64),
+    visit_char(char),
+    visit_bytes(&[u8]),
+    visit_borrowed_bytes(&'de [u8]),
+  }
+
+  fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+    Self::reject()
+  }
+
+  fn visit_some<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Self::reject()
+  }
+
+  fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+    Self::reject()
+  }
+
+  fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Self::reject()
+  }
+
+  fn visit_seq<A: SeqAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Self::reject()
+  }
+
+  fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Self::reject()
+  }
+
+  fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Self::reject()
   }
 }
 

@@ -4363,18 +4363,10 @@ mod with_serde {
 
   #[test]
   fn decimals_reject_everything_but_strings() {
-    assert_de_tokens_error::<Price>(
-      &[Token::F64(16.7)],
-      "invalid type: floating point `16.7`, expected a decimal number as a string",
-    );
-    assert_de_tokens_error::<Price>(
-      &[Token::I64(167)],
-      "invalid type: integer `167`, expected a decimal number as a string",
-    );
-    assert_de_tokens_error::<Price>(
-      &[Token::Bytes(b"1.5")],
-      "invalid type: byte array, expected a decimal number as a string",
-    );
+    // One fixed message, which names nothing of the input.
+    for token in [Token::F64(16.7), Token::I64(167), Token::Bytes(b"1.5")] {
+      assert_de_tokens_error::<Price>(&[token], "expected a decimal value as a string");
+    }
     // A string that does not parse reports why.
     assert_de_tokens_error::<Price>(&[Token::Str("1.5x")], "invalid decimal syntax");
     assert_de_tokens_error::<D2x2>(
@@ -4432,19 +4424,11 @@ mod with_serde {
     type D2x1 = Decimal<U2, U1>;
     let value: D2x1 = serde_json::from_str("\"16.7\"").unwrap();
     assert_eq!(value.repr(), 167);
-    let err = serde_json::from_str::<D2x1>("16.7").unwrap_err();
-    assert!(err.is_data(), "{err}");
-    assert!(
-      err
-        .to_string()
-        .starts_with("invalid type: floating point `16.7`"),
-      "{err}"
-    );
-    let err = serde_json::from_str::<D2x1>("16").unwrap_err();
-    assert!(
-      err.to_string().starts_with("invalid type: integer `16`"),
-      "{err}"
-    );
+    for number in ["16.7", "16"] {
+      let err = serde_json::from_str::<D2x1>(number).unwrap_err();
+      assert!(err.is_data(), "{err}");
+      assert_eq!(err.to_string(), "expected a decimal value as a string");
+    }
     let err = serde_json::from_str::<D2x1>("\"16.7.1\"").unwrap_err();
     assert!(
       err.to_string().starts_with("invalid decimal syntax"),
