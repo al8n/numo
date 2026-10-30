@@ -1,4 +1,4 @@
-//! The traits that [`Decimal`] implements for generic code.
+//! The traits that [`Decimal`] and [`Scaled`] implement for generic code.
 //!
 //! The traits on one decimal type form two layers. The general layer, [`FixedDecimal`], the sign
 //! traits and [`DecimalOne`], requires `Clone` but not `Copy`, and has zero, the limits and one as
@@ -11,6 +11,12 @@
 //! [`ConvertTo`] and [`DivRound`], which relate two or three decimal types, mirror inherent methods
 //! of the same names, and each has a single implementation for every combination of them, with the
 //! bounds of the inherent method it calls.
+//!
+//! [`Scaled`] implements each trait once, for every decimal that implements it, with the decimal's
+//! result and the scale that the documentation of `Scaled` gives each operation. A `Scaled` relates
+//! only to a `Scaled`. Its parsing is defined for each storage, so its implementations require the
+//! `FromStr` that [`FixedDecimal`] needs, and code generic over the decimal `D` adds the bound
+//! `Scaled<D>: FixedDecimal`.
 
 use core::{
   fmt::{Debug, Display},
@@ -23,26 +29,34 @@ use typenum::{And, Diff, Max, Maximum, Sum};
 
 use sealed::{Sealed, SealedPair, SealedTriple};
 
-use super::{ConvertError, Decimal, DivideError, ParseError, QuantizeError};
+use super::{ConvertError, Decimal, DivideError, ParseError, QuantizeError, Scaled};
 use crate::{
   layout::{DivIntermediate, Layout, Pick, Storage, Widen, WidenRepr},
   rounding::RoundingMode,
 };
 
 mod sealed {
-  /// Seals the traits on one type: only [`Decimal`](crate::Decimal) implements them.
+  /// Seals the traits on one type: only [`Decimal`](crate::Decimal) and
+  /// [`Scaled`](crate::Scaled) implement them.
   pub trait Sealed {}
 
   impl<I, F, R> Sealed for super::Decimal<I, F, R> {}
 
+  // Unconditional: another crate cannot implement a trait of this crate for a `Scaled` over a type
+  // of its own anyway, because `Scaled` is not one of its types.
+  impl<D> Sealed for super::Scaled<D> {}
+
   /// Seals the traits that relate a decimal type to another, including the parameter: only pairs
-  /// of [`Decimal`](crate::Decimal)s implement them.
+  /// of [`Decimal`](crate::Decimal)s and pairs of [`Scaled`](crate::Scaled)s implement them.
   pub trait SealedPair<T> {}
 
   impl<I, F, R, I2, F2, R2> SealedPair<super::Decimal<I2, F2, R2>> for super::Decimal<I, F, R> {}
 
+  impl<D, D2> SealedPair<super::Scaled<D2>> for super::Scaled<D> {}
+
   /// Seals the traits that relate a decimal type to two others, including the parameters: only
-  /// triples of [`Decimal`](crate::Decimal)s implement them.
+  /// triples of [`Decimal`](crate::Decimal)s and triples of [`Scaled`](crate::Scaled)s implement
+  /// them.
   pub trait SealedTriple<T, U> {}
 
   impl<I, F, R, I2, F2, R2, I3, F3, R3>
@@ -50,9 +64,12 @@ mod sealed {
     for super::Decimal<I, F, R>
   {
   }
+
+  impl<D, D2, D3> SealedTriple<super::Scaled<D2>, super::Scaled<D3>> for super::Scaled<D> {}
 }
 
-/// An exact fixed-point decimal number: [`Decimal`] over any storage.
+/// An exact fixed-point decimal number: [`Decimal`] over any storage, or [`Scaled`] over such a
+/// decimal.
 ///
 /// [`zero`](Self::zero), [`max_value`](Self::max_value) and [`min_value`](Self::min_value) return
 /// the inherent constants `ZERO`, `MAX` and `MIN`, and have no inherent counterparts; the other
@@ -63,7 +80,9 @@ mod sealed {
 /// this trait, which `Decimal<I, F, R>` implements for each storage `R` where `(I, F): Layout<R>`;
 /// a method call needs the trait in scope. Because the implementations are per storage, code
 /// generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and
-/// `(I, F): Layout<R>` do not imply. The supertraits give generic code cloning, comparison,
+/// `(I, F): Layout<R>` do not imply. [`Scaled<D>`](Scaled) implements this trait for every `D` that
+/// does, keeping the scale of its text, and code generic over `D` that computes with `Scaled<D>`
+/// adds the bound `Scaled<D>: FixedDecimal`. The supertraits give generic code cloning, comparison,
 /// hashing, formatting, parsing through `FromStr` and `Default`, which is zero. The functions
 /// `zero`, `max_value` and `min_value`, and [`one`](DecimalOne::one), have the names of those of
 /// `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by traits of both crates
@@ -178,7 +197,7 @@ pub trait FixedDecimal:
 }
 
 /// An exact fixed-point decimal number whose zero and limits are constants: [`Decimal`] over any
-/// storage.
+/// storage, or [`Scaled`] over such a decimal.
 ///
 /// `ZERO`, `MAX` and `MIN` are the inherent constants of the same names, which a concrete type
 /// reaches without this trait, also in constant contexts. Generic code reads them through this
@@ -230,7 +249,7 @@ pub trait ConstFixedDecimal: FixedDecimal + Copy {
 
 /// A decimal number with a signed storage: [`Decimal`] over `i8`, `i16`, `i32`, `i64`, `i128`,
 /// [`i192`](crate::i192), [`i256`](crate::i256), [`i320`](crate::i320), [`i384`](crate::i384),
-/// [`i448`](crate::i448) or [`i512`](crate::i512).
+/// [`i448`](crate::i448) or [`i512`](crate::i512), or [`Scaled`] over such a decimal.
 ///
 /// The methods are the inherent methods of the same names, which a concrete type reaches without
 /// this trait, also in constant contexts. The range of a signed storage is symmetric, so negation
@@ -279,7 +298,8 @@ pub trait SignedFixedDecimal: FixedDecimal + Neg<Output = Self> {
 
 /// A decimal number with an unsigned storage, whose values are never negative: [`Decimal`] over
 /// `u8`, `u16`, `u32`, `u64`, `u128`, [`u192`](crate::u192), [`u256`](crate::u256),
-/// [`u320`](crate::u320), [`u384`](crate::u384), [`u448`](crate::u448) or [`u512`](crate::u512).
+/// [`u320`](crate::u320), [`u384`](crate::u384), [`u448`](crate::u448) or [`u512`](crate::u512),
+/// or [`Scaled`] over such a decimal.
 ///
 /// This trait has no items of its own. As a bound, it states that values are never negative, so
 /// that [`min_value`](FixedDecimal::min_value) returns zero and
@@ -308,7 +328,7 @@ pub trait SignedFixedDecimal: FixedDecimal + Neg<Output = Self> {
 pub trait UnsignedFixedDecimal: FixedDecimal {}
 
 /// A decimal number that holds one: [`Decimal`] with at least one integral digit, over any
-/// storage.
+/// storage, or [`Scaled`] over such a decimal.
 ///
 /// [`one`](Self::one) returns the inherent constant `ONE` and has no inherent counterpart; a
 /// concrete type reaches `ONE` without this trait, also in constant contexts, and
@@ -345,7 +365,7 @@ pub trait DecimalOne: FixedDecimal {
 }
 
 /// A decimal number that holds one as a constant: [`Decimal`] with at least one integral digit,
-/// over any storage.
+/// over any storage, or [`Scaled`] over such a decimal.
 ///
 /// `ONE` is the inherent constant of the same name, which a concrete type reaches without this
 /// trait, also in constant contexts. Generic code reads it through this trait as `T::ONE`, also in
@@ -386,6 +406,8 @@ pub trait ConstDecimalOne: DecimalOne + ConstFixedDecimal {
 /// that [`Pick`](crate::Pick) chooses for them, which is unsigned only if both operand storages
 /// are. It implements [`FixedDecimal`], so generic code with that trait in scope computes with the
 /// product without a bound of its own. As for [`Mul`](core::ops::Mul), `Rhs` defaults to `Self`.
+/// Two [`Scaled`] values multiply into a `Scaled` with the product of their decimals and the sum
+/// of their scales, saturating at 255.
 ///
 /// ```
 /// use numo::{
@@ -429,7 +451,7 @@ pub trait ExactMul<Rhs = Self>: SealedPair<Rhs> {
 /// `widen` is the inherent method of the same name, which a concrete type reaches without this
 /// trait. [`Decimal`] implements this trait for every target that `widen` accepts, with the bounds
 /// of the inherent method: one whose storage holds its digits and is signed if the source's
-/// storage is.
+/// storage is. A [`Scaled`] widens to a `Scaled` with its scale.
 ///
 /// ```
 /// use numo::{
@@ -462,7 +484,8 @@ pub trait WidenTo<T>: SealedPair<T> {
 ///
 /// The methods are the inherent methods of the same names, which a concrete type reaches without
 /// this trait. [`Decimal`] implements this trait for every pair of decimal types, with the bounds
-/// of the inherent methods.
+/// of the inherent methods. A [`Scaled`] converts to a `Scaled`: `try_convert` keeps its scale, and
+/// `round_to` gives the fraction digits of `T` as the scale.
 ///
 /// ```
 /// use numo::{
@@ -517,7 +540,8 @@ pub trait ConvertTo<T>: SealedPair<T> {
 /// `div_round` is the inherent method of the same name, which a concrete type reaches without this
 /// trait. [`Decimal`] implements this trait for every dividend, divisor and quotient type whose
 /// intermediate has at most 153 digits, or 154 when both operand storages are unsigned, with the
-/// bounds of the inherent method, which generic code then does not repeat.
+/// bounds of the inherent method, which generic code then does not repeat. A [`Scaled`] divides by
+/// a `Scaled` into a `Scaled` whose scale is the fraction digits of `Out`.
 ///
 /// ```
 /// use numo::{

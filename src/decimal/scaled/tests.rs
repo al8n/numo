@@ -7,13 +7,17 @@ use core::{
 use std::{
   collections::{HashSet, hash_map::RandomState},
   format,
-  string::ToString,
+  string::{String, ToString},
 };
 
-use typenum::{U0, U1, U2, U4, U8, U10, U11, U18, U20, U153, U154};
+use typenum::{U0, U1, U2, U4, U8, U10, U11, U12, U16, U18, U20, U22, U36, U40, U153, U154};
 
 use super::Scaled;
-use crate::{Decimal, FixedDecimal, ParseError, ParseErrorKind, i512, u512};
+use crate::{
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalOne, DivRound,
+  DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError, RoundingMode,
+  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo, bigint::MODES, i256, i512, u256, u512,
+};
 
 /// 20 integral and 18 fraction digits in an `i128`.
 type Wide = Decimal<U20, U18>;
@@ -21,6 +25,12 @@ type WideS = Scaled<Wide>;
 /// 11 integral and 8 fraction digits in a `u64`.
 type Narrow = Decimal<U11, U8, u64>;
 type NarrowS = Scaled<Narrow>;
+type Price = Scaled<Decimal<U10, U8>>;
+type Quantity = Scaled<Decimal<U12, U8>>;
+type Notional = Scaled<Decimal<U22, U16>>;
+type Cents = Scaled<Decimal<U10, U2>>;
+/// The product of two `WideS`.
+type WideNotional = Scaled<Decimal<U40, U36, i256>>;
 
 fn value<T: FromStr<Err = ParseError>>(text: &str) -> T {
   text.parse().unwrap_or_else(|err| panic!("{text:?}: {err}"))
@@ -482,18 +492,357 @@ fn parse_and_accessors_in_const_context() {
 
 #[test]
 fn layout() {
-  type Price = Decimal<U10, U8>;
+  type Bare = Decimal<U10, U8>;
   assert_eq!(size_of::<Scaled<Decimal<U1, U1, u8>>>(), 2);
   // The scale takes the padding to the alignment of the decimal.
-  assert_eq!(
-    size_of::<Scaled<Price>>(),
-    size_of::<Price>() + align_of::<Price>()
-  );
+  assert_eq!(size_of::<Price>(), size_of::<Bare>() + align_of::<Bare>());
   assert_eq!(size_of::<WideS>(), size_of::<Wide>() + align_of::<Wide>());
   // The scale is a plain `u8`, so an `Option` has no niche.
   assert_eq!(
     size_of::<Option<WideS>>(),
     size_of::<WideS>() + align_of::<WideS>()
+  );
+}
+
+#[test]
+fn scale_rules_of_derived_values() {
+  let short: WideS = value("0.001");
+  let padded: WideS = value("0.00100000");
+  // A sum or a difference takes the larger scale.
+  assert_text(&short.checked_add(&padded).unwrap(), "0.00200000", 8);
+  assert_text(&padded.checked_add(&short).unwrap(), "0.00200000", 8);
+  assert_text(&short.checked_sub(&padded).unwrap(), "0.00000000", 8);
+  assert_text(&short.checked_add(&short).unwrap(), "0.002", 3);
+  assert_eq!(WideS::MAX.checked_add(&short), None);
+  assert_eq!(NarrowS::ZERO.checked_sub(&value("0.001")), None);
+
+  // An exact product takes the sum of the scales, saturating at 255; the value is never rounded.
+  let price: Price = value("64250.5");
+  let quantity: Quantity = value("0.0015000");
+  let notional: Notional = price.exact_mul(&quantity);
+  assert_text(&notional, "96.37575000", 8);
+  let saturated =
+    Scaled::new(price.into_value(), 200).exact_mul(&Scaled::new(quantity.into_value(), 100));
+  assert_eq!(saturated.scale(), 255);
+  assert_eq!(*saturated.value(), *notional.value());
+  assert_eq!(saturated.to_string().len(), "96".len() + 1 + 255);
+
+  // Quantizing takes the scale of the step.
+  let tick: Price = value("0.10");
+  assert_text(
+    &price.quantize(&tick, RoundingMode::HalfEven).unwrap(),
+    "64250.50",
+    2,
+  );
+  assert_text(
+    &value::<Price>("64250.55")
+      .quantize(&value("0.1"), RoundingMode::Down)
+      .unwrap(),
+    "64250.5",
+    1,
+  );
+  assert_eq!(
+    price.quantize(&Price::ZERO, RoundingMode::Up),
+    Err(QuantizeError::InvalidStep)
+  );
+  assert!(price.is_multiple_of(&tick));
+  assert!(!value::<Price>("64250.55").is_multiple_of(&tick));
+
+  // Widening and an exact conversion keep the scale; rounding takes the fraction digits of the
+  // target.
+  let widened: WideS = price.widen();
+  assert_text(&widened, "64250.5", 1);
+  let cents: Cents = value::<Price>("2.5000").try_convert().unwrap();
+  assert_text(&cents, "2.5000", 4);
+  assert_eq!(
+    ConvertTo::<Cents>::try_convert(value::<Price>("2.345")),
+    Err(ConvertError::Inexact)
+  );
+  let rounded: Cents = value::<Price>("2.345")
+    .round_to(RoundingMode::HalfEven)
+    .unwrap();
+  assert_text(&rounded, "2.34", 2);
+  let exact: WideS = value::<Price>("2.5")
+    .round_to(RoundingMode::HalfUp)
+    .unwrap();
+  assert_text(&exact, "2.500000000000000000", 18);
+
+  // A quotient takes the fraction digits of the target.
+  let budget: Scaled<Decimal<U12, U2>> = value("1000.00");
+  let bought: Quantity = budget.div_round(&price, RoundingMode::Down).unwrap();
+  assert_text(&bought, "0.01556408", 8);
+  assert_eq!(
+    DivRound::<Price, Quantity>::div_round(&budget, &Price::ZERO, RoundingMode::Down),
+    Err(DivideError::DivisionByZero)
+  );
+  let quarter: WideS = value::<WideS>("-0.1")
+    .div_round(&value::<WideS>("4"), RoundingMode::Floor)
+    .unwrap();
+  assert_text(&quarter, "-0.025000000000000000", 18);
+
+  // Negation and the absolute value keep the scale.
+  let fee: WideS = value("-0.00000192834");
+  assert_text(&-fee, "0.00000192834", 11);
+  assert_text(&SignedFixedDecimal::neg(&fee), "0.00000192834", 11);
+  assert_text(&fee.abs(), "0.00000192834", 11);
+  assert!(fee.is_negative() && !fee.abs().is_negative());
+  assert_text(&-value::<WideS>("1.000"), "-1.000", 3);
+
+  // Zero, the limits, one and a value made from its coefficient have scale 0.
+  assert_text(&WideS::zero(), "0", 0);
+  assert_text(
+    &WideS::max_value(),
+    "99999999999999999999.999999999999999999",
+    0,
+  );
+  assert_text(&Price::one(), "1", 0);
+  assert_text(&Price::ONE, "1", 0);
+  assert_text(&Price::from_repr(150_000_000).unwrap(), "1.5", 0);
+  assert_eq!(Price::from_repr(1_000_000_000_000_000_000), None);
+}
+
+/// Asserts, for a `Scaled` over each decimal type, that each trait method gives the value of the
+/// decimal's method, with the scale of its rule.
+macro_rules! assert_agrees {
+  ($($decimal:ty),+ $(,)?) => {$({
+    type D = $decimal;
+    type S = Scaled<D>;
+    let a: S = value("1.5");
+    let b: S = value("0.25000");
+    let step: S = value("0.5");
+    assert_eq!(
+      a.checked_add(&b).map(Scaled::into_parts),
+      a.value().checked_add(b.value()).map(|sum| (sum, 5))
+    );
+    assert_eq!(
+      a.checked_sub(&b).map(Scaled::into_parts),
+      a.value().checked_sub(b.value()).map(|difference| (difference, 5))
+    );
+    for mode in MODES {
+      assert_eq!(
+        a.quantize(&step, mode).map(Scaled::into_parts),
+        a.value().quantize(step.value(), mode).map(|quantized| (quantized, 1))
+      );
+    }
+    assert_eq!(a.is_multiple_of(&step), a.value().is_multiple_of(step.value()));
+    assert_eq!(S::zero().into_parts(), (D::ZERO, 0));
+    assert_eq!(S::max_value().into_parts(), (D::MAX, 0));
+    assert_eq!(S::min_value().into_parts(), (D::MIN, 0));
+    assert_eq!(S::one().into_parts(), (D::ONE, 0));
+    assert_eq!(<S as ConstFixedDecimal>::ZERO.into_parts(), (D::ZERO, 0));
+    assert_eq!(<S as ConstFixedDecimal>::MAX.into_parts(), (D::MAX, 0));
+    assert_eq!(<S as ConstFixedDecimal>::MIN.into_parts(), (D::MIN, 0));
+    assert_eq!(<S as ConstDecimalOne>::ONE.into_parts(), (D::ONE, 0));
+    assert_eq!(S::default().into_parts(), (D::default(), 0));
+    assert_eq!(
+      S::from_repr(a.into_value().repr()).map(Scaled::into_parts),
+      Some((a.into_value(), 0))
+    );
+    // Equality ignores the scale, so a value equals the one made from its coefficient.
+    assert_eq!(S::from_repr(a.repr()), Some(a));
+    assert_eq!(FixedDecimal::repr(a), a.into_value().repr());
+    assert_eq!(<S as FixedDecimal>::INTEGRAL, D::INTEGRAL);
+    assert_eq!(<S as FixedDecimal>::FRACTION, D::FRACTION);
+    assert_eq!(<S as FixedDecimal>::DIGITS, D::DIGITS);
+    assert_eq!(<S as FixedDecimal>::SIGNED, D::SIGNED);
+    assert!(a.is_positive() && !a.is_zero());
+    assert!(S::zero().is_zero() && !S::zero().is_positive());
+    let product = a.exact_mul(&b);
+    assert_eq!(product.scale(), 6);
+    assert_eq!(
+      product.value().to_string(),
+      a.value().exact_mul(b.value()).to_string()
+    );
+  })+};
+}
+
+#[test]
+fn trait_results_agree_with_the_decimal() {
+  assert_agrees!(
+    Decimal<U2, U2>,
+    Decimal<U10, U8>,
+    Decimal<U20, U18>,
+    Decimal<U2, U2, u16>,
+    Decimal<U11, U8, u64>,
+    Decimal<U20, U18, u128>,
+    Decimal<U40, U36, i256>,
+    Decimal<U40, U36, u256>,
+  );
+  fn signed<T: SignedFixedDecimal>() {}
+  fn unsigned<T: UnsignedFixedDecimal>() {}
+  signed::<WideS>();
+  signed::<WideNotional>();
+  unsigned::<NarrowS>();
+  unsigned::<Scaled<Decimal<U40, U36, u256>>>();
+}
+
+#[test]
+fn generic_code_takes_scaled_and_bare_decimals_alike() {
+  fn total<T: FixedDecimal>(values: &[T]) -> Option<T> {
+    values
+      .iter()
+      .try_fold(T::zero(), |sum, value| sum.checked_add(value))
+  }
+  fn notional<P: ExactMul<Q>, Q>(fills: &[(P, Q)]) -> Option<P::Output> {
+    fills
+      .iter()
+      .try_fold(P::Output::zero(), |sum, (price, quantity)| {
+        sum.checked_add(&price.exact_mul(quantity))
+      })
+  }
+  fn cents<T: ConvertTo<C>, C>(amount: T) -> Result<C, ConvertError> {
+    amount.round_to(RoundingMode::HalfEven)
+  }
+  fn quantity<B: DivRound<P, Q>, P, Q>(budget: &B, price: &P) -> Result<Q, DivideError> {
+    budget.div_round(price, RoundingMode::Down)
+  }
+  fn sum<A: WidenTo<T>, B: WidenTo<T>, T: FixedDecimal>(a: A, b: B) -> Option<T> {
+    a.widen().checked_add(&b.widen())
+  }
+  fn padded<T: FixedDecimal>(value: &T) -> String {
+    let digits = T::FRACTION as usize;
+    format!("{value:.digits$}")
+  }
+  // Code generic over the decimal that computes with a `Scaled` of it names the bound.
+  fn doubled<D>(value: D) -> Option<Scaled<D>>
+  where
+    D: FixedDecimal,
+    Scaled<D>: FixedDecimal,
+  {
+    let scaled = Scaled::new(value, 2);
+    scaled.checked_add(&scaled)
+  }
+
+  let prices: [Price; 2] = [value("64250.5"), value("0.25000")];
+  let bare: [Decimal<U10, U8>; 2] = [value("64250.5"), value("0.25")];
+  assert_text(&total(&prices).unwrap(), "64250.75000", 5);
+  assert_eq!(total(&bare).unwrap().to_string(), "64250.75");
+
+  let fills: [(Price, Quantity); 2] = [
+    (value("64250.5"), value("0.0015")),
+    (value("64251"), value("0.001")),
+  ];
+  let bare_fills: [(Decimal<U10, U8>, Decimal<U12, U8>); 2] = [
+    (value("64250.5"), value("0.0015")),
+    (value("64251"), value("0.001")),
+  ];
+  let scaled_total: Notional = notional(&fills).unwrap();
+  assert_text(&scaled_total, "160.62675", 5);
+  let bare_total: Decimal<U22, U16> = notional(&bare_fills).unwrap();
+  assert_eq!(bare_total, *scaled_total.value());
+
+  let scaled_cents: Cents = cents(value::<Price>("2.345")).unwrap();
+  assert_text(&scaled_cents, "2.34", 2);
+  let bare_cents: Decimal<U10, U2> = cents(value::<Decimal<U10, U8>>("2.345")).unwrap();
+  assert_eq!(bare_cents, *scaled_cents.value());
+
+  let budget: Scaled<Decimal<U12, U2>> = value("1000");
+  let bought: Quantity = quantity(&budget, &prices[0]).unwrap();
+  assert_text(&bought, "0.01556408", 8);
+  let bare_bought: Decimal<U12, U8> = quantity(budget.value(), &bare[0]).unwrap();
+  assert_eq!(bare_bought, *bought.value());
+
+  let fee: Scaled<Decimal<U2, U4, u32>> = value("1.2500");
+  assert_text(
+    &sum::<_, _, WideS>(fee, prices[0]).unwrap(),
+    "64251.7500",
+    4,
+  );
+  let bare_sum = sum::<_, _, Wide>(fee.into_value(), bare[0]).unwrap();
+  assert_eq!(bare_sum.to_string(), "64251.75");
+
+  assert_eq!(padded(&prices[1]), "0.25000000");
+  assert_eq!(padded(&value::<Price>("0.250000000000")), "0.250000000000");
+  assert_eq!(padded(&bare[1]), "0.25000000");
+
+  assert_text(&doubled(value::<Wide>("1.5")).unwrap(), "3.00", 2);
+  assert_text(&doubled(value::<Narrow>("0.001")).unwrap(), "0.002", 2);
+  assert_eq!(doubled(Wide::MAX), None);
+}
+
+#[test]
+fn generic_constants_in_const_context() {
+  const fn limits<T: ConstFixedDecimal>() -> [T; 3] {
+    [T::MIN, T::ZERO, T::MAX]
+  }
+  const fn units<T: ConstDecimalOne>() -> [T; 2] {
+    [T::ZERO, T::ONE]
+  }
+  const SCALED_LIMITS: [WideS; 3] = limits();
+  const BARE_LIMITS: [Wide; 3] = limits();
+  const SCALED_UNITS: [NarrowS; 2] = units();
+  const BARE_UNITS: [Narrow; 2] = units();
+  for (scaled, bare) in SCALED_LIMITS.into_iter().zip(BARE_LIMITS) {
+    assert_eq!(scaled.into_parts(), (bare, 0));
+  }
+  for (scaled, bare) in SCALED_UNITS.into_iter().zip(BARE_UNITS) {
+    assert_eq!(scaled.into_parts(), (bare, 0));
+  }
+  assert_text(&SCALED_UNITS[1], "1", 0);
+}
+
+#[test]
+fn products_at_the_extremes_and_rounding_in_every_mode() {
+  let square = WideS::MAX.exact_mul(&WideS::MAX);
+  assert_eq!(square.scale(), 0);
+  assert_eq!(
+    square.to_string(),
+    "9999999999999999999999999999999999999800.000000000000000000000000000000000001"
+  );
+  let narrow_square = NarrowS::MAX.exact_mul(&NarrowS::MAX);
+  assert_eq!(
+    narrow_square.to_string(),
+    "9999999999999999998000.0000000000000001"
+  );
+  assert_eq!(
+    ConvertTo::<WideS>::try_convert(square),
+    Err(ConvertError::OutOfRange)
+  );
+  assert_eq!(
+    ConvertTo::<WideS>::round_to(square, RoundingMode::Down),
+    Err(ConvertError::OutOfRange)
+  );
+
+  let tiny: WideNotional = value::<WideS>("1e-9").exact_mul(&value::<WideS>("1e-10"));
+  assert_text(&tiny, "0.0000000000000000001", 19);
+  let tie: WideNotional = value::<WideS>("5e-10").exact_mul(&value::<WideS>("1e-9"));
+  for mode in MODES {
+    let rounded: WideS = tiny.round_to(mode).unwrap();
+    let expected = match mode {
+      RoundingMode::Up | RoundingMode::Ceiling => "0.000000000000000001",
+      _ => "0.000000000000000000",
+    };
+    assert_text(&rounded, expected, 18);
+    let rounded_tie: WideS = tie.round_to(mode).unwrap();
+    let expected_tie = match mode {
+      RoundingMode::Up | RoundingMode::Ceiling | RoundingMode::HalfUp => "0.000000000000000001",
+      _ => "0.000000000000000000",
+    };
+    assert_text(&rounded_tie, expected_tie, 18);
+  }
+  // The exact product keeps every digit of a wide operand, and converts back exactly.
+  let wide: WideS = value("92233720368.54775807");
+  let unit: WideS = value("0.00000001");
+  let product: WideNotional = wide.exact_mul(&unit);
+  assert_text(&product, "922.3372036854775807", 16);
+  let back: WideS = product.try_convert().unwrap();
+  assert_text(&back, "922.3372036854775807", 16);
+}
+
+#[test]
+fn widening_between_storages_keeps_the_scale() {
+  let narrow: NarrowS = value("48.000012");
+  let wide: WideS = narrow.widen();
+  assert_text(&wide, "48.000012", 6);
+  let wider: WideNotional = wide.widen();
+  assert_text(&wider, "48.000012", 6);
+  let unsigned_wide: Scaled<Decimal<U40, U36, u256>> = narrow.widen();
+  assert_text(&unsigned_wide, "48.000012", 6);
+  let back: NarrowS = wider.try_convert().unwrap();
+  assert_eq!(back.into_parts(), (narrow.into_value(), 6));
+  assert_eq!(
+    ConvertTo::<NarrowS>::try_convert(value::<WideS>("-1")),
+    Err(ConvertError::OutOfRange)
   );
 }
 

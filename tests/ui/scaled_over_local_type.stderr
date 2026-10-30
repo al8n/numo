@@ -1,0 +1,50 @@
+error[E0277]: the trait bound `Local: FixedDecimal` is not satisfied
+  --> tests/ui/scaled_over_local_type.rs:13:19
+   |
+13 |   let _ = total::<Scaled<Local>>(&[]);
+   |                   ^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `FixedDecimal` is not implemented for `Local`
+  --> tests/ui/scaled_over_local_type.rs:6:1
+   |
+ 6 | struct Local;
+   | ^^^^^^^^^^^^
+   = help: the following other types implement trait `FixedDecimal`:
+             Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>
+             Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>
+             Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>
+             Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>
+             Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>
+             Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>
+             Decimal<I, F, i128>
+             Decimal<I, F, i16>
+           and $N others
+   = note: required for `Scaled<Local>` to implement `FixedDecimal`
+note: required by a bound in `total`
+  --> tests/ui/scaled_over_local_type.rs:8:13
+   |
+ 8 | fn total<T: FixedDecimal>(values: &[T]) -> Option<T> {
+   |             ^^^^^^^^^^^^ required by this bound in `total`
+
+error[E0277]: the trait bound `Scaled<Local>: FixedDecimal` is not satisfied
+  --> tests/ui/scaled_over_local_type.rs:13:19
+   |
+13 |   let _ = total::<Scaled<Local>>(&[]);
+   |                   ^^^^^^^^^^^^^ the trait `FromStr` is not implemented for `Scaled<Local>`
+   |
+   = help: the following other types implement trait `FromStr`:
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>>
+             Scaled<Decimal<I, F, i128>>
+             Scaled<Decimal<I, F, i16>>
+           and $N others
+   = note: required for `Scaled<Local>` to implement `FixedDecimal`
+note: required by a bound in `total`
+  --> tests/ui/scaled_over_local_type.rs:8:13
+   |
+ 8 | fn total<T: FixedDecimal>(values: &[T]) -> Option<T> {
+   |             ^^^^^^^^^^^^ required by this bound in `total`
