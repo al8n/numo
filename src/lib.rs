@@ -129,9 +129,9 @@
 //! and its forms, `unsigned_abs`, `signum` and `checked_isqrt` for `Int`, and the operators `+`,
 //! `-`, `*`, `/` and `%`, which panic or wrap on overflow as the native integers do (see
 //! [Overflow](Uint#overflow)): `/` and `%` panic on a zero divisor and on overflow in every build.
-//! Addition, subtraction and multiplication, and negation for `Int`, also have the `unchecked_*`
-//! form, as `const unsafe fn`s whose caller guarantees that the `checked_*` method would return
-//! `Some`.
+//! Addition, subtraction, multiplication and exact division, and negation for `Int`, also have the
+//! `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the `checked_*` method
+//! would return `Some`.
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,

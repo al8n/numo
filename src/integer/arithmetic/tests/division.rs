@@ -294,10 +294,10 @@ macro_rules! sign_division {
 /// Checks the division of `$ty`, of the sign `$sign` and of `$bits` bits, whose values `$from`
 /// creates from an `i128` and `$value` and `$magnitude` read back, at each pair of `$pairs`: the
 /// inherent `const fn`s and the traits return the [`expected_division`] and the [`expected_math`],
-/// and so does `unchecked_div_exact` through the trait wherever `checked_div_exact` returns a
-/// value. Every width but zero bits, where every divisor is zero, divides 0 by 1, or at one signed
-/// bit by -1, which the pairs of the ends include, so unless the tier checks no pair of the
-/// storage, `unchecked_div_exact` is called.
+/// and so does `unchecked_div_exact`, inherent and through the trait, wherever `checked_div_exact`
+/// returns a value. Every width but zero bits, where every divisor is zero, divides 0 by 1, or at
+/// one signed bit by -1, which the pairs of the ends include, so unless the tier checks no pair of
+/// the storage, `unchecked_div_exact` is called.
 macro_rules! sweep_division {
   ($sign:ident; $ty:ty, $bits:expr, $pairs:expr, $from:expr, $value:expr, $magnitude:expr) => {{
     let (bits, signed, pairs) = ($bits, is_signed!($sign), $pairs);
@@ -334,8 +334,17 @@ macro_rules! sweep_division {
       if let Some(quotient) = expected.exact {
         // SAFETY: the assertions above show that `checked_div_exact` returns `Some`, the
         // precondition of `unchecked_div_exact`.
-        let result = unsafe { UncheckedOps::unchecked_div_exact(&x, &y) };
-        assert_eq!(value(&result), quotient, "{a} / {b} exactly in {bits} bits");
+        let (inherent, through_trait) = unsafe {
+          (
+            x.unchecked_div_exact(&y),
+            UncheckedOps::unchecked_div_exact(&x, &y),
+          )
+        };
+        assert_eq!(
+          (value(&inherent), value(&through_trait)),
+          (quotient, quotient),
+          "{a} / {b} exactly in {bits} bits"
+        );
         exact_calls += 1;
       }
     }
@@ -640,7 +649,8 @@ fn division_panics_report_the_caller() {
 }
 
 /// The division of the families in constant contexts, in a native integer and in an array, at zero
-/// bits and at one signed bit, with inputs that do not panic.
+/// bits and at one signed bit, with inputs that do not panic, and `unchecked_div_exact` with inputs
+/// that meet its contract.
 #[test]
 fn division_in_constant_contexts() {
   type Bytes = Int<U24, [u8; 3]>;
@@ -701,6 +711,17 @@ fn division_in_constant_contexts() {
     Int::<U1, i8>::MIN.checked_div_exact(&Int::<U1, i8>::MIN),
     Int::<U1, i8>::ZERO.checked_div_exact(&Int::<U1, i8>::MIN),
   ];
+  // SAFETY: every divisor is nonzero and divides its value, and no value is `MIN` divided by -1, so
+  // `checked_div_exact` would return every quotient.
+  const UNCHECKED_EXACT: (u7, Int<U8, i8>, Bytes, Int<U1, i8>, i256) = unsafe {
+    (
+      u7::new(126).unchecked_div_exact(&u7::new(7)),
+      Int::<U8, i8>::MIN.unchecked_div_exact(&Int::<U8, i8>::new(2)),
+      Bytes::MIN.unchecked_div_exact(&Bytes::MIN),
+      Int::<U1, i8>::ZERO.unchecked_div_exact(&Int::<U1, i8>::MIN),
+      i256::MAX.unchecked_div_exact(&i256::MAX.wrapping_neg()),
+    )
+  };
 
   assert_eq!(
     OVERFLOWING,
@@ -731,6 +752,16 @@ fn division_in_constant_contexts() {
   );
   assert_eq!(ONE_BIT_EXACT, [None, Some(Int::<U1, i8>::ZERO)]);
   assert_eq!(MULTIPLES, [Some(Bytes::MAX), Some(Bytes::MIN), None, None]);
+  assert_eq!(
+    UNCHECKED_EXACT,
+    (
+      u7::new(18),
+      Int::<U8, i8>::new(-64),
+      Bytes::ONE,
+      Int::<U1, i8>::ZERO,
+      -i256::ONE
+    )
+  );
 }
 
 /// Asserts that the functions of `IntegerMath` that divide panic on the divisor `$zero`, zero, of

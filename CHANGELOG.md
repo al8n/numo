@@ -137,9 +137,11 @@ FEATURES
     fails to compile in every build. `div_exact` follows the behavior of the native method, which is
     unstable and computes the remainder first: a zero divisor and `MIN / -1` panic with the messages
     of the remainder.
-  - `unchecked_add`, `unchecked_sub` and `unchecked_mul`, and `unchecked_neg` for `Int`, as
-    `const unsafe fn`s of every storage: the caller guarantees that the `checked_*` method of the
-    same operation would return `Some`, and the behavior is undefined otherwise.
+  - `unchecked_add`, `unchecked_sub`, `unchecked_mul` and `unchecked_div_exact`, and `unchecked_neg`
+    for `Int`, as `const unsafe fn`s of every storage: the caller guarantees that the `checked_*`
+    method of the same operation would return `Some`, and the behavior is undefined otherwise.
+    `unchecked_div_exact` computes the checked quotient at every width, as the native method is
+    unstable.
   - The operators `+`, `-` and `*` in every form of values and references, `+=`, `-=` and `*=` for
     a value and a reference, `-` for `Int`, `Sum`, and `Product` where `ONE` exists, for every
     storage. On overflow they repeat a native overflow, so that `overflow-checks` decides whether

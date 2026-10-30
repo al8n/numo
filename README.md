@@ -181,11 +181,11 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   the Euclidean, rounded and exact division, the next multiple, the square root and the root of
   any degree, the logarithms, the midpoint and the absolute difference, `carrying_add`,
   `borrowing_sub`, `is_multiple_of` and the next power of two for `Uint`, and `abs` and its forms,
-  `unsigned_abs`, `signum` and `checked_isqrt` for `Int`. Addition, subtraction and multiplication,
-  and negation for `Int`, also have the `unchecked_*` form, as `const unsafe fn`s whose caller
-  guarantees that the `checked_*` method would return `Some`. The operators `+`, `-` and `*`, their
-  compound assignments, `-` for `Int`, `Sum` and `Product` panic or wrap on overflow as
-  `overflow-checks` decides, as for the native integers, and so do `pow`, `next_multiple_of` and
+  `unsigned_abs`, `signum` and `checked_isqrt` for `Int`. Addition, subtraction, multiplication and
+  exact division, and negation for `Int`, also have the `unchecked_*` form, as `const unsafe fn`s
+  whose caller guarantees that the `checked_*` method would return `Some`. The operators `+`, `-`
+  and `*`, their compound assignments, `-` for `Int`, `Sum` and `Product` panic or wrap on overflow
+  as `overflow-checks` decides, as for the native integers, and so do `pow`, `next_multiple_of` and
   `next_power_of_two`; `/` and `%` and their compound assignments, like the division methods, panic
   on a zero divisor and on overflow in every build. Every panic reports the caller, as the operators
   of the native integers do, but that of `pow`, which reports a line in `core` as the native `pow`

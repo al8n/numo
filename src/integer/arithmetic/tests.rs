@@ -1686,8 +1686,9 @@ macro_rules! check_unchecked {
   };
   ($values:expr $(, $neg:ident)?) => {{
     let values = $values;
-    // The calls of `unchecked_add`, `unchecked_sub`, `unchecked_mul` and `unchecked_neg`.
-    let mut calls = [0usize; 4];
+    // The calls of `unchecked_add`, `unchecked_sub`, `unchecked_mul`, `unchecked_neg` and
+    // `unchecked_div_exact`.
+    let mut calls = [0usize; 5];
     for x in &values {
       $(check_unchecked!(@$neg x, calls);)?
       for y in &values {
@@ -1709,10 +1710,25 @@ macro_rules! check_unchecked {
           assert_eq!(results, (product, product), "{x} * {y}");
           calls[2] += 1;
         }
+        if let Some(quotient) = x.checked_div_exact(y) {
+          // SAFETY: `checked_div_exact` returns `Some`, which is the precondition of
+          // `unchecked_div_exact`.
+          let inherent = unsafe { x.unchecked_div_exact(y) };
+          // SAFETY: the method of the trait has the precondition of the inherent one.
+          let through_trait = unsafe { UncheckedOps::unchecked_div_exact(x, y) };
+          assert_eq!((inherent, through_trait), (quotient, quotient), "{x} / {y} exactly");
+          calls[4] += 1;
+        }
       }
     }
     assert!(calls[..3].iter().all(|&count| count > 0), "calls: {calls:?}");
     $(check_unchecked!(@called $neg calls);)?
+    // Zero bits hold no divisor but zero, so they have no exact division to call; any other width
+    // divides zero by a nonzero value.
+    assert!(
+      calls[4] > 0 || values.iter().all(|x| x.is_zero()),
+      "calls: {calls:?}"
+    );
   }};
 }
 
@@ -1743,11 +1759,11 @@ macro_rules! check_unchecked_storage {
 
 /// The `unchecked_*` methods, inherent and through the traits, return what the checked methods
 /// return wherever these return a value, at every value and every pair of zero, one, 7 and 8 bits:
-/// in native integers at a partial width and at their full width, where the inherent methods call
-/// the native `unchecked_*`, and in arrays of no limbs, one limb and two limbs. No other input is
-/// passed, here or in any test: the standard library checks the preconditions of unsafe functions
-/// in debug builds and aborts on a violation, and in release builds a violation is undefined
-/// behavior.
+/// in native integers at a partial width and at their full width, where the inherent methods but
+/// `unchecked_div_exact` call the native `unchecked_*`, and in arrays of no limbs, one limb and two
+/// limbs. No other input is passed, here or in any test: the standard library checks the
+/// preconditions of unsafe functions in debug builds and aborts on a violation, and in release
+/// builds a violation is undefined behavior.
 #[test]
 fn unchecked_methods_return_the_checked_results() {
   check_unchecked_storage!(native U0, 0, u8, i8);

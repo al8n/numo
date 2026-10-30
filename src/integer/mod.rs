@@ -124,15 +124,16 @@ mod traits;
 /// [`ilog`](Self::ilog), [`ilog2`](Self::ilog2) and [`ilog10`](Self::ilog10),
 /// [`midpoint`](Self::midpoint), [`abs_diff`](Self::abs_diff) and
 /// [`next_power_of_two`](Self::next_power_of_two); those that can fail also have a `checked_*`
-/// form, and the next power of two a `wrapping_*` form. Addition, subtraction and multiplication
-/// also have the `unchecked_*` form, such as [`unchecked_add`](Self::unchecked_add), as
-/// `const unsafe fn`s: the caller guarantees that the `checked_*` method would return `Some`, and
-/// the behavior is undefined otherwise. The operators `+`, `-`, `*`, `/` and `%`, their compound
-/// assignments, `Sum` and `Product` work for every storage, and so do the traits that give generic
-/// code the methods, such as [`CheckedOps`](crate::CheckedOps) and
-/// [`IntegerMath`](crate::IntegerMath). A method of a storage is called with method syntax or with
-/// a path that names the storage, such as `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the
-/// storage to inference, such as `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
+/// form, and the next power of two a `wrapping_*` form. Addition, subtraction, multiplication and
+/// exact division also have the `unchecked_*` form, such as [`unchecked_add`](Self::unchecked_add)
+/// and [`unchecked_div_exact`](Self::unchecked_div_exact), as `const unsafe fn`s: the caller
+/// guarantees that the `checked_*` method would return `Some`, and the behavior is undefined
+/// otherwise. The operators `+`, `-`, `*`, `/` and `%`, their compound assignments, `Sum` and
+/// `Product` work for every storage, and so do the traits that give generic code the methods, such
+/// as [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). A method of a
+/// storage is called with method syntax or with a path that names the storage, such as
+/// `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the storage to inference, such as
+/// `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
 ///
 /// ```
 /// use numo::{Uint, typenum::U200, u7};
@@ -143,6 +144,8 @@ mod traits;
 /// assert_eq!(u7::new(100) + u7::new(27), u7::MAX);
 /// // SAFETY: 100 + 27 is at most `MAX`, so `checked_add` would return `Some`.
 /// assert_eq!(unsafe { u7::new(100).unchecked_add(&u7::new(27)) }, u7::MAX);
+/// // SAFETY: 7 is not zero and divides 126, so `checked_div_exact` would return `Some`.
+/// assert_eq!(unsafe { u7::new(126).unchecked_div_exact(&u7::new(7)) }, u7::new(18));
 ///
 /// // Division, which a zero divisor fails, and the functions of the native integers.
 /// assert_eq!(u7::new(100) / u7::new(7), u7::new(14));
@@ -277,13 +280,15 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// power of two, and with [`checked_isqrt`](Self::checked_isqrt):
 /// [`abs_diff`](Self::abs_diff) returns the [`Uint`] of the same width and storage size, and
 /// [`nth_root`](Self::nth_root) takes a negative value for an odd degree. As for [`Uint`],
-/// addition, subtraction, multiplication and negation also have the `unchecked_*` form, as
-/// `const unsafe fn`s whose caller guarantees that the `checked_*` method would return `Some`:
-/// [`unchecked_neg`](Self::unchecked_neg), for example, requires that `self` is not `MIN`, except at
-/// zero bits. The operators `+`, `-`, `*`, `/` and `%`, their compound assignments, the negation
-/// `-`, `Sum` and `Product` work for every storage, and so do the traits that give generic code the
-/// methods, such as [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). As
-/// for [`Uint`], a path to a method names the storage.
+/// addition, subtraction, multiplication, negation and exact division also have the `unchecked_*`
+/// form, as `const unsafe fn`s whose caller guarantees that the `checked_*` method would return
+/// `Some`: [`unchecked_neg`](Self::unchecked_neg), for example, requires that `self` is not `MIN`,
+/// except at zero bits, and [`unchecked_div_exact`](Self::unchecked_div_exact) that `rhs` is not
+/// zero and divides `self`, and that `self` is not `MIN` with `rhs` -1. The operators `+`, `-`,
+/// `*`, `/` and `%`, their compound assignments, the negation `-`, `Sum` and `Product` work for
+/// every storage, and so do the traits that give generic code the methods, such as
+/// [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). As for [`Uint`], a
+/// path to a method names the storage.
 ///
 /// ```
 /// use numo::{i7, u7};
@@ -532,6 +537,25 @@ macro_rules! array_integers {
         unsafe { core::hint::assert_unchecked(!overflow) };
         Self::wrap(product)
       }
+
+      /// Unchecked exact division: `self / rhs`, assuming that `rhs` divides `self`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must not be zero and must divide `self`, leaving no remainder, that is,
+      /// [`checked_div_exact`](Self::checked_div_exact) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold no divisor but zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_div_exact(&self, rhs: &Self) -> Self {
+        let quotient =
+          int::unsigned::$lower::checked_div_exact_bits(&self.repr, &rhs.repr, Self::BITS);
+        // SAFETY: `quotient` is the value on which `checked_div_exact` returns `Some`, and the
+        // caller guarantees that it would. Nothing else is assumed: the value it holds is the
+        // quotient that `checked_div_exact` returns.
+        Self::wrap(unsafe { quotient.unwrap_unchecked() })
+      }
     }
 
     impl<B, const N: usize> Uint<B, [$limb; N]> {
@@ -692,6 +716,27 @@ macro_rules! array_integers {
         // that `wrapping_neg` returns.
         unsafe { core::hint::assert_unchecked(!overflow) };
         Self::wrap(negated)
+      }
+
+      /// Unchecked exact division: `self / rhs`, assuming that `rhs` divides `self` and that the
+      /// quotient cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must not be zero and must divide `self`, leaving no remainder, and the quotient must
+      /// be within `MIN..=MAX`, so `self` must not be `MIN` with `rhs` -1: that is,
+      /// [`checked_div_exact`](Self::checked_div_exact) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold no divisor but zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_div_exact(&self, rhs: &Self) -> Self {
+        let quotient =
+          int::signed::$upper::checked_div_exact_bits(&self.repr, &rhs.repr, Self::BITS);
+        // SAFETY: `quotient` is the value on which `checked_div_exact` returns `Some`, and the
+        // caller guarantees that it would. Nothing else is assumed: the value it holds is the
+        // quotient that `checked_div_exact` returns.
+        Self::wrap(unsafe { quotient.unwrap_unchecked() })
       }
     }
 
@@ -1003,6 +1048,26 @@ macro_rules! native_integers {
           Self::wrap(product)
         }
       }
+
+      /// Unchecked exact division: `self / rhs`, assuming that `rhs` divides `self`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must not be zero and must divide `self`, leaving no remainder, that is,
+      /// [`checked_div_exact`](Self::checked_div_exact) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold no divisor but zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_div_exact(&self, rhs: &Self) -> Self {
+        // The native `unchecked_div_exact` is unstable, so the full width computes the checked
+        // quotient, as every other width does.
+        let quotient = int::$uint::checked_div_exact_bits(self.repr, rhs.repr, Self::BITS);
+        // SAFETY: `quotient` is the value on which `checked_div_exact` returns `Some`, and the
+        // caller guarantees that it would. Nothing else is assumed: the value it holds is the
+        // quotient that `checked_div_exact` returns.
+        Self::wrap(unsafe { quotient.unwrap_unchecked() })
+      }
     }
 
     impl<B> Uint<B, $uint> {
@@ -1160,6 +1225,28 @@ macro_rules! native_integers {
           unsafe { core::hint::assert_unchecked(!overflow) };
           Self::wrap(negated)
         }
+      }
+
+      /// Unchecked exact division: `self / rhs`, assuming that `rhs` divides `self` and that the
+      /// quotient cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must not be zero and must divide `self`, leaving no remainder, and the quotient must
+      /// be within `MIN..=MAX`, so `self` must not be `MIN` with `rhs` -1: that is,
+      /// [`checked_div_exact`](Self::checked_div_exact) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold no divisor but zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_div_exact(&self, rhs: &Self) -> Self {
+        // The native `unchecked_div_exact` is unstable, so the full width computes the checked
+        // quotient, as every other width does.
+        let quotient = int::$int::checked_div_exact_bits(self.repr, rhs.repr, Self::BITS);
+        // SAFETY: `quotient` is the value on which `checked_div_exact` returns `Some`, and the
+        // caller guarantees that it would. Nothing else is assumed: the value it holds is the
+        // quotient that `checked_div_exact` returns.
+        Self::wrap(unsafe { quotient.unwrap_unchecked() })
       }
     }
 
