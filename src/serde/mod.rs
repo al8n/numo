@@ -1,5 +1,5 @@
-//! `serde` support: a decimal as its text and a rounding mode as its name, as strings in every
-//! format.
+//! `serde` support: a decimal as its text, a [`Scaled`] as its text with its scale, and a rounding
+//! mode as its name, as strings in every format.
 //!
 //! The traits come from `serde_core`, which `serde` 1.0.220 and later re-export. There is no
 //! branch on `is_human_readable`: a binary format writes the same text, because a coefficient read
@@ -24,7 +24,7 @@ use serde_core::{
 };
 
 use crate::{
-  Decimal, ParseError, RoundingMode, int,
+  Decimal, FixedDecimal, ParseError, RoundingMode, Scaled, int,
   layout::{Layout, Storage},
 };
 
@@ -36,22 +36,46 @@ mod tests;
 /// and 153 digits: 156 bytes each.
 const TEXT_LEN: usize = int::DIGIT_BUF_LEN + 2;
 
-/// A fixed buffer that `Display` writes into, failing once it is full.
-struct Text {
-  buf: [u8; TEXT_LEN],
+/// Length of a buffer that holds the text of any [`Scaled`]: a sign, 154 integral digits, the
+/// point and 255 fraction digits, the largest scale, which is more than any decimal has. The widest
+/// texts take one byte less, because no signed storage holds 154 digits.
+const SCALED_TEXT_LEN: usize = 1 + 154 + 1 + u8::MAX as usize;
+
+/// A fixed buffer of `N` bytes that `Display` writes into, failing once it is full.
+struct Text<const N: usize> {
+  buf: [u8; N],
   len: usize,
 }
 
-impl fmt::Write for Text {
+impl<const N: usize> fmt::Write for Text<N> {
   fn write_str(&mut self, s: &str) -> fmt::Result {
     let end = match self.len.checked_add(s.len()) {
-      Some(end) if end <= TEXT_LEN => end,
+      Some(end) if end <= N => end,
       _ => return Err(fmt::Error),
     };
     self.buf[self.len..end].copy_from_slice(s.as_bytes());
     self.len = end;
     Ok(())
   }
+}
+
+/// Serializes the text that `value` writes with [`Display`](fmt::Display) as a string, through a
+/// buffer of `N` bytes.
+fn serialize_text<const N: usize, T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: fmt::Display,
+  S: Serializer,
+{
+  let mut text = Text::<N> {
+    buf: [0; N],
+    len: 0,
+  };
+  // `Display` fails only when the buffer is full, which no value fills; the error is reported
+  // rather than unwrapped all the same.
+  write!(text, "{value}").map_err(<S::Error as ser::Error>::custom)?;
+  let text =
+    core::str::from_utf8(&text.buf[..text.len]).map_err(<S::Error as ser::Error>::custom)?;
+  serializer.serialize_str(text)
 }
 
 impl<I, F, R> Serialize for Decimal<I, F, R>
@@ -65,16 +89,38 @@ where
   where
     S: Serializer,
   {
-    let mut text = Text {
-      buf: [0; TEXT_LEN],
-      len: 0,
-    };
-    // `Display` fails only when the buffer is full, which no decimal fills; the error is reported
-    // rather than unwrapped all the same.
-    write!(text, "{self}").map_err(<S::Error as ser::Error>::custom)?;
-    let text =
-      core::str::from_utf8(&text.buf[..text.len]).map_err(<S::Error as ser::Error>::custom)?;
-    serializer.serialize_str(text)
+    serialize_text::<TEXT_LEN, _, _>(self, serializer)
+  }
+}
+
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+impl<D> Serialize for Scaled<D>
+where
+  D: FixedDecimal,
+{
+  /// Writes the value as a string, the text that [`Display`](fmt::Display) writes with the scale,
+  /// in every format.
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    serialize_text::<SCALED_TEXT_LEN, _, _>(self, serializer)
+  }
+}
+
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+impl<'de, D> Deserialize<'de> for Scaled<D>
+where
+  Self: FromStr<Err = ParseError>,
+{
+  /// Reads a value and the scale of its text from a string in the syntax of `parse`, in every
+  /// format. Any other input, such as a number, is rejected with a fixed message that names
+  /// nothing of the input; a string that does not parse reports its [`ParseError`].
+  fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
+  where
+    De: Deserializer<'de>,
+  {
+    deserialize_text(deserializer)
   }
 }
 

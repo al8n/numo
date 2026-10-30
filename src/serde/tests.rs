@@ -12,7 +12,7 @@ use serde_json::error::Category;
 use serde_test::{Compact, Readable, Token, assert_de_tokens_error};
 use typenum::{U8, U10, U18, U60};
 
-use crate::{Decimal, ParseError, u320};
+use crate::{Decimal, ParseError, Scaled, u320};
 
 /// The message of every input that is not a string.
 const EXPECTED: &str = "expected a decimal value as a string";
@@ -77,6 +77,9 @@ fn every_input_but_a_string_gets_one_fixed_message() {
   assert_rejects_all_but_strings::<Price>();
   assert_rejects_all_but_strings::<Amount>();
   assert_rejects_all_but_strings::<TokenAmount>();
+  assert_rejects_all_but_strings::<Scaled<Price>>();
+  assert_rejects_all_but_strings::<Scaled<Amount>>();
+  assert_rejects_all_but_strings::<Scaled<TokenAmount>>();
 }
 
 /// A reader that yields its bytes and then fails.
@@ -159,6 +162,9 @@ fn a_format_error_that_names_no_input_passes_through_with_its_category() {
   assert_format_errors_pass_through::<Price>("-64250.5");
   assert_format_errors_pass_through::<Amount>("0.00100000");
   assert_format_errors_pass_through::<TokenAmount>("1.000000000000000001");
+  assert_format_errors_pass_through::<Scaled<Price>>("-64250.50");
+  assert_format_errors_pass_through::<Scaled<Amount>>("0.00100000");
+  assert_format_errors_pass_through::<Scaled<TokenAmount>>("1.000000000000000001000");
 }
 
 /// A deserializer of one text field in a format that infers the type of the field from its text,
@@ -194,6 +200,18 @@ impl<'de> Deserializer<'de> for InferringField<'de> {
 fn a_value_reads_back_through_a_format_that_infers_numbers() {
   for text in ["96.37575", "-64250.5", "5838", "-1", "0"] {
     let price = Price::deserialize(InferringField(text)).unwrap();
+    assert_eq!(price.to_string(), text);
+  }
+  // A `Scaled` keeps the scale of the text.
+  for text in [
+    "96.37575000",
+    "-64250.50",
+    "0.00100000",
+    "5838",
+    "-1",
+    "0.0",
+  ] {
+    let price = Scaled::<Price>::deserialize(InferringField(text)).unwrap();
     assert_eq!(price.to_string(), text);
   }
 }

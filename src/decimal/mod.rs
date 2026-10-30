@@ -11,6 +11,7 @@ use core::{
 use typenum::{And, Diff, Max, Maximum, Sum};
 
 pub use error::{ConvertError, DivideError, ParseError, ParseErrorKind, QuantizeError};
+pub use scaled::Scaled;
 pub use traits::{
   ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal,
   SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
@@ -28,6 +29,7 @@ use crate::{
 mod error;
 mod format;
 mod parse;
+mod scaled;
 mod storage;
 mod traits;
 
@@ -822,6 +824,7 @@ where
       self.repr.is_negative(Token::new()),
       &buf[start..],
       Self::FRACTION as usize,
+      f.precision().unwrap_or(0),
     )
   }
 }
