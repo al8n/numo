@@ -271,6 +271,71 @@ mod sealed {
 
     /// Returns `true` if the value is one.
     fn is_one(&self, token: Token) -> bool;
+
+    /// The quotient and the remainder of `self / rhs`, and `false`, which no unsigned quotient
+    /// overflows, or `None` if `rhs` is zero. Requires both values to have `bits` bits.
+    fn div_rem_bits(&self, rhs: &Self, bits: u32, token: Token) -> Option<(Self, Self, bool)>;
+
+    /// The Euclidean quotient and remainder of `self / rhs`, which for unsigned values are those
+    /// of [`div_rem_bits`](Self::div_rem_bits).
+    fn div_rem_euclid_bits(
+      &self,
+      rhs: &Self,
+      bits: u32,
+      token: Token,
+    ) -> Option<(Self, Self, bool)>;
+
+    /// `self / rhs` rounded down, and `false`, or `None` if `rhs` is zero. Requires both values to
+    /// have `bits` bits.
+    fn div_floor_bits(&self, rhs: &Self, bits: u32, token: Token) -> Option<(Self, bool)>;
+
+    /// `self / rhs` rounded up, and `false`, or `None` if `rhs` is zero. Requires both values to
+    /// have `bits` bits.
+    fn div_ceil_bits(&self, rhs: &Self, bits: u32, token: Token) -> Option<(Self, bool)>;
+
+    /// The smallest multiple of `rhs` at least `self`, modulo `2^bits`, and whether it is
+    /// `2^bits` or more, or `None` if `rhs` is zero. Requires `bits` to be at most the bits of the
+    /// storage and both values to have `bits` bits.
+    fn next_multiple_of_bits(&self, rhs: &Self, bits: u32, token: Token) -> Option<(Self, bool)>;
+
+    /// `self / rhs` if `rhs` divides `self`, or `None` if `rhs` is zero or the division leaves a
+    /// remainder. Requires both values to have `bits` bits.
+    fn checked_div_exact_bits(&self, rhs: &Self, bits: u32, token: Token) -> Option<Self>;
+
+    /// `self^exp` modulo `2^bits`, and whether it is `2^bits` or more. Requires `bits` to be at
+    /// most the bits of the storage and the value to have `bits` bits.
+    fn overflowing_pow_bits(&self, exp: u32, bits: u32, token: Token) -> (Self, bool);
+
+    /// The square root of the value, rounded down, which every unsigned value has.
+    fn checked_isqrt(&self, token: Token) -> Option<Self>;
+
+    /// The `n`th root of the value, rounded down, or `None` if `n` is zero.
+    fn checked_nth_root(&self, n: u32, token: Token) -> Option<Self>;
+
+    /// The logarithm of the value to the base `base`, rounded down, or `None` if the value is
+    /// zero or `base` is below 2.
+    fn checked_ilog(&self, base: &Self, token: Token) -> Option<u32>;
+
+    /// The base-2 logarithm of the value, rounded down, or `None` if the value is zero.
+    fn checked_ilog2(&self, token: Token) -> Option<u32>;
+
+    /// The base-10 logarithm of the value, rounded down, or `None` if the value is zero.
+    fn checked_ilog10(&self, token: Token) -> Option<u32>;
+
+    /// `(self + rhs) / 2` rounded down.
+    fn midpoint(&self, rhs: &Self, token: Token) -> Self;
+
+    /// `|self - rhs|`.
+    fn abs_diff(&self, rhs: &Self, token: Token) -> Self;
+
+    /// Returns `true` if the value is a multiple of `rhs`: if `self / rhs` leaves no remainder, or
+    /// if both are zero.
+    fn is_multiple_of(&self, rhs: &Self, token: Token) -> bool;
+
+    /// The smallest power of two at least the value, modulo `2^bits`, and whether it is `2^bits`
+    /// or more. Requires `bits` to be at most the bits of the storage and the value to have `bits`
+    /// bits.
+    fn next_power_of_two_bits(&self, bits: u32, token: Token) -> (Self, bool);
   }
 
   /// Seals [`IntRepr`](super::IntRepr) and gives the trait implementations of [`Int`](crate::Int)
@@ -339,6 +404,69 @@ mod sealed {
 
     /// The absolute value as an unsigned integer, which has the bits of the value.
     fn unsigned_abs(&self, token: Token) -> Self::Magnitude;
+
+    /// The quotient and the remainder of `self / rhs` rounded toward zero, the remainder with the
+    /// sign of `self`, and whether the quotient is outside the range of `bits` bits, as it is only
+    /// for the smallest value divided by -1, whose quotient wraps to the smallest value; or `None`
+    /// if `rhs` is zero. Requires `bits` to be at most the bits of the storage and both values to
+    /// have `bits` bits.
+    fn div_rem_bits(&self, rhs: &Self, bits: u32, token: Token) -> Option<(Self, Self, bool)>;
+
+    /// The Euclidean quotient and remainder of `self / rhs`, the remainder never negative, and
+    /// whether the quotient is outside the range of `bits` bits, as for
+    /// [`div_rem_bits`](Self::div_rem_bits).
+    fn div_rem_euclid_bits(
+      &self,
+      rhs: &Self,
+      bits: u32,
+      token: Token,
+    ) -> Option<(Self, Self, bool)>;
+
+    /// `self / rhs` rounded down, and whether it is outside the range of `bits` bits, or `None` if
+    /// `rhs` is zero, as for [`div_rem_bits`](Self::div_rem_bits).
+    fn div_floor_bits(&self, rhs: &Self, bits: u32, token: Token) -> Option<(Self, bool)>;
+
+    /// `self / rhs` rounded up, and whether it is outside the range of `bits` bits, or `None` if
+    /// `rhs` is zero, as for [`div_rem_bits`](Self::div_rem_bits).
+    fn div_ceil_bits(&self, rhs: &Self, bits: u32, token: Token) -> Option<(Self, bool)>;
+
+    /// For a positive `rhs` the smallest multiple of `rhs` at least `self`, and for a negative
+    /// `rhs` the largest at most `self`, wrapped to `bits` bits, and whether it is outside the
+    /// range of `bits` bits; or `None` if `rhs` is zero. Requires `bits` to be at most the bits of
+    /// the storage and both values to have `bits` bits.
+    fn next_multiple_of_bits(&self, rhs: &Self, bits: u32, token: Token) -> Option<(Self, bool)>;
+
+    /// `self / rhs` if `rhs` divides `self` and the quotient is within the range of `bits` bits,
+    /// or `None` otherwise. Requires `bits` to be at most the bits of the storage and both values
+    /// to have `bits` bits.
+    fn checked_div_exact_bits(&self, rhs: &Self, bits: u32, token: Token) -> Option<Self>;
+
+    /// `self^exp` wrapped to `bits` bits, and whether it is outside the range of `bits` bits.
+    /// Requires `bits` to be at most the bits of the storage and the value to have `bits` bits.
+    fn overflowing_pow_bits(&self, exp: u32, bits: u32, token: Token) -> (Self, bool);
+
+    /// The square root of the value, rounded down, or `None` if the value is negative.
+    fn checked_isqrt(&self, token: Token) -> Option<Self>;
+
+    /// The `n`th root of the value, rounded toward zero, or `None` if `n` is zero or the value is
+    /// negative and `n` even.
+    fn checked_nth_root(&self, n: u32, token: Token) -> Option<Self>;
+
+    /// The logarithm of the value to the base `base`, rounded down, or `None` if the value is not
+    /// positive or `base` is below 2.
+    fn checked_ilog(&self, base: &Self, token: Token) -> Option<u32>;
+
+    /// The base-2 logarithm of the value, rounded down, or `None` if the value is not positive.
+    fn checked_ilog2(&self, token: Token) -> Option<u32>;
+
+    /// The base-10 logarithm of the value, rounded down, or `None` if the value is not positive.
+    fn checked_ilog10(&self, token: Token) -> Option<u32>;
+
+    /// `(self + rhs) / 2` rounded toward zero.
+    fn midpoint(&self, rhs: &Self, token: Token) -> Self;
+
+    /// `|self - rhs|` as an unsigned integer, which has the bits of the values.
+    fn abs_diff(&self, rhs: &Self, token: Token) -> Self::Magnitude;
   }
 }
 
@@ -564,6 +692,86 @@ macro_rules! array_storage {
       fn is_one(&self, _: Token) -> bool {
         unsigned::$lower::is_one(self)
       }
+
+      #[inline]
+      fn div_rem_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, Self, bool)> {
+        unsigned::$lower::div_rem_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn div_rem_euclid_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, Self, bool)> {
+        unsigned::$lower::div_rem_euclid_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn div_floor_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        unsigned::$lower::div_floor_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn div_ceil_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        unsigned::$lower::div_ceil_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn next_multiple_of_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        unsigned::$lower::next_multiple_of_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn checked_div_exact_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<Self> {
+        unsigned::$lower::checked_div_exact_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_pow_bits(&self, exp: u32, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_pow_bits(self, exp, bits)
+      }
+
+      #[inline]
+      fn checked_isqrt(&self, _: Token) -> Option<Self> {
+        unsigned::$lower::checked_isqrt(self)
+      }
+
+      #[inline]
+      fn checked_nth_root(&self, n: u32, _: Token) -> Option<Self> {
+        unsigned::$lower::checked_nth_root(self, n)
+      }
+
+      #[inline]
+      fn checked_ilog(&self, base: &Self, _: Token) -> Option<u32> {
+        unsigned::$lower::checked_ilog(self, base)
+      }
+
+      #[inline]
+      fn checked_ilog2(&self, _: Token) -> Option<u32> {
+        unsigned::$lower::checked_ilog2(self)
+      }
+
+      #[inline]
+      fn checked_ilog10(&self, _: Token) -> Option<u32> {
+        unsigned::$lower::checked_ilog10(self)
+      }
+
+      #[inline]
+      fn midpoint(&self, rhs: &Self, _: Token) -> Self {
+        unsigned::$lower::midpoint(self, rhs)
+      }
+
+      #[inline]
+      fn abs_diff(&self, rhs: &Self, _: Token) -> Self {
+        unsigned::$lower::abs_diff(self, rhs)
+      }
+
+      #[inline]
+      fn is_multiple_of(&self, rhs: &Self, _: Token) -> bool {
+        unsigned::$lower::is_multiple_of(self, rhs)
+      }
+
+      #[inline]
+      fn next_power_of_two_bits(&self, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::next_power_of_two_bits(self, bits)
+      }
     }
 
     impl<const N: usize> IntRepr for [$limb; N] {
@@ -655,6 +863,76 @@ macro_rules! array_storage {
       #[inline]
       fn unsigned_abs(&self, _: Token) -> Self {
         signed::$upper::unsigned_abs(self)
+      }
+
+      #[inline]
+      fn div_rem_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, Self, bool)> {
+        signed::$upper::div_rem_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn div_rem_euclid_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, Self, bool)> {
+        signed::$upper::div_rem_euclid_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn div_floor_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        signed::$upper::div_floor_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn div_ceil_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        signed::$upper::div_ceil_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn next_multiple_of_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        signed::$upper::next_multiple_of_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn checked_div_exact_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<Self> {
+        signed::$upper::checked_div_exact_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_pow_bits(&self, exp: u32, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_pow_bits(self, exp, bits)
+      }
+
+      #[inline]
+      fn checked_isqrt(&self, _: Token) -> Option<Self> {
+        signed::$upper::checked_isqrt(self)
+      }
+
+      #[inline]
+      fn checked_nth_root(&self, n: u32, _: Token) -> Option<Self> {
+        signed::$upper::checked_nth_root(self, n)
+      }
+
+      #[inline]
+      fn checked_ilog(&self, base: &Self, _: Token) -> Option<u32> {
+        signed::$upper::checked_ilog(self, base)
+      }
+
+      #[inline]
+      fn checked_ilog2(&self, _: Token) -> Option<u32> {
+        signed::$upper::checked_ilog2(self)
+      }
+
+      #[inline]
+      fn checked_ilog10(&self, _: Token) -> Option<u32> {
+        signed::$upper::checked_ilog10(self)
+      }
+
+      #[inline]
+      fn midpoint(&self, rhs: &Self, _: Token) -> Self {
+        signed::$upper::midpoint(self, rhs)
+      }
+
+      #[inline]
+      fn abs_diff(&self, rhs: &Self, _: Token) -> Self {
+        signed::$upper::abs_diff(self, rhs)
       }
     }
 
@@ -768,6 +1046,88 @@ macro_rules! native_storage {
       fn is_one(&self, _: Token) -> bool {
         int::$uint::is_one(*self)
       }
+
+      // The layer is named by its path, as in `IntCore` below: method syntax on `self`, a
+      // `&$uint`, would find these methods before the inherent methods of the same names.
+      #[inline]
+      fn div_rem_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, Self, bool)> {
+        int::$uint::div_rem_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn div_rem_euclid_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, Self, bool)> {
+        int::$uint::div_rem_euclid_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn div_floor_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        int::$uint::div_floor_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn div_ceil_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        int::$uint::div_ceil_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn next_multiple_of_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        int::$uint::next_multiple_of_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn checked_div_exact_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<Self> {
+        int::$uint::checked_div_exact_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_pow_bits(&self, exp: u32, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_pow_bits(*self, exp, bits)
+      }
+
+      #[inline]
+      fn checked_isqrt(&self, _: Token) -> Option<Self> {
+        int::$uint::checked_isqrt(*self)
+      }
+
+      #[inline]
+      fn checked_nth_root(&self, n: u32, _: Token) -> Option<Self> {
+        int::$uint::checked_nth_root(*self, n)
+      }
+
+      #[inline]
+      fn checked_ilog(&self, base: &Self, _: Token) -> Option<u32> {
+        int::$uint::checked_ilog(*self, *base)
+      }
+
+      #[inline]
+      fn checked_ilog2(&self, _: Token) -> Option<u32> {
+        int::$uint::checked_ilog2(*self)
+      }
+
+      #[inline]
+      fn checked_ilog10(&self, _: Token) -> Option<u32> {
+        int::$uint::checked_ilog10(*self)
+      }
+
+      #[inline]
+      fn midpoint(&self, rhs: &Self, _: Token) -> Self {
+        int::$uint::midpoint(*self, *rhs)
+      }
+
+      #[inline]
+      fn abs_diff(&self, rhs: &Self, _: Token) -> Self {
+        int::$uint::abs_diff(*self, *rhs)
+      }
+
+      #[inline]
+      fn is_multiple_of(&self, rhs: &Self, _: Token) -> bool {
+        int::$uint::is_multiple_of(*self, *rhs)
+      }
+
+      #[inline]
+      fn next_power_of_two_bits(&self, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::next_power_of_two_bits(*self, bits)
+      }
     }
 
     impl IntRepr for $int {
@@ -854,6 +1214,76 @@ macro_rules! native_storage {
       #[inline]
       fn unsigned_abs(&self, _: Token) -> $uint {
         int::$int::unsigned_abs(*self)
+      }
+
+      #[inline]
+      fn div_rem_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, Self, bool)> {
+        int::$int::div_rem_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn div_rem_euclid_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, Self, bool)> {
+        int::$int::div_rem_euclid_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn div_floor_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        int::$int::div_floor_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn div_ceil_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        int::$int::div_ceil_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn next_multiple_of_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<(Self, bool)> {
+        int::$int::next_multiple_of_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn checked_div_exact_bits(&self, rhs: &Self, bits: u32, _: Token) -> Option<Self> {
+        int::$int::checked_div_exact_bits(*self, *rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_pow_bits(&self, exp: u32, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_pow_bits(*self, exp, bits)
+      }
+
+      #[inline]
+      fn checked_isqrt(&self, _: Token) -> Option<Self> {
+        int::$int::checked_isqrt(*self)
+      }
+
+      #[inline]
+      fn checked_nth_root(&self, n: u32, _: Token) -> Option<Self> {
+        int::$int::checked_nth_root(*self, n)
+      }
+
+      #[inline]
+      fn checked_ilog(&self, base: &Self, _: Token) -> Option<u32> {
+        int::$int::checked_ilog(*self, *base)
+      }
+
+      #[inline]
+      fn checked_ilog2(&self, _: Token) -> Option<u32> {
+        int::$int::checked_ilog2(*self)
+      }
+
+      #[inline]
+      fn checked_ilog10(&self, _: Token) -> Option<u32> {
+        int::$int::checked_ilog10(*self)
+      }
+
+      #[inline]
+      fn midpoint(&self, rhs: &Self, _: Token) -> Self {
+        int::$int::midpoint(*self, *rhs)
+      }
+
+      #[inline]
+      fn abs_diff(&self, rhs: &Self, _: Token) -> $uint {
+        int::$int::abs_diff(*self, *rhs)
       }
     }
 
