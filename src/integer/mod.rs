@@ -10,8 +10,8 @@ use core::{
 pub use error::TryNewError;
 pub use traits::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs,
-  IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger, StrictOps,
-  UncheckedOps, UnsignedFixedInteger, WrappingOps,
+  IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger,
+  SignedMath, StrictOps, UncheckedOps, UnsignedFixedInteger, UnsignedMath, WrappingOps,
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -409,6 +409,8 @@ macro_rules! array_integers {
       saturating_table!(Uint, inherent_items![unsigned, $lower, &]);
       strict_table!(inherent_items![unsigned, $lower, &]);
       uint_sign_table!(inherent_items![unsigned, $lower, &]);
+      integer_math_table!(inherent_items![unsigned, $lower, &, Uint<B, [$limb; N]>]);
+      uint_math_table!(inherent_items![unsigned, $lower, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -549,6 +551,8 @@ macro_rules! array_integers {
       saturating_table!(Int, inherent_items![signed, $upper, &]);
       strict_table!(inherent_items![signed, $upper, &]);
       int_sign_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
+      integer_math_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
+      int_math_table!(inherent_items![signed, $upper, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -856,6 +860,8 @@ macro_rules! native_integers {
       saturating_table!(Uint, inherent_items![$uint]);
       strict_table!(inherent_items![$uint]);
       uint_sign_table!(inherent_items![$uint]);
+      integer_math_table!(inherent_items![$uint, Uint<B, $uint>]);
+      uint_math_table!(inherent_items![$uint]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -986,6 +992,8 @@ macro_rules! native_integers {
       saturating_table!(Int, inherent_items![$int]);
       strict_table!(inherent_items![$int]);
       int_sign_table!(inherent_items![$int, Uint<B, $uint>]);
+      integer_math_table!(inherent_items![$int, Uint<B, $uint>]);
+      int_math_table!(inherent_items![$int]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///

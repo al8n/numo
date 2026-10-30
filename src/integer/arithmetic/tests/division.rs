@@ -1,8 +1,10 @@
-//! The division of `Uint` and `Int` in the arithmetic families: the overflowing, checked, wrapping,
-//! saturating and strict division and remainder, rounded toward zero and Euclidean, the checked
-//! next multiple and the exact division, through the inherent `const fn`s and the traits, against
-//! `i128` at every width up to 16 bits and against `num-bigint` at wider ones; their panics; and
-//! their constants.
+//! The division of `Uint` and `Int`: the overflowing, checked, wrapping, saturating and strict
+//! division and remainder of the families, rounded toward zero and Euclidean, the checked next
+//! multiple and the exact division, and the functions of `IntegerMath` and `UnsignedMath` that
+//! take two values: the Euclidean, rounded and exact division, the next multiple, the midpoint, the
+//! absolute difference, the logarithm to any base and `is_multiple_of`. Each through the inherent
+//! `const fn`s and the traits, against `i128` at every width up to 16 bits and against
+//! `num-bigint` at wider ones; their panics; and their constants.
 
 use typenum::{U3, U4, U5, U6, U10, U11, U12, U13, U14, U15};
 
@@ -162,17 +164,146 @@ fn expected_big_division(a: &BigInt, b: &BigInt, bits: u32, signed: bool) -> Div
   }
 }
 
-/// Checks the division methods of `$ty`, of `$bits` bits, signed if `$signed`, whose values `$from`
-/// creates from an `i128` and `$value` reads back, at each pair of `$pairs`: the inherent
-/// `const fn`s and the traits return the [`expected_division`], and so does `unchecked_div_exact`
-/// through the trait wherever `checked_div_exact` returns a value. Every width but zero bits, where
-/// every divisor is zero, divides 0 by 1, or at one signed bit by -1, which the pairs of the ends
-/// include, so unless the tier checks no pair of the storage, `unchecked_div_exact` is called.
+/// What the functions of `IntegerMath` that take two values return for a pair, each value read as
+/// `V`: the Euclidean division and remainder, the division rounded down and up, and the exact
+/// division where they do not panic, on a zero divisor or on `MIN / -1`; the next multiple where it
+/// does not overflow; the midpoint; the absolute difference; and the logarithm to the base of the
+/// second value, checked, and where it does not panic.
+#[derive(Debug, PartialEq)]
+struct Math<V> {
+  euclid: [Option<V>; 2],
+  rounded: [Option<V>; 2],
+  exact: Option<Option<V>>,
+  next_multiple: Option<V>,
+  midpoint: V,
+  abs_diff: V,
+  log: [Option<u32>; 2],
+}
+
+/// The [`Math`] of `$x` and `$y`, references to values of one type, which `$value` reads, with the
+/// absolute difference read by `$magnitude`, through the methods that the context reaches, as
+/// [`division_results!`] does.
+macro_rules! math_results {
+  ($x:expr, $y:expr, $value:expr, $magnitude:expr) => {{
+    let (x, y, value, magnitude) = ($x, $y, $value, $magnitude);
+    // Each of these methods panics where the checked division returns `None`.
+    let divides = x.checked_div(y).is_some();
+    Math {
+      euclid: [
+        divides.then(|| value(&x.div_euclid(y))),
+        divides.then(|| value(&x.rem_euclid(y))),
+      ],
+      rounded: [
+        divides.then(|| value(&x.div_floor(y))),
+        divides.then(|| value(&x.div_ceil(y))),
+      ],
+      exact: divides.then(|| x.div_exact(y).map(|quotient| value(&quotient))),
+      next_multiple: x
+        .checked_next_multiple_of(y)
+        .map(|_| value(&x.next_multiple_of(y))),
+      midpoint: value(&x.midpoint(y)),
+      abs_diff: magnitude(&x.abs_diff(y)),
+      log: [x.checked_ilog(y), x.checked_ilog(y).map(|_| x.ilog(y))],
+    }
+  }};
+}
+
+/// The [`Math`] of `x` and `y` through the traits.
+fn math_through_traits<T, V>(
+  x: &T,
+  y: &T,
+  value: fn(&T) -> V,
+  magnitude: fn(&T::Magnitude) -> V,
+) -> Math<V>
+where
+  T: CheckedOps + IntegerMath,
+{
+  math_results!(x, y, value, magnitude)
+}
+
+/// The [`Math`] that the functions return for `a` and `b`, values of `bits` bits, signed if
+/// `signed`, computed in `i128`.
+fn expected_math(a: i128, b: i128, bits: u32, signed: bool) -> Math<i128> {
+  let (min, max) = range(bits, signed);
+  // Only `MIN / -1` overflows, whose quotient, rounded any way, is `-MIN`.
+  let divides = b != 0 && a / b <= max;
+  let next = (b != 0).then(|| bigint::next_multiple(a, b));
+  Math {
+    euclid: [
+      divides.then(|| a.div_euclid(b)),
+      divides.then(|| a.rem_euclid(b)),
+    ],
+    rounded: [
+      divides.then(|| bigint::floor_div(a, b)),
+      divides.then(|| bigint::ceil_div(a, b)),
+    ],
+    exact: divides.then(|| (a % b == 0).then_some(a / b)),
+    next_multiple: next.filter(|next| (min..=max).contains(next)),
+    midpoint: (a + b) / 2,
+    abs_diff: (a - b).abs(),
+    log: [a.checked_ilog(b), a.checked_ilog(b)],
+  }
+}
+
+/// The [`Math`] that the functions return for `a` and `b`, values of `bits` bits, signed if
+/// `signed`, computed with `num-bigint`.
+fn expected_big_math(a: &BigInt, b: &BigInt, bits: u32, signed: bool) -> Math<BigInt> {
+  let (min, max) = (bigint::min(bits, signed), bigint::max(bits, signed));
+  let zero = BigInt::ZERO;
+  let divides = *b != zero && a / b <= max;
+  let (euclid_quotient, euclid_remainder) = if *b == zero {
+    (zero.clone(), zero.clone())
+  } else {
+    bigint::div_rem_euclid(a, b)
+  };
+  let next = (*b != zero).then(|| bigint::next_multiple_of(a, b));
+  let log = bigint::ilog(a, b);
+  Math {
+    euclid: [
+      divides.then_some(euclid_quotient),
+      divides.then_some(euclid_remainder),
+    ],
+    rounded: [
+      divides.then(|| bigint::div_floor(a, b)),
+      divides.then(|| bigint::div_ceil(a, b)),
+    ],
+    exact: divides.then(|| (a % b == zero).then(|| a / b)),
+    next_multiple: next.filter(|next| min <= *next && *next <= max),
+    midpoint: (a + b) / 2u8,
+    abs_diff: if a < b { b - a } else { a - b },
+    log: [log, log],
+  }
+}
+
+/// Checks the functions of `UnsignedMath` and `SignedMath` that take two values, for the sign
+/// token `$sign`, on `$x` and `$y`, the values `$a` and `$b`, through the inherent `const fn`s and
+/// the traits: `is_multiple_of` for `Uint`, and nothing for `Int`.
+macro_rules! sign_division {
+  (unsigned, $x:expr, $y:expr, $a:expr, $b:expr) => {{
+    let (a, b) = ($a, $b);
+    let expected = if b == 0 { a == 0 } else { a % b == 0 };
+    assert_eq!(
+      both!(UnsignedMath::is_multiple_of($x, $y)),
+      expected,
+      "{a} % {b}"
+    );
+  }};
+  (signed, $x:expr, $y:expr, $a:expr, $b:expr) => {{}};
+}
+
+/// Checks the division of `$ty`, of the sign `$sign` and of `$bits` bits, whose values `$from`
+/// creates from an `i128` and `$value` and `$magnitude` read back, at each pair of `$pairs`: the
+/// inherent `const fn`s and the traits return the [`expected_division`] and the [`expected_math`],
+/// and so does `unchecked_div_exact` through the trait wherever `checked_div_exact` returns a
+/// value. Every width but zero bits, where every divisor is zero, divides 0 by 1, or at one signed
+/// bit by -1, which the pairs of the ends include, so unless the tier checks no pair of the
+/// storage, `unchecked_div_exact` is called.
 macro_rules! sweep_division {
-  ($ty:ty, $bits:expr, $signed:expr, $pairs:expr, $from:expr, $value:expr) => {{
-    let (bits, signed, pairs) = ($bits, $signed, $pairs);
+  ($sign:ident; $ty:ty, $bits:expr, $pairs:expr, $from:expr, $value:expr, $magnitude:expr) => {{
+    let (bits, signed, pairs) = ($bits, is_signed!($sign), $pairs);
     let from: fn(i128) -> $ty = $from;
     let value: fn(&$ty) -> i128 = $value;
+    let magnitude: fn(&<$ty as IntegerMath>::Magnitude) -> i128 = $magnitude;
     let checks_pairs = !pairs.is_empty();
     let mut exact_calls = 0;
     for (a, b) in pairs {
@@ -188,6 +319,18 @@ macro_rules! sweep_division {
         expected,
         "{a} and {b} in {bits} bits, through the traits"
       );
+      let math = expected_math(a, b, bits, signed);
+      assert_eq!(
+        math_results!(&x, &y, value, magnitude),
+        math,
+        "{a} and {b} in {bits} bits"
+      );
+      assert_eq!(
+        math_through_traits(&x, &y, value, magnitude),
+        math,
+        "{a} and {b} in {bits} bits, through the traits"
+      );
+      sign_division!($sign, &x, &y, a, b);
       if let Some(quotient) = expected.exact {
         // SAFETY: the assertions above show that `checked_div_exact` returns `Some`, the
         // precondition of `unchecked_div_exact`.
@@ -252,26 +395,29 @@ fn families_divide_values_of_up_to_8_bits() {
 }
 
 /// The pairs that the tier takes of each width from 9 to 16 bits, with the pairs of the ends, in
-/// `u16` and `i16`, in two limbs of 8 bits and in one of 16 bits.
+/// `u16` and `i16`, in two limbs of 8 bits and in one of 16 bits. Miri checks 9, 12 and 16 bits.
 #[test]
 fn families_divide_values_of_9_to_16_bits() {
   division_of_large_widths::<U9>(9);
-  division_of_large_widths::<U10>(10);
-  division_of_large_widths::<U11>(11);
   division_of_large_widths::<U12>(12);
-  division_of_large_widths::<U13>(13);
-  division_of_large_widths::<U14>(14);
-  division_of_large_widths::<U15>(15);
   division_of_large_widths::<U16>(16);
+  if !tier().is_miri() {
+    division_of_large_widths::<U10>(10);
+    division_of_large_widths::<U11>(11);
+    division_of_large_widths::<U13>(13);
+    division_of_large_widths::<U14>(14);
+    division_of_large_widths::<U15>(15);
+  }
 }
 
-/// Checks the division methods of `T`, of `bits` bits, through the traits at every pair of
-/// `samples` against `num-bigint`, and `unchecked_div_exact` through the trait wherever
-/// `checked_div_exact` returns a value.
+/// Checks the division methods of `T`, of `bits` bits, and its functions of `IntegerMath` that
+/// take two values, through the traits at every pair of `samples` against `num-bigint`, and
+/// `unchecked_div_exact` through the trait wherever `checked_div_exact` returns a value.
 fn check_division_against_big_integers<T>(bits: u32, samples: &[BigInt])
 where
   T: Big + FixedInteger + OverflowingOps + CheckedOps + WrappingOps + SaturatingOps + StrictOps,
-  T: UncheckedOps,
+  T: UncheckedOps + IntegerMath,
+  T::Magnitude: Big,
 {
   let values: Vec<T> = samples.iter().map(T::from_big).collect();
   for (a, x) in samples.iter().zip(&values) {
@@ -280,6 +426,11 @@ where
       assert_eq!(
         division_through_traits(x, y, |value| value.to_big()),
         expected,
+        "{a} and {b} in {bits} bits"
+      );
+      assert_eq!(
+        math_through_traits(x, y, |value| value.to_big(), |value| value.to_big()),
+        expected_big_math(a, b, bits, T::SIGNED),
         "{a} and {b} in {bits} bits"
       );
       if let Some(quotient) = expected.exact {
@@ -296,17 +447,40 @@ where
   }
 }
 
-/// Checks that the inherent `const fn`s of the division of `$ty` agree with the traits at every
-/// pair of `$samples`.
+/// Checks `is_multiple_of` of `T`, unsigned, through the trait at every pair of `samples` against
+/// `num-bigint`.
+fn check_multiples_against_big_integers<T: Big + UnsignedMath>(samples: &[BigInt]) {
+  let zero = BigInt::ZERO;
+  for a in samples {
+    for b in samples {
+      let expected = if *b == zero {
+        *a == zero
+      } else {
+        a % b == zero
+      };
+      let multiple = T::from_big(a).is_multiple_of(&T::from_big(b));
+      assert_eq!(multiple, expected, "{a} % {b}");
+    }
+  }
+}
+
+/// Checks that the inherent `const fn`s of the division of `$ty` and of its functions of
+/// `IntegerMath` that take two values agree with the traits at every pair of `$samples`.
 macro_rules! check_division_paths {
   ($ty:ty, $samples:expr) => {{
     let values: Vec<$ty> = $samples.iter().map(<$ty>::from_big).collect();
     let value: fn(&$ty) -> BigInt = |value| value.to_big();
+    let magnitude: fn(&<$ty as IntegerMath>::Magnitude) -> BigInt = |value| value.to_big();
     for x in &values {
       for y in &values {
         assert_eq!(
           division_results!(x, y, value),
           division_through_traits(x, y, value),
+          "{x} and {y}"
+        );
+        assert_eq!(
+          math_results!(x, y, value, magnitude),
+          math_through_traits(x, y, value, magnitude),
           "{x} and {y}"
         );
       }
@@ -322,6 +496,7 @@ macro_rules! division_agrees {
     let signed = big_samples($bits, true, $count);
     $(
       check_division_against_big_integers::<Uint<$width, $uint>>($bits, &unsigned);
+      check_multiples_against_big_integers::<Uint<$width, $uint>>(&unsigned);
       check_division_paths!(Uint<$width, $uint>, unsigned);
       check_division_against_big_integers::<Int<$width, $int>>($bits, &signed);
       check_division_paths!(Int<$width, $int>, signed);
@@ -329,26 +504,26 @@ macro_rules! division_agrees {
   }};
 }
 
-/// The edge and random values of 17 to 4096 bits in every storage that holds them: the division
-/// agrees with `num-bigint` through the traits, and the inherent `const fn`s agree with the
-/// traits. Under Miri, the widths above 256 bits are left out.
+/// The edge and random values of 24 to 4096 bits in storages of each kind that hold them: the
+/// division agrees with `num-bigint` through the traits, and the inherent `const fn`s agree with
+/// the traits. An unoptimized build leaves out the widths above 200 bits, and Miri also 64, 128 and
+/// 200 bits.
 #[test]
 #[cfg_attr(
   all(miri, target_pointer_width = "32"),
   ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
 )]
 fn storages_agree_on_the_division() {
-  division_agrees!(U24, 24, 8; u32, i32; [u8; 3], [u8; 3]; [u16; 2], [u16; 2]);
-  division_agrees!(U63, 63, 8; u64, i64; [u8; 8], [u8; 8]; [u32; 2], [u32; 2]);
-  division_agrees!(U64, 64, 8; u64, i64; [u16; 4], [u16; 4]; [u64; 1], [u64; 1]);
-  division_agrees!(U65, 65, 8; u128, i128; [u8; 9], [u8; 9]; [u64; 2], [u64; 2]);
-  division_agrees!(U127, 127, 8; u128, i128; [u32; 4], [u32; 4]; [u128; 1], [u128; 1]);
-  division_agrees!(U128, 128, 8; u128, i128; [u16; 8], [u16; 8]; [u64; 2], [u64; 2]);
-  division_agrees!(U129, 129, 8; [u8; 17], [u8; 17]; [u64; 3], [u64; 3]; [u128; 2], [u128; 2]);
-  division_agrees!(U200, 200, 8; [u16; 13], [u16; 13]; [u32; 7], [u32; 7]; [u64; 4], [u64; 4]);
-  division_agrees!(U256, 256, 8; [u8; 32], [u8; 32]; [u64; 4], [u64; 4]; [u128; 2], [u128; 2]);
-  if !cfg!(miri) {
-    division_agrees!(U1024, 1024, 4; [u32; 32], [u32; 32]; [u64; 16], [u64; 16]);
+  division_agrees!(U24, 24, 4; u32, i32; [u8; 3], [u8; 3]; [u16; 2], [u16; 2]);
+  division_agrees!(U65, 65, 4; u128, i128; [u8; 9], [u8; 9]; [u64; 2], [u64; 2]);
+  division_agrees!(U129, 129, 4; [u8; 17], [u8; 17]; [u64; 3], [u64; 3]; [u128; 2], [u128; 2]);
+  if !tier().is_miri() {
+    division_agrees!(U64, 64, 4; u64, i64; [u32; 2], [u32; 2]; [u64; 1], [u64; 1]);
+    division_agrees!(U128, 128, 4; u128, i128; [u16; 8], [u16; 8]; [u128; 1], [u128; 1]);
+    division_agrees!(U200, 200, 4; [u32; 7], [u32; 7]; [u64; 4], [u64; 4]);
+  }
+  if tier().is_full() {
+    division_agrees!(U1024, 1024, 2; [u32; 32], [u32; 32]; [u64; 16], [u64; 16]);
     division_agrees!(U4096, 4096, 2; [u8; 512], [u8; 512]; [u64; 64], [u64; 64]);
     division_agrees!(U4096, 4096, 2; [u128; 32], [u128; 32]);
   }
@@ -556,4 +731,187 @@ fn division_in_constant_contexts() {
   );
   assert_eq!(ONE_BIT_EXACT, [None, Some(Int::<U1, i8>::ZERO)]);
   assert_eq!(MULTIPLES, [Some(Bytes::MAX), Some(Bytes::MIN), None, None]);
+}
+
+/// Asserts that the functions of `IntegerMath` that divide panic on the divisor `$zero`, zero, of
+/// `$x`, with the messages of `$messages`, through the inherent `const fn`s and the traits, and
+/// report the caller: the division ones with that of the native division, and the remainder,
+/// `next_multiple_of` and `div_exact`, which computes the remainder first, with that of the
+/// native remainder.
+macro_rules! math_by_zero_panics {
+  ($x:expr, $zero:expr, $messages:expr) => {{
+    let (x, zero) = ($x, $zero);
+    let [div, rem, _, _] = $messages;
+    panics_here!(x.div_euclid(&zero), div);
+    panics_here!(IntegerMath::div_euclid(&x, &zero), div);
+    panics_here!(x.rem_euclid(&zero), rem);
+    panics_here!(IntegerMath::rem_euclid(&x, &zero), rem);
+    panics_here!(x.div_floor(&zero), div);
+    panics_here!(IntegerMath::div_floor(&x, &zero), div);
+    panics_here!(x.div_ceil(&zero), div);
+    panics_here!(IntegerMath::div_ceil(&x, &zero), div);
+    panics_here!(x.next_multiple_of(&zero), rem);
+    panics_here!(IntegerMath::next_multiple_of(&x, &zero), rem);
+    panics_here!(x.div_exact(&zero), rem);
+    panics_here!(IntegerMath::div_exact(&x, &zero), rem);
+  }};
+}
+
+/// Asserts that the functions of `IntegerMath` that divide panic on `$min / $minus_one`, which
+/// overflows, with the messages of `$messages`, in every build, through the inherent `const fn`s
+/// and the traits, and report the caller: `div_exact` with that of the remainder, which it computes
+/// first. Every value is a multiple of -1, so `next_multiple_of` returns `$min`.
+macro_rules! math_overflow_panics {
+  ($min:expr, $minus_one:expr, $messages:expr) => {{
+    let (min, minus_one) = ($min, $minus_one);
+    let [_, _, div, rem] = $messages;
+    panics_here!(min.div_euclid(&minus_one), div);
+    panics_here!(IntegerMath::div_euclid(&min, &minus_one), div);
+    panics_here!(min.rem_euclid(&minus_one), rem);
+    panics_here!(IntegerMath::rem_euclid(&min, &minus_one), rem);
+    panics_here!(min.div_floor(&minus_one), div);
+    panics_here!(IntegerMath::div_floor(&min, &minus_one), div);
+    panics_here!(min.div_ceil(&minus_one), div);
+    panics_here!(IntegerMath::div_ceil(&min, &minus_one), div);
+    panics_here!(min.div_exact(&minus_one), rem);
+    panics_here!(IntegerMath::div_exact(&min, &minus_one), rem);
+    assert_eq!(min.next_multiple_of(&minus_one), min);
+    assert_eq!(min.checked_div_exact(&minus_one), None);
+  }};
+}
+
+/// The functions of `IntegerMath` that divide panic on a zero divisor and on `MIN / -1` in every
+/// build, as the native methods do, through the inherent `const fn`s and the traits, and report the
+/// caller, at a partial and at the full width of a native integer and of an array, at zero bits and
+/// at one signed bit. `div_exact` panics with the messages of the remainder, as the native method
+/// does, which computes it first, although its documentation describes otherwise; the native
+/// `next_multiple_of` also computes the remainder of a zero divisor first.
+#[test]
+fn math_division_panics_report_the_caller() {
+  let mut messages = native_division_messages();
+  messages[1] = panic_of(|| black_box(1u8).next_multiple_of(black_box(0)))
+    .expect("a panic")
+    .0;
+  let exact = [
+    messages[0].clone(),
+    panic_of(|| black_box(1i8) % black_box(0))
+      .expect("a panic")
+      .0,
+    messages[2].clone(),
+    panic_of(|| black_box(i8::MIN) % black_box(-1))
+      .expect("a panic")
+      .0,
+  ];
+  assert_eq!(messages[1], exact[1]);
+  type I7 = Int<U7, i8>;
+  type I8 = Int<U8, i8>;
+  type I200 = Int<U200, [u64; 4]>;
+  type I1 = Int<U1, [u8; 1]>;
+  math_by_zero_panics!(u7::MAX, u7::ZERO, messages.clone());
+  math_by_zero_panics!(Uint::<U200>::MAX, Uint::<U200>::ZERO, messages.clone());
+  math_by_zero_panics!(u256::ONE, u256::ZERO, messages.clone());
+  math_by_zero_panics!(I7::MIN, I7::ZERO, messages.clone());
+  math_by_zero_panics!(I8::MAX, I8::ZERO, messages.clone());
+  math_by_zero_panics!(I200::MIN, I200::ZERO, messages.clone());
+  math_by_zero_panics!(i256::MAX, i256::ZERO, messages.clone());
+  math_by_zero_panics!(Uint::<U0, u8>::ZERO, Uint::<U0, u8>::ZERO, messages.clone());
+  math_by_zero_panics!(Int::<U0, i16>::ZERO, Int::<U0, i16>::ZERO, messages.clone());
+  math_by_zero_panics!(I1::MIN, I1::ZERO, messages.clone());
+  math_overflow_panics!(I7::MIN, -I7::ONE, exact.clone());
+  math_overflow_panics!(I8::MIN, -I8::ONE, exact.clone());
+  math_overflow_panics!(I200::MIN, -I200::ONE, exact.clone());
+  math_overflow_panics!(i256::MIN, -i256::ONE, exact.clone());
+  // One bit holds only -1 and 0, so -1 is `MIN`.
+  math_overflow_panics!(I1::MIN, I1::MIN, exact.clone());
+  // A remainder that is not zero gives `None` and no panic.
+  assert_eq!(I7::MIN.div_exact(&I7::new(3)), None);
+  assert_eq!(i256::MAX.div_exact(&-i256::ONE), Some(-i256::MAX));
+}
+
+/// `next_multiple_of` overflows as a native addition does, which is how the native method
+/// overflows: with overflow checks it panics with the message of the native addition and reports
+/// the caller, and without them it returns the wrapped multiple, at a partial and at the full width
+/// of a native integer and of an array.
+#[test]
+fn next_multiple_of_follows_overflow_checks() {
+  // The message of a native addition that overflows, which only a build with checks has.
+  let message = panic_of(|| black_box(u8::MAX) + 1).map_or_else(String::new, |panic| panic.0);
+  type U200 = Uint<typenum::U200, [u64; 4]>;
+  type U8 = Uint<typenum::U8, u8>;
+  let two = U200::ONE + U200::ONE;
+  overflows_here!(u7::MAX.next_multiple_of(&u7::new(2)), message, u7::ZERO);
+  overflows_here!(U8::MAX.next_multiple_of(&U8::new(2)), message, U8::ZERO);
+  // The next multiple of `MAX - 1` from `MAX` is twice it, `MAX - 3` modulo `2^200`.
+  let below = U200::MAX - U200::ONE;
+  overflows_here!(U200::MAX.next_multiple_of(&below), message, below - two);
+  overflows_here!(i7::MIN.next_multiple_of(&i7::new(-3)), message, i7::new(62));
+  let even = i256::ONE + i256::ONE;
+  overflows_here!(i256::MAX.next_multiple_of(&even), message, i256::MIN);
+}
+
+/// The functions of `IntegerMath` and `UnsignedMath` that take two values in constant contexts, in
+/// a native integer and in an array, at zero bits and at one signed bit.
+#[test]
+fn math_division_in_constant_contexts() {
+  type Bytes = Int<U24, [u8; 3]>;
+  type Word = Uint<U7, [u64; 1]>;
+  type U0 = Uint<typenum::U0, u8>;
+  type I1 = Int<U1, i8>;
+  const EUCLID: [i7; 2] = [
+    i7::new(-7).div_euclid(&i7::new(2)),
+    i7::new(-7).rem_euclid(&i7::new(-2)),
+  ];
+  const ROUNDED: [Bytes; 2] = [
+    Bytes::MIN.div_floor(&Bytes::MAX),
+    Bytes::MIN.div_ceil(&Bytes::MAX),
+  ];
+  const EXACT: [Option<Word>; 2] = [
+    Word::MAX.div_exact(&Word::MAX),
+    Word::MAX.div_exact(&Word::ONE.wrapping_add(&Word::ONE)),
+  ];
+  const MULTIPLES: [u7; 2] = [
+    u7::new(100).next_multiple_of(&u7::new(7)),
+    u7::ZERO.next_multiple_of(&u7::MAX),
+  ];
+  const MIDPOINTS: [i256; 2] = [
+    i256::MIN.midpoint(&i256::MAX),
+    i256::MIN.midpoint(&i256::ZERO),
+  ];
+  const DIFFERENCES: (u7, Uint<U24, [u8; 3]>) =
+    (i7::MIN.abs_diff(&i7::MAX), Bytes::MIN.abs_diff(&Bytes::MAX));
+  const LOGS: [Option<u32>; 3] = [
+    u7::new(81).checked_ilog(&u7::new(3)),
+    Bytes::MAX.checked_ilog(&Bytes::ONE),
+    Word::MAX.checked_ilog(&Word::ONE.wrapping_add(&Word::ONE)),
+  ];
+  const LOG: u32 = Bytes::MAX.ilog(&Bytes::MAX);
+  const DIVIDES: [bool; 3] = [
+    u7::new(42).is_multiple_of(&u7::new(7)),
+    Word::ZERO.is_multiple_of(&Word::ZERO),
+    Word::ONE.is_multiple_of(&Word::ZERO),
+  ];
+  const ZERO_BITS: (U0, U0, bool) = (
+    U0::ZERO.midpoint(&U0::ZERO),
+    U0::ZERO.abs_diff(&U0::ZERO),
+    U0::ZERO.is_multiple_of(&U0::ZERO),
+  );
+  const ONE_BIT: (I1, Uint<U1, u8>, Option<I1>) = (
+    I1::MIN.midpoint(&I1::ZERO),
+    I1::MIN.abs_diff(&I1::ZERO),
+    I1::ZERO.div_exact(&I1::MIN),
+  );
+
+  let minus = |count: i8| Bytes::checked_from_limbs(limbs_of(count.into())).expect("in range");
+  assert_eq!(EUCLID, [i7::new(-4), i7::ONE]);
+  assert_eq!(ROUNDED, [minus(-2), minus(-1)]);
+  assert_eq!(EXACT, [Some(Word::ONE), None]);
+  assert_eq!(MULTIPLES, [u7::new(105), u7::ZERO]);
+  let half_min = i256::MIN.checked_div(&(i256::ONE + i256::ONE));
+  assert_eq!(MIDPOINTS, [i256::ZERO, half_min.expect("in range")]);
+  assert_eq!(DIFFERENCES, (u7::MAX, Uint::<U24, [u8; 3]>::MAX));
+  assert_eq!(LOGS, [Some(4), None, Some(6)]);
+  assert_eq!(LOG, 1);
+  assert_eq!(DIVIDES, [true, true, false]);
+  assert_eq!(ZERO_BITS, (U0::ZERO, U0::ZERO, true));
+  assert_eq!(ONE_BIT, (I1::ZERO, Uint::<U1, u8>::ONE, Some(I1::ZERO)));
 }

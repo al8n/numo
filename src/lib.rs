@@ -332,8 +332,9 @@ pub use decimal::{
 };
 pub use integer::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs, Int,
-  IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger, StrictOps,
-  TryNewError, Uint, UncheckedOps, UnsignedFixedInteger, WrappingOps,
+  IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger,
+  SignedMath, StrictOps, TryNewError, Uint, UncheckedOps, UnsignedFixedInteger, UnsignedMath,
+  WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

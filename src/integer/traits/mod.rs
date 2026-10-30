@@ -575,6 +575,97 @@ pub trait UncheckedOps: Sealed + Sized {
   unchecked_table!(trait_items![]);
 }
 
+/// The power, the Euclidean, rounded and exact division, the next multiple, the roots, the
+/// logarithms, the midpoint and the absolute difference: the integer functions of the native
+/// integers that have no overflow prefix.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope. The checked roots and logarithms are here, beside the methods that panic where
+/// they return `None`; the checked forms of the operations whose result can be outside the range of
+/// the type, such as [`checked_next_multiple_of`](CheckedOps::checked_next_multiple_of) and
+/// [`checked_div_exact`](CheckedOps::checked_div_exact), are in [`CheckedOps`], with the other
+/// forms of the power, the division and the remainder in the other families.
+///
+/// ```
+/// use numo::{BitWidth, Int, IntegerMath, Uint, i7, u7};
+///
+/// // The number of decimal digits of a value.
+/// fn digits<B: BitWidth>(value: Uint<B>) -> u32 {
+///   value.checked_ilog10().map_or(1, |log| log + 1)
+/// }
+///
+/// // The distance between two values, which the unsigned integer of the width holds.
+/// fn distance<B: BitWidth>(a: Int<B>, b: Int<B>) -> Uint<B> {
+///   a.abs_diff(&b)
+/// }
+///
+/// assert_eq!(digits(u7::new(100)), 3);
+/// assert_eq!(digits(u7::ZERO), 1);
+/// assert_eq!(distance(i7::MIN, i7::MAX), u7::MAX);
+/// assert_eq!(i7::new(-7).div_euclid(&i7::new(2)), i7::new(-4));
+/// assert_eq!(i7::new(-7).midpoint(&i7::new(2)), i7::new(-2));
+/// assert_eq!(u7::new(100).isqrt(), u7::new(10));
+/// assert_eq!(u7::new(9).div_exact(&u7::new(3)), Some(u7::new(3)));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait IntegerMath: Sealed + Sized {
+  /// The type of [`abs_diff`](Self::abs_diff), the unsigned integer of the same width: `Self` for
+  /// `Uint`, and for `Int` the `Uint` of the same width in a storage of the same size, which is
+  /// also [`SignedFixedInteger::Unsigned`].
+  type Magnitude;
+
+  integer_math_table!(trait_items![]);
+}
+
+/// The functions of [`Uint`] alone that have no overflow prefix: `is_multiple_of` and the next
+/// power of two in its forms.
+///
+/// [`Uint`] implements it for every storage, with the results of the inherent `const fn`s of the
+/// same names, which a concrete type reaches without this trait, also in constant contexts.
+///
+/// ```
+/// use numo::{BitWidth, Uint, UnsignedMath, u7};
+///
+/// // The capacity of a buffer for `len` elements, a power of two.
+/// fn capacity<B: BitWidth>(len: Uint<B>) -> Option<Uint<B>> {
+///   len.checked_next_power_of_two()
+/// }
+///
+/// assert_eq!(capacity(u7::new(33)), Some(u7::new(64)));
+/// assert_eq!(capacity(u7::new(65)), None);
+/// assert_eq!(u7::new(65).wrapping_next_power_of_two(), u7::ZERO);
+/// assert!(u7::new(42).is_multiple_of(&u7::new(7)));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait UnsignedMath: Sealed + Sized {
+  uint_math_table!(trait_items![]);
+}
+
+/// The functions of [`Int`] alone that have no overflow prefix: the checked square root.
+///
+/// [`Int`] implements it for every storage, with the results of the inherent `const fn`s of the
+/// same names, which a concrete type reaches without this trait, also in constant contexts.
+///
+/// ```
+/// use numo::{BitWidth, Int, SignedMath, i7};
+///
+/// fn root<B: BitWidth>(value: Int<B>) -> Option<Int<B>> {
+///   value.checked_isqrt()
+/// }
+///
+/// assert_eq!(root(i7::new(50)), Some(i7::new(7)));
+/// assert_eq!(root(i7::new(-1)), None);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait SignedMath: Sealed + Sized {
+  int_math_table!(trait_items![]);
+}
+
 // The constants and methods are the inherent ones, which `Self::` names first, and the functions
 // without an inherent counterpart return the inherent constants.
 impl<B: FitsBits<R>, R: InlineUintRepr> FixedInteger for Uint<B, R> {
@@ -791,6 +882,28 @@ impl<B: FitsBits<R>, R: UintRepr> UncheckedOps for Uint<B, R> {
 
 impl<B: FitsBits<R>, R: IntRepr> UncheckedOps for Int<B, R> {
   unchecked_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: UintRepr> IntegerMath for Uint<B, R> {
+  type Magnitude = Self;
+
+  integer_math_table!(generic_items![]);
+}
+
+// The storage of the magnitude is the unsigned storage of `R`, which the sealed `IntCore` returns
+// from `abs_diff`, so no other bound is needed.
+impl<B: FitsBits<R>, R: IntRepr> IntegerMath for Int<B, R> {
+  type Magnitude = Uint<B, <R as IntRepr>::Unsigned>;
+
+  integer_math_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: UintRepr> UnsignedMath for Uint<B, R> {
+  uint_math_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> SignedMath for Int<B, R> {
+  int_math_table!(generic_items![]);
 }
 
 #[cfg(test)]
