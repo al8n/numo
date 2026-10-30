@@ -95,9 +95,9 @@ mod tests;
 /// that implements it: [`FixedDecimal`], [`ConstFixedDecimal`], [`SignedFixedDecimal`],
 /// [`UnsignedFixedDecimal`], [`DecimalOne`] and [`ConstDecimalOne`], and between `Scaled` types
 /// [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`]. Generic code bounded by them takes a
-/// `Scaled` and a bare decimal alike, and the arithmetic of a `Scaled` is reached through them, with
-/// the trait in scope. A `Scaled` relates only to a `Scaled`: no trait converts a bare decimal into
-/// a `Scaled`, or multiplies one by the other.
+/// `Scaled` and a bare decimal alike, and the arithmetic of a `Scaled` is reached through them,
+/// with the trait in scope. A `Scaled` relates only to a `Scaled`: no trait converts a bare decimal
+/// into a `Scaled`, or multiplies one by the other.
 ///
 /// A result has the value that the decimal's own operation gives, and the scale of the operation:
 ///

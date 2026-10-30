@@ -25,10 +25,9 @@ FEATURES
     unsigned storages is unsigned, `widen` never converts a signed storage to an unsigned one, and
     `try_convert` reports a negative value as `OutOfRange`.
   - `ParseErrorKind::Negative`, for `-` followed by a finite number read into an unsigned storage,
-    whatever its magnitude, `-0` included. This changes the kind of such an input, which was
-    `InvalidSyntax`: `-` alone, a second sign and other invalid text after the sign stay
-    `InvalidSyntax`, and `-inf` is `NotFinite`. The kind comes after `NotFinite` and before
-    `OutOfRange`, as the sign is decided after the syntax and before the value.
+    whatever its magnitude, `-0` included. `-` alone, a second sign and other invalid text after
+    the sign are `InvalidSyntax`, and `-inf` is `NotFinite`. The kind comes after `NotFinite` and
+    before `OutOfRange`, as the sign is decided after the syntax and before the value.
   - Wide storages: `i192`, `i256`, `i320`, `i384`, `i448` and `i512` hold 57, 76, 96, 115, 134 and
     153 digits, and `u192`, `u256`, `u320`, `u384`, `u448` and `u512` hold 57, 77, 96, 115, 134 and
     154, so any uint256 amount fits `Decimal<U60, U18, u320>`. They have the same constants,
@@ -96,9 +95,8 @@ FEATURES
   name, read leniently, without allocation. No error of reading a decimal or a `Scaled` names the
   rejected input: every input but a string gets the fixed message
   `expected a decimal value as a string`, which also replaces a format error that would describe
-  the input, so that the messages of a number or a byte array read as a decimal change, while every
-  other format error keeps its category. The impls use `serde_core`, so they need `serde` 1.0.220
-  or later in the build; the feature enables no feature of any other crate.
+  the input, while every other format error keeps its category. The impls use `serde_core`, so they
+  need `serde` 1.0.220 or later in the build; the feature enables no feature of any other crate.
 - The `arbitrary`, `proptest` and `quickcheck` features: the `Arbitrary` trait of each crate for
   `Decimal` and `RoundingMode`, for fuzzing and property tests on a target with `std`. One generator
   serves all three: an edge value one time in eight (zero, one unit in the last place, one, `MAX`,
