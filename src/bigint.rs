@@ -11,7 +11,10 @@ use core::{
 use num_bigint::{BigInt, Sign};
 use std::{vec, vec::Vec};
 
-use crate::RoundingMode;
+use crate::{
+  FitsBits, FixedInteger, InlineIntRepr, InlineUintRepr, Int, RoundingMode, SignedFixedInteger,
+  Uint,
+};
 
 /// An unsigned integer type that holds the limbs of an array, least significant first.
 pub(crate) trait Limb: Copy {
@@ -32,6 +35,9 @@ pub(crate) trait Limb: Copy {
 
   /// The limb whose bytes, least significant first, are `bytes`. Requires `BITS / 8` bytes.
   fn from_le_slice(bytes: &[u8]) -> Self;
+
+  /// The limb as a `u128`, which holds every limb.
+  fn to_u128(self) -> u128;
 }
 
 macro_rules! limb {
@@ -48,6 +54,10 @@ macro_rules! limb {
 
       fn from_le_slice(bytes: &[u8]) -> Self {
         $limb::from_le_bytes(bytes.try_into().expect("the bytes of one limb"))
+      }
+
+      fn to_u128(self) -> u128 {
+        u128::from(self)
       }
     }
   )+};
@@ -231,6 +241,156 @@ pub(crate) fn wrap(exact: &BigInt, bits: u32, min: &BigInt) -> BigInt {
   }
 }
 
+/// The quotient and the remainder of `a / b` with the remainder at least zero, as the Euclidean
+/// division of the native integers gives them. Requires `b != 0`.
+pub(crate) fn div_rem_euclid(a: &BigInt, b: &BigInt) -> (BigInt, BigInt) {
+  // `/` and `%` round toward zero, so the remainder has the sign of `a`.
+  let (quotient, remainder) = (a / b, a % b);
+  if remainder.sign() != Sign::Minus {
+    (quotient, remainder)
+  } else if b.sign() == Sign::Minus {
+    (quotient + 1u8, remainder - b)
+  } else {
+    (quotient - 1u8, remainder + b)
+  }
+}
+
+/// `a / b` rounded down. Requires `b != 0`.
+pub(crate) fn div_floor(a: &BigInt, b: &BigInt) -> BigInt {
+  let (quotient, remainder) = (a / b, a % b);
+  if remainder.sign() != Sign::NoSign && remainder.sign() != b.sign() {
+    quotient - 1u8
+  } else {
+    quotient
+  }
+}
+
+/// `a / b` rounded up. Requires `b != 0`.
+pub(crate) fn div_ceil(a: &BigInt, b: &BigInt) -> BigInt {
+  -div_floor(&-a, b)
+}
+
+/// For a positive `b`, the smallest multiple of `b` at least `a`, and for a negative `b`, the
+/// largest multiple of `b` at most `a`: `ceil(a / b) * b` for both. Requires `b != 0`.
+pub(crate) fn next_multiple_of(a: &BigInt, b: &BigInt) -> BigInt {
+  div_ceil(a, b) * b
+}
+
+/// `value^exp` wrapped to the range of `bits` bits from `min` to `max`, and whether it is outside
+/// that range.
+pub(crate) fn pow_bits(
+  value: &BigInt,
+  exp: u32,
+  bits: u32,
+  min: &BigInt,
+  max: &BigInt,
+) -> (BigInt, bool) {
+  let magnitude_bits = value.magnitude().bits();
+  // A magnitude of at least 2^k has a power of at least `2^(k * exp)`, outside the range once
+  // `k * exp >= bits`; otherwise the exact power has fewer than `bits + exp` bits.
+  if magnitude_bits >= 2 && (magnitude_bits - 1) * u64::from(exp) >= u64::from(bits) {
+    let modulus = BigInt::from(1u8) << bits;
+    let residue = value.modpow(&BigInt::from(exp), &modulus);
+    (wrap(&residue, bits, min), true)
+  } else {
+    let exact = value.pow(exp);
+    (wrap(&exact, bits, min), exact < *min || *max < exact)
+  }
+}
+
+/// The logarithm of `value` to the base `base`, rounded down, or `None` if `value` is not positive
+/// or `base` is below 2.
+pub(crate) fn ilog(value: &BigInt, base: &BigInt) -> Option<u32> {
+  if value.sign() != Sign::Plus || *base < BigInt::from(2u8) {
+    return None;
+  }
+  // A floating-point estimate, which the powers below correct to the exact logarithm.
+  let mut log = (log2(value) / log2(base)).floor() as u32;
+  while log > 0 && base.pow(log) > *value {
+    log -= 1;
+  }
+  while base.pow(log + 1) <= *value {
+    log += 1;
+  }
+  Some(log)
+}
+
+/// An estimate of the base-2 logarithm of `value`, which is positive, from its top 64 bits.
+fn log2(value: &BigInt) -> f64 {
+  let shift = value.bits().saturating_sub(64);
+  let top = (value.magnitude() >> shift)
+    .iter_u64_digits()
+    .next()
+    .unwrap_or(0);
+  shift as f64 + (top as f64).log2()
+}
+
+/// The smallest power of two at least `value`, which is not negative.
+pub(crate) fn next_power_of_two(value: &BigInt) -> BigInt {
+  if *value <= BigInt::from(1u8) {
+    BigInt::from(1u8)
+  } else {
+    BigInt::from(1u8) << (value - 1u8).bits()
+  }
+}
+
+/// `a / b` rounded down, for the values of up to 64 bits that `i128` checks quickly. Requires
+/// `b != 0`.
+pub(crate) fn floor_div(a: i128, b: i128) -> i128 {
+  let (quotient, remainder) = (a / b, a % b);
+  if remainder != 0 && (remainder < 0) != (b < 0) {
+    quotient - 1
+  } else {
+    quotient
+  }
+}
+
+/// `a / b` rounded up, as [`floor_div`]. Requires `b != 0`.
+pub(crate) fn ceil_div(a: i128, b: i128) -> i128 {
+  -floor_div(-a, b)
+}
+
+/// `ceil(a / b) * b`, as [`next_multiple_of`] for `i128`. Requires `b != 0`.
+pub(crate) fn next_multiple(a: i128, b: i128) -> i128 {
+  ceil_div(a, b) * b
+}
+
+/// `value^exp` wrapped to the range of `bits` bits from `min` to `max`, at most 64 bits, and
+/// whether it is outside that range, as [`pow_bits`] for `i128`.
+pub(crate) fn pow_wrapped(value: i128, exp: u32, bits: u32, min: i128, max: i128) -> (i128, bool) {
+  let modulus = 1i128 << bits;
+  // The power modulo `2^128`, and so modulo `2^bits`, moved into the range.
+  let residue = (value as u128).wrapping_pow(exp) as i128 & (modulus - 1);
+  let wrapped = (residue - min).rem_euclid(modulus) + min;
+  // A power that `i128` does not hold is outside every range of 64 bits.
+  let outside = value
+    .checked_pow(exp)
+    .is_none_or(|exact| exact < min || max < exact);
+  (wrapped, outside)
+}
+
+/// The `n`th root of `value`, rounded toward zero, as [`BigInt::nth_root`] for `i128`. Requires
+/// `n >= 1`, and `n` odd for a negative `value`.
+pub(crate) fn nth_root(value: i128, n: u32) -> i128 {
+  let magnitude = value.unsigned_abs();
+  // The largest `root` with `root^n <= magnitude`, by bisection from `low^n <= magnitude` and
+  // `high^n > magnitude`.
+  let (mut low, mut high) = (0u128, magnitude + 1);
+  while high - low > 1 {
+    let middle = low + (high - low) / 2;
+    if middle
+      .checked_pow(n)
+      .is_some_and(|power| power <= magnitude)
+    {
+      low = middle;
+    } else {
+      high = middle;
+    }
+  }
+  let root = i128::try_from(low).expect("a root of an i128");
+  if value < 0 { -root } else { root }
+}
+
 /// The widths at which the arithmetic of a width is checked in `limbs` limbs of `limb_bits` bits:
 /// every width from zero to `limb_bits * limbs` for limbs of at most 16 bits, and otherwise, or
 /// under Miri, zero, one, two and the widths next to each multiple of `limb_bits`.
@@ -252,8 +412,8 @@ pub(crate) fn arithmetic_widths(limb_bits: u32, limbs: usize) -> Vec<u32> {
 /// The values from `min` to `max`, the range of `bits` bits, at which the arithmetic of a width is
 /// checked for limbs of `limb_bits` bits: the limits and the values next to them and to zero, the
 /// powers `±2^k` and the values next to them for `k` next to the limb boundaries and to `bits`, and
-/// values from `random`, wrapped to the range. Under Miri, fewer random values and every third
-/// value.
+/// values from `random`, wrapped to the range. Under Miri, fewer random values, and the values that
+/// [`thin`] keeps.
 pub(crate) fn arithmetic_samples(
   bits: u32,
   limb_bits: u32,
@@ -347,10 +507,91 @@ pub(crate) fn to_signed(pattern: u128, bits: u32) -> i128 {
   }
 }
 
-/// `samples`, or every third of them under Miri, which runs big-integer arithmetic slowly.
-pub(crate) fn thin<T>(samples: Vec<T>) -> Vec<T> {
-  let step = if cfg!(miri) { 3 } else { 1 };
-  samples.into_iter().step_by(step).collect()
+/// A sample that [`thin`] keeps when it is zero or a unit, which a stride may skip.
+pub(crate) trait Sample {
+  /// Whether the sample is zero, one or minus one; for limbs, whether they are all zeros, one or
+  /// all ones.
+  fn is_unit_or_zero(&self) -> bool;
+}
+
+impl Sample for BigInt {
+  fn is_unit_or_zero(&self) -> bool {
+    self.magnitude().bits() <= 1
+  }
+}
+
+macro_rules! sample {
+  (unsigned $($int:ident),+) => {$(
+    impl Sample for $int {
+      fn is_unit_or_zero(&self) -> bool {
+        *self <= 1
+      }
+    }
+  )+};
+  (signed $($int:ident),+) => {$(
+    impl Sample for $int {
+      fn is_unit_or_zero(&self) -> bool {
+        (-1..=1).contains(self)
+      }
+    }
+  )+};
+}
+
+sample!(unsigned u8, u16, u32, u64, u128);
+sample!(signed i8, i16, i32, i64, i128);
+
+impl<L: Limb + PartialEq, const N: usize> Sample for [L; N] {
+  fn is_unit_or_zero(&self) -> bool {
+    let above_first_are_zero = self.iter().skip(1).all(|&limb| limb == L::ZERO);
+    let first = self.first().copied().unwrap_or(L::ZERO);
+    (above_first_are_zero && (first == L::ZERO || first == L::ONE))
+      || self.iter().all(|&limb| limb == L::MAX)
+  }
+}
+
+impl<B: FitsBits<R>, R: InlineUintRepr> Sample for Uint<B, R> {
+  fn is_unit_or_zero(&self) -> bool {
+    FixedInteger::is_zero(self) || FixedInteger::is_one(self)
+  }
+}
+
+impl<B: FitsBits<R>, R: InlineIntRepr> Sample for Int<B, R> {
+  fn is_unit_or_zero(&self) -> bool {
+    // The sign is the value exactly for -1, 0 and 1.
+    SignedFixedInteger::signum(self) == *self
+  }
+}
+
+/// `samples`, or under Miri, which runs big-integer arithmetic slowly, every third of them, as
+/// [`thin_by`] keeps them.
+pub(crate) fn thin<T: Sample>(samples: Vec<T>) -> Vec<T> {
+  thin_by(samples, 3, T::is_unit_or_zero)
+}
+
+/// `samples`, or under Miri every `step`th of them, the first, the last and every sample for which
+/// `keep` returns `true`, such as zero and the units, which a stride may skip.
+pub(crate) fn thin_by<T>(samples: Vec<T>, step: usize, keep: impl Fn(&T) -> bool) -> Vec<T> {
+  if !cfg!(miri) {
+    return samples;
+  }
+  let last = samples.len().saturating_sub(1);
+  samples
+    .into_iter()
+    .enumerate()
+    .filter(|(i, sample)| i % step == 0 || *i == last || keep(sample))
+    .map(|(_, sample)| sample)
+    .collect()
+}
+
+/// The values of `strided` and of `ends`, which a stride may skip, sorted and without duplicates.
+pub(crate) fn with_ends<T: Ord>(
+  strided: impl IntoIterator<Item = T>,
+  ends: impl IntoIterator<Item = T>,
+) -> Vec<T> {
+  let mut values: Vec<T> = strided.into_iter().chain(ends).collect();
+  values.sort_unstable();
+  values.dedup();
+  values
 }
 
 /// Bit patterns of `N` limbs of type `L`: zero, all ones, and for each bit index `k`, bit `k`

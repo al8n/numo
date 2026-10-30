@@ -28,10 +28,13 @@ export RUSTFLAGS="--cfg test_$CONFIG_FLAGS"
 # group of modules below, in order, and a last one for every test outside the groups. Each group
 # skips the groups before it, so a later group may be a prefix of an earlier one: `integer::tests::`
 # runs the tests that `integer::tests::int_` and `integer::tests::uint_` did not, and `integer::`
-# those that the four groups before it did not. The arithmetic group runs first, so that its result,
-# and the message of a failure in it, arrives early in the job.
+# those that the groups before it did not. The arithmetic groups run first, so that their results,
+# and the message of a failure in them, arrive early in the job: the division and the powers in
+# processes of their own, and then the rest of the arithmetic.
 if rustc --print cfg --target "$TARGET" | grep -qx 'target_pointer_width="32"'; then
   filters=(
+    integer::arithmetic::tests::division::
+    integer::arithmetic::tests::powers::
     integer::arithmetic::
     integer::tests::int_
     integer::tests::uint_

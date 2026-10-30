@@ -2,7 +2,7 @@ use core::{
   fmt::Debug,
   hint::black_box,
   iter::{Product, Sum},
-  ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+  ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
 };
 use std::{
   boxed::Box,
@@ -24,8 +24,9 @@ use typenum::{
 
 use crate::{
   BitWidth, CheckedOps, ConstFixedInteger, ConstIntegerOne, FitsBits, FixedInteger, Int,
-  IntReprMut, IntegerOne, OverflowingOps, SaturatingOps, SignedFixedInteger, StrictOps, Uint,
-  UintReprMut, UncheckedOps, UnsignedFixedInteger, WrappingOps, bigint, i7, i256, u7, u256, u4096,
+  IntReprMut, IntegerMath, IntegerOne, OverflowingOps, SaturatingOps, SignedFixedInteger,
+  SignedMath, StrictOps, Uint, UintReprMut, UncheckedOps, UnsignedFixedInteger, UnsignedMath,
+  WrappingOps, bigint, i7, i256, u7, u256, u4096,
 };
 
 /// The smallest and the largest value of `bits` bits, unsigned or in two's complement.
@@ -42,6 +43,47 @@ fn wrap(exact: i128, bits: u32, signed: bool) -> (i128, bool) {
   let (min, max) = range(bits, signed);
   let wrapped = (exact - min).rem_euclid(1 << bits) + min;
   (wrapped, exact < min || max < exact)
+}
+
+/// The values of `bits` bits that a stride may skip and every sweep checks: the limits, the values
+/// next to them, -1, 0 and 1, where they are in range.
+fn ends(bits: u32, signed: bool) -> Vec<i128> {
+  let (min, max) = range(bits, signed);
+  let mut ends: Vec<i128> = [min, min + 1, -1, 0, 1, max - 1, max]
+    .into_iter()
+    .filter(|value| (min..=max).contains(value))
+    .collect();
+  ends.sort_unstable();
+  ends.dedup();
+  ends
+}
+
+/// The values of `bits` bits that a sweep checks, in order: every `step`th value from the smallest,
+/// and the values of [`ends`].
+fn every_value(bits: u32, signed: bool, step: usize) -> Vec<i128> {
+  let (min, max) = range(bits, signed);
+  let mut values: Vec<i128> = (min..=max).step_by(step).collect();
+  values.extend(ends(bits, signed));
+  values.sort_unstable();
+  values.dedup();
+  values
+}
+
+/// The pairs of values of `bits` bits that a sweep checks, in order: every `step`th pair, counted
+/// from `(min, min)` with the second value varying fastest, and every pair of the values of
+/// [`ends`], such as `(MIN, -1)`, `(MIN, 0)` and `(MAX, MAX)`.
+fn every_pair(bits: u32, signed: bool, step: usize) -> Vec<(i128, i128)> {
+  let (min, max) = range(bits, signed);
+  let count = max - min + 1;
+  let mut pairs: Vec<(i128, i128)> = (0..count * count)
+    .step_by(step)
+    .map(|pair| (min + pair / count, min + pair % count))
+    .collect();
+  let ends = ends(bits, signed);
+  pairs.extend(ends.iter().flat_map(|&a| ends.iter().map(move |&b| (a, b))));
+  pairs.sort_unstable();
+  pairs.dedup();
+  pairs
 }
 
 /// `value` in `N` limbs of type `L`, least significant first, in two's complement. Requires the
@@ -66,14 +108,15 @@ macro_rules! both {
 /// Checks the values of `$ty`, of `$bits` bits, created by `$from` from their value: the
 /// overflowing, checked, wrapping, saturating and strict methods, through the inherent `const fn`s
 /// and the traits, against the exact results wrapped to the width. Every value and every `$step`th
-/// pair, or under Miri every 7th value and every 61st pair.
+/// pair, or under Miri every 7th value and every 61st pair, with the ends that `every_value` and
+/// `every_pair` keep.
 macro_rules! check_every_pair {
   ($ty:ty, $bits:expr, $signed:expr, $step:expr, $from:expr) => {{
     let from: fn(i128) -> $ty = $from;
     let (bits, signed) = ($bits, $signed);
     let (min, max) = range(bits, signed);
     let (value_step, pair_step) = if cfg!(miri) { (7, 61) } else { (1, $step) };
-    for a in (min..=max).step_by(value_step) {
+    for a in every_value(bits, signed, value_step) {
       let x = from(a);
       let (negated, overflow) = wrap(-a, bits, signed);
       assert_eq!(
@@ -99,9 +142,7 @@ macro_rules! check_every_pair {
         );
       }
     }
-    let count = max - min + 1;
-    for pair in (0..count * count).step_by(pair_step) {
-      let (a, b) = (min + pair / count, min + pair % count);
+    for (a, b) in every_pair(bits, signed, pair_step) {
       let (x, y) = (from(a), from(b));
       for (exact, (value, overflow), checked, wrapping, saturating) in [
         (
@@ -172,19 +213,17 @@ macro_rules! check_every_pair {
 /// Checks the values of `$ty`, unsigned, of `$bits` bits, created by `$from` from their value:
 /// `is_one`, and the carrying addition and the borrowing subtraction with and without a carry,
 /// through the inherent `const fn`s and the traits, against the exact results wrapped to the
-/// width. Every value and every `$step`th pair, or under Miri every 7th value and every 61st pair.
+/// width. Every value and every `$step`th pair, or under Miri every 7th value and every 61st pair,
+/// with the ends that `every_value` and `every_pair` keep.
 macro_rules! check_unsigned_methods {
   ($ty:ty, $bits:expr, $step:expr, $from:expr) => {{
     let from: fn(i128) -> $ty = $from;
     let bits = $bits;
-    let (min, max) = range(bits, false);
     let (value_step, pair_step) = if cfg!(miri) { (7, 61) } else { (1, $step) };
-    for a in (min..=max).step_by(value_step) {
+    for a in every_value(bits, false, value_step) {
       assert_eq!(both!(FixedInteger::is_one(&from(a))), a == 1, "{a}");
     }
-    let count = max - min + 1;
-    for pair in (0..count * count).step_by(pair_step) {
-      let (a, b) = (min + pair / count, min + pair % count);
+    for (a, b) in every_pair(bits, false, pair_step) {
       let (x, y) = (from(a), from(b));
       for carry in [false, true] {
         let c = i128::from(carry);
@@ -206,16 +245,17 @@ macro_rules! check_unsigned_methods {
 }
 
 /// Checks every value of `$ty`, signed, of `$bits` bits, created by `$from` from its value, or
-/// under Miri every 7th value: `is_one`, the absolute value in every form, the saturating
-/// negation, `signum` and `unsigned_abs`, whose result `$unsigned` creates, through the inherent
-/// `const fn`s and the traits, against the exact results wrapped to the width.
+/// under Miri every 7th value and the ends that `every_value` keeps: `is_one`, the absolute value
+/// in every form, the saturating negation, `signum` and `unsigned_abs`, whose result `$unsigned`
+/// creates, through the inherent `const fn`s and the traits, against the exact results wrapped to
+/// the width.
 macro_rules! check_signed_methods {
   ($ty:ty, $bits:expr, $from:expr, $unsigned:expr) => {{
     let from: fn(i128) -> $ty = $from;
     let bits = $bits;
     let (min, max) = range(bits, true);
     let step = if cfg!(miri) { 7 } else { 1 };
-    for a in (min..=max).step_by(step) {
+    for a in every_value(bits, true, step) {
       let x = from(a);
       assert_eq!(both!(FixedInteger::is_one(&x)), a == 1, "{a}");
       let (abs, overflow) = wrap(a.abs(), bits, true);
@@ -270,15 +310,13 @@ macro_rules! check_signed_methods {
 /// sum, the difference or the product is in range, the operator in its four forms of values and
 /// references, its compound assignment with a value and with a reference, and for the sum `Sum`
 /// over values and over references give the result of the checked method. Every `$step`th pair, or
-/// under Miri every 61st pair.
+/// under Miri every 61st pair, with the ends that `every_pair` keeps.
 macro_rules! check_operators {
   ($ty:ty, $bits:expr, $signed:expr, $step:expr, $from:expr) => {{
     let from: fn(i128) -> $ty = $from;
-    let (min, max) = range($bits, $signed);
     let step = if cfg!(miri) { 61 } else { $step };
-    let count = max - min + 1;
-    for pair in (0..count * count).step_by(step) {
-      let (x, y) = (from(min + pair / count), from(min + pair % count));
+    for (a, b) in every_pair($bits, $signed, step) {
+      let (x, y) = (from(a), from(b));
       check_operators!(@op x, y, +, +=, x.checked_add(&y));
       check_operators!(@op x, y, -, -=, x.checked_sub(&y));
       check_operators!(@op x, y, *, *=, x.checked_mul(&y));
@@ -376,6 +414,35 @@ fn every_pair_of_one_and_zero_bits() {
   check_storage!(array U0, 0, [u8; 1], 1);
   check_storage!(array U0, 0, [u32; 1], 1);
   check_storage!(array U0, 0, [u64; 2], 1);
+}
+
+/// The sweeps keep the ends of the range under any stride, as under Miri: one signed bit keeps -1
+/// and 0, the only operand of a legal negation, and wider ranges keep the limits, -1, 0 and 1, and
+/// their pairs, such as `(MIN, -1)` and `(MAX, MAX)`.
+#[test]
+fn sampling_keeps_the_ends() {
+  assert_eq!(every_value(0, true, 7), [0]);
+  assert_eq!(every_value(1, true, 7), [-1, 0]);
+  assert_eq!(
+    every_pair(1, true, 61),
+    [(-1, -1), (-1, 0), (0, -1), (0, 0)]
+  );
+  for (bits, signed) in [(2, true), (7, true), (7, false), (8, true), (8, false)] {
+    let (min, max) = range(bits, signed);
+    let values = every_value(bits, signed, 7);
+    let pairs = every_pair(bits, signed, 61);
+    let ends = ends(bits, signed);
+    assert!(ends.contains(&min) && ends.contains(&max) && ends.contains(&0));
+    assert_eq!(ends.contains(&-1), signed);
+    for &a in &ends {
+      assert!(values.contains(&a), "{a} in {bits} bits");
+      for &b in &ends {
+        assert!(pairs.contains(&(a, b)), "({a}, {b}) in {bits} bits");
+      }
+    }
+    assert!(values.is_sorted() && pairs.is_sorted());
+    assert!(values.iter().all(|value| (min..=max).contains(value)));
+  }
 }
 
 /// `ONE` is the storage's one, and the constant of `ConstIntegerOne` and the function of
@@ -1000,11 +1067,13 @@ fn overflow_panics_report_the_caller() {
 
 /// `-` on values and references, and `Product` over values and references, give the results of
 /// `checked_neg` and `checked_mul` where these are `Some`, for every value and pair of 7 bits in a
-/// native integer and in an array of one byte, or under Miri every 7th.
+/// native integer and in an array of one byte, or under Miri every 7th value, with the ends that
+/// `every_value` keeps, against every value.
 #[test]
 fn negation_and_products_match_the_checked_methods() {
   let step = if cfg!(miri) { 7 } else { 1 };
-  for a in (-64..=63).step_by(step) {
+  for a in every_value(7, true, step) {
+    let a = a as i8;
     let native = i7::new(a);
     let array = Int::<U7, [u8; 1]>::checked_from_limbs(limbs_of(a.into())).expect("7 bits");
     if let Some(negated) = native.checked_neg() {
@@ -1023,9 +1092,9 @@ fn negation_and_products_match_the_checked_methods() {
       }
     }
   }
-  for a in (0..=127u8).step_by(step) {
+  for a in every_value(7, false, step) {
     for b in 0..=127 {
-      let (x, y) = (u7::new(a), u7::new(b));
+      let (x, y) = (u7::new(a as u8), u7::new(b));
       if let Some(product) = x.checked_mul(&y) {
         assert_eq!([x, y].into_iter().product::<u7>(), product);
         assert_eq!([x, y].iter().product::<u7>(), product);
@@ -1037,10 +1106,11 @@ fn negation_and_products_match_the_checked_methods() {
   assert_eq!(core::iter::empty::<&i256>().product::<i256>(), i256::ONE);
 }
 
-/// The results of the families, of `is_one` and `is_zero`, and of the strict methods, the
-/// operators, `+=` and `Sum` where they do not overflow, for the values `$a` and `$b` of `$ty`, as
-/// text. The methods are those that the context reaches: the inherent `const fn`s for a concrete
-/// storage, and the traits in code over `B: BitWidth`.
+/// The results of the families, of `is_one` and `is_zero`, of the strict methods, the operators,
+/// `+=` and `Sum` where they do not overflow, and of the functions of `IntegerMath` where they do
+/// not panic, for the values `$a` and `$b` of `$ty`, as text. The methods are those that the
+/// context reaches: the inherent `const fn`s for a concrete storage, and the traits in code over
+/// `B: BitWidth`.
 macro_rules! family_results {
   ($ty:ty; $a:expr, $b:expr) => {{
     let (a, b): ($ty, $ty) = ($a, $b);
@@ -1076,6 +1146,98 @@ macro_rules! family_results {
       format!("{:?}", a.checked_sub(&b).map(|_| (a.strict_sub(&b), a - b))),
       format!("{:?}", a.checked_mul(&b).map(|_| (a.strict_mul(&b), a * b))),
       format!("{:?}", a.checked_neg().map(|_| a.strict_neg())),
+      format!(
+        "{:?}",
+        (
+          a.checked_div(&b),
+          a.checked_rem(&b),
+          a.checked_div_euclid(&b),
+          a.checked_rem_euclid(&b)
+        )
+      ),
+      format!(
+        "{:?}",
+        (
+          a.checked_next_multiple_of(&b),
+          a.checked_div_exact(&b),
+          a.midpoint(&b),
+          a.abs_diff(&b)
+        )
+      ),
+      // Every method that can panic is called only where the checked division returns a value.
+      format!(
+        "{:?}",
+        a.checked_div(&b).map(|_| (
+          a.overflowing_div(&b),
+          a.overflowing_rem(&b),
+          a.overflowing_div_euclid(&b),
+          a.overflowing_rem_euclid(&b)
+        ))
+      ),
+      format!(
+        "{:?}",
+        a.checked_div(&b).map(|_| (
+          a.wrapping_div(&b),
+          a.wrapping_rem(&b),
+          a.wrapping_div_euclid(&b),
+          a.wrapping_rem_euclid(&b),
+          a.saturating_div(&b)
+        ))
+      ),
+      format!(
+        "{:?}",
+        a.checked_div(&b).map(|_| (
+          a.strict_div(&b),
+          a.strict_rem(&b),
+          a.strict_div_euclid(&b),
+          a.strict_rem_euclid(&b)
+        ))
+      ),
+      format!(
+        "{:?}",
+        a.checked_div(&b).map(|_| (
+          a.div_euclid(&b),
+          a.rem_euclid(&b),
+          a.div_floor(&b),
+          a.div_ceil(&b),
+          a.div_exact(&b)
+        ))
+      ),
+      format!(
+        "{:?}",
+        a.checked_next_multiple_of(&b)
+          .map(|_| a.next_multiple_of(&b))
+      ),
+      format!(
+        "{:?}",
+        (
+          a.overflowing_pow(3),
+          a.checked_pow(2),
+          a.wrapping_pow(u32::MAX),
+          a.saturating_pow(5)
+        )
+      ),
+      format!(
+        "{:?}",
+        a.checked_pow(2).map(|_| (a.strict_pow(2), a.pow(2)))
+      ),
+      format!(
+        "{:?}",
+        (
+          a.checked_nth_root(3),
+          a.checked_nth_root(2).map(|_| (a.isqrt(), a.nth_root(2))),
+          a.checked_ilog(&b),
+          a.checked_ilog(&b).map(|_| a.ilog(&b))
+        )
+      ),
+      format!(
+        "{:?}",
+        (
+          a.checked_ilog2(),
+          a.checked_ilog10(),
+          a.checked_ilog2().map(|_| (a.ilog2(), a.ilog10()))
+        )
+      ),
     ]
   }};
 }
@@ -1094,6 +1256,18 @@ macro_rules! unsigned_results {
         "{:?}",
         (a.borrowing_sub(&b, false), a.borrowing_sub(&b, true))
       ),
+      format!(
+        "{:?}",
+        (
+          a.is_multiple_of(&b),
+          a.checked_next_power_of_two(),
+          a.wrapping_next_power_of_two()
+        )
+      ),
+      format!(
+        "{:?}",
+        a.checked_next_power_of_two().map(|_| a.next_power_of_two())
+      ),
     ]
   }};
 }
@@ -1111,6 +1285,7 @@ macro_rules! signed_results {
       format!("{:?}", (a.unsigned_abs(), a.is_negative(), a.is_positive())),
       format!("{:?}", a.checked_abs().map(|_| (a.strict_abs(), a.abs()))),
       format!("{:?}", a.checked_neg().map(|_| -a)),
+      format!("{:?}", a.checked_isqrt()),
     ]
   }};
 }
@@ -1183,19 +1358,21 @@ fn bit_width_gives_one_and_product() {
   assert_eq!(signed::<U129>(), (Int::<U129>::ONE, Int::<U129>::ONE));
 }
 
-/// The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` the families and the traits of each sign,
-/// with their operators, the constants of the const layer, and with a width that holds one,
-/// `IntegerOne`, `ConstIntegerOne` and `Product`. Every storage is updated in place, and
-/// representative storages have every form of the operators, of `Sum` and of `Product`.
+/// The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` the families, `IntegerMath`, the traits of
+/// each sign and `UnsignedMath` and `SignedMath`, with their operators, the constants of the const
+/// layer, and with a width that holds one, `IntegerOne`, `ConstIntegerOne` and `Product`. Every
+/// storage is updated in place, and representative storages have every form of the operators, of
+/// `Sum` and of `Product`.
 #[test]
 fn arithmetic_trait_surface() {
   fn families<T>()
   where
     T: OverflowingOps + CheckedOps + WrappingOps + SaturatingOps + StrictOps + UncheckedOps,
+    T: IntegerMath,
   {
   }
-  fn unsigned<T: FixedInteger + UnsignedFixedInteger>() {}
-  fn signed<T: FixedInteger + SignedFixedInteger + Neg<Output = T>>() {}
+  fn unsigned<T: FixedInteger + UnsignedFixedInteger + UnsignedMath>() {}
+  fn signed<T: FixedInteger + SignedFixedInteger + SignedMath + Neg<Output = T>>() {}
   fn constants<T: FixedInteger + ConstFixedInteger>() {}
   fn integer_one<T: IntegerOne>() {}
   fn const_integer_one<T: ConstIntegerOne>() {}
@@ -1205,10 +1382,19 @@ fn arithmetic_trait_surface() {
     T: FixedInteger + Product + for<'a> Sum<&'a T> + for<'a> Product<&'a T>,
     T: for<'a> Add<&'a T, Output = T> + for<'a> Sub<&'a T, Output = T>,
     T: for<'a> Mul<&'a T, Output = T>,
+    T: for<'a> Div<&'a T, Output = T> + for<'a> Rem<&'a T, Output = T>,
     T: for<'a> AddAssign<&'a T> + for<'a> SubAssign<&'a T> + for<'a> MulAssign<&'a T>,
+    T: for<'a> DivAssign<&'a T> + for<'a> RemAssign<&'a T>,
     for<'a> &'a T: Add<T, Output = T> + Sub<T, Output = T> + Mul<T, Output = T>,
+    for<'a> &'a T: Div<T, Output = T> + Rem<T, Output = T>,
     for<'a, 'b> &'a T: Add<&'b T, Output = T> + Sub<&'b T, Output = T> + Mul<&'b T, Output = T>,
+    for<'a, 'b> &'a T: Div<&'b T, Output = T> + Rem<&'b T, Output = T>,
   {
+  }
+  // `FixedInteger` gives the operators on values and their compound assignments with values.
+  fn fixed_operators<T: FixedInteger>() {
+    fn division<T: Div<Output = T> + Rem<Output = T> + DivAssign + RemAssign>() {}
+    division::<T>();
   }
   fn negation<T: Neg<Output = T>>()
   where
@@ -1222,6 +1408,8 @@ fn arithmetic_trait_surface() {
     signed::<Int<B>>();
     constants::<Uint<B>>();
     constants::<Int<B>>();
+    fixed_operators::<Uint<B>>();
+    fixed_operators::<Int<B>>();
   }
   fn unsigned_one<B: BitWidth + NonZero>() {
     integer_one::<Uint<B>>();
@@ -1384,6 +1572,12 @@ fn generic_operators<B: BitWidth + NonZero + IsGreater<U1, Output = True>>() {
   assert_eq!(six.to_string(), "6");
   assert_eq!((six - &three).to_string(), "3");
   assert_eq!((&six * &two).to_string(), "12");
+  assert_eq!((six / &(three + two)).to_string(), "1");
+  assert_eq!((&six % three).to_string(), "0");
+  let mut quotient = six;
+  quotient /= two;
+  quotient %= &two;
+  assert_eq!(quotient.to_string(), "1");
   assert_eq!([one, two, three].iter().sum::<Uint<B>>(), six);
   assert_eq!([two, three].into_iter().product::<Uint<B>>(), six);
 
@@ -1395,6 +1589,8 @@ fn generic_operators<B: BitWidth + NonZero + IsGreater<U1, Output = True>>() {
   value *= -&one;
   assert_eq!(value.to_string(), "3");
   assert_eq!((minus_three * minus_three).to_string(), "9");
+  assert_eq!((minus_three / (one + one)).to_string(), "-1");
+  assert_eq!((&minus_three % &(one + one)).to_string(), "-1");
   assert_eq!([minus_three, one, one].into_iter().sum::<Int<B>>(), -one);
   assert_eq!([minus_three, -one].iter().product::<Int<B>>(), value);
 }
@@ -1418,17 +1614,17 @@ fn bit_width_gives_the_operators() {
 fn reference_operators_need_only_the_storage_trait() {
   use crate::{FitsBits, IntRepr, UintRepr, i7, i256, u7, u256};
 
-  fn unsigned<B: FitsBits<R>, R: UintRepr>(a: Uint<B, R>, b: Uint<B, R>) -> [Uint<B, R>; 3] {
-    [&a + &b, &a - &b, &a * &b]
+  fn unsigned<B: FitsBits<R>, R: UintRepr>(a: Uint<B, R>, b: Uint<B, R>) -> [Uint<B, R>; 5] {
+    [&a + &b, &a - &b, &a * &b, &a / &b, &a % &b]
   }
 
-  fn signed<B: FitsBits<R>, R: IntRepr>(a: Int<B, R>, b: Int<B, R>) -> [Int<B, R>; 4] {
-    [&a + &b, &a - &b, &a * &b, -&a]
+  fn signed<B: FitsBits<R>, R: IntRepr>(a: Int<B, R>, b: Int<B, R>) -> [Int<B, R>; 6] {
+    [&a + &b, &a - &b, &a * &b, &a / &b, &a % &b, -&a]
   }
 
   assert_eq!(
     unsigned(u7::new(10), u7::new(3)),
-    [u7::new(13), u7::new(7), u7::new(30)]
+    [u7::new(13), u7::new(7), u7::new(30), u7::new(3), u7::ONE]
   );
   let (ten, three) = (
     u256::from_limbs([10, 0, 0, 0]),
@@ -1436,11 +1632,18 @@ fn reference_operators_need_only_the_storage_trait() {
   );
   assert_eq!(
     unsigned(ten, three).map(|value| value.to_string()),
-    ["13", "7", "30"]
+    ["13", "7", "30", "3", "1"]
   );
   assert_eq!(
     signed(i7::new(-10), i7::new(3)),
-    [i7::new(-7), i7::new(-13), i7::new(-30), i7::new(10)]
+    [
+      i7::new(-7),
+      i7::new(-13),
+      i7::new(-30),
+      i7::new(-3),
+      i7::new(-1),
+      i7::new(10)
+    ]
   );
   let (minus_ten, three) = (
     -i256::from_limbs([10, 0, 0, 0]),
@@ -1448,24 +1651,28 @@ fn reference_operators_need_only_the_storage_trait() {
   );
   assert_eq!(
     signed(minus_ten, three).map(|value| value.to_string()),
-    ["-7", "-13", "-30", "10"]
+    ["-7", "-13", "-30", "-3", "-1", "10"]
   );
 }
 
 /// The values of `bits` bits that `from` creates from their value: every value, or under Miri every
-/// 7th.
-fn every_value<T>(bits: u32, signed: bool, from: impl Fn(i128) -> T) -> Vec<T> {
-  let (min, max) = range(bits, signed);
+/// 7th value and the ends that `every_value` keeps.
+fn values_of<T>(bits: u32, signed: bool, from: impl Fn(i128) -> T) -> Vec<T> {
   let step = if cfg!(miri) { 7 } else { 1 };
-  (min..=max).step_by(step).map(from).collect()
+  every_value(bits, signed, step)
+    .into_iter()
+    .map(from)
+    .collect()
 }
 
 /// Checks the `unchecked_*` methods at every pair of `$values`, and with `neg` `unchecked_neg` at
 /// every value, against the checked methods, through the inherent methods and through the traits,
 /// `UncheckedOps` and `SignedFixedInteger`: each is called only where the checked method returns
 /// a value, and both paths must return that value. Each operation must be called at least once,
-/// so that the check cannot pass where the checked methods return no value; at zero bits, each is
-/// called exactly once, on zero.
+/// so that the check cannot pass where the checked methods return no value: zero, which every set
+/// of values here holds, gives each operation but the exact division a call, and at zero bits each
+/// of these is called exactly once, on zero. The exact division needs a nonzero divisor, which
+/// every width but zero bits holds, so it is not called at zero bits, whose only divisor is zero.
 macro_rules! check_unchecked {
   (@neg $x:ident, $calls:ident) => {
     if let Some(negated) = $x.checked_neg() {
@@ -1480,8 +1687,9 @@ macro_rules! check_unchecked {
   };
   ($values:expr $(, $neg:ident)?) => {{
     let values = $values;
-    // The calls of `unchecked_add`, `unchecked_sub`, `unchecked_mul` and `unchecked_neg`.
-    let mut calls = [0usize; 4];
+    // The calls of `unchecked_add`, `unchecked_sub`, `unchecked_mul`, `unchecked_neg` and
+    // `unchecked_div_exact`.
+    let mut calls = [0usize; 5];
     for x in &values {
       $(check_unchecked!(@$neg x, calls);)?
       for y in &values {
@@ -1503,10 +1711,25 @@ macro_rules! check_unchecked {
           assert_eq!(results, (product, product), "{x} * {y}");
           calls[2] += 1;
         }
+        if let Some(quotient) = x.checked_div_exact(y) {
+          // SAFETY: `checked_div_exact` returns `Some`, which is the precondition of
+          // `unchecked_div_exact`.
+          let inherent = unsafe { x.unchecked_div_exact(y) };
+          // SAFETY: the method of the trait has the precondition of the inherent one.
+          let through_trait = unsafe { UncheckedOps::unchecked_div_exact(x, y) };
+          assert_eq!((inherent, through_trait), (quotient, quotient), "{x} / {y} exactly");
+          calls[4] += 1;
+        }
       }
     }
     assert!(calls[..3].iter().all(|&count| count > 0), "calls: {calls:?}");
     $(check_unchecked!(@called $neg calls);)?
+    // Zero bits hold no divisor but zero, so they have no exact division to call; any other width
+    // divides zero by a nonzero value.
+    assert!(
+      calls[4] > 0 || values.iter().all(|x| x.is_zero()),
+      "calls: {calls:?}"
+    );
   }};
 }
 
@@ -1514,20 +1737,20 @@ macro_rules! check_unchecked {
 /// every value and every pair: `native` in `$uint` and `$int`, and `array` in `[$limb; $n]`.
 macro_rules! check_unchecked_storage {
   (native $width:ty, $bits:expr, $uint:ident, $int:ident) => {{
-    check_unchecked!(every_value($bits, false, |v| Uint::<$width, $uint>::new(
+    check_unchecked!(values_of($bits, false, |v| Uint::<$width, $uint>::new(
       v as $uint
     )));
     check_unchecked!(
-      every_value($bits, true, |v| Int::<$width, $int>::new(v as $int)),
+      values_of($bits, true, |v| Int::<$width, $int>::new(v as $int)),
       neg
     );
   }};
   (array $width:ty, $bits:expr, [$limb:ident; $n:literal]) => {{
-    check_unchecked!(every_value($bits, false, |v| {
+    check_unchecked!(values_of($bits, false, |v| {
       Uint::<$width, [$limb; $n]>::checked_from_limbs(limbs_of(v)).expect("in range")
     }));
     check_unchecked!(
-      every_value($bits, true, |v| {
+      values_of($bits, true, |v| {
         Int::<$width, [$limb; $n]>::checked_from_limbs(limbs_of(v)).expect("in range")
       }),
       neg
@@ -1537,11 +1760,11 @@ macro_rules! check_unchecked_storage {
 
 /// The `unchecked_*` methods, inherent and through the traits, return what the checked methods
 /// return wherever these return a value, at every value and every pair of zero, one, 7 and 8 bits:
-/// in native integers at a partial width and at their full width, where the inherent methods call
-/// the native `unchecked_*`, and in arrays of no limbs, one limb and two limbs. No other input is
-/// passed, here or in any test: the standard library checks the preconditions of unsafe functions
-/// in debug builds and aborts on a violation, and in release builds a violation is undefined
-/// behavior.
+/// in native integers at a partial width and at their full width, where the inherent methods but
+/// `unchecked_div_exact` call the native `unchecked_*`, and in arrays of no limbs, one limb and two
+/// limbs. No other input is passed, here or in any test: the standard library checks the
+/// preconditions of unsafe functions in debug builds and aborts on a violation, and in release
+/// builds a violation is undefined behavior.
 #[test]
 fn unchecked_methods_return_the_checked_results() {
   check_unchecked_storage!(native U0, 0, u8, i8);
@@ -1596,10 +1819,36 @@ fn unchecked_methods_return_the_checked_results_in_wide_storages() {
 }
 
 /// Code over `B: BitWidth` reaches the `unchecked_*` methods through `UncheckedOps` and
-/// `SignedFixedInteger`, which `check_unchecked!` calls at every pair of `unsigned` and `signed`.
+/// `SignedFixedInteger`, which `check_unchecked!` calls at every pair of `unsigned` and `signed`,
+/// and `unchecked_div_exact` through `UncheckedOps`, which [`unchecked_exact_divisions`] calls at
+/// least once for each sign at every width but zero bits, where every divisor is zero.
 fn unchecked_over_the_width<B: BitWidth>(unsigned: Vec<Uint<B>>, signed: Vec<Int<B>>) {
+  let calls = [
+    unchecked_exact_divisions(&unsigned),
+    unchecked_exact_divisions(&signed),
+  ];
+  assert_eq!(calls.contains(&0), Uint::<B>::BITS == 0, "calls: {calls:?}");
   check_unchecked!(unsigned);
   check_unchecked!(signed, neg);
+}
+
+/// Calls `unchecked_div_exact` through `UncheckedOps` at every pair of `values` where
+/// `checked_div_exact` returns a value, which both must return, and returns the number of calls.
+fn unchecked_exact_divisions<T: CheckedOps + UncheckedOps + PartialEq + Debug>(
+  values: &[T],
+) -> usize {
+  let mut calls = 0;
+  for x in values {
+    for y in values {
+      if let Some(quotient) = x.checked_div_exact(y) {
+        // SAFETY: `checked_div_exact` returns `Some`, the precondition of `unchecked_div_exact`.
+        let result = unsafe { x.unchecked_div_exact(y) };
+        assert_eq!(result, quotient, "{x:?} / {y:?} exactly");
+        calls += 1;
+      }
+    }
+  }
+  calls
 }
 
 /// The `unchecked_*` methods in code over `B: BitWidth`, at widths of each kind of default storage,
@@ -1625,3 +1874,291 @@ fn bit_width_gives_the_unchecked_methods() {
 
   at!(U0, U1, U7, U8, U64, U65, U128, U129, U200, U1024);
 }
+
+/// The magnitude of `IntegerMath`, the type of `abs_diff`, is `Uint<B>` itself, and that of
+/// `Int<B>` the `Uint` of the same width in a storage of the same size, the type that
+/// `SignedFixedInteger::Unsigned` also names: code bounded by both traits names both without
+/// ambiguity.
+#[test]
+fn the_magnitude_is_the_unsigned_integer() {
+  use core::any::TypeId;
+
+  fn magnitude<T: IntegerMath<Magnitude = M>, M>() {}
+  fn types<T: SignedFixedInteger + IntegerMath>() -> (TypeId, TypeId)
+  where
+    T::Unsigned: 'static,
+    T::Magnitude: 'static,
+  {
+    (TypeId::of::<T::Unsigned>(), TypeId::of::<T::Magnitude>())
+  }
+  fn width<B: BitWidth>() {
+    magnitude::<Uint<B>, Uint<B>>();
+    magnitude::<Int<B>, Uint<B>>();
+  }
+
+  width::<U0>();
+  width::<U7>();
+  width::<U200>();
+  magnitude::<Int<U9, [u8; 2]>, Uint<U9, [u8; 2]>>();
+  for (unsigned, magnitude) in [
+    types::<Int<U7, i8>>(),
+    types::<Int<U16, [u8; 2]>>(),
+    types::<i256>(),
+  ] {
+    assert_eq!(unsigned, magnitude);
+  }
+  assert_eq!(types::<i7>().1, TypeId::of::<u7>());
+}
+
+/// `IntegerMath`, `UnsignedMath` and `SignedMath` need only the storage trait, `UintRepr` or
+/// `IntRepr`, not a storage that holds the value inline: code bounded by it uses them, in a native
+/// integer and in an array.
+#[test]
+fn the_math_traits_need_only_the_storage_trait() {
+  use crate::{IntRepr, UintRepr};
+
+  fn unsigned<B: FitsBits<R>, R: UintRepr>(a: &Uint<B, R>, b: &Uint<B, R>) -> String {
+    let root = a.nth_root(3);
+    format!(
+      "{:?}",
+      (
+        a.midpoint(b),
+        a.abs_diff(b),
+        a.is_multiple_of(b),
+        root,
+        a.checked_ilog10()
+      )
+    )
+  }
+
+  fn signed<B: FitsBits<R>, R: IntRepr>(a: &Int<B, R>, b: &Int<B, R>) -> String {
+    format!(
+      "{:?}",
+      (a.div_floor(b), a.abs_diff(b), a.checked_isqrt(), a.pow(2))
+    )
+  }
+
+  assert_eq!(
+    unsigned(&u7::new(100), &u7::new(25)),
+    "(62, 75, true, 4, Some(2))"
+  );
+  let (hundred, five) = (
+    u256::from_limbs([100, 0, 0, 0]),
+    u256::from_limbs([5, 0, 0, 0]),
+  );
+  assert_eq!(unsigned(&hundred, &five), "(52, 95, true, 4, Some(2))");
+  assert_eq!(signed(&i7::new(-7), &i7::new(2)), "(-4, 9, None, 49)");
+  let minus_seven = i256::from_limbs([u64::MAX - 6, u64::MAX, u64::MAX, u64::MAX]);
+  let two = i256::from_limbs([2, 0, 0, 0]);
+  assert_eq!(signed(&minus_seven, &two), "(-4, 9, None, 49)");
+}
+
+/// How thoroughly the sweeps of the division and of the powers check: every value and pair that is
+/// cheap enough in an optimized build, which runs them fast; fewer in an unoptimized build, which
+/// every feature combination and every sanitizer of the tests runs; and the fewest under Miri.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, derive_more::IsVariant)]
+enum Tier {
+  /// Under Miri.
+  Miri,
+  /// In an unoptimized build, with debug assertions.
+  Debug,
+  /// In an optimized build.
+  Full,
+}
+
+/// The tier of this build. `--cfg all_tests` does not raise it: the sanitizers that set that flag
+/// run unoptimized code.
+fn tier() -> Tier {
+  if cfg!(miri) {
+    Tier::Miri
+  } else if cfg!(debug_assertions) {
+    Tier::Debug
+  } else {
+    Tier::Full
+  }
+}
+
+/// The value of the integer of at most 128 bits in `limbs`, least significant first, read in two's
+/// complement if `signed`.
+fn value_of_limbs<L: bigint::Limb, const N: usize>(limbs: &[L; N], signed: bool) -> i128 {
+  let bits = L::BITS * N as u32;
+  let mut value = 0u128;
+  for (i, &limb) in limbs.iter().enumerate() {
+    value |= limb.to_u128() << (L::BITS * i as u32);
+  }
+  if signed && 0 < bits && bits < 128 {
+    // The arithmetic shift copies the top bit of the limbs into the bits above them.
+    ((value << (128 - bits)) as i128) >> (128 - bits)
+  } else {
+    value as i128
+  }
+}
+
+/// The pairs of values of up to 8 bits that a sweep checks, as [`every_pair`] gives them: in a
+/// storage that every tier checks, `primary`, every pair in an optimized build, every 13th pair in
+/// an unoptimized one and every 509th under Miri; in another storage, every 7th pair in an
+/// optimized build, every 31st in an unoptimized one, and none under Miri.
+fn small_pairs(bits: u32, signed: bool, primary: bool) -> Vec<(i128, i128)> {
+  let step = match (tier(), primary) {
+    (Tier::Full, true) => 1,
+    (Tier::Full, false) => 7,
+    (Tier::Debug, true) => 13,
+    (Tier::Debug, false) => 31,
+    (Tier::Miri, true) => 509,
+    (Tier::Miri, false) => return Vec::new(),
+  };
+  every_pair(bits, signed, step)
+}
+
+/// The values of up to 8 bits that a sweep checks, as [`every_value`] gives them: every value in a
+/// storage that every tier checks, `primary`, or under Miri every 61st; and in another storage,
+/// every value in an optimized build, every 7th in an unoptimized one, and none under Miri.
+fn small_values(bits: u32, signed: bool, primary: bool) -> Vec<i128> {
+  match (tier(), primary) {
+    (Tier::Full, _) | (Tier::Debug, true) => every_value(bits, signed, 1),
+    (Tier::Debug, false) => every_value(bits, signed, 7),
+    (Tier::Miri, true) => every_value(bits, signed, 61),
+    (Tier::Miri, false) => Vec::new(),
+  }
+}
+
+/// The pairs of values of 9 to 16 bits that a sweep checks: as many as the tier takes, `2^12` in an
+/// optimized build, `2^9` in an unoptimized one and `2^6` under Miri, at an odd step through the
+/// pairs, counted as [`every_pair`] counts them, near their number divided by the golden ratio, so
+/// that both values of the pairs spread over the range; and the pairs of the values of [`ends`].
+fn large_pairs(bits: u32, signed: bool) -> Vec<(i128, i128)> {
+  let count: i128 = match tier() {
+    Tier::Full => 1 << 12,
+    Tier::Debug => 1 << 9,
+    Tier::Miri => 1 << 6,
+  };
+  let (min, max) = range(bits, signed);
+  let size = max - min + 1;
+  let pairs = size * size;
+  // `pairs * (sqrt(5) - 1) / 2`, from the fraction in 64 bits.
+  let step = ((pairs as u128 * 0x9e37_79b9_7f4a_7c15) >> 64) as i128 | 1;
+  let mut sampled: Vec<(i128, i128)> = (0..count.min(pairs))
+    .map(|k| {
+      let pair = k * step % pairs;
+      (min + pair / size, min + pair % size)
+    })
+    .collect();
+  let ends = ends(bits, signed);
+  sampled.extend(ends.iter().flat_map(|&a| ends.iter().map(move |&b| (a, b))));
+  sampled.sort_unstable();
+  sampled.dedup();
+  sampled
+}
+
+/// The values of 9 to 16 bits that a sweep checks, as [`every_value`] gives them: every 61st value
+/// in an optimized build, every 127th in an unoptimized one, and every 1021st under Miri.
+fn large_values(bits: u32, signed: bool) -> Vec<i128> {
+  let step = match tier() {
+    Tier::Full => 61,
+    Tier::Debug => 127,
+    Tier::Miri => 1021,
+  };
+  every_value(bits, signed, step)
+}
+
+/// Whether the sign token `$sign`, `unsigned` or `signed`, is that of a signed integer.
+macro_rules! is_signed {
+  (unsigned) => {
+    false
+  };
+  (signed) => {
+    true
+  };
+}
+
+/// Checks `Uint` and `Int` of the width `$width`, `$bits` bits, in one storage with `$sweep!`, at
+/// the pairs or values that `$samples` gives for the width and the sign: `native` in `$uint` and
+/// `$int`, and `array` in `[$limb; $n]`. `$sweep!` takes the sign token, the type, the width, the
+/// samples, and the functions that create a value from an `i128` and read back a value and a
+/// magnitude, the result of `abs_diff`.
+macro_rules! sweep_storage {
+  ($sweep:ident, $samples:expr, native $width:ty, $bits:expr, $uint:ident, $int:ident) => {{
+    let samples = $samples;
+    $sweep!(
+      unsigned;
+      Uint<$width, $uint>,
+      $bits,
+      samples($bits, false),
+      |v| Uint::<$width, $uint>::new(v as $uint),
+      |x| x.value() as i128,
+      |x| x.value() as i128
+    );
+    $sweep!(
+      signed;
+      Int<$width, $int>,
+      $bits,
+      samples($bits, true),
+      |v| Int::<$width, $int>::new(v as $int),
+      |x| x.value() as i128,
+      |x| x.value() as i128
+    );
+  }};
+  ($sweep:ident, $samples:expr, array $width:ty, $bits:expr, [$limb:ident; $n:literal]) => {{
+    let samples = $samples;
+    $sweep!(
+      unsigned;
+      Uint<$width, [$limb; $n]>,
+      $bits,
+      samples($bits, false),
+      |v| Uint::<$width, [$limb; $n]>::checked_from_limbs(limbs_of(v)).expect("in range"),
+      |x| value_of_limbs(x.as_limbs(), false),
+      |x| value_of_limbs(x.as_limbs(), false)
+    );
+    $sweep!(
+      signed;
+      Int<$width, [$limb; $n]>,
+      $bits,
+      samples($bits, true),
+      |v| Int::<$width, [$limb; $n]>::checked_from_limbs(limbs_of(v)).expect("in range"),
+      |x| value_of_limbs(x.as_limbs(), true),
+      |x| value_of_limbs(x.as_limbs(), false)
+    );
+  }};
+}
+
+/// Asserts that `$value` panics with the message `$message` and reports the line of the outermost
+/// macro invocation that leads to it, in its file, as `line!` does, so that invocation must fit on
+/// one line.
+macro_rules! panics_here {
+  ($value:expr, $message:expr) => {{
+    let expected = Some(($message.clone(), file!().to_string(), line!()));
+    assert_eq!(panic_of(|| $value), expected, "{}", stringify!($value));
+  }};
+}
+
+/// Asserts that `$value` overflows as a native operation does: with overflow checks, it panics with
+/// `$message` and reports the line of the outermost macro invocation that leads to it, in its file,
+/// which must therefore fit on one line, or with `in core` a line of `core`, as the native `pow`
+/// does; without them, it returns `$wrapped`.
+macro_rules! overflows_here {
+  ($value:expr, $message:expr, $wrapped:expr) => {
+    overflows_here!(@check $value, $message, $wrapped, true)
+  };
+  ($value:expr, $message:expr, $wrapped:expr, in core) => {
+    overflows_here!(@check $value, $message, $wrapped, false)
+  };
+  (@check $value:expr, $message:expr, $wrapped:expr, $here:expr) => {{
+    match panic_of(|| $value) {
+      Some((message, file, line)) => {
+        let name = stringify!($value);
+        assert!(overflow_checks(), "{name} panics without overflow checks");
+        assert_eq!(message, $message, "{name}");
+        let caller = (file == file!() && line == line!());
+        assert_eq!(caller, $here, "{name} reports {file}:{line}");
+      }
+      None => {
+        let name = stringify!($value);
+        assert!(!overflow_checks(), "{name} returns with overflow checks");
+        assert_eq!($value, $wrapped, "{name}");
+      }
+    }
+  }};
+}
+
+mod division;
+mod powers;

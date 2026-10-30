@@ -116,9 +116,32 @@ FEATURES
     returns the `Uint` of the same width, and `signum` for `Int`; `is_one`; and the constant `ONE`
     from one bit for `Uint` and from two bits for `Int`, so that `u0`, `i0` and `i1` have none. The
     strict methods panic on overflow in every build, with the messages of the native integers.
-  - `unchecked_add`, `unchecked_sub` and `unchecked_mul`, and `unchecked_neg` for `Int`, as
-    `const unsafe fn`s of every storage: the caller guarantees that the `checked_*` method of the
-    same operation would return `Some`, and the behavior is undefined otherwise.
+  - The division and the remainder, rounded toward zero and Euclidean, in the `overflowing_*`,
+    `checked_*`, `wrapping_*` and `strict_*` forms, and `saturating_div`, the exponentiation in
+    every form, and the integer functions of the native integers without an overflow prefix, as
+    `const fn`s of every storage: `pow`, `div_euclid`, `rem_euclid`, `div_floor`, `div_ceil`,
+    `next_multiple_of` and `checked_next_multiple_of`, `div_exact` and `checked_div_exact`, `isqrt`,
+    the root of any degree `nth_root` and `checked_nth_root`, rounded toward zero, `ilog`, `ilog2`
+    and `ilog10` and their checked forms, `midpoint`, rounded toward zero, and `abs_diff`, which for
+    `Int` returns the `Uint` of the same width; `is_multiple_of` and `next_power_of_two` with its
+    checked and wrapping forms for `Uint`, and `checked_isqrt` for `Int`. They compute the results
+    of the native integers at the width `Bits`, including `MIN / -1`, which overflows at every
+    width, and the powers at zero bits and at one signed bit, which hold no one, so that `pow(0)`
+    overflows there. A zero divisor, `MIN / -1` in the strict, Euclidean and rounded division, the
+    square root or a root of even degree of a negative value, a root of degree zero, and a logarithm
+    of a value that is not positive or to a base below 2 panic in every build with the messages of
+    the native integers, and every panic reports the caller. `pow`, `next_multiple_of` and
+    `next_power_of_two` repeat an overflow in a native operation, as the operators do: `pow` in a
+    native exponentiation, so it follows the `overflow-checks` setting of the calling crate also in
+    an unoptimized build, its panic reports a line in `core`, and an overflowing `pow` in a constant
+    fails to compile in every build. `div_exact` follows the behavior of the native method, which is
+    unstable and computes the remainder first: a zero divisor and `MIN / -1` panic with the messages
+    of the remainder.
+  - `unchecked_add`, `unchecked_sub`, `unchecked_mul` and `unchecked_div_exact`, and `unchecked_neg`
+    for `Int`, as `const unsafe fn`s of every storage: the caller guarantees that the `checked_*`
+    method of the same operation would return `Some`, and the behavior is undefined otherwise.
+    `unchecked_div_exact` computes the checked quotient at every width, as the native method is
+    unstable.
   - The operators `+`, `-` and `*` in every form of values and references, `+=`, `-=` and `*=` for
     a value and a reference, `-` for `Int`, `Sum`, and `Product` where `ONE` exists, for every
     storage. On overflow they repeat a native overflow, so that `overflow-checks` decides whether
@@ -126,11 +149,22 @@ FEATURES
     build follows the setting of this crate, and an optimized build panics only when both crates
     check. A panic reports the expression of the caller, and a panicking compound assignment leaves
     its target unchanged. `abs` handles `MIN` in the same way.
+  - The operators `/` and `%` in every form of values and references, and `/=` and `%=` for a value
+    and a reference, for every storage: as the native operators do, they panic on a zero divisor
+    and on `MIN / -1` in every build, report the expression of the caller, and leave the target of a
+    panicking compound assignment unchanged. `FixedInteger` requires them.
   - The sealed traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`,
     `UncheckedOps` and `IntegerOne`, each with one implementation for every storage; `is_one`, the
     operators, their compound assignments and `Sum` on `FixedInteger`, the methods of each sign on
     `UnsignedFixedInteger` and `SignedFixedInteger`, which also requires `Neg` and has
-    `unchecked_neg`, and `Product` on `IntegerOne`. The unsafe methods of the traits have the
+    `unchecked_neg`, and `Product` on `IntegerOne`. The families have the division, the remainder
+    and the power in their forms, `CheckedOps` also `checked_next_multiple_of` and
+    `checked_div_exact`, and `UncheckedOps` also `unchecked_div_exact`. The sealed traits
+    `IntegerMath`, with the functions without an overflow prefix and the associated type
+    `Magnitude`, the type of `abs_diff`: `Self` for `Uint`, and for `Int` the `Uint` of the same
+    width, the type that `SignedFixedInteger::Unsigned` also names; `UnsignedMath`, with
+    `is_multiple_of` and the next power of two; and `SignedMath`, with `checked_isqrt`. These need
+    only the storage traits `UintRepr` and `IntRepr`. The unsafe methods of the traits have the
     contract of the inherent ones. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` the
     families and the operators, and `IntegerOne` and `ConstIntegerOne` with `B: NonZero` for
     `Uint<B>` or `B: IsGreater<U1, Output = True>` for `Int<B>`. The sealed storage traits

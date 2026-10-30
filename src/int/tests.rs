@@ -98,11 +98,11 @@ macro_rules! core_tests {
           }
         }
         // Rounding by positive divisors, for fewer pairs under Miri, which runs big integers
-        // slowly.
-        let stride = if cfg!(miri) { 4 } else { 1 };
-        let divisors: Vec<$int> =
-          samples.iter().copied().filter(|&b| b > 0).step_by(stride).collect();
-        for &a in samples.iter().step_by(stride) {
+        // slowly: every fourth sample, with the first, the last, zero and the units.
+        let thinned =
+          |samples: Vec<$int>| bigint::thin_by(samples, 4, bigint::Sample::is_unit_or_zero);
+        let divisors = thinned(samples.iter().copied().filter(|&b| b > 0).collect());
+        for &a in &thinned(samples.clone()) {
           for &b in &divisors {
             let (big_a, big_b) = (BigInt::from(a), BigInt::from(b));
             for mode in bigint::MODES {
@@ -474,11 +474,14 @@ macro_rules! wide_tests {
           }
         }
         // Rounding by positive divisors, for fewer pairs under Miri, which runs big integers
-        // slowly.
-        let stride = if cfg!(miri) { 3 } else { 1 };
-        for &(a, ref big_a) in samples.iter().step_by(stride) {
-          let divisors = samples.iter().filter(|(_, big_b)| big_b.sign() == Sign::Plus);
-          for &(b, ref big_b) in divisors.step_by(stride) {
+        // slowly: every third sample, with the first, the last, zero and the units.
+        let thinned = |samples: Vec<(Wide, BigInt)>| {
+          bigint::thin_by(samples, 3, |(_, big)| bigint::Sample::is_unit_or_zero(big))
+        };
+        let positive = samples.iter().filter(|(_, big_b)| big_b.sign() == Sign::Plus);
+        let divisors = thinned(positive.cloned().collect());
+        for &(a, ref big_a) in &thinned(samples.clone()) {
+          for &(b, ref big_b) in &divisors {
             let truncated = big_a / big_b;
             for mode in bigint::MODES {
               let (rounded, remainder, away) = wide::round_div(&a, &b, mode);
@@ -645,10 +648,33 @@ mod arithmetic_bits {
     ]
   }
 
+  /// The bit patterns of `bits` bits, at most 64, that a stride may skip: the limits of the
+  /// unsigned and of the two's complement reading, the patterns next to them, and those of -1, 0
+  /// and 1.
+  fn end_patterns(bits: u32) -> Vec<u128> {
+    if bits == 0 {
+      return vec![0];
+    }
+    let (max, min) = (u128::MAX >> (128 - bits), 1u128 << (bits - 1));
+    [
+      0,
+      1,
+      max - 1,
+      max,
+      min.wrapping_sub(2),
+      min - 1,
+      min,
+      min + 1,
+    ]
+    .into_iter()
+    .filter(|&pattern| pattern <= max)
+    .collect()
+  }
+
   /// Checks the arithmetic of each width of `$widths` in the unsigned layer `$uint` and the signed
   /// layer `$int`, for `bits` bits at most 64: every value of up to `$every` bits against every
-  /// other, or under Miri every 61st pair, and otherwise every value against the structured
-  /// operands of the width, or under Miri every 61st value against them.
+  /// other, and otherwise the structured operands of the width against each other. Under Miri, only
+  /// every 61st left operand and the patterns of the ends.
   macro_rules! check_native {
     ($uint:ident, $int:ident, $widths:expr, $every:expr) => {{
       let step = if cfg!(miri) { 61 } else { 1 };
@@ -664,7 +690,8 @@ mod arithmetic_bits {
         } else {
           bigint::structured_patterns(bits)
         };
-        for &a in lefts.iter().step_by(step) {
+        let lefts = bigint::with_ends(lefts.into_iter().step_by(step), end_patterns(bits));
+        for &a in &lefts {
           let signed = bigint::to_signed(a, bits);
           assert_eq!(int::$uint::is_one(a as $uint), a == 1);
           assert_eq!(int::$int::is_one(signed as $int), signed == 1);
@@ -800,6 +827,416 @@ mod arithmetic_bits {
               ] {
                 check(exact, big(computed), a, op, b);
               }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /// Checks the division functions of `bits` bits, at most 64, in the unsigned layer `$uint` and
+  /// the signed layer `$int`, on the bit patterns `$a` and `$b` read with each sign, against
+  /// `i128`: the division rounded toward zero, the Euclidean division, the quotient rounded down
+  /// and up, the next multiple, the exact division, `is_multiple_of`, the midpoint, the absolute
+  /// difference and the logarithm to the base `$b`.
+  macro_rules! check_division_bits {
+    ($uint:ident, $int:ident, $a:expr, $b:expr, $bits:expr) => {{
+      let bits = $bits;
+      let (a, b) = ($a as i128, $b as i128);
+      let (x, y) = (a as $uint, b as $uint);
+      let unsigned = |exact: i128| {
+        (
+          wrapped(exact, bits, false).0 as $uint,
+          exact > range(bits, false).1,
+        )
+      };
+      let multiple = if b == 0 { a == 0 } else { a % b == 0 };
+      assert_eq!(int::$uint::is_multiple_of(x, y), multiple, "{a} % {b}");
+      assert_eq!(int::$uint::midpoint(x, y), ((a + b) / 2) as $uint);
+      assert_eq!(int::$uint::abs_diff(x, y), a.abs_diff(b) as $uint);
+      assert_eq!(
+        int::$uint::checked_ilog(x, y),
+        a.checked_ilog(b),
+        "log({a}) to the base {b}"
+      );
+      let division = (b != 0).then(|| (a / b, a % b));
+      let quotients =
+        division.map(|(quotient, remainder)| (quotient as $uint, remainder as $uint, false));
+      assert_eq!(int::$uint::div_rem_bits(x, y, bits), quotients, "{a} / {b}");
+      assert_eq!(
+        int::$uint::div_rem_euclid_bits(x, y, bits),
+        quotients,
+        "{a} / {b}"
+      );
+      let rounded = |round: fn(i128, i128) -> i128| (b != 0).then(|| unsigned(round(a, b)));
+      assert_eq!(
+        int::$uint::div_floor_bits(x, y, bits),
+        rounded(bigint::floor_div)
+      );
+      assert_eq!(
+        int::$uint::div_ceil_bits(x, y, bits),
+        rounded(bigint::ceil_div)
+      );
+      assert_eq!(
+        int::$uint::next_multiple_of_bits(x, y, bits),
+        rounded(bigint::next_multiple)
+      );
+      let exact =
+        division.and_then(|(quotient, remainder)| (remainder == 0).then_some(quotient as $uint));
+      assert_eq!(int::$uint::checked_div_exact_bits(x, y, bits), exact);
+
+      let (a, b) = (bigint::to_signed($a, bits), bigint::to_signed($b, bits));
+      let (x, y) = (a as $int, b as $int);
+      let signed = |exact: i128| {
+        let (value, overflow) = wrapped(exact, bits, true);
+        (value as $int, overflow)
+      };
+      // `/` rounds toward zero.
+      assert_eq!(int::$int::midpoint(x, y), ((a + b) / 2) as $int);
+      assert_eq!(int::$int::abs_diff(x, y), a.abs_diff(b) as $uint);
+      assert_eq!(
+        int::$int::checked_ilog(x, y),
+        a.checked_ilog(b),
+        "log({a}) to the base {b}"
+      );
+      if b == 0 {
+        assert_eq!(int::$int::div_rem_bits(x, y, bits), None);
+        assert_eq!(int::$int::div_rem_euclid_bits(x, y, bits), None);
+        assert_eq!(int::$int::div_floor_bits(x, y, bits), None);
+        assert_eq!(int::$int::div_ceil_bits(x, y, bits), None);
+        assert_eq!(int::$int::next_multiple_of_bits(x, y, bits), None);
+        assert_eq!(int::$int::checked_div_exact_bits(x, y, bits), None);
+      } else {
+        let (quotient, overflow) = signed(a / b);
+        let remainder = (a % b) as $int;
+        assert_eq!(
+          int::$int::div_rem_bits(x, y, bits),
+          Some((quotient, remainder, overflow)),
+          "{a} / {b} in {bits} bits"
+        );
+        let (euclid, euclid_overflow) = signed(a.div_euclid(b));
+        assert_eq!(
+          int::$int::div_rem_euclid_bits(x, y, bits),
+          Some((euclid, a.rem_euclid(b) as $int, euclid_overflow)),
+          "{a} / {b} in {bits} bits"
+        );
+        assert_eq!(
+          int::$int::div_floor_bits(x, y, bits),
+          Some(signed(bigint::floor_div(a, b)))
+        );
+        assert_eq!(
+          int::$int::div_ceil_bits(x, y, bits),
+          Some(signed(bigint::ceil_div(a, b)))
+        );
+        assert_eq!(
+          int::$int::next_multiple_of_bits(x, y, bits),
+          Some(signed(bigint::next_multiple(a, b))),
+          "the multiple of {b} from {a} in {bits} bits"
+        );
+        let exact = (remainder == 0 && !overflow).then_some(quotient);
+        assert_eq!(int::$int::checked_div_exact_bits(x, y, bits), exact);
+      }
+    }};
+  }
+
+  /// Checks the powers, roots and logarithms of `bits` bits, at most 64, in the unsigned layer
+  /// `$uint` and the signed layer `$int`, of the bit pattern `$a` read with each sign, and its next
+  /// power of two, against `i128`: every exponent to `2 * bits + 2` and the two largest, and every
+  /// degree to `bits + 2` and the largest.
+  macro_rules! check_powers_bits {
+    ($uint:ident, $int:ident, $a:expr, $bits:expr) => {{
+      let bits = $bits;
+      let exps = (0..=2 * bits + 2).chain([u32::MAX - 1, u32::MAX]);
+      let degrees = (1..=bits + 2).chain([u32::MAX]);
+
+      let a = $a as i128;
+      let x = a as $uint;
+      let (min, max) = range(bits, false);
+      for exp in exps.clone() {
+        let (power, overflow) = bigint::pow_wrapped(a, exp, bits, min, max);
+        assert_eq!(
+          int::$uint::overflowing_pow_bits(x, exp, bits),
+          (power as $uint, overflow),
+          "{a}^{exp} in {bits} bits"
+        );
+      }
+      assert_eq!(int::$uint::checked_isqrt(x), Some(a.isqrt() as $uint));
+      assert_eq!(int::$uint::checked_nth_root(x, 0), None);
+      for n in degrees.clone() {
+        let root = bigint::nth_root(a, n) as $uint;
+        assert_eq!(
+          int::$uint::checked_nth_root(x, n),
+          Some(root),
+          "the root {n} of {a}"
+        );
+      }
+      assert_eq!(int::$uint::checked_ilog2(x), a.checked_ilog2());
+      assert_eq!(int::$uint::checked_ilog10(x), a.checked_ilog10());
+      let power = a.unsigned_abs().next_power_of_two();
+      let expected = if power <= max as u128 {
+        (power as $uint, false)
+      } else {
+        (0, true)
+      };
+      assert_eq!(
+        int::$uint::next_power_of_two_bits(x, bits),
+        expected,
+        "{a} in {bits} bits"
+      );
+
+      let a = bigint::to_signed($a, bits);
+      let x = a as $int;
+      let (min, max) = range(bits, true);
+      for exp in exps {
+        let (power, overflow) = bigint::pow_wrapped(a, exp, bits, min, max);
+        assert_eq!(
+          int::$int::overflowing_pow_bits(x, exp, bits),
+          (power as $int, overflow),
+          "{a}^{exp} in {bits} bits"
+        );
+      }
+      assert_eq!(
+        int::$int::checked_isqrt(x),
+        (a >= 0).then(|| a.isqrt() as $int)
+      );
+      assert_eq!(int::$int::checked_nth_root(x, 0), None);
+      for n in degrees {
+        let root = (a >= 0 || n % 2 == 1).then(|| bigint::nth_root(a, n) as $int);
+        assert_eq!(
+          int::$int::checked_nth_root(x, n),
+          root,
+          "the root {n} of {a}"
+        );
+      }
+      assert_eq!(int::$int::checked_ilog2(x), a.checked_ilog2());
+      assert_eq!(int::$int::checked_ilog10(x), a.checked_ilog10());
+    }};
+  }
+
+  /// Checks the division, the powers, the roots and the logarithms of each width of `$widths` in
+  /// the layers `$uint` and `$int`, as `check_native!` checks the arithmetic: every value of up to
+  /// `$every` bits against every other, and otherwise the structured operands of the width against
+  /// each other. Under Miri, only every 61st left operand and the patterns of the ends.
+  macro_rules! check_native_division {
+    ($uint:ident, $int:ident, $widths:expr, $every:expr) => {{
+      let step = if cfg!(miri) { 61 } else { 1 };
+      for bits in $widths {
+        let lefts: Vec<u128> = if bits <= $every {
+          (0..1u128 << bits).collect()
+        } else {
+          bigint::structured_patterns(bits)
+        };
+        let rights: Vec<u128> = if bits <= $every {
+          lefts.clone()
+        } else {
+          bigint::structured_patterns(bits)
+        };
+        let lefts = bigint::with_ends(lefts.into_iter().step_by(step), end_patterns(bits));
+        for &a in &lefts {
+          check_powers_bits!($uint, $int, a, bits);
+          for &b in &rights {
+            check_division_bits!($uint, $int, a, b, bits);
+          }
+        }
+      }
+    }};
+  }
+
+  #[test]
+  fn u8_and_i8_divide_as_wider_integers() {
+    check_native_division!(u8, i8, 0..=8, 8);
+  }
+
+  #[test]
+  fn u16_and_i16_divide_as_wider_integers() {
+    let widths: Vec<u32> = if cfg!(miri) {
+      vec![9, 16]
+    } else {
+      (9..=16).collect()
+    };
+    check_native_division!(u16, i16, widths, 8);
+  }
+
+  #[test]
+  fn u32_to_i64_divide_as_wider_integers() {
+    check_native_division!(u32, i32, [0, 1, 2, 16, 31, 32], 0);
+    check_native_division!(u64, i64, [0, 1, 2, 32, 63, 64], 0);
+  }
+
+  /// The division, the powers, the roots and the logarithms of the structured operands of 128 bits
+  /// and of a few narrower widths in `u128` and `i128`, against `num-bigint`.
+  #[test]
+  #[cfg_attr(
+    all(miri, target_pointer_width = "32"),
+    ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+  )]
+  fn u128_and_i128_divide_as_big_integers() {
+    for bits in [0, 1, 2, 64, 65, 127, 128] {
+      for signed in [false, true] {
+        let (min, max) = (bigint::min(bits, signed), bigint::max(bits, signed));
+        let mut patterns = bigint::structured_patterns(bits).into_iter().cycle();
+        let samples = bigint::arithmetic_samples(bits, 64, &min, &max, || {
+          BigInt::from(patterns.next().expect("a pattern"))
+        });
+        // `exact` wrapped to the width, and whether it is outside the range.
+        let wrap = |exact: &BigInt| {
+          (
+            bigint::wrap(exact, bits, &min),
+            *exact < min || max < *exact,
+          )
+        };
+        let ten = BigInt::from(10u8);
+        for a in &samples {
+          let exps = [
+            0,
+            1,
+            2,
+            3,
+            bits.saturating_sub(1),
+            bits,
+            bits + 1,
+            2 * bits + 1,
+          ];
+          let mut powers = exps
+            .into_iter()
+            .chain([u32::MAX - 1, u32::MAX])
+            .map(|exp| bigint::pow_bits(a, exp, bits, &min, &max));
+          let negative = *a < BigInt::ZERO;
+          let roots: Vec<Option<BigInt>> = [0, 1, 2, 3, 7, bits + 1, u32::MAX]
+            .into_iter()
+            .map(|n| (n > 0 && (!negative || n % 2 == 1)).then(|| a.nth_root(n)))
+            .collect();
+          let logs = (bigint::ilog(a, &BigInt::from(2u8)), bigint::ilog(a, &ten));
+          let exps = exps.into_iter().chain([u32::MAX - 1, u32::MAX]);
+          let degrees = [0, 1, 2, 3, 7, bits + 1, u32::MAX];
+          if signed {
+            let x = i128::try_from(a).expect("in range");
+            let big = |(value, flag): (i128, bool)| (BigInt::from(value), flag);
+            for exp in exps {
+              assert_eq!(
+                big(int::i128::overflowing_pow_bits(x, exp, bits)),
+                powers.next().expect("a power"),
+                "{a}^{exp}"
+              );
+            }
+            assert_eq!(
+              int::i128::checked_isqrt(x).map(BigInt::from),
+              (!negative).then(|| a.sqrt())
+            );
+            for (n, root) in degrees.into_iter().zip(&roots) {
+              assert_eq!(
+                int::i128::checked_nth_root(x, n).map(BigInt::from),
+                *root,
+                "the root {n} of {a}"
+              );
+            }
+            assert_eq!(
+              (int::i128::checked_ilog2(x), int::i128::checked_ilog10(x)),
+              logs
+            );
+          } else {
+            let x = u128::try_from(a).expect("in range");
+            let big = |(value, flag): (u128, bool)| (BigInt::from(value), flag);
+            for exp in exps {
+              assert_eq!(
+                big(int::u128::overflowing_pow_bits(x, exp, bits)),
+                powers.next().expect("a power"),
+                "{a}^{exp}"
+              );
+            }
+            assert_eq!(
+              int::u128::checked_isqrt(x).map(BigInt::from),
+              Some(a.sqrt())
+            );
+            for (n, root) in degrees.into_iter().zip(&roots) {
+              assert_eq!(
+                int::u128::checked_nth_root(x, n).map(BigInt::from),
+                *root,
+                "the root {n} of {a}"
+              );
+            }
+            assert_eq!(
+              (int::u128::checked_ilog2(x), int::u128::checked_ilog10(x)),
+              logs
+            );
+            let power = bigint::next_power_of_two(a);
+            assert_eq!(
+              big(int::u128::next_power_of_two_bits(x, bits)),
+              wrap(&power),
+              "{a}"
+            );
+          }
+          for b in &samples {
+            let zero = BigInt::ZERO;
+            let division = (*b != zero).then(|| {
+              let (quotient, remainder) = (a / b, a % b);
+              let (euclid_quotient, euclid_remainder) = bigint::div_rem_euclid(a, b);
+              let exact =
+                (remainder == zero && min <= quotient && quotient <= max).then(|| quotient.clone());
+              (
+                (wrap(&quotient), remainder),
+                (wrap(&euclid_quotient), euclid_remainder),
+                wrap(&bigint::div_floor(a, b)),
+                wrap(&bigint::div_ceil(a, b)),
+                wrap(&bigint::next_multiple_of(a, b)),
+                exact,
+              )
+            });
+            let midpoint = (a + b) / 2u8;
+            let difference = if a < b { b - a } else { a - b };
+            let log = bigint::ilog(a, b);
+            macro_rules! compare {
+              ($layer:ident, $ty:ty) => {{
+                let (x, y) = (
+                  <$ty>::try_from(a).expect("in range"),
+                  <$ty>::try_from(b).expect("in range"),
+                );
+                let big = |(value, flag): ($ty, bool)| (BigInt::from(value), flag);
+                assert_eq!(BigInt::from(int::$layer::midpoint(x, y)), midpoint);
+                assert_eq!(BigInt::from(int::$layer::abs_diff(x, y)), difference);
+                assert_eq!(
+                  int::$layer::checked_ilog(x, y),
+                  log,
+                  "log({a}) to the base {b}"
+                );
+                let computed = (*b != zero).then(|| {
+                  let (quotient, remainder, overflow) =
+                    int::$layer::div_rem_bits(x, y, bits).expect("a divisor");
+                  let (euclid, euclid_remainder, euclid_overflow) =
+                    int::$layer::div_rem_euclid_bits(x, y, bits).expect("a divisor");
+                  (
+                    ((BigInt::from(quotient), overflow), BigInt::from(remainder)),
+                    (
+                      (BigInt::from(euclid), euclid_overflow),
+                      BigInt::from(euclid_remainder),
+                    ),
+                    big(int::$layer::div_floor_bits(x, y, bits).expect("a divisor")),
+                    big(int::$layer::div_ceil_bits(x, y, bits).expect("a divisor")),
+                    big(int::$layer::next_multiple_of_bits(x, y, bits).expect("a divisor")),
+                    int::$layer::checked_div_exact_bits(x, y, bits).map(BigInt::from),
+                  )
+                });
+                assert_eq!(computed, division, "{a} / {b} in {bits} bits");
+                if *b == zero {
+                  assert_eq!(int::$layer::div_rem_bits(x, y, bits), None);
+                }
+              }};
+            }
+            if signed {
+              compare!(i128, i128);
+            } else {
+              compare!(u128, u128);
+              assert_eq!(
+                int::u128::is_multiple_of(
+                  u128::try_from(a).expect("in range"),
+                  u128::try_from(b).expect("in range")
+                ),
+                if *b == zero {
+                  *a == zero
+                } else {
+                  a % b == zero
+                }
+              );
             }
           }
         }

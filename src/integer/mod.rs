@@ -10,8 +10,8 @@ use core::{
 pub use error::TryNewError;
 pub use traits::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs,
-  IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger, StrictOps,
-  UncheckedOps, UnsignedFixedInteger, WrappingOps,
+  IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger,
+  SignedMath, StrictOps, UncheckedOps, UnsignedFixedInteger, UnsignedMath, WrappingOps,
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -111,17 +111,29 @@ mod traits;
 /// # Arithmetic
 ///
 /// Each storage has the arithmetic of the native unsigned integers at the width `Bits`, as
-/// `const fn`s: addition, subtraction, multiplication and negation in the `checked_*`,
-/// `wrapping_*`, `overflowing_*` and `strict_*` forms, the first three also in the `saturating_*`
-/// form, [`carrying_add`](Self::carrying_add) and [`borrowing_sub`](Self::borrowing_sub), and from
-/// one bit the constant `ONE`. Addition, subtraction and multiplication also have the `unchecked_*`
-/// form, such as [`unchecked_add`](Self::unchecked_add), as `const unsafe fn`s: the caller
+/// `const fn`s: addition, subtraction, multiplication, negation, division, remainder and
+/// exponentiation in the `checked_*`, `wrapping_*`, `overflowing_*` and `strict_*` forms, the
+/// Euclidean division and remainder in the same four forms, the saturating addition, subtraction,
+/// multiplication, division and exponentiation, [`carrying_add`](Self::carrying_add) and
+/// [`borrowing_sub`](Self::borrowing_sub), and from one bit the constant `ONE`. The functions
+/// without an overflow prefix are [`pow`](Self::pow), [`div_euclid`](Self::div_euclid) and
+/// [`rem_euclid`](Self::rem_euclid), [`div_floor`](Self::div_floor) and
+/// [`div_ceil`](Self::div_ceil), [`next_multiple_of`](Self::next_multiple_of),
+/// [`is_multiple_of`](Self::is_multiple_of), [`div_exact`](Self::div_exact),
+/// [`isqrt`](Self::isqrt), the root of any degree [`nth_root`](Self::nth_root), the logarithms
+/// [`ilog`](Self::ilog), [`ilog2`](Self::ilog2) and [`ilog10`](Self::ilog10),
+/// [`midpoint`](Self::midpoint), [`abs_diff`](Self::abs_diff) and
+/// [`next_power_of_two`](Self::next_power_of_two); those that can fail also have a `checked_*`
+/// form, and the next power of two a `wrapping_*` form. Addition, subtraction, multiplication and
+/// exact division also have the `unchecked_*` form, such as [`unchecked_add`](Self::unchecked_add)
+/// and [`unchecked_div_exact`](Self::unchecked_div_exact), as `const unsafe fn`s: the caller
 /// guarantees that the `checked_*` method would return `Some`, and the behavior is undefined
-/// otherwise. The operators `+`, `-` and `*`, their compound assignments, `Sum` and `Product` work
-/// for every storage, and so do the traits that give generic code the methods, such as
-/// [`CheckedOps`](crate::CheckedOps). A method of a storage is called with method syntax or with a
-/// path that names the storage, such as `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the
-/// storage to inference, such as `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
+/// otherwise. The operators `+`, `-`, `*`, `/` and `%`, their compound assignments, `Sum` and
+/// `Product` work for every storage, and so do the traits that give generic code the methods, such
+/// as [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). A method of a
+/// storage is called with method syntax or with a path that names the storage, such as
+/// `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the storage to inference, such as
+/// `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
 ///
 /// ```
 /// use numo::{Uint, typenum::U200, u7};
@@ -132,6 +144,17 @@ mod traits;
 /// assert_eq!(u7::new(100) + u7::new(27), u7::MAX);
 /// // SAFETY: 100 + 27 is at most `MAX`, so `checked_add` would return `Some`.
 /// assert_eq!(unsafe { u7::new(100).unchecked_add(&u7::new(27)) }, u7::MAX);
+/// // SAFETY: 7 is not zero and divides 126, so `checked_div_exact` would return `Some`.
+/// assert_eq!(unsafe { u7::new(126).unchecked_div_exact(&u7::new(7)) }, u7::new(18));
+///
+/// // Division, which a zero divisor fails, and the functions of the native integers.
+/// assert_eq!(u7::new(100) / u7::new(7), u7::new(14));
+/// assert_eq!(u7::new(100) % u7::new(7), u7::new(2));
+/// assert_eq!(u7::new(100).checked_div(&u7::ZERO), None);
+/// assert_eq!(u7::new(100).div_ceil(&u7::new(7)), u7::new(15));
+/// assert_eq!(u7::new(2).checked_pow(7), None);
+/// assert_eq!(u7::new(100).isqrt(), u7::new(10));
+/// assert_eq!(u7::new(100).ilog10(), 2);
 ///
 /// // 2^199 needs every bit of 200, and twice it needs 201.
 /// type U200x4 = Uint<U200, [u64; 4]>;
@@ -139,16 +162,32 @@ mod traits;
 /// let two = U200x4::ONE + U200x4::ONE;
 /// assert_eq!(top.checked_mul(&two), None);
 /// assert_eq!(top.overflowing_mul(&two), (U200x4::ZERO, true));
+/// assert_eq!(top / &two, top.wrapping_div(&two));
+/// assert_eq!(top.checked_ilog2(), Some(199));
 /// ```
 ///
 /// # Overflow
 ///
 /// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
-/// same in every build. The operators forward the overflow to a native operation. With one profile
-/// for the build, numo's `overflow-checks` and yours agree and the operators behave as the native
-/// integers do. With a per-package override, which setting applies depends on where the code is
-/// generated: an unoptimized build follows numo's setting; an optimized build panics only when both
-/// numo's and your crate's checks are on.
+/// same in every build. The operators `+`, `-` and `*`, [`pow`](Self::pow),
+/// [`next_multiple_of`](Self::next_multiple_of) and [`next_power_of_two`](Self::next_power_of_two)
+/// forward the overflow to a native operation: the last two to an addition, which is how the native
+/// methods overflow, and `pow` to an exponentiation. With one profile for the build, numo's
+/// `overflow-checks` and yours agree and they behave as the native integers do. With a per-package
+/// override, which setting applies depends on where the code is generated: an unoptimized build
+/// follows numo's setting; an optimized build panics only when both numo's and your crate's checks
+/// are on. `pow` follows your crate's setting in an unoptimized build too, as the native `pow`
+/// does, since that is the operation it repeats, and in a constant an overflowing `pow` fails to
+/// compile in every build. At zero bits, which hold no one, `pow(0)` and the next power of two of
+/// zero overflow: `checked_pow(0)` returns `None` there.
+///
+/// A division or a remainder by zero, in the methods and in the operators `/` and `%`, a logarithm
+/// of zero or to a base below 2, and a root of degree zero panic in every build, as for the native
+/// integers. [`div_exact`](Self::div_exact) panics on a zero divisor with the message of the
+/// remainder: the native `div_exact` is unstable, and numo follows what it does, which computes the
+/// remainder first, rather than its documentation. Every panic reports the caller, where the native
+/// methods sometimes report a line in `core`, except that of `pow`, which reports the line in
+/// `core` that the native `pow` reports.
 #[repr(transparent)]
 pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits` or above is zero, so the
@@ -230,21 +269,29 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// # Arithmetic
 ///
 /// Each storage has the arithmetic of the native signed integers at the width `Bits`, as
-/// `const fn`s: addition, subtraction, multiplication and negation in the `checked_*`,
-/// `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` forms, the absolute value in the
-/// same forms, [`abs`](Self::abs) and [`unsigned_abs`](Self::unsigned_abs), which returns the
-/// [`Uint`] of the same width and storage size, [`signum`](Self::signum), and from two bits the
-/// constant `ONE`, since one bit holds only -1 and 0. As for [`Uint`], addition, subtraction,
-/// multiplication and negation also have the `unchecked_*` form, as `const unsafe fn`s whose caller
-/// guarantees that the `checked_*` method would return `Some`:
-/// [`unchecked_neg`](Self::unchecked_neg), for example, requires that `self` is not `MIN`, except at
-/// zero bits. The operators `+`, `-` and `*`, their compound assignments, the negation `-`, `Sum`
-/// and `Product` work for every storage, and so do the traits that give generic code the methods,
-/// such as [`CheckedOps`](crate::CheckedOps). As for [`Uint`], a path to a method names the
-/// storage.
+/// `const fn`s: addition, subtraction, multiplication, negation, division, remainder and
+/// exponentiation in the `checked_*`, `wrapping_*`, `overflowing_*` and `strict_*` forms, the
+/// Euclidean division and remainder in the same four forms, the saturating addition, subtraction,
+/// multiplication, negation, division and exponentiation, the absolute value in every form,
+/// [`abs`](Self::abs) and [`unsigned_abs`](Self::unsigned_abs), which returns the [`Uint`] of the
+/// same width and storage size, [`signum`](Self::signum), and from two bits the constant `ONE`,
+/// since one bit holds only -1 and 0. The functions without an overflow prefix are those of
+/// [`Uint`], rounded toward zero where `Uint` rounds down, but for `is_multiple_of` and the next
+/// power of two, and with [`checked_isqrt`](Self::checked_isqrt):
+/// [`abs_diff`](Self::abs_diff) returns the [`Uint`] of the same width and storage size, and
+/// [`nth_root`](Self::nth_root) takes a negative value for an odd degree. As for [`Uint`],
+/// addition, subtraction, multiplication, negation and exact division also have the `unchecked_*`
+/// form, as `const unsafe fn`s whose caller guarantees that the `checked_*` method would return
+/// `Some`: [`unchecked_neg`](Self::unchecked_neg), for example, requires that `self` is not `MIN`,
+/// except at zero bits, and [`unchecked_div_exact`](Self::unchecked_div_exact) that `rhs` is not
+/// zero and divides `self`, and that `self` is not `MIN` with `rhs` -1. The operators `+`, `-`,
+/// `*`, `/` and `%`, their compound assignments, the negation `-`, `Sum` and `Product` work for
+/// every storage, and so do the traits that give generic code the methods, such as
+/// [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). As for [`Uint`], a
+/// path to a method names the storage.
 ///
 /// ```
-/// use numo::i7;
+/// use numo::{i7, u7};
 ///
 /// assert_eq!(i7::MIN.checked_neg(), None);
 /// assert_eq!(i7::MIN.wrapping_abs(), i7::MIN);
@@ -254,18 +301,40 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// assert_eq!(-i7::new(63) - i7::ONE, i7::MIN);
 /// // SAFETY: -63 is not `MIN`, so `checked_neg` would return `Some`.
 /// assert_eq!(unsafe { i7::new(-63).unchecked_neg() }, i7::MAX);
+///
+/// // Division rounds toward zero, and the Euclidean remainder is never negative.
+/// assert_eq!(i7::new(-7) / i7::new(2), i7::new(-3));
+/// assert_eq!(i7::new(-7).div_floor(&i7::new(2)), i7::new(-4));
+/// assert_eq!(i7::new(-7).rem_euclid(&i7::new(2)), i7::ONE);
+/// assert_eq!(i7::MIN.checked_div(&-i7::ONE), None);
+/// assert_eq!(i7::MIN.abs_diff(&i7::MAX), u7::MAX);
+/// assert_eq!(i7::new(-27).nth_root(3), i7::new(-3));
 /// ```
 ///
 /// # Overflow
 ///
 /// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
-/// same in every build. The operators forward the overflow to a native operation. With one profile
-/// for the build, numo's `overflow-checks` and yours agree and the operators behave as the native
-/// integers do. With a per-package override, which setting applies depends on where the code is
-/// generated: an unoptimized build follows numo's setting; an optimized build panics only when both
-/// numo's and your crate's checks are on. [`abs`](Self::abs) handles `MIN` in the same way, as the
-/// native `abs` does; in a constant, where `abs` is the only method that forwards an overflow,
-/// numo's setting applies and the error names the native value (`i8::MIN`).
+/// same in every build. The operators `+`, `-` and `*`, the negation `-`, [`pow`](Self::pow) and
+/// [`next_multiple_of`](Self::next_multiple_of) forward the overflow to a native operation, as for
+/// [`Uint`]. With one profile for the build, numo's `overflow-checks` and yours agree and they
+/// behave as the native integers do. With a per-package override, which setting applies depends on
+/// where the code is generated: an unoptimized build follows numo's setting; an optimized build
+/// panics only when both numo's and your crate's checks are on; `pow` follows your crate's setting,
+/// and fails to compile in a constant, as for [`Uint`]. [`abs`](Self::abs) handles `MIN` in the
+/// same way, as the native `abs` does; in a constant, where `abs` is the only method other than
+/// `pow` that forwards an overflow, numo's setting applies and the error names the native value
+/// (`i8::MIN`). One bit holds -1 and 0 and no one, so `MIN.pow(0)`, which is one, overflows to -1:
+/// it panics with overflow checks and returns -1 without them, `saturating_pow(0)` returns `MAX`,
+/// which is zero, and `checked_pow(0)` returns `None`, while `MIN.pow(3)` is -1; zero bits overflow
+/// on `pow(0)` as for [`Uint`].
+///
+/// As for [`Uint`], a division or a remainder by zero, a logarithm of a value that is not positive
+/// or to a base below 2, and a root of degree zero panic in every build, and so do `MIN / -1` and
+/// `MIN % -1` in the strict methods, the Euclidean and rounded division and the operators `/` and
+/// `%`, the square root and a root of even degree of a negative value, as for the native integers.
+/// [`div_exact`](Self::div_exact) panics on a zero divisor and on `MIN / -1` with the messages of
+/// the remainder, as the unstable native method does. Every panic reports the caller, but that of
+/// `pow`.
 #[repr(transparent)]
 pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits - 1` or above equals bit
@@ -409,6 +478,8 @@ macro_rules! array_integers {
       saturating_table!(Uint, inherent_items![unsigned, $lower, &]);
       strict_table!(inherent_items![unsigned, $lower, &]);
       uint_sign_table!(inherent_items![unsigned, $lower, &]);
+      integer_math_table!(inherent_items![unsigned, $lower, &, Uint<B, [$limb; N]>]);
+      uint_math_table!(inherent_items![unsigned, $lower, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -465,6 +536,25 @@ macro_rules! array_integers {
         // that `wrapping_mul` returns.
         unsafe { core::hint::assert_unchecked(!overflow) };
         Self::wrap(product)
+      }
+
+      /// Unchecked exact division: `self / rhs`, assuming that `rhs` divides `self`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must not be zero and must divide `self`, leaving no remainder, that is,
+      /// [`checked_div_exact`](Self::checked_div_exact) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold no divisor but zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_div_exact(&self, rhs: &Self) -> Self {
+        let quotient =
+          int::unsigned::$lower::checked_div_exact_bits(&self.repr, &rhs.repr, Self::BITS);
+        // SAFETY: `quotient` is the value on which `checked_div_exact` returns `Some`, and the
+        // caller guarantees that it would. Nothing else is assumed: the value it holds is the
+        // quotient that `checked_div_exact` returns.
+        Self::wrap(unsafe { quotient.unwrap_unchecked() })
       }
     }
 
@@ -549,6 +639,8 @@ macro_rules! array_integers {
       saturating_table!(Int, inherent_items![signed, $upper, &]);
       strict_table!(inherent_items![signed, $upper, &]);
       int_sign_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
+      integer_math_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
+      int_math_table!(inherent_items![signed, $upper, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -624,6 +716,27 @@ macro_rules! array_integers {
         // that `wrapping_neg` returns.
         unsafe { core::hint::assert_unchecked(!overflow) };
         Self::wrap(negated)
+      }
+
+      /// Unchecked exact division: `self / rhs`, assuming that `rhs` divides `self` and that the
+      /// quotient cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must not be zero and must divide `self`, leaving no remainder, and the quotient must
+      /// be within `MIN..=MAX`, so `self` must not be `MIN` with `rhs` -1: that is,
+      /// [`checked_div_exact`](Self::checked_div_exact) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold no divisor but zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_div_exact(&self, rhs: &Self) -> Self {
+        let quotient =
+          int::signed::$upper::checked_div_exact_bits(&self.repr, &rhs.repr, Self::BITS);
+        // SAFETY: `quotient` is the value on which `checked_div_exact` returns `Some`, and the
+        // caller guarantees that it would. Nothing else is assumed: the value it holds is the
+        // quotient that `checked_div_exact` returns.
+        Self::wrap(unsafe { quotient.unwrap_unchecked() })
       }
     }
 
@@ -856,6 +969,8 @@ macro_rules! native_integers {
       saturating_table!(Uint, inherent_items![$uint]);
       strict_table!(inherent_items![$uint]);
       uint_sign_table!(inherent_items![$uint]);
+      integer_math_table!(inherent_items![$uint, Uint<B, $uint>]);
+      uint_math_table!(inherent_items![$uint]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -933,6 +1048,26 @@ macro_rules! native_integers {
           Self::wrap(product)
         }
       }
+
+      /// Unchecked exact division: `self / rhs`, assuming that `rhs` divides `self`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must not be zero and must divide `self`, leaving no remainder, that is,
+      /// [`checked_div_exact`](Self::checked_div_exact) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold no divisor but zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_div_exact(&self, rhs: &Self) -> Self {
+        // The native `unchecked_div_exact` is unstable, so the full width computes the checked
+        // quotient, as every other width does.
+        let quotient = int::$uint::checked_div_exact_bits(self.repr, rhs.repr, Self::BITS);
+        // SAFETY: `quotient` is the value on which `checked_div_exact` returns `Some`, and the
+        // caller guarantees that it would. Nothing else is assumed: the value it holds is the
+        // quotient that `checked_div_exact` returns.
+        Self::wrap(unsafe { quotient.unwrap_unchecked() })
+      }
     }
 
     impl<B> Uint<B, $uint> {
@@ -986,6 +1121,8 @@ macro_rules! native_integers {
       saturating_table!(Int, inherent_items![$int]);
       strict_table!(inherent_items![$int]);
       int_sign_table!(inherent_items![$int, Uint<B, $uint>]);
+      integer_math_table!(inherent_items![$int, Uint<B, $uint>]);
+      int_math_table!(inherent_items![$int]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1088,6 +1225,28 @@ macro_rules! native_integers {
           unsafe { core::hint::assert_unchecked(!overflow) };
           Self::wrap(negated)
         }
+      }
+
+      /// Unchecked exact division: `self / rhs`, assuming that `rhs` divides `self` and that the
+      /// quotient cannot overflow.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must not be zero and must divide `self`, leaving no remainder, and the quotient must
+      /// be within `MIN..=MAX`, so `self` must not be `MIN` with `rhs` -1: that is,
+      /// [`checked_div_exact`](Self::checked_div_exact) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold no divisor but zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_div_exact(&self, rhs: &Self) -> Self {
+        // The native `unchecked_div_exact` is unstable, so the full width computes the checked
+        // quotient, as every other width does.
+        let quotient = int::$int::checked_div_exact_bits(self.repr, rhs.repr, Self::BITS);
+        // SAFETY: `quotient` is the value on which `checked_div_exact` returns `Some`, and the
+        // caller guarantees that it would. Nothing else is assumed: the value it holds is the
+        // quotient that `checked_div_exact` returns.
+        Self::wrap(unsafe { quotient.unwrap_unchecked() })
       }
     }
 

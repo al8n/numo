@@ -170,6 +170,142 @@ macro_rules! native {
         value & max_of_bits(bits)
       }
 
+      /// The quotient and the remainder of `lhs / rhs`, and `false`, which no unsigned quotient
+      /// overflows, or `None` if `rhs` is zero. The quotient and the remainder are at most `lhs`,
+      /// so `bits` does not change them; it gives every width the signature of the upper layer.
+      #[inline]
+      pub(crate) const fn div_rem_bits(
+        lhs: $uint,
+        rhs: $uint,
+        _bits: u32,
+      ) -> Option<($uint, $uint, bool)> {
+        if rhs == 0 {
+          None
+        } else {
+          Some((lhs / rhs, lhs % rhs, false))
+        }
+      }
+
+      /// The Euclidean quotient and remainder of `lhs / rhs`, those of the division rounded toward
+      /// zero for unsigned values, as [`div_rem_bits`] gives them.
+      #[inline]
+      pub(crate) const fn div_rem_euclid_bits(
+        lhs: $uint,
+        rhs: $uint,
+        bits: u32,
+      ) -> Option<($uint, $uint, bool)> {
+        div_rem_bits(lhs, rhs, bits)
+      }
+
+      /// `lhs / rhs` rounded down, and `false`, or `None` if `rhs` is zero.
+      #[inline]
+      pub(crate) const fn div_floor_bits(
+        lhs: $uint,
+        rhs: $uint,
+        _bits: u32,
+      ) -> Option<($uint, bool)> {
+        match lhs.checked_div(rhs) {
+          Some(quotient) => Some((quotient, false)),
+          None => None,
+        }
+      }
+
+      /// `lhs / rhs` rounded up, and `false`, or `None` if `rhs` is zero.
+      #[inline]
+      pub(crate) const fn div_ceil_bits(
+        lhs: $uint,
+        rhs: $uint,
+        _bits: u32,
+      ) -> Option<($uint, bool)> {
+        if rhs == 0 {
+          None
+        } else {
+          Some((lhs.div_ceil(rhs), false))
+        }
+      }
+
+      /// The smallest multiple of `rhs` at least `lhs`, wrapped to `bits` bits, and whether it is
+      /// `2^bits` or more, or `None` if `rhs` is zero. Requires `bits <= BITS` and both values
+      /// below `2^bits`.
+      pub(crate) const fn next_multiple_of_bits(
+        lhs: $uint,
+        rhs: $uint,
+        bits: u32,
+      ) -> Option<($uint, bool)> {
+        if rhs == 0 {
+          return None;
+        }
+        match lhs % rhs {
+          0 => Some((lhs, false)),
+          // `rhs - remainder` is below `rhs`, so it has `bits` bits.
+          remainder => Some(overflowing_add_bits(lhs, rhs - remainder, bits)),
+        }
+      }
+
+      /// Returns `true` if `lhs` is a multiple of `rhs`: if `lhs / rhs` leaves no remainder, or if
+      /// both are zero.
+      #[inline]
+      pub(crate) const fn is_multiple_of(lhs: $uint, rhs: $uint) -> bool {
+        lhs.is_multiple_of(rhs)
+      }
+
+      /// The square root of `value`, rounded down, which every unsigned value has.
+      #[inline]
+      pub(crate) const fn checked_isqrt(value: $uint) -> Option<$uint> {
+        Some(value.isqrt())
+      }
+
+      /// The `n`th root of `value`, rounded down. Requires `n >= 1`.
+      pub(crate) const fn nth_root(value: $uint, n: u32) -> $uint {
+        if value == 0 || n == 1 {
+          return value;
+        }
+        let log2 = value.ilog2();
+        // `value < 2^(log2 + 1) <= 2^n`.
+        if n > log2 {
+          return 1;
+        }
+        // Newton's method from above the root, as in the limb layers: `x0^n >= 2^(log2 + 1)`, and
+        // each step is `floor(((n - 1) * x + q) / n)` for `q = floor(value / x^(n - 1))`.
+        let mut x: $uint = 1 << (log2 / n + 1);
+        loop {
+          // A power that overflows is above `value`.
+          let quotient = match x.checked_pow(n - 1) {
+            Some(power) => value / power,
+            None => 0,
+          };
+          if quotient >= x {
+            return x;
+          }
+          // `n <= log2 < BITS`, so `n` fits.
+          x -= (x - quotient - 1) / n as $uint + 1;
+        }
+      }
+
+      /// The `n`th root of `value`, rounded down, or `None` if `n` is zero.
+      #[inline]
+      pub(crate) const fn checked_nth_root(value: $uint, n: u32) -> Option<$uint> {
+        if n == 0 { None } else { Some(nth_root(value, n)) }
+      }
+
+      /// `|lhs - rhs|`.
+      #[inline]
+      pub(crate) const fn abs_diff(lhs: $uint, rhs: $uint) -> $uint {
+        lhs.abs_diff(rhs)
+      }
+
+      /// The smallest power of two at least `value`, wrapped to `bits` bits, and whether it is
+      /// `2^bits` or more, as it is at zero bits, where the power of two of zero is one. Requires
+      /// `bits <= BITS` and `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn next_power_of_two_bits(value: $uint, bits: u32) -> ($uint, bool) {
+        match value.checked_next_power_of_two() {
+          Some(power) if fits_bits(power, bits) => (power, false),
+          // A power of two of `bits` bits or more wraps to zero.
+          _ => (0, true),
+        }
+      }
+
       native!(@bits $uint, zero_extend);
     }
   };
@@ -344,6 +480,132 @@ macro_rules! native {
         }
       }
 
+      /// The quotient and the remainder of `lhs / rhs` rounded toward zero, the remainder with the
+      /// sign of `lhs`, and whether the quotient is outside the range of `bits` bits, as it is only
+      /// for `MIN / -1`, whose quotient wraps to `MIN` with the remainder zero; or `None` if `rhs`
+      /// is zero. Requires `bits <= BITS` and both values within that range.
+      pub(crate) const fn div_rem_bits(
+        lhs: $int,
+        rhs: $int,
+        bits: u32,
+      ) -> Option<($int, $int, bool)> {
+        match rhs {
+          0 => None,
+          // `lhs / -1` is `-lhs`. At a partial width `MIN / -1` does not overflow the native
+          // integer, so the negation at the width detects it; at the full width the native
+          // division would panic.
+          -1 => {
+            let (quotient, overflow) = overflowing_neg_bits(lhs, bits);
+            Some((quotient, 0, overflow))
+          }
+          // With `|rhs| >= 2`, the native division cannot overflow.
+          _ => Some((lhs / rhs, lhs % rhs, false)),
+        }
+      }
+
+      /// The Euclidean quotient and remainder of `lhs / rhs`, the remainder never negative, and
+      /// whether the quotient is outside the range of `bits` bits, as [`div_rem_bits`] gives them.
+      pub(crate) const fn div_rem_euclid_bits(
+        lhs: $int,
+        rhs: $int,
+        bits: u32,
+      ) -> Option<($int, $int, bool)> {
+        match rhs {
+          // The remainder of a division by -1 is zero, so both divisions agree there.
+          0 | -1 => div_rem_bits(lhs, rhs, bits),
+          _ => Some((lhs.div_euclid(rhs), lhs.rem_euclid(rhs), false)),
+        }
+      }
+
+      /// `lhs / rhs` rounded down, and whether it is outside the range of `bits` bits, as it is
+      /// only for `MIN / -1`; or `None` if `rhs` is zero. Requires `bits <= BITS` and both values
+      /// within that range.
+      pub(crate) const fn div_floor_bits(lhs: $int, rhs: $int, bits: u32) -> Option<($int, bool)> {
+        match div_rem_bits(lhs, rhs, bits) {
+          // A remainder of the other sign than `rhs` needs `|rhs| >= 2`, and one less is in range.
+          Some((quotient, remainder, _)) if remainder != 0 && (remainder < 0) != (rhs < 0) => {
+            Some((quotient - 1, false))
+          }
+          Some((quotient, _, overflow)) => Some((quotient, overflow)),
+          None => None,
+        }
+      }
+
+      /// `lhs / rhs` rounded up, and whether it is outside the range of `bits` bits, as it is only
+      /// for `MIN / -1`; or `None` if `rhs` is zero. Requires `bits <= BITS` and both values within
+      /// that range.
+      pub(crate) const fn div_ceil_bits(lhs: $int, rhs: $int, bits: u32) -> Option<($int, bool)> {
+        match div_rem_bits(lhs, rhs, bits) {
+          // A remainder of the sign of `rhs` needs `|rhs| >= 2`, and one more is in range.
+          Some((quotient, remainder, _)) if remainder != 0 && (remainder < 0) == (rhs < 0) => {
+            Some((quotient + 1, false))
+          }
+          Some((quotient, _, overflow)) => Some((quotient, overflow)),
+          None => None,
+        }
+      }
+
+      /// For a positive `rhs` the smallest multiple of `rhs` at least `lhs`, and for a negative
+      /// `rhs` the largest at most `lhs`, wrapped to `bits` bits, and whether it is outside the
+      /// range of `bits` bits; or `None` if `rhs` is zero. Requires `bits <= BITS` and both values
+      /// within that range.
+      pub(crate) const fn next_multiple_of_bits(
+        lhs: $int,
+        rhs: $int,
+        bits: u32,
+      ) -> Option<($int, bool)> {
+        match rhs {
+          0 => None,
+          // Every value is a multiple of -1, and `MIN % -1` would overflow the native remainder.
+          -1 => Some((lhs, false)),
+          _ => {
+            let remainder = lhs % rhs;
+            // The remainder of the division rounded toward negative infinity, which has the sign
+            // of `rhs`: a remainder of the other sign plus `rhs`, which then differ in sign.
+            let rounded = if remainder != 0 && (remainder < 0) != (rhs < 0) {
+              remainder + rhs
+            } else {
+              remainder
+            };
+            if rounded == 0 {
+              Some((lhs, false))
+            } else {
+              // `rounded` has the sign of `rhs` and a smaller magnitude, so `rhs - rounded` is
+              // within the range of `bits` bits.
+              Some(overflowing_add_bits(lhs, rhs - rounded, bits))
+            }
+          }
+        }
+      }
+
+      /// The square root of `value`, rounded down, or `None` if `value` is negative.
+      #[inline]
+      pub(crate) const fn checked_isqrt(value: $int) -> Option<$int> {
+        value.checked_isqrt()
+      }
+
+      /// The `n`th root of `value`, rounded toward zero, or `None` if `n` is zero or `value` is
+      /// negative and `n` even.
+      pub(crate) const fn checked_nth_root(value: $int, n: u32) -> Option<$int> {
+        if n == 0 || (value < 0 && n % 2 == 0) {
+          return None;
+        }
+        // The root of the magnitude, which also holds that of `MIN`, is at most the magnitude, so
+        // its negation is in range.
+        let root = super::$uint::nth_root(value.unsigned_abs(), n);
+        Some(if value < 0 {
+          ZERO.wrapping_sub_unsigned(root)
+        } else {
+          root as $int
+        })
+      }
+
+      /// `|lhs - rhs|` as an unsigned integer, which holds it.
+      #[inline]
+      pub(crate) const fn abs_diff(lhs: $int, rhs: $int) -> $uint {
+        lhs.abs_diff(rhs)
+      }
+
       native!(@bits $int, sign_extend);
     }
   };
@@ -440,6 +702,31 @@ macro_rules! native {
     pub(crate) const fn from_limbs(limbs: [u64; 2]) -> $int {
       native!(@u128 limbs) as $int
     }
+
+    /// `(lhs + rhs) / 2` rounded toward zero, which cannot overflow.
+    #[inline]
+    pub(crate) const fn midpoint(lhs: $int, rhs: $int) -> $int {
+      lhs.midpoint(rhs)
+    }
+
+    /// The logarithm of `value` to the base `base`, rounded down, or `None` if `value` is not
+    /// positive or `base` is below 2.
+    #[inline]
+    pub(crate) const fn checked_ilog(value: $int, base: $int) -> Option<u32> {
+      value.checked_ilog(base)
+    }
+
+    /// The base-2 logarithm of `value` rounded down, or `None` if `value` is not positive.
+    #[inline]
+    pub(crate) const fn checked_ilog2(value: $int) -> Option<u32> {
+      value.checked_ilog2()
+    }
+
+    /// The base-10 logarithm of `value` rounded down, or `None` if `value` is not positive.
+    #[inline]
+    pub(crate) const fn checked_ilog10(value: $int) -> Option<u32> {
+      value.checked_ilog10()
+    }
   };
   (@u128 $limbs:ident) => {
     $limbs[0] as u128 | ($limbs[1] as u128) << 64
@@ -482,6 +769,28 @@ macro_rules! native {
       let (raw, overflow) = value.overflowing_neg();
       let wrapped = $extend(raw, bits);
       (wrapped, overflow || wrapped != raw)
+    }
+
+    /// `base^exp` wrapped to `bits` bits, and whether the exact power is outside the range of
+    /// `bits` bits. Requires `bits <= BITS` and `base` within that range. The native integer holds
+    /// one, so `base^0` overflows only a width that does not: zero bits, and one signed bit.
+    #[inline]
+    pub(crate) const fn overflowing_pow_bits(base: $int, exp: u32, bits: u32) -> ($int, bool) {
+      let (raw, overflow) = base.overflowing_pow(exp);
+      let wrapped = $extend(raw, bits);
+      (wrapped, overflow || wrapped != raw)
+    }
+
+    /// `lhs / rhs` if `rhs` divides `lhs` and the quotient is within the range of `bits` bits, or
+    /// `None` if `rhs` is zero, the division leaves a remainder, or the quotient is outside that
+    /// range, as only that of `MIN / -1` is. Requires `bits <= BITS` and both values within that
+    /// range.
+    #[inline]
+    pub(crate) const fn checked_div_exact_bits(lhs: $int, rhs: $int, bits: u32) -> Option<$int> {
+      match div_rem_bits(lhs, rhs, bits) {
+        Some((quotient, 0, false)) => Some(quotient),
+        _ => None,
+      }
     }
   };
 }

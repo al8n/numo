@@ -1,27 +1,31 @@
 //! The arithmetic of [`Uint`](crate::Uint) and [`Int`](crate::Int): the method tables of the
-//! overflowing, checked, wrapping, saturating and strict addition, subtraction, multiplication and
-//! negation, of the carrying addition and the borrowing subtraction of `Uint`, of the absolute
-//! value and the sign of `Int`, and of the unchecked arithmetic of the traits, the panics of the
-//! strict methods, and the operators, `Sum` and `Product`.
+//! overflowing, checked, wrapping, saturating and strict addition, subtraction, multiplication,
+//! negation, division, remainder and power, of the carrying addition and the borrowing subtraction
+//! of `Uint`, of the absolute value and the sign of `Int`, of the unchecked arithmetic of the
+//! traits, and of the integer functions without an overflow prefix, such as the Euclidean and
+//! rounded division, the roots and the logarithms; the panics; and the operators, `Sum` and
+//! `Product`.
 //!
 //! Each storage computes the overflowing methods at the width `Bits`, and most other methods are
 //! derived from them. The tables pass their rows to the callbacks of `tables`, for the inherent
 //! `const fn`s of each storage and for the generic implementations of the traits, so their bodies
-//! name the panics by the full path `$crate::integer::arithmetic::overflow`. The unchecked tables
-//! serve only the traits, whose bodies compute the overflowing method and check its flag with a
-//! debug assertion: they never call the inherent `unchecked_*` methods, which each storage writes
-//! out with their unsafe blocks. The operators are implemented once for every storage, over
-//! `OverflowingOps`, and repeat an overflow in a native operation, so that `overflow-checks`
-//! decides whether they panic, as for the native integers.
+//! name the panics by the full paths `$crate::integer::arithmetic::overflow` and
+//! `$crate::integer::arithmetic::domain`. The unchecked tables serve only the traits, whose bodies
+//! compute the overflowing or the checked method and check it with a debug assertion: they never
+//! call the inherent `unchecked_*` methods, which each storage writes out with their unsafe blocks.
+//! The operators are implemented once for every storage: `+`, `-`, `*` and the negation over
+//! `OverflowingOps`, repeating an overflow in a native operation, so that `overflow-checks` decides
+//! whether they panic, and `/` and `%` over `StrictOps`, which panic in every build, as for the
+//! native integers.
 
 use core::{
   iter::{Product, Sum},
-  ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+  ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
 
-use super::{Int, OverflowingOps, Uint};
+use super::{Int, OverflowingOps, StrictOps, Uint};
 use crate::{
   layout::Token,
   width::{FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntReprMut, UintRepr, UintReprMut},
@@ -51,6 +55,78 @@ macro_rules! overflowing_table {
       /// negation is outside that range: for `Uint` every value but zero, and for `Int` only `MIN`,
       /// except at zero bits, where `MIN` is zero.
       fn overflowing_neg(&self) -> (Self, bool) = prim pair overflowing_neg_bits(self);
+
+      /// Overflowing division: `self / rhs` rounded toward zero, wrapped to the range of the type,
+      /// and whether the exact quotient is outside that range, as it is only for `Int` when `self`
+      /// is `MIN` and `rhs` is -1, where the quotient wraps to `MIN`.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero.
+      #[track_caller]
+      fn overflowing_div(&self, rhs: &Self) -> (Self, bool)
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, overflow)) => (Self::wrap(quotient), overflow),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
+        }
+
+      /// Overflowing remainder: `self % rhs`, the remainder of the division rounded toward zero,
+      /// which has the sign of `self`, and whether the quotient is outside the range of the type,
+      /// as it is only for `Int` when `self` is `MIN` and `rhs` is -1, where the remainder is zero.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero.
+      #[track_caller]
+      fn overflowing_rem(&self, rhs: &Self) -> (Self, bool)
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((_, remainder, overflow)) => (Self::wrap(remainder), overflow),
+            None => $crate::integer::arithmetic::domain::rem_by_zero(),
+          }
+        }
+
+      /// Overflowing Euclidean division: the quotient `q` of `self = q * rhs + r` with
+      /// `0 <= r < |rhs|`, wrapped to the range of the type, and whether the exact quotient is
+      /// outside that range, as it is only for `Int` when `self` is `MIN` and `rhs` is -1, where
+      /// the quotient wraps to `MIN`. For `Uint` it is the division rounded toward zero.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero.
+      #[track_caller]
+      fn overflowing_div_euclid(&self, rhs: &Self) -> (Self, bool)
+        = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, overflow)) => (Self::wrap(quotient), overflow),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
+        }
+
+      /// Overflowing Euclidean remainder: the remainder `r` of `self = q * rhs + r` with
+      /// `0 <= r < |rhs|`, and whether the quotient is outside the range of the type, as it is only
+      /// for `Int` when `self` is `MIN` and `rhs` is -1, where the remainder is zero.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero.
+      #[track_caller]
+      fn overflowing_rem_euclid(&self, rhs: &Self) -> (Self, bool)
+        = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((_, remainder, overflow)) => (Self::wrap(remainder), overflow),
+            None => $crate::integer::arithmetic::domain::rem_by_zero(),
+          }
+        }
+
+      /// Overflowing exponentiation: `self^exp` wrapped to the range of the type, and whether the
+      /// exact power is outside that range. A power that is one, as `self^0` is, overflows where
+      /// one is outside the range: at zero bits, where it wraps to zero, and for `Int` of one bit,
+      /// where it wraps to -1, as `(-1)^2` does, while `(-1)^3` is -1.
+      fn overflowing_pow(&self, exp: u32) -> (Self, bool)
+        = prim pair overflowing_pow_bits(self; exp);
     }
   };
 }
@@ -101,6 +177,81 @@ macro_rules! checked_table {
           (_, true) => None,
         }
       }
+
+      /// Checked division: `self / rhs` rounded toward zero, or `None` if `rhs` is zero or the
+      /// quotient is outside the range of the type, as it is only for `Int` when `self` is `MIN`
+      /// and `rhs` is -1.
+      fn checked_div(&self, rhs: &Self) -> Option<Self>
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, false)) => Some(Self::wrap(quotient)),
+            _ => None,
+          }
+        }
+
+      /// Checked remainder: `self % rhs`, which has the sign of `self`, or `None` if `rhs` is zero
+      /// or the quotient is outside the range of the type, as it is only for `Int` when `self` is
+      /// `MIN` and `rhs` is -1.
+      fn checked_rem(&self, rhs: &Self) -> Option<Self>
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((_, remainder, false)) => Some(Self::wrap(remainder)),
+            _ => None,
+          }
+        }
+
+      /// Checked Euclidean division: the quotient `q` of `self = q * rhs + r` with
+      /// `0 <= r < |rhs|`, or `None` if `rhs` is zero or the quotient is outside the range of the
+      /// type, as it is only for `Int` when `self` is `MIN` and `rhs` is -1.
+      fn checked_div_euclid(&self, rhs: &Self) -> Option<Self>
+        = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, false)) => Some(Self::wrap(quotient)),
+            _ => None,
+          }
+        }
+
+      /// Checked Euclidean remainder: the remainder `r` of `self = q * rhs + r` with
+      /// `0 <= r < |rhs|`, or `None` if `rhs` is zero or the quotient is outside the range of the
+      /// type, as it is only for `Int` when `self` is `MIN` and `rhs` is -1.
+      fn checked_rem_euclid(&self, rhs: &Self) -> Option<Self>
+        = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((_, remainder, false)) => Some(Self::wrap(remainder)),
+            _ => None,
+          }
+        }
+
+      /// Checked exponentiation: `self^exp`, or `None` if the power is outside the range of the
+      /// type, as `self^0`, one, is at zero bits and for `Int` of one bit.
+      fn checked_pow(&self, exp: u32) -> Option<Self> {
+        match self.overflowing_pow(exp) {
+          (power, false) => Some(power),
+          (_, true) => None,
+        }
+      }
+
+      /// Checked next multiple: for a positive `rhs`, the smallest multiple of `rhs` at least
+      /// `self`, and for a negative `rhs`, which only `Int` has, the largest multiple of `rhs` at
+      /// most `self`; or `None` if `rhs` is zero or that multiple is outside the range of the type.
+      fn checked_next_multiple_of(&self, rhs: &Self) -> Option<Self>
+        = prim next_multiple_of_bits(self, rhs; Self::BITS) as multiple {
+          match multiple {
+            Some((multiple, false)) => Some(Self::wrap(multiple)),
+            _ => None,
+          }
+        }
+
+      /// Checked exact division: `self / rhs` if `rhs` divides `self`, or `None` if `rhs` is
+      /// zero, the division leaves a remainder, or the quotient is outside the range of the type,
+      /// as it is only for `Int` when `self` is `MIN` and `rhs` is -1.
+      fn checked_div_exact(&self, rhs: &Self) -> Option<Self>
+        = prim checked_div_exact_bits(self, rhs; Self::BITS) as quotient {
+          match quotient {
+            Some(quotient) => Some(Self::wrap(quotient)),
+            None => None,
+          }
+        }
     }
   };
 }
@@ -128,6 +279,56 @@ macro_rules! wrapping_table {
       /// negates to itself.
       fn wrapping_neg(&self) -> Self {
         self.overflowing_neg().0
+      }
+
+      /// Wrapping division: `self / rhs` rounded toward zero, modulo `2^Bits`, within the range of
+      /// the type; for `Int`, `MIN / -1` wraps to `MIN`.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero.
+      #[track_caller]
+      fn wrapping_div(&self, rhs: &Self) -> Self {
+        self.overflowing_div(rhs).0
+      }
+
+      /// Wrapping remainder: `self % rhs`, which has the sign of `self`; for `Int`, `MIN % -1` is
+      /// zero.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero.
+      #[track_caller]
+      fn wrapping_rem(&self, rhs: &Self) -> Self {
+        self.overflowing_rem(rhs).0
+      }
+
+      /// Wrapping Euclidean division: the quotient `q` of `self = q * rhs + r` with
+      /// `0 <= r < |rhs|`, modulo `2^Bits`, within the range of the type; for `Int`, `MIN / -1`
+      /// wraps to `MIN`.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero.
+      #[track_caller]
+      fn wrapping_div_euclid(&self, rhs: &Self) -> Self {
+        self.overflowing_div_euclid(rhs).0
+      }
+
+      /// Wrapping Euclidean remainder: the remainder `r` of `self = q * rhs + r` with
+      /// `0 <= r < |rhs|`; for `Int`, the remainder of `MIN` by -1 is zero.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero.
+      #[track_caller]
+      fn wrapping_rem_euclid(&self, rhs: &Self) -> Self {
+        self.overflowing_rem_euclid(rhs).0
+      }
+
+      /// Wrapping exponentiation: `self^exp` modulo `2^Bits`, within the range of the type.
+      fn wrapping_pow(&self, exp: u32) -> Self {
+        self.overflowing_pow(exp).0
       }
     }
   };
@@ -162,6 +363,30 @@ macro_rules! saturating_table {
       fn saturating_mul(&self, rhs: &Self) -> Self {
         match self.overflowing_mul(rhs) {
           (product, false) => product,
+          (_, true) => Self::MAX,
+        }
+      }
+
+      /// Saturating division: `self / rhs` rounded toward zero, or `MAX` if the quotient is
+      /// outside the range of the type, as it is only for `Int` when `self` is `MIN` and `rhs` is
+      /// -1.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero.
+      #[track_caller]
+      fn saturating_div(&self, rhs: &Self) -> Self {
+        match self.overflowing_div(rhs) {
+          (quotient, false) => quotient,
+          (_, true) => Self::MAX,
+        }
+      }
+
+      /// Saturating exponentiation: `self^exp`, or the bound of the range of the type that the
+      /// power passes.
+      fn saturating_pow(&self, exp: u32) -> Self {
+        match self.overflowing_pow(exp) {
+          (power, false) => power,
           (_, true) => Self::MAX,
         }
       }
@@ -209,6 +434,38 @@ macro_rules! saturating_table {
           // An overflowing product passes `MIN` exactly when the operands differ in sign.
           (_, true) => {
             if self.is_negative() != rhs.is_negative() {
+              Self::MIN
+            } else {
+              Self::MAX
+            }
+          }
+        }
+      }
+
+      /// Saturating division: `self / rhs` rounded toward zero, or `MAX` if the quotient is
+      /// outside the range of the type, as it is only for `Int` when `self` is `MIN` and `rhs` is
+      /// -1.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero.
+      #[track_caller]
+      fn saturating_div(&self, rhs: &Self) -> Self {
+        match self.overflowing_div(rhs) {
+          (quotient, false) => quotient,
+          (_, true) => Self::MAX,
+        }
+      }
+
+      /// Saturating exponentiation: `self^exp`, or the bound of the range of the type that the
+      /// power passes.
+      fn saturating_pow(&self, exp: u32) -> Self {
+        match self.overflowing_pow(exp) {
+          (power, false) => power,
+          // The power passes `MIN` exactly when it is negative: an odd power of a negative value.
+          // At one bit `(-1)^0`, one, passes `MAX`, which is zero.
+          (_, true) => {
+            if self.is_negative() && exp % 2 == 1 {
               Self::MIN
             } else {
               Self::MAX
@@ -278,6 +535,81 @@ macro_rules! strict_table {
         match self.overflowing_neg() {
           (negated, false) => negated,
           (_, true) => $crate::integer::arithmetic::overflow::neg(),
+        }
+      }
+
+      /// Strict division: `self / rhs` rounded toward zero, which panics on overflow whatever the
+      /// `overflow-checks` setting.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
+      /// only for `Int` when `self` is `MIN` and `rhs` is -1.
+      #[track_caller]
+      fn strict_div(&self, rhs: &Self) -> Self {
+        match self.overflowing_div(rhs) {
+          (quotient, false) => quotient,
+          (_, true) => $crate::integer::arithmetic::overflow::div(),
+        }
+      }
+
+      /// Strict remainder: `self % rhs`, which has the sign of `self` and panics on overflow
+      /// whatever the `overflow-checks` setting.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
+      /// only for `Int` when `self` is `MIN` and `rhs` is -1.
+      #[track_caller]
+      fn strict_rem(&self, rhs: &Self) -> Self {
+        match self.overflowing_rem(rhs) {
+          (remainder, false) => remainder,
+          (_, true) => $crate::integer::arithmetic::overflow::rem(),
+        }
+      }
+
+      /// Strict Euclidean division: the quotient `q` of `self = q * rhs + r` with
+      /// `0 <= r < |rhs|`, which panics on overflow whatever the `overflow-checks` setting.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
+      /// only for `Int` when `self` is `MIN` and `rhs` is -1.
+      #[track_caller]
+      fn strict_div_euclid(&self, rhs: &Self) -> Self {
+        match self.overflowing_div_euclid(rhs) {
+          (quotient, false) => quotient,
+          (_, true) => $crate::integer::arithmetic::overflow::div(),
+        }
+      }
+
+      /// Strict Euclidean remainder: the remainder `r` of `self = q * rhs + r` with
+      /// `0 <= r < |rhs|`, which panics on overflow whatever the `overflow-checks` setting.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
+      /// only for `Int` when `self` is `MIN` and `rhs` is -1.
+      #[track_caller]
+      fn strict_rem_euclid(&self, rhs: &Self) -> Self {
+        match self.overflowing_rem_euclid(rhs) {
+          (remainder, false) => remainder,
+          (_, true) => $crate::integer::arithmetic::overflow::rem(),
+        }
+      }
+
+      /// Strict exponentiation: `self^exp`, which panics on overflow whatever the
+      /// `overflow-checks` setting.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the power is outside the range of the type, as `self^0`, one, is at zero bits
+      /// and for `Int` of one bit.
+      #[track_caller]
+      fn strict_pow(&self, exp: u32) -> Self {
+        match self.overflowing_pow(exp) {
+          (power, false) => power,
+          (_, true) => $crate::integer::arithmetic::overflow::pow(),
         }
       }
     }
@@ -411,9 +743,309 @@ macro_rules! int_sign_table {
   };
 }
 
-/// Passes the unchecked addition, subtraction and multiplication of `Uint` and `Int` to
-/// `$callback`, after the tokens of `$args`, for the traits alone: each storage writes out its
-/// inherent `unchecked_*` methods.
+/// Passes the integer functions of `Uint` and `Int` that have no overflow prefix to `$callback`,
+/// after the tokens of `$args`: the power, the Euclidean, rounded and exact division, the next
+/// multiple, the roots, the logarithms, the midpoint and the absolute difference.
+macro_rules! integer_math_table {
+  ($callback:ident! $args:tt) => {
+    $callback! { $args
+      /// Exponentiation: `self^exp`. A power outside the range of the type overflows: the method
+      /// then panics or returns the wrapped power, as `overflow-checks` decides for the native
+      /// integers (see [Overflow](crate::Uint#overflow)), and in a constant it fails to compile in
+      /// every build.
+      fn pow(&self, exp: u32) -> Self {
+        match self.overflowing_pow(exp) {
+          (power, false) => power,
+          (power, true) => {
+            $crate::integer::arithmetic::overflow::forward_pow();
+            power
+          }
+        }
+      }
+
+      /// Euclidean division: the quotient `q` of `self = q * rhs + r` with `0 <= r < |rhs|`, which
+      /// for `Uint` is the quotient rounded toward zero.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
+      /// only for `Int` when `self` is `MIN` and `rhs` is -1, in every build, as the native
+      /// method does.
+      #[track_caller]
+      fn div_euclid(&self, rhs: &Self) -> Self {
+        self.strict_div_euclid(rhs)
+      }
+
+      /// Euclidean remainder: the remainder `r` of `self = q * rhs + r` with `0 <= r < |rhs|`,
+      /// which for `Uint` is the remainder of the division rounded toward zero.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
+      /// only for `Int` when `self` is `MIN` and `rhs` is -1, in every build, as the native
+      /// method does.
+      #[track_caller]
+      fn rem_euclid(&self, rhs: &Self) -> Self {
+        self.strict_rem_euclid(rhs)
+      }
+
+      /// Division rounded down: `self / rhs` rounded toward negative infinity, which for `Uint` is
+      /// the quotient rounded toward zero.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
+      /// only for `Int` when `self` is `MIN` and `rhs` is -1, in every build.
+      #[track_caller]
+      fn div_floor(&self, rhs: &Self) -> Self
+        = prim div_floor_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, false)) => Self::wrap(quotient),
+            Some((_, true)) => $crate::integer::arithmetic::overflow::div(),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
+        }
+
+      /// Division rounded up: `self / rhs` rounded toward positive infinity.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
+      /// only for `Int` when `self` is `MIN` and `rhs` is -1, in every build.
+      #[track_caller]
+      fn div_ceil(&self, rhs: &Self) -> Self
+        = prim div_ceil_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, false)) => Self::wrap(quotient),
+            Some((_, true)) => $crate::integer::arithmetic::overflow::div(),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
+        }
+
+      /// Next multiple: for a positive `rhs`, the smallest multiple of `rhs` at least `self`, and
+      /// for a negative `rhs`, which only `Int` has, the largest multiple of `rhs` at most `self`.
+      /// A multiple outside the range of the type overflows: the method then panics or returns the
+      /// wrapped multiple, as `overflow-checks` decides for the native integers (see
+      /// [Overflow](crate::Uint#overflow)).
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero, with the message of the native remainder, which the native
+      /// method computes first, in every build.
+      #[track_caller]
+      fn next_multiple_of(&self, rhs: &Self) -> Self
+        = prim next_multiple_of_bits(self, rhs; Self::BITS) as multiple {
+          match multiple {
+            Some((multiple, false)) => Self::wrap(multiple),
+            Some((multiple, true)) => {
+              $crate::integer::arithmetic::overflow::forward_add();
+              Self::wrap(multiple)
+            }
+            None => $crate::integer::arithmetic::domain::rem_by_zero(),
+          }
+        }
+
+      /// Exact division: `self / rhs` if `rhs` divides `self`, or `None` if the division leaves a
+      /// remainder.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is zero, or if `self` is `MIN` and `rhs` is -1 for `Int`, in every build,
+      /// with the messages of the native remainder. The native `div_exact` is unstable
+      /// ([#139911](https://github.com/rust-lang/rust/issues/139911)); this method follows what it
+      /// does, which computes `self % rhs` first, rather than its documentation.
+      #[track_caller]
+      fn div_exact(&self, rhs: &Self) -> Option<Self> {
+        match self.checked_div_exact(rhs) {
+          Some(quotient) => Some(quotient),
+          // The remainder of a zero divisor and of `MIN / -1` panics, in every build, and any other
+          // division that is not exact leaves a remainder.
+          None => {
+            let _ = self.strict_rem(rhs);
+            None
+          }
+        }
+      }
+
+      /// Square root: `self` to the power one half, rounded down.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `self` is negative, which only `Int` can be.
+      #[track_caller]
+      fn isqrt(&self) -> Self
+        = prim checked_isqrt(self) as root {
+          match root {
+            Some(root) => Self::wrap(root),
+            // Every unsigned value has a square root.
+            None => $crate::integer::arithmetic::domain::sqrt_of_negative(),
+          }
+        }
+
+      /// Checked root: the `n`th root of `self`, rounded toward zero, or `None` if `n` is zero or
+      /// `self` is negative and `n` even.
+      fn checked_nth_root(&self, n: u32) -> Option<Self>
+        = prim checked_nth_root(self; n) as root {
+          match root {
+            Some(root) => Some(Self::wrap(root)),
+            None => None,
+          }
+        }
+
+      /// Root: the `n`th root of `self`, rounded toward zero: the largest `r` with `r^n <= self`
+      /// for a value at least zero, and the negation of the root of `-self` for a negative value
+      /// and an odd `n`.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `n` is zero, and otherwise if `self` is negative and `n` even, which only `Int`
+      /// can be.
+      #[track_caller]
+      fn nth_root(&self, n: u32) -> Self {
+        if n == 0 {
+          $crate::integer::arithmetic::domain::root_degree();
+        }
+        match self.checked_nth_root(n) {
+          Some(root) => root,
+          None => $crate::integer::arithmetic::domain::root_of_negative(),
+        }
+      }
+
+      /// Checked logarithm: the logarithm of `self` to the base `base`, rounded down, or `None` if
+      /// `self` is not positive or `base` is below 2.
+      fn checked_ilog(&self, base: &Self) -> Option<u32> = prim checked_ilog(self, base);
+
+      /// Checked base-2 logarithm: the logarithm of `self` to the base 2, rounded down, or `None`
+      /// if `self` is not positive.
+      fn checked_ilog2(&self) -> Option<u32> = prim checked_ilog2(self);
+
+      /// Checked base-10 logarithm: the logarithm of `self` to the base 10, rounded down, or
+      /// `None` if `self` is not positive.
+      fn checked_ilog10(&self) -> Option<u32> = prim checked_ilog10(self);
+
+      /// Logarithm: the logarithm of `self` to the base `base`, rounded down.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `base` is below 2, and otherwise if `self` is not positive, as the native
+      /// method does.
+      #[track_caller]
+      fn ilog(&self, base: &Self) -> u32 {
+        // A base below 2 has no base-2 logarithm of at least 1.
+        if !matches!(base.checked_ilog2(), Some(1..)) {
+          $crate::integer::arithmetic::domain::log_base();
+        }
+        match self.checked_ilog(base) {
+          Some(log) => log,
+          None => $crate::integer::arithmetic::domain::log_of_nonpositive(),
+        }
+      }
+
+      /// Base-2 logarithm: the logarithm of `self` to the base 2, rounded down, the index of its
+      /// highest set bit.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `self` is not positive.
+      #[track_caller]
+      fn ilog2(&self) -> u32 {
+        match self.checked_ilog2() {
+          Some(log) => log,
+          None => $crate::integer::arithmetic::domain::log_of_nonpositive(),
+        }
+      }
+
+      /// Base-10 logarithm: the logarithm of `self` to the base 10, rounded down, one less than
+      /// the number of its decimal digits.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `self` is not positive.
+      #[track_caller]
+      fn ilog10(&self) -> u32 {
+        match self.checked_ilog10() {
+          Some(log) => log,
+          None => $crate::integer::arithmetic::domain::log_of_nonpositive(),
+        }
+      }
+
+      /// Midpoint: `(self + rhs) / 2` rounded toward zero, computed without overflow.
+      fn midpoint(&self, rhs: &Self) -> Self = prim value midpoint(self, rhs);
+
+      /// Absolute difference: `|self - other|`, as the unsigned integer of the same width, which
+      /// holds it: `Self` for `Uint`, and for `Int` the `Uint` of the same width in a storage of
+      /// the same size.
+      fn abs_diff(&self, other: &Self) -> Self::Magnitude = prim unsigned abs_diff(self, other);
+    }
+  };
+}
+
+/// Passes the functions of `Uint` alone that have no overflow prefix to `$callback`, after the
+/// tokens of `$args`: `is_multiple_of` and the next power of two.
+macro_rules! uint_math_table {
+  ($callback:ident! $args:tt) => {
+    $callback! { $args
+      /// Returns `true` if `self` is a multiple of `rhs`: if `self / rhs` leaves no remainder, or,
+      /// for a zero `rhs`, if `self` is zero.
+      fn is_multiple_of(&self, rhs: &Self) -> bool = prim is_multiple_of(self, rhs);
+
+      /// Next power of two: the smallest power of two at least `self`. A power outside the range
+      /// of the type overflows, as one does at zero bits: the method then panics or returns zero,
+      /// as `overflow-checks` decides for the native integers (see
+      /// [Overflow](crate::Uint#overflow)).
+      #[track_caller]
+      fn next_power_of_two(&self) -> Self
+        = prim next_power_of_two_bits(self; Self::BITS) as power {
+          match power {
+            (power, false) => Self::wrap(power),
+            (power, true) => {
+              $crate::integer::arithmetic::overflow::forward_add();
+              Self::wrap(power)
+            }
+          }
+        }
+
+      /// Checked next power of two: the smallest power of two at least `self`, or `None` if it is
+      /// outside the range of the type, as one is at zero bits.
+      fn checked_next_power_of_two(&self) -> Option<Self>
+        = prim next_power_of_two_bits(self; Self::BITS) as power {
+          match power {
+            (power, false) => Some(Self::wrap(power)),
+            (_, true) => None,
+          }
+        }
+
+      /// Wrapping next power of two: the smallest power of two at least `self`, or zero if it is
+      /// outside the range of the type.
+      fn wrapping_next_power_of_two(&self) -> Self
+        = prim next_power_of_two_bits(self; Self::BITS) as power {
+          Self::wrap(power.0)
+        }
+    }
+  };
+}
+
+/// Passes the functions of `Int` alone that have no overflow prefix to `$callback`, after the
+/// tokens of `$args`: the checked square root.
+macro_rules! int_math_table {
+  ($callback:ident! $args:tt) => {
+    $callback! { $args
+      /// Checked square root: `self` to the power one half, rounded down, or `None` if `self` is
+      /// negative.
+      fn checked_isqrt(&self) -> Option<Self>
+        = prim checked_isqrt(self) as root {
+          match root {
+            Some(root) => Some(Self::wrap(root)),
+            None => None,
+          }
+        }
+    }
+  };
+}
+
+/// Passes the unchecked addition, subtraction, multiplication and exact division of `Uint` and
+/// `Int` to `$callback`, after the tokens of `$args`, for the traits alone: each storage writes out
+/// its inherent `unchecked_*` methods.
 macro_rules! unchecked_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -449,6 +1081,30 @@ macro_rules! unchecked_table {
       #[track_caller]
       unsafe fn unchecked_mul(&self, rhs: &Self) -> Self
         = unchecked overflowing_mul(self, rhs), "attempt to multiply with overflow";
+
+      /// Unchecked exact division: `self / rhs`, assuming that `rhs` divides `self`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must not be zero, the division must leave no remainder, and the quotient must be
+      /// within the range of the type, so that for `Int` `self` is not `MIN` with `rhs` -1: that
+      /// is, [`checked_div_exact`](crate::CheckedOps::checked_div_exact) would return `Some`.
+      /// Otherwise the behavior is undefined. Zero bits hold no divisor but zero, so no call is
+      /// sound there.
+      #[track_caller]
+      unsafe fn unchecked_div_exact(&self, rhs: &Self) -> Self {
+        let quotient = self.checked_div_exact(rhs);
+        debug_assert!(
+          quotient.is_some(),
+          "attempt to divide exactly with a zero divisor, with overflow or with a remainder"
+        );
+        // Without debug assertions, a call that breaks the contract gets the wrapped quotient,
+        // or the panic of a zero divisor.
+        match quotient {
+          Some(quotient) => quotient,
+          None => self.wrapping_div(rhs),
+        }
+      }
     }
   };
 }
@@ -505,6 +1161,27 @@ pub(super) mod overflow {
     panic!("attempt to negate with overflow")
   }
 
+  /// Panics as the native `strict_div` does on overflow, and the native `/` in every build.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn div() -> ! {
+    panic!("attempt to divide with overflow")
+  }
+
+  /// Panics as the native `strict_rem` does on overflow, and the native `%` in every build.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn rem() -> ! {
+    panic!("attempt to calculate the remainder with overflow")
+  }
+
+  /// Panics as the native `strict_pow` does.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn pow() -> ! {
+    panic!("attempt to exponentiate with overflow")
+  }
+
   /// Repeats the overflow of a native addition, which panics with the message of the native
   /// integers when `overflow-checks` is on and does nothing otherwise.
   #[inline]
@@ -533,6 +1210,70 @@ pub(super) mod overflow {
   #[track_caller]
   pub(crate) const fn forward_neg() {
     let _ = -black_box(i8::MIN);
+  }
+
+  /// Repeats the overflow of a native exponentiation, as [`forward_add`] does. The native `pow`
+  /// is not `#[track_caller]`, so the panic reports a line in `core`, as that of the native `pow`
+  /// does. It reads `overflow-checks` where the native `pow` is instantiated, so the setting of the
+  /// crate that calls this decides, also in an unoptimized build, and a constant evaluates it
+  /// with the checks on.
+  #[inline]
+  pub(crate) const fn forward_pow() {
+    let _ = black_box(u8::MAX).pow(2);
+  }
+}
+
+/// The panics of an operand outside the domain of an operation, such as a zero divisor, with the
+/// messages of the native integers. They are not overflows: every build panics on them, whatever
+/// the `overflow-checks` setting.
+pub(super) mod domain {
+  /// Panics as the native division does on a zero divisor.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn div_by_zero() -> ! {
+    panic!("attempt to divide by zero")
+  }
+
+  /// Panics as the native remainder does on a zero divisor.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn rem_by_zero() -> ! {
+    panic!("attempt to calculate the remainder with a divisor of zero")
+  }
+
+  /// Panics as the native `isqrt` does on a negative value.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn sqrt_of_negative() -> ! {
+    panic!("argument of integer square root cannot be negative")
+  }
+
+  /// Panics as the native logarithms do on a value that is not positive.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn log_of_nonpositive() -> ! {
+    panic!("argument of integer logarithm must be positive")
+  }
+
+  /// Panics as the native `ilog` does on a base below 2.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn log_base() -> ! {
+    panic!("base of integer logarithm must be at least 2")
+  }
+
+  /// Panics on a root of degree zero, in the words of the other panics.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn root_degree() -> ! {
+    panic!("degree of integer root must be at least 1")
+  }
+
+  /// Panics on a root of even degree of a negative value, in the words of the other panics.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn root_of_negative() -> ! {
+    panic!("argument of integer root of even degree cannot be negative")
   }
 }
 
@@ -641,6 +1382,97 @@ binary_operator!(
 binary_operator!(
   Int: IntRepr, InlineIntRepr, IntReprMut;
   Mul mul, MulAssign mul_assign, overflowing_mul, overflowing_mul_bits, forward_mul
+);
+
+/// Implements the division operator `$op`, `/` or `%`, in its four forms of values and references,
+/// and its compound assignment `$assign` for a value and a reference, with the strict method
+/// `$strict` of the same operation: as for the native integers, a zero divisor and an overflow
+/// panic whatever the `overflow-checks` setting, and nothing wraps. The form on two references is
+/// implemented for every storage, `$repr`; the forms with an owned operand, for a storage that
+/// holds the value inline, `$inline`, pass references to it; and the compound assignments, for a
+/// storage that holds the value in place, `$repr_mut`, store the result after the division, so that
+/// a panic leaves their target unchanged.
+macro_rules! division_operator {
+  (
+    $type:ident: $repr:ident, $inline:ident, $repr_mut:ident;
+    $op:ident $method:ident,
+    $assign:ident $assign_method:ident,
+    $strict:ident
+  ) => {
+    impl<B: FitsBits<R>, R: $inline> $op for $type<B, R> {
+      type Output = Self;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: Self) -> Self {
+        $op::$method(&self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $inline> $op<&$type<B, R>> for $type<B, R> {
+      type Output = Self;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: &Self) -> Self {
+        $op::$method(&self, rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $inline> $op<$type<B, R>> for &$type<B, R> {
+      type Output = $type<B, R>;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: $type<B, R>) -> $type<B, R> {
+        $op::$method(self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $repr> $op<&$type<B, R>> for &$type<B, R> {
+      type Output = $type<B, R>;
+
+      #[inline]
+      #[track_caller]
+      fn $method(self, rhs: &$type<B, R>) -> $type<B, R> {
+        StrictOps::$strict(self, rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $repr_mut> $assign for $type<B, R> {
+      #[inline]
+      #[track_caller]
+      fn $assign_method(&mut self, rhs: Self) {
+        $assign::$assign_method(self, &rhs);
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $repr_mut> $assign<&$type<B, R>> for $type<B, R> {
+      #[inline]
+      #[track_caller]
+      fn $assign_method(&mut self, rhs: &Self) {
+        let result = StrictOps::$strict(&*self, rhs);
+        *self = result;
+      }
+    }
+  };
+}
+
+division_operator!(
+  Uint: UintRepr, InlineUintRepr, UintReprMut;
+  Div div, DivAssign div_assign, strict_div
+);
+division_operator!(
+  Uint: UintRepr, InlineUintRepr, UintReprMut;
+  Rem rem, RemAssign rem_assign, strict_rem
+);
+division_operator!(
+  Int: IntRepr, InlineIntRepr, IntReprMut;
+  Div div, DivAssign div_assign, strict_div
+);
+division_operator!(
+  Int: IntRepr, InlineIntRepr, IntReprMut;
+  Rem rem, RemAssign rem_assign, strict_rem
 );
 
 // As for the binary operators, the negation of a reference computes for every storage, and the

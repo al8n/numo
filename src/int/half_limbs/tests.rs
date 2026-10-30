@@ -92,15 +92,26 @@ mod u8_limbs {
   half_limbs_tests!(u8);
 
   /// The step of the sweeps below: every input, or under Miri, which runs them slowly, every
-  /// 331st.
+  /// 331st. Each sweep also visits the inputs whose limbs are all of `ENDS`, which a stride may
+  /// skip.
   const STEP: usize = if cfg!(miri) { 331 } else { 1 };
+
+  /// The limits of a limb and the values next to them.
+  const ENDS: [u8; 4] = [0, 1, u8::MAX - 1, u8::MAX];
 
   /// Every `(a, b, carry)` with `add` zero or all ones. Every intermediate grows with the digits
   /// of `carry` and `add`, which are largest at all ones, so these include the largest
   /// intermediates of each `(a, b)`.
   #[test]
   fn every_multiply_add_matches_u16() {
-    for index in (0..1 << 25).step_by(STEP) {
+    let ends = ENDS.iter().flat_map(|&a| {
+      ENDS.iter().flat_map(move |&b| {
+        ENDS
+          .iter()
+          .flat_map(move |&carry| [0, 1].map(|top| u32::from_le_bytes([a, b, carry, top])))
+      })
+    });
+    for index in (0..1 << 25).step_by(STEP).chain(ends) {
       let [a, b, carry, top] = u32::to_le_bytes(index);
       let add = if top == 0 { 0 } else { u8::MAX };
       let wide = u16::from(a) * u16::from(b) + u16::from(carry) + u16::from(add);
@@ -115,7 +126,14 @@ mod u8_limbs {
   /// Every `(high, low, divisor)` with `high < divisor`.
   #[test]
   fn every_division_matches_u16() {
-    for index in (0..1 << 24).step_by(STEP) {
+    let ends = ENDS.iter().flat_map(|&high| {
+      ENDS.iter().flat_map(move |&low| {
+        ENDS
+          .iter()
+          .map(move |&divisor| u32::from_le_bytes([high, low, divisor, 0]))
+      })
+    });
+    for index in (0..1 << 24).step_by(STEP).chain(ends) {
       let [high, low, divisor, _] = u32::to_le_bytes(index);
       if high < divisor {
         let wide = u16::from(high) << 8 | u16::from(low);

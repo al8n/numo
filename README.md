@@ -29,7 +29,7 @@ standard traits.
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, formatting, addition, subtraction, multiplication and negation in every overflow form of the native integers with the operators, and generic traits; division, bit operations and shifts planned |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, formatting, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, and generic traits; bit operations and shifts planned |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
 
@@ -176,13 +176,20 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   hold a value of `Bits` bits, and `to_limbs` and `as_limbs`; `is_zero` and `is_one`, plus
   `is_negative` and `is_positive` for `Int`.
 - The arithmetic of the native integers at the width `Bits`, as `const fn`s: addition, subtraction,
-  multiplication and negation in the `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and
-  `strict_*` forms, `carrying_add` and `borrowing_sub` for `Uint`, and `abs` and its forms,
-  `unsigned_abs` and `signum` for `Int`. Addition, subtraction and multiplication, and negation for
-  `Int`, also have the `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the
-  `checked_*` method would return `Some`. The operators `+`, `-` and `*`, their compound
-  assignments, `-` for `Int`, `Sum` and `Product` panic or wrap on overflow as `overflow-checks`
-  decides, as for the native integers.
+  multiplication, negation, division, remainder and exponentiation in the `checked_*`,
+  `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` forms that the native integers have,
+  the Euclidean, rounded and exact division, the next multiple, the square root and the root of
+  any degree, the logarithms, the midpoint and the absolute difference, `carrying_add`,
+  `borrowing_sub`, `is_multiple_of` and the next power of two for `Uint`, and `abs` and its forms,
+  `unsigned_abs`, `signum` and `checked_isqrt` for `Int`. Addition, subtraction, multiplication and
+  exact division, and negation for `Int`, also have the `unchecked_*` form, as `const unsafe fn`s
+  whose caller guarantees that the `checked_*` method would return `Some`. The operators `+`, `-`
+  and `*`, their compound assignments, `-` for `Int`, `Sum` and `Product` panic or wrap on overflow
+  as `overflow-checks` decides, as for the native integers, and so do `pow`, `next_multiple_of` and
+  `next_power_of_two`; `/` and `%` and their compound assignments, like the division methods, panic
+  on a zero divisor and on overflow in every build. Every panic reports the caller, as the operators
+  of the native integers do, but that of `pow`, which reports a line in `core` as the native `pow`
+  does.
 - Numeric equality, ordering and hashing, where the hash depends only on the value and `Bits`,
   whatever the storage, decimal formatting, and `Default`, which is zero.
 - Traits with one implementation for every storage of a kind, for generic code, in two layers. The
@@ -191,15 +198,16 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   functions return the constants `ZERO`, `MIN`, `MAX` and `ONE`. The const layer,
   `ConstFixedInteger` and `ConstIntegerOne`, adds `Copy` and the constants themselves, which a
   generic `const fn` can read. `UnsignedFixedInteger` and `SignedFixedInteger` have the methods of
-  each sign, `NativeInteger`, `ArrayInteger` and `FromLimbs` the construction of each kind, and the
+  each sign, `NativeInteger`, `ArrayInteger` and `FromLimbs` the construction of each kind, the
   arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`
-  and `UncheckedOps` the arithmetic; with the bound `B: BitWidth`, such code uses `Uint<B>` and
-  `Int<B>` for any width from 0 to 65536 bits.
+  and `UncheckedOps` the arithmetic, and `IntegerMath`, `UnsignedMath` and `SignedMath` the
+  functions without an overflow prefix, such as `pow`, `isqrt` and `ilog10`; with the bound
+  `B: BitWidth`, such code uses `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
   width of more than 65536 bits without an explicit storage.
 
-Division and remainder, bit operations and shifts are planned.
+Bit operations and shifts are planned.
 
 #### License
 

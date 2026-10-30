@@ -121,13 +121,17 @@
 //! their numeric value, alike in every storage.
 //!
 //! Each type also has the arithmetic of the native integers at its width, as `const fn`s:
-//! addition, subtraction, multiplication and negation in the `checked_*`, `wrapping_*`,
-//! `overflowing_*`, `saturating_*` and `strict_*` forms, `carrying_add` and `borrowing_sub` for
-//! `Uint`, `abs` and its forms, `unsigned_abs` and `signum` for `Int`, and the operators `+`, `-`
-//! and `*`, which panic or wrap on overflow as the native integers do (see
-//! [Overflow](Uint#overflow)). Addition, subtraction and multiplication, and negation for `Int`,
-//! also have the `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the
-//! `checked_*` method would return `Some`.
+//! addition, subtraction, multiplication, negation, division, remainder and exponentiation in the
+//! `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` forms that the native
+//! integers have, the Euclidean, rounded and exact division, the next multiple, the square root
+//! and the root of any degree, the logarithms, the midpoint and the absolute difference,
+//! `carrying_add`, `borrowing_sub`, `is_multiple_of` and the next power of two for `Uint`, `abs`
+//! and its forms, `unsigned_abs`, `signum` and `checked_isqrt` for `Int`, and the operators `+`,
+//! `-`, `*`, `/` and `%`, which panic or wrap on overflow as the native integers do (see
+//! [Overflow](Uint#overflow)): `/` and `%` panic on a zero divisor and on overflow in every build.
+//! Addition, subtraction, multiplication and exact division, and negation for `Int`, also have the
+//! `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the `checked_*` method
+//! would return `Some`.
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,
@@ -137,11 +141,12 @@
 //! [`ConstIntegerOne`], adds `Copy` and these constants, which a generic `const fn` can read.
 //! [`UnsignedFixedInteger`] and [`SignedFixedInteger`] have the methods of each sign, the families
 //! [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`], [`StrictOps`] and
-//! [`UncheckedOps`] the arithmetic, and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`] the
-//! construction of each kind. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
-//! [`FixedInteger`] and [`ConstFixedInteger`], the sign traits and the families, and
-//! [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one. The trait methods are not
-//! `const`, so constant contexts call the inherent `const fn`s, which a concrete type reaches
+//! [`UncheckedOps`] the arithmetic, [`IntegerMath`], [`UnsignedMath`] and [`SignedMath`] the
+//! functions without an overflow prefix, and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`]
+//! the construction of each kind. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
+//! [`FixedInteger`] and [`ConstFixedInteger`], the sign traits, the families and the math traits,
+//! and [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one. The trait methods are
+//! not `const`, so constant contexts call the inherent `const fn`s, which a concrete type reaches
 //! without importing a trait.
 //!
 //! ```
@@ -177,6 +182,9 @@
 //! assert_eq!(SMALL + u7::new(27), u7::MAX);
 //! assert_eq!(SMALL.checked_add(&u7::new(28)), None);
 //! assert_eq!(SMALL.wrapping_add(&u7::new(28)), u7::ZERO);
+//! assert_eq!(SMALL / u7::new(7), u7::new(14));
+//! assert_eq!(SMALL.checked_rem(&u7::ZERO), None);
+//! assert_eq!(SMALL.isqrt(), u7::new(10));
 //!
 //! // Generic code over the width alone.
 //! fn count_zeros<B: BitWidth>(values: &[Int<B>]) -> usize {
@@ -332,8 +340,9 @@ pub use decimal::{
 };
 pub use integer::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs, Int,
-  IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger, StrictOps,
-  TryNewError, Uint, UncheckedOps, UnsignedFixedInteger, WrappingOps,
+  IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger,
+  SignedMath, StrictOps, TryNewError, Uint, UncheckedOps, UnsignedFixedInteger, UnsignedMath,
+  WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,
