@@ -138,10 +138,11 @@
 //! [`UnsignedFixedInteger`] and [`SignedFixedInteger`] have the methods of each sign, the families
 //! [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`], [`StrictOps`] and
 //! [`UncheckedOps`] the arithmetic, and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`] the
-//! construction of each kind. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` both layers of
-//! [`FixedInteger`], the sign traits and the families, and [`IntegerOne`] and [`ConstIntegerOne`]
-//! with a width that holds one. The trait methods are not `const`, so constant contexts call the
-//! inherent `const fn`s, which a concrete type reaches without importing a trait.
+//! construction of each kind. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
+//! [`FixedInteger`] and [`ConstFixedInteger`], the sign traits and the families, and
+//! [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one. The trait methods are not
+//! `const`, so constant contexts call the inherent `const fn`s, which a concrete type reaches
+//! without importing a trait.
 //!
 //! ```
 //! use numo::{

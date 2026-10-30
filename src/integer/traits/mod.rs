@@ -1,15 +1,14 @@
 //! The traits that [`Uint`] and [`Int`] implement for their storages.
 //!
-//! The traits on one integer type form two layers. The general layer, [`FixedInteger`] and
-//! [`IntegerOne`], requires `Clone` but not `Copy`, and has zero, the limits and one as the
-//! functions `zero`, `min_value`, `max_value` and `one`, which return the inherent constants
-//! `ZERO`, `MIN`, `MAX` and `ONE`; its other items mirror inherent items of the same names, which
-//! concrete types reach without the trait. The const layer, [`ConstFixedInteger`] and
-//! [`ConstIntegerOne`], adds `Copy` and the constants themselves, which are the inherent constants
-//! and which a generic `const fn` can read. Every other trait mirrors inherent items of the same
-//! names too, also in constant contexts. Generic code reaches them through the traits, which have
-//! one implementation for every storage of a kind: the bound `B: BitWidth` gives `Uint<B>` and
-//! `Int<B>` every trait that their default storages implement.
+//! Zero, the limits and one reach generic code in two layers. The general layer, [`FixedInteger`]
+//! and [`IntegerOne`], requires `Clone` but not `Copy` and has them as the functions `zero`,
+//! `min_value`, `max_value` and `one`, which return the inherent constants `ZERO`, `MIN`, `MAX` and
+//! `ONE`. The const layer, [`ConstFixedInteger`] and [`ConstIntegerOne`], adds `Copy` and the
+//! constants themselves, which a generic `const fn` can read. Every other item of the traits
+//! mirrors the inherent item of the same name, which a concrete type reaches without the trait,
+//! also in constant contexts. Generic code reaches the items through the traits, which have one
+//! implementation for every storage of a kind: the bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
+//! every trait that their default storages implement.
 
 use core::{
   fmt::{Debug, Display},

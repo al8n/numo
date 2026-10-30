@@ -167,8 +167,8 @@ FEATURES
     width, `NativeInteger`, which requires `ConstFixedInteger` and has `new`, `try_new` and
     `value`, `ArrayInteger`, with `checked_from_limbs`, `to_limbs` and `as_limbs`, and
     `FromLimbs`, with `from_limbs`. Each mirrors the inherent items for generic code; the bound
-    `B: BitWidth` gives `Uint<B>` and `Int<B>` both layers of `FixedInteger` and the sign traits.
-    The trait methods are not `const`; constant contexts use the inherent `const fn`s.
+    `B: BitWidth` gives `Uint<B>` and `Int<B>` `FixedInteger`, `ConstFixedInteger` and the sign
+    traits. The trait methods are not `const`; constant contexts use the inherent `const fn`s.
 - The arithmetic methods of `Decimal`, `Uint` and `Int`, inherent and in the traits, take the
   receiver and the operands by reference, as in `a.checked_add(&b)`, so that a call does not copy a
   wide value, while the operators keep the signatures of their standard traits.
