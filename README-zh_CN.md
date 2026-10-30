@@ -163,9 +163,13 @@ fn main() -> Result<(), ParseError> {
   运算符 `+`、`-`、`*` 及其复合赋值、`Int` 的取负 `-`、`Sum` 与 `Product` 溢出时与原生整数一样，由
   `overflow-checks` 决定 panic 还是回绕。
 - 按数值的相等、比较与哈希，哈希只取决于值与 `Bits`，与存储无关；十进制格式化；`Default` 为零。
-- 供泛型代码使用的 trait，每类存储各只有一个实现：`FixedInteger`、`UnsignedFixedInteger`、
-  `SignedFixedInteger`、`HasOne`、`NativeInteger`、`ArrayInteger` 与 `FromLimbs`，以及算术 trait
-  `OverflowingOps`、`CheckedOps`、`WrappingOps`、`SaturatingOps`、`StrictOps` 与 `UncheckedOps`；加上
+- 供泛型代码使用的 trait 分两层，每类存储各只有一个实现。通用层要求 `Clone`，不要求 `Copy`：
+  `FixedInteger` 提供 `zero()`、`min_value()`、`max_value()`、`is_zero`、`is_one` 与运算符，
+  `IntegerOne` 提供 `one()`；这些函数返回常量 `ZERO`、`MIN`、`MAX` 与 `ONE`。常量层
+  `ConstFixedInteger` 与 `ConstIntegerOne` 另外要求 `Copy`，并直接提供这些常量，泛型 `const fn`
+  也能读取它们。`UnsignedFixedInteger` 与 `SignedFixedInteger` 提供按符号区分的方法，
+  `NativeInteger`、`ArrayInteger` 与 `FromLimbs` 提供各类存储的构造，算术 trait `OverflowingOps`、
+  `CheckedOps`、`WrappingOps`、`SaturatingOps`、`StrictOps` 与 `UncheckedOps` 提供算术；加上
   `B: BitWidth` 约束后，泛型代码可以对 0 到 65536 位的任意位宽使用 `Uint<B>` 与 `Int<B>`。
 - 存储放不下的位宽、`2^32` 位及以上的位宽，以及带前导零位的位宽写法（`typenum` 的常量与运算结果都不会这样写），在类型检查阶段就会报错；没有写出存储且超过 65536 位的位宽也一样。
 

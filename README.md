@@ -187,11 +187,16 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   decides, as for the native integers.
 - Numeric equality, ordering and hashing, where the hash depends only on the value and `Bits`,
   whatever the storage, decimal formatting, and `Default`, which is zero.
-- Traits with one implementation for every storage of a kind, `FixedInteger`,
-  `UnsignedFixedInteger`, `SignedFixedInteger`, `HasOne`, `NativeInteger`, `ArrayInteger` and
-  `FromLimbs`, and the arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`,
-  `SaturatingOps`, `StrictOps` and `UncheckedOps`, for generic code; with the bound `B: BitWidth`,
-  such code uses `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
+- Traits with one implementation for every storage of a kind, for generic code, in two layers. The
+  general layer requires `Clone` but not `Copy`: `FixedInteger`, with `zero()`, `min_value()`,
+  `max_value()`, `is_zero`, `is_one` and the operators, and `IntegerOne`, with `one()`; these
+  functions return the constants `ZERO`, `MIN`, `MAX` and `ONE`. The const layer,
+  `ConstFixedInteger` and `ConstIntegerOne`, adds `Copy` and the constants themselves, which a
+  generic `const fn` can read. `UnsignedFixedInteger` and `SignedFixedInteger` have the methods of
+  each sign, `NativeInteger`, `ArrayInteger` and `FromLimbs` the construction of each kind, and the
+  arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`
+  and `UncheckedOps` the arithmetic; with the bound `B: BitWidth`, such code uses `Uint<B>` and
+  `Int<B>` for any width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
   width of more than 65536 bits without an explicit storage.
