@@ -39,8 +39,9 @@ help: the trait `ConvertTo<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>
    | / impl<D, T> ConvertTo<Scaled<T>> for Scaled<D>
    | | where
    | |   D: ConvertTo<T>,
-   | |   T: FixedDecimal,
-   | |__________________^
+   | |   Self: FixedDecimal,
+   | |   Scaled<T>: FixedDecimal,
+   | |__________________________^
    = help: for that trait implementation, expected `Scaled<Decimal<_, _, _>>`, found `Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UTerm, B1>, B0>, i64>`
 note: required by a bound in `into_bare`
   --> tests/ui/scaled_and_decimal_do_not_convert.rs:10:17

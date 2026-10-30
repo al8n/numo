@@ -463,9 +463,15 @@ where
   const ONE: Self = Self::new(D::ONE, 0);
 }
 
+// Every `Scaled` that the implementations below relate is a `FixedDecimal`, so that a `Scaled` over
+// anything but a decimal of this crate, such as a `Scaled<Scaled<D>>`, has none of the traits
+// between decimal types. Bounds on the inner decimals alone would hold one level further out too,
+// because each `Scaled<D>` relates as its `D` does.
 impl<D, D2> ExactMul<Scaled<D2>> for Scaled<D>
 where
   D: ExactMul<D2>,
+  Self: FixedDecimal,
+  Scaled<D2>: FixedDecimal,
   Scaled<<D as ExactMul<D2>>::Output>: FixedDecimal,
 {
   type Output = Scaled<<D as ExactMul<D2>>::Output>;
@@ -484,6 +490,8 @@ where
 impl<D, T> WidenTo<Scaled<T>> for Scaled<D>
 where
   D: WidenTo<T>,
+  Self: FixedDecimal,
+  Scaled<T>: FixedDecimal,
 {
   /// Widens the decimal, keeping the scale.
   #[inline]
@@ -495,7 +503,8 @@ where
 impl<D, T> ConvertTo<Scaled<T>> for Scaled<D>
 where
   D: ConvertTo<T>,
-  T: FixedDecimal,
+  Self: FixedDecimal,
+  Scaled<T>: FixedDecimal,
 {
   /// Converts the decimal exactly, keeping the scale.
   #[inline]
@@ -508,7 +517,7 @@ where
   fn round_to(self, mode: RoundingMode) -> Result<Scaled<T>, ConvertError> {
     Ok(Scaled::new(
       self.value.round_to(mode)?,
-      fraction_scale::<T>(),
+      fraction_scale::<Scaled<T>>(),
     ))
   }
 }
@@ -516,14 +525,16 @@ where
 impl<D, D2, T> DivRound<Scaled<D2>, Scaled<T>> for Scaled<D>
 where
   D: DivRound<D2, T>,
-  T: FixedDecimal,
+  Self: FixedDecimal,
+  Scaled<D2>: FixedDecimal,
+  Scaled<T>: FixedDecimal,
 {
   /// Divides and rounds into `T`. The quotient takes the fraction digits of `T` as its scale.
   #[inline]
   fn div_round(&self, rhs: &Scaled<D2>, mode: RoundingMode) -> Result<Scaled<T>, DivideError> {
     Ok(Scaled::new(
       self.value.div_round(&rhs.value, mode)?,
-      fraction_scale::<T>(),
+      fraction_scale::<Scaled<T>>(),
     ))
   }
 }

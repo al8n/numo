@@ -1,0 +1,220 @@
+error[E0277]: the trait bound `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>: WidenTo<Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>>` is not satisfied
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:25:12
+   |
+25 |   widens::<Scaled<Scaled<Narrow>>, Scaled<Scaled<Wide>>>();
+   |            ^^^^^^^^^^^^^^^^^^^^^^ the trait `FromStr` is not implemented for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>`
+   |
+   = help: the following other types implement trait `FromStr`:
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>>
+             Scaled<Decimal<I, F, i128>>
+             Scaled<Decimal<I, F, i16>>
+           and $N others
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>` to implement `FixedDecimal`
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>` to implement `WidenTo<Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>>`
+note: required by a bound in `widens`
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:8:14
+   |
+ 8 | fn widens<A: WidenTo<B>, B>() {}
+   |              ^^^^^^^^^^ required by this bound in `widens`
+
+error[E0277]: the trait bound `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>: FromStr` is not satisfied
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:25:12
+   |
+25 |   widens::<Scaled<Scaled<Narrow>>, Scaled<Scaled<Wide>>>();
+   |            ^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `FromStr` is not implemented for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>`
+   = help: the following other types implement trait `FromStr`:
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>>
+             Scaled<Decimal<I, F, i128>>
+             Scaled<Decimal<I, F, i16>>
+           and $N others
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>` to implement `FixedDecimal`
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>` to implement `WidenTo<Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>>`
+note: required by a bound in `widens`
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:8:14
+   |
+ 8 | fn widens<A: WidenTo<B>, B>() {}
+   |              ^^^^^^^^^^ required by this bound in `widens`
+
+error[E0277]: the trait bound `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>: ConvertTo<Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>>` is not satisfied
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:26:14
+   |
+26 |   converts::<Scaled<Scaled<Wide>>, Scaled<Scaled<Narrow>>>();
+   |              ^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `FromStr` is not implemented for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>`
+   = help: the following other types implement trait `FromStr`:
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>>
+             Scaled<Decimal<I, F, i128>>
+             Scaled<Decimal<I, F, i16>>
+           and $N others
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>` to implement `FixedDecimal`
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>` to implement `ConvertTo<Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>>`
+note: required by a bound in `converts`
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:10:16
+   |
+10 | fn converts<A: ConvertTo<B>, B>() {}
+   |                ^^^^^^^^^^^^ required by this bound in `converts`
+
+error[E0277]: the trait bound `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>: FromStr` is not satisfied
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:26:14
+   |
+26 |   converts::<Scaled<Scaled<Wide>>, Scaled<Scaled<Narrow>>>();
+   |              ^^^^^^^^^^^^^^^^^^^^ the trait `FromStr` is not implemented for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>`
+   |
+   = help: the following other types implement trait `FromStr`:
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>>
+             Scaled<Decimal<I, F, i128>>
+             Scaled<Decimal<I, F, i16>>
+           and $N others
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>` to implement `FixedDecimal`
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>` to implement `ConvertTo<Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>>`
+note: required by a bound in `converts`
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:10:16
+   |
+10 | fn converts<A: ConvertTo<B>, B>() {}
+   |                ^^^^^^^^^^^^ required by this bound in `converts`
+
+error[E0277]: the trait bound `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>: DivRound<Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>, Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>>` is not satisfied
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:27:13
+   |
+27 |   divides::<Scaled<Scaled<Wide>>, Scaled<Scaled<Narrow>>, Scaled<Scaled<Wide>>>();
+   |             ^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `FromStr` is not implemented for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>`
+   = help: the following other types implement trait `FromStr`:
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>>
+             Scaled<Decimal<I, F, i128>>
+             Scaled<Decimal<I, F, i16>>
+           and $N others
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>` to implement `FixedDecimal`
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>` to implement `DivRound<Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>, Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>>`
+note: required by a bound in `divides`
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:12:15
+   |
+12 | fn divides<A: DivRound<B, C>, B, C>() {}
+   |               ^^^^^^^^^^^^^^ required by this bound in `divides`
+
+error[E0277]: the trait bound `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>: FromStr` is not satisfied
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:27:13
+   |
+27 |   divides::<Scaled<Scaled<Wide>>, Scaled<Scaled<Narrow>>, Scaled<Scaled<Wide>>>();
+   |             ^^^^^^^^^^^^^^^^^^^^ the trait `FromStr` is not implemented for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>`
+   |
+   = help: the following other types implement trait `FromStr`:
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>>
+             Scaled<Decimal<I, F, i128>>
+             Scaled<Decimal<I, F, i16>>
+           and $N others
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>` to implement `FixedDecimal`
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>` to implement `DivRound<Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>, Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>>`
+note: required by a bound in `divides`
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:12:15
+   |
+12 | fn divides<A: DivRound<B, C>, B, C>() {}
+   |               ^^^^^^^^^^^^^^ required by this bound in `divides`
+
+error[E0277]: the trait bound `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>: ExactMul<Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>>` is not satisfied
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:28:16
+   |
+28 |   multiplies::<Scaled<Scaled<Narrow>>, Scaled<Scaled<Wide>>>();
+   |                ^^^^^^^^^^^^^^^^^^^^^^ the trait `FromStr` is not implemented for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>`
+   |
+   = help: the following other types implement trait `FromStr`:
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>>
+             Scaled<Decimal<I, F, i128>>
+             Scaled<Decimal<I, F, i16>>
+           and $N others
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>` to implement `FixedDecimal`
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>` to implement `ExactMul<Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>>`
+note: required by a bound in `multiplies`
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:14:18
+   |
+14 | fn multiplies<A: ExactMul<B>, B>() {}
+   |                  ^^^^^^^^^^^ required by this bound in `multiplies`
+
+error[E0277]: the trait bound `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>: FromStr` is not satisfied
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:28:16
+   |
+28 |   multiplies::<Scaled<Scaled<Narrow>>, Scaled<Scaled<Wide>>>();
+   |                ^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `FromStr` is not implemented for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>`
+   = help: the following other types implement trait `FromStr`:
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>>
+             Scaled<Decimal<I, F, i128>>
+             Scaled<Decimal<I, F, i16>>
+           and $N others
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>` to implement `FixedDecimal`
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>` to implement `ExactMul<Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>>`
+note: required by a bound in `multiplies`
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:14:18
+   |
+14 | fn multiplies<A: ExactMul<B>, B>() {}
+   |                  ^^^^^^^^^^^ required by this bound in `multiplies`
+
+error[E0277]: the trait bound `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, i128>>>: FromStr` is not satisfied
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:28:16
+   |
+28 |   multiplies::<Scaled<Scaled<Narrow>>, Scaled<Scaled<Wide>>>();
+   |                ^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `FromStr` is not implemented for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, i128>>>`
+   = help: the following other types implement trait `FromStr`:
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 8]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 5]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 6]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 7]>>>
+             Scaled<Decimal<I, F, Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 3]>>>
+             Scaled<Decimal<I, F, i128>>
+             Scaled<Decimal<I, F, i16>>
+           and $N others
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, i128>>>` to implement `FixedDecimal`
+   = note: required for `Scaled<Scaled<Decimal<UInt<UInt<UTerm, B1>, B0>, UInt<UInt<UInt<UTerm, B1>, B0>, B0>, i32>>>` to implement `ExactMul<Scaled<Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i64>>>>`
+note: required by a bound in `multiplies`
+  --> tests/ui/nested_scaled_has_no_relation_traits.rs:14:18
+   |
+14 | fn multiplies<A: ExactMul<B>, B>() {}
+   |                  ^^^^^^^^^^^ required by this bound in `multiplies`

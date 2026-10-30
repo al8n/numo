@@ -14,9 +14,10 @@
 //!
 //! [`Scaled`] implements each trait once, for every decimal that implements it, with the decimal's
 //! result and the scale that the documentation of `Scaled` gives each operation. A `Scaled` relates
-//! only to a `Scaled`. Its parsing is defined for each storage, so its implementations require the
-//! `FromStr` that [`FixedDecimal`] needs, and code generic over the decimal `D` adds the bound
-//! `Scaled<D>: FixedDecimal`.
+//! only to a `Scaled`. Its parsing is defined for each storage, so its implementations of the
+//! traits on one type require the `FromStr` that [`FixedDecimal`] needs, and those of the traits
+//! between types require every `Scaled` that they relate to be a [`FixedDecimal`]. Code generic
+//! over the decimal `D` adds the bound `Scaled<D>: FixedDecimal`.
 
 use core::{
   fmt::{Debug, Display},
