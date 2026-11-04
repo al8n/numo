@@ -40,6 +40,15 @@
 //! `message`; it has no unsafe code. A derived unsafe row, `unsafe fn name(..) -> Self { body }`,
 //! serves the traits in the same way, with a body that has no unsafe code either. Each storage
 //! writes out its inherent `unchecked_*` methods.
+//!
+//! The tables of the non-zero integers, in `integer::nonzero`, have derived rows only, and the
+//! derived arm of `inherent_items!` ignores their `$args`. In an inherent block `$args` is
+//! `[integer, other]`, the integer of the same width and storage and the non-zero integer of the
+//! other sign, which the rows name through `nonzero_integer!` and `nonzero_other!`, and in a trait
+//! it is `[]`, for the associated types. A row calls `self.integer()`, the rows of the integer,
+//! `Self::known`, `Self::saturated`, `Self::duplicate` and other rows: an inherent block defines
+//! these as `const fn`s, and the generic implementations reach them through the helper traits of
+//! `integer::nonzero`.
 
 /// Passes the queries of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
 macro_rules! integer_query_table {

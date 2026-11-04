@@ -9,10 +9,11 @@ use core::{
 
 pub use error::TryNewError;
 pub use traits::{
-  ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs,
-  IntegerBits, IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedBits,
-  SignedFixedInteger, SignedMath, StrictOps, UncheckedOps, UnsignedBits, UnsignedFixedInteger,
-  UnsignedMath, WrappingOps,
+  ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,
+  FixedNonZero, FromLimbs, IntegerBits, IntegerMath, IntegerNonZero, IntegerOne, NativeInteger,
+  NonZeroLimits, NonZeroOf, OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger,
+  SignedMath, SignedNonZero, StrictOps, UncheckedOps, UnsignedBits, UnsignedFixedInteger,
+  UnsignedMath, UnsignedNonZero, WrappingOps,
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -33,6 +34,7 @@ mod tables;
 mod arithmetic;
 #[macro_use]
 mod bits;
+#[macro_use]
 mod nonzero;
 mod traits;
 

@@ -24,21 +24,30 @@ use typenum::{IsGreater, NonZero, True, U1};
 
 use sealed::Sealed;
 
-use super::{Int, TryNewError, Uint};
+use super::{
+  Int, NonZeroInt, NonZeroUint, TryNewError, Uint,
+  nonzero::{Parts, Saturated, zero, zero_value},
+};
 use crate::{
   layout::Token,
   width::{
-    FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, UintCore, UintRepr,
+    FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, NonZeroIntRepr,
+    NonZeroUintRepr, UintCore, UintRepr,
   },
 };
 
 mod sealed {
-  /// Seals the integer traits: only [`Uint`](crate::Uint) and [`Int`](crate::Int) implement them.
+  /// Seals the integer traits: only [`Uint`](crate::Uint), [`Int`](crate::Int),
+  /// [`NonZeroUint`](crate::NonZeroUint) and [`NonZeroInt`](crate::NonZeroInt) implement them.
   pub trait Sealed {}
 
   impl<B, R> Sealed for crate::Uint<B, R> {}
 
   impl<B, R> Sealed for crate::Int<B, R> {}
+
+  impl<B, R> Sealed for crate::NonZeroUint<B, R> {}
+
+  impl<B, R> Sealed for crate::NonZeroInt<B, R> {}
 }
 
 /// An integer of a fixed number of bits: [`Uint`] and [`Int`] over a native integer or an array of
@@ -789,6 +798,253 @@ pub trait SignedBits: Sealed + Sized + IntegerMath {
   int_bits_table!(trait_items![]);
 }
 
+/// A non-zero integer of a fixed number of bits: [`NonZeroUint`] and [`NonZeroInt`] over the
+/// `NonZero` of a native integer or an array of limbs.
+///
+/// [`Integer`](Self::Integer) is the integer of the same width and storage that may be zero, which
+/// [`new`](Self::new) takes and [`get`](Self::get) returns. `BITS`, `new`, `get` and the methods of
+/// the bits and the arithmetic are the inherent items of the same names, which a concrete type
+/// reaches without this trait, also in constant contexts. This trait requires `Clone` rather than
+/// `Copy`, and has no constant but `BITS`, so that every storage implements it at every width, zero
+/// bits included, where no value exists; [`NonZeroLimits`] and [`ConstNonZeroLimits`] add the
+/// limits from one bit. Generic code reaches the items through this trait, which the bound
+/// `B: BitWidth` provides on `NonZeroUint<B>` and `NonZeroInt<B>`; a method call needs the trait in
+/// scope. The operators that a non-zero integer has, which need a storage that holds the value
+/// inline in their forms on values, are not supertraits: generic code that uses one bounds it.
+///
+/// ```
+/// use numo::{
+///   BitWidth, FixedNonZero, NonZeroUint,
+///   typenum::{U7, U200},
+///   u7,
+/// };
+///
+/// // The number of ones of the values.
+/// fn ones<B: BitWidth>(values: &[NonZeroUint<B>]) -> u32 {
+///   values.iter().map(|value| value.count_ones().get()).sum()
+/// }
+///
+/// fn squared<T: FixedNonZero>(value: &T) -> Option<T> {
+///   value.checked_mul(value)
+/// }
+///
+/// let five = NonZeroUint::<U7>::new(u7::new(5)).unwrap();
+/// assert_eq!(ones(&[five, NonZeroUint::<U7>::MAX]), 9);
+/// assert_eq!(squared(&five).map(|square| square.get()), Some(u7::new(25)));
+/// assert_eq!(squared(&NonZeroUint::<U200>::MAX), None);
+/// assert_eq!(<NonZeroUint<U7> as FixedNonZero>::new(u7::ZERO), None);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait FixedNonZero: Sealed + Clone + Eq + Ord + Hash + Debug + Display {
+  /// The integer of the same width and storage that may be zero: `Uint<B, u8>` for
+  /// `NonZeroUint<B, core::num::NonZero<u8>>`, and so on, and `Uint<B, [L; N]>` for
+  /// `NonZeroUint<B, [L; N]>`, and the `Int` of the same storage for `NonZeroInt`.
+  type Integer;
+
+  /// The number of bits, `Bits`.
+  const BITS: u32;
+
+  /// Creates a non-zero integer of the value `value`, or returns `None` if it is zero.
+  #[must_use]
+  fn new(value: Self::Integer) -> Option<Self>;
+
+  /// Returns the value, as the integer that may be zero.
+  #[must_use]
+  fn get(self) -> Self::Integer;
+
+  /// Creates a non-zero integer of the value `value`, which must not be zero.
+  ///
+  /// # Safety
+  ///
+  /// `value` must not be zero, that is, [`new`](Self::new) would return `Some`. Otherwise the
+  /// behavior is undefined. Through this trait, the method checks `value` in every build and
+  /// panics if it is zero, reporting the caller: unlike the unchecked arithmetic of
+  /// [`UncheckedOps`], whose results exist when the caller's guarantee fails, no non-zero integer
+  /// of zero exists to return.
+  #[must_use]
+  #[track_caller]
+  unsafe fn new_unchecked(value: Self::Integer) -> Self;
+
+  nonzero_table!(Uint, trait_items![]);
+}
+
+/// A non-zero unsigned integer of a fixed number of bits: [`NonZeroUint`].
+///
+/// The methods are the inherent methods of the same names, which a concrete type reaches without
+/// this trait, also in constant contexts: the addition of an integer that may be zero, the next
+/// power of two, the logarithms, the midpoint, the square root, the division rounded up, the bit
+/// width and the cast to [`NonZeroInt`].
+///
+/// ```
+/// use numo::{
+///   NonZeroInt, NonZeroUint, UnsignedNonZero,
+///   typenum::U7,
+///   i7, u7,
+/// };
+///
+/// // The number of decimal digits of a value.
+/// fn digits<T: UnsignedNonZero>(value: &T) -> u32 {
+///   value.ilog10() + 1
+/// }
+///
+/// let hundred = NonZeroUint::<U7>::new(u7::new(100)).unwrap();
+/// assert_eq!(digits(&hundred), 3);
+/// assert_eq!(hundred.checked_add(&u7::new(27)), Some(NonZeroUint::<U7>::MAX));
+/// assert_eq!(hundred.checked_add(&u7::new(28)), None);
+/// assert_eq!(hundred.saturating_add(&u7::new(28)), NonZeroUint::<U7>::MAX);
+/// assert_eq!(NonZeroUint::<U7>::MAX.cast_signed(), NonZeroInt::<U7>::new(i7::new(-1)).unwrap());
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait UnsignedNonZero: FixedNonZero {
+  /// The `NonZeroInt` of the same width in a storage of the same size:
+  /// `NonZeroInt<B, core::num::NonZero<i8>>` for `NonZeroUint<B, core::num::NonZero<u8>>`, and so
+  /// on, and `NonZeroInt<B, [L; N]>` for `NonZeroUint<B, [L; N]>`.
+  type Signed;
+
+  nonzero_uint_table!(trait_items![]);
+}
+
+/// A non-zero signed integer of a fixed number of bits, in two's complement: [`NonZeroInt`].
+///
+/// The methods are the inherent methods of the same names, which a concrete type reaches without
+/// this trait, also in constant contexts: the sign queries, the negation and the absolute value
+/// in their forms, `unsigned_abs` and the cast to [`NonZeroUint`].
+///
+/// ```
+/// use numo::{
+///   NonZeroInt, SignedNonZero,
+///   typenum::U7,
+///   u7,
+/// };
+///
+/// // The distance from zero, which also holds that of `MIN`.
+/// fn distance<T: SignedNonZero>(value: &T) -> T::Unsigned {
+///   value.unsigned_abs()
+/// }
+///
+/// let min = NonZeroInt::<U7>::MIN;
+/// assert!(min.is_negative());
+/// assert_eq!(min.checked_abs(), None);
+/// assert_eq!(min.saturating_abs(), NonZeroInt::<U7>::MAX);
+/// assert_eq!(distance(&min).get(), u7::new(64));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait SignedNonZero: FixedNonZero {
+  /// The `NonZeroUint` of the same width in a storage of the same size:
+  /// `NonZeroUint<B, core::num::NonZero<u8>>` for `NonZeroInt<B, core::num::NonZero<i8>>`, and so
+  /// on, and `NonZeroUint<B, [L; N]>` for `NonZeroInt<B, [L; N]>`.
+  type Unsigned;
+
+  nonzero_int_table!(trait_items![]);
+}
+
+/// A non-zero integer with limits: [`NonZeroUint`] and [`NonZeroInt`] of at least one bit.
+///
+/// [`min_value`](Self::min_value) and [`max_value`](Self::max_value) return the inherent constants
+/// `MIN` and `MAX`. Zero bits hold no value but zero, so a non-zero integer of zero bits has no
+/// limits and does not implement this trait. This trait requires `Clone` but not `Copy`, as
+/// [`FixedNonZero`] does; [`ConstNonZeroLimits`] gives the limits to generic code as constants.
+/// Generic code over `B: BitWidth` adds `B: NonZero`.
+///
+/// ```
+/// use numo::{
+///   BitWidth, NonZeroInt, NonZeroLimits,
+///   typenum::{NonZero, U7},
+///   i7,
+/// };
+///
+/// // The largest of the values, or the smallest value of the type if there are none.
+/// fn largest<T: NonZeroLimits>(values: &[T]) -> T {
+///   values.iter().fold(T::min_value(), |largest, value| largest.max(value.clone()))
+/// }
+///
+/// fn limits<B: BitWidth + NonZero>() -> (NonZeroInt<B>, NonZeroInt<B>) {
+///   (NonZeroInt::<B>::MIN, NonZeroInt::<B>::MAX)
+/// }
+///
+/// let five = NonZeroInt::<U7>::new(i7::new(5)).unwrap();
+/// assert_eq!(largest(&[five, NonZeroInt::<U7>::MIN]), five);
+/// assert_eq!(largest::<NonZeroInt<U7>>(&[]), NonZeroInt::<U7>::MIN);
+/// assert_eq!(limits::<U7>(), (NonZeroInt::<U7>::MIN, NonZeroInt::<U7>::MAX));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait NonZeroLimits: FixedNonZero {
+  /// Returns the smallest value: one for `NonZeroUint`, and `MIN` for `NonZeroInt`.
+  #[must_use]
+  fn min_value() -> Self;
+
+  /// Returns the largest value: `MAX`, which one signed bit holds as -1.
+  #[must_use]
+  fn max_value() -> Self;
+}
+
+/// A non-zero integer whose limits are constants: [`NonZeroUint`] and [`NonZeroInt`] of at least
+/// one bit, over a `Copy` storage whose integer holds the value inline.
+///
+/// `MIN` and `MAX` are the inherent constants of the same names, which a concrete type reaches
+/// without this trait, also in constant contexts. Generic code reads them through this trait as
+/// `T::MIN` and `T::MAX`, also in a generic `const fn`, which cannot call
+/// [`min_value`](NonZeroLimits::min_value) or [`max_value`](NonZeroLimits::max_value). The
+/// supertrait `Copy` lets generic code use a value again without cloning it.
+///
+/// ```
+/// use numo::{ConstNonZeroLimits, NonZeroInt, NonZeroUint, typenum::U7};
+///
+/// // The limits, in a constant context.
+/// const fn limits<T: ConstNonZeroLimits>() -> [T; 2] {
+///   [T::MIN, T::MAX]
+/// }
+///
+/// const UNSIGNED: [NonZeroUint<U7>; 2] = limits();
+/// const SIGNED: [NonZeroInt<U7>; 2] = limits();
+/// assert_eq!(UNSIGNED, [NonZeroUint::<U7>::MIN, NonZeroUint::<U7>::MAX]);
+/// assert_eq!(SIGNED, [NonZeroInt::<U7>::MIN, NonZeroInt::<U7>::MAX]);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait ConstNonZeroLimits: NonZeroLimits + Copy {
+  /// The smallest value.
+  const MIN: Self;
+
+  /// The largest value.
+  const MAX: Self;
+}
+
+/// An integer and its non-zero integer: [`Uint`] and [`Int`], whose
+/// [`NonZero`](Self::NonZero) is the [`NonZeroUint`] or [`NonZeroInt`] of the same width over the
+/// non-zero storage of its storage, which [`NonZeroOf`] names.
+///
+/// ```
+/// use numo::{FixedNonZero, IntegerNonZero, NonZeroOf, i256, u7};
+///
+/// const FIVE: NonZeroOf<u7> = NonZeroOf::<u7>::new(u7::new(5)).unwrap();
+///
+/// // The first value that is not zero.
+/// fn first<T: IntegerNonZero>(values: Vec<T>) -> Option<NonZeroOf<T>> {
+///   values.into_iter().find_map(NonZeroOf::<T>::new)
+/// }
+///
+/// assert_eq!(first(vec![u7::ZERO, u7::new(5)]), Some(FIVE));
+/// assert_eq!(first(vec![i256::ZERO]), None);
+/// assert_eq!(size_of::<Option<NonZeroOf<u7>>>(), 1);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait IntegerNonZero: Sealed + Sized {
+  /// The non-zero integer of the same width and storage size: `NonZeroUint<B, R::NonZero>` for
+  /// `Uint<B, R>`, and `NonZeroInt<B, R::NonZero>` for `Int<B, R>`.
+  type NonZero: FixedNonZero<Integer = Self>;
+}
+
+/// The non-zero integer of the integer `T`: `NonZeroOf<u7>` is
+/// `NonZeroUint<U7, core::num::NonZero<u8>>`, and `NonZeroOf<i256>` is
+/// `NonZeroInt<U256, [u64; 4]>`. It names the non-zero integer of any alias of [`aliases`](crate::aliases).
+pub type NonZeroOf<T> = <T as IntegerNonZero>::NonZero;
+
 // The constants and methods are the inherent ones, which `Self::` names first, and the functions
 // without an inherent counterpart return the inherent constants.
 impl<B: FitsBits<R>, R: InlineUintRepr> FixedInteger for Uint<B, R> {
@@ -1048,6 +1304,146 @@ impl<B: FitsBits<R>, R: UintRepr> UnsignedBits for Uint<B, R> {
 
 impl<B: FitsBits<R>, R: IntRepr> SignedBits for Int<B, R> {
   int_bits_table!(generic_items![]);
+}
+
+// The constants and the construction are written out, and the rows come from the tables. The bodies
+// reach the storage through its sealed trait and the helpers of `Parts` and `Saturated`, which need
+// neither `Copy` nor a constant, so that every storage implements the traits.
+impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> FixedNonZero for NonZeroUint<B, R> {
+  type Integer = Uint<B, R::Integer>;
+
+  const BITS: u32 = Self::BITS;
+
+  #[inline]
+  fn new(value: Uint<B, R::Integer>) -> Option<Self> {
+    let repr = value.repr.to_nonzero(Token::new())?;
+    Some(Self {
+      value: Uint::wrap(repr),
+    })
+  }
+
+  #[inline]
+  fn get(self) -> Uint<B, R::Integer> {
+    Uint::wrap(<R::Integer as UintCore>::from_nonzero(
+      self.value.repr,
+      Token::new(),
+    ))
+  }
+
+  // The body has no unsafe code: it checks the value and panics on zero, in every build.
+  #[inline]
+  #[track_caller]
+  unsafe fn new_unchecked(value: Uint<B, R::Integer>) -> Self {
+    match <Self as FixedNonZero>::new(value) {
+      Some(nonzero) => nonzero,
+      None => zero_value(),
+    }
+  }
+
+  nonzero_table!(Uint, generic_items![]);
+}
+
+impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> FixedNonZero for NonZeroInt<B, R> {
+  type Integer = Int<B, R::Integer>;
+
+  const BITS: u32 = Self::BITS;
+
+  #[inline]
+  fn new(value: Int<B, R::Integer>) -> Option<Self> {
+    let repr = value.repr.to_nonzero(Token::new())?;
+    Some(Self {
+      value: Int::wrap(repr),
+    })
+  }
+
+  #[inline]
+  fn get(self) -> Int<B, R::Integer> {
+    Int::wrap(<R::Integer as IntCore>::from_nonzero(
+      self.value.repr,
+      Token::new(),
+    ))
+  }
+
+  // The body has no unsafe code: it checks the value and panics on zero, in every build.
+  #[inline]
+  #[track_caller]
+  unsafe fn new_unchecked(value: Int<B, R::Integer>) -> Self {
+    match <Self as FixedNonZero>::new(value) {
+      Some(nonzero) => nonzero,
+      None => zero_value(),
+    }
+  }
+
+  nonzero_table!(Int, generic_items![]);
+}
+
+// The casts build the non-zero integer of the other sign through `Parts`, which needs no width
+// relation of its storage.
+impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> UnsignedNonZero for NonZeroUint<B, R> {
+  type Signed = NonZeroInt<B, R::Signed>;
+
+  nonzero_uint_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> SignedNonZero for NonZeroInt<B, R> {
+  type Unsigned = NonZeroUint<B, R::Unsigned>;
+
+  nonzero_int_table!(generic_items![]);
+}
+
+// The limits are computed with the sealed storage methods, which need no constant.
+impl<B: FitsBits<R::Integer> + NonZero, R: NonZeroUintRepr> NonZeroLimits for NonZeroUint<B, R> {
+  #[inline]
+  fn min_value() -> Self {
+    // One, the lowest bit alone, which a width of one bit or more holds.
+    match <R::Integer as UintCore>::zero(Token::new()).with_bit(0, true, B::U32, Token::new()) {
+      Some(one) => Self::known(Uint::wrap(one)),
+      None => zero(),
+    }
+  }
+
+  #[inline]
+  fn max_value() -> Self {
+    Self::saturated(true)
+  }
+}
+
+impl<B: FitsBits<R::Integer> + NonZero, R: NonZeroIntRepr> NonZeroLimits for NonZeroInt<B, R> {
+  #[inline]
+  fn min_value() -> Self {
+    Self::saturated(false)
+  }
+
+  #[inline]
+  fn max_value() -> Self {
+    Self::saturated(true)
+  }
+}
+
+impl<B: FitsBits<R::Integer> + NonZero, R: NonZeroUintRepr + Copy> ConstNonZeroLimits
+  for NonZeroUint<B, R>
+where
+  R::Integer: InlineUintRepr,
+{
+  const MIN: Self = Self::MIN;
+  const MAX: Self = Self::MAX;
+}
+
+impl<B: FitsBits<R::Integer> + NonZero, R: NonZeroIntRepr + Copy> ConstNonZeroLimits
+  for NonZeroInt<B, R>
+where
+  R::Integer: InlineIntRepr,
+{
+  const MIN: Self = Self::MIN;
+  const MAX: Self = Self::MAX;
+}
+
+impl<B: FitsBits<R>, R: UintRepr> IntegerNonZero for Uint<B, R> {
+  type NonZero = NonZeroUint<B, <R as UintRepr>::NonZero>;
+}
+
+impl<B: FitsBits<R>, R: IntRepr> IntegerNonZero for Int<B, R> {
+  type NonZero = NonZeroInt<B, <R as IntRepr>::NonZero>;
 }
 
 #[cfg(test)]

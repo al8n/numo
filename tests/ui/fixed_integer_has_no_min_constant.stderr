@@ -13,5 +13,7 @@ help: the following traits define an item `MIN`, perhaps you need to restrict ty
   |                             +++++++++++++++++++
 5 | fn smallest<T: FixedInteger + ConstFixedInteger>() -> T {
   |                             +++++++++++++++++++
+5 | fn smallest<T: FixedInteger + ConstNonZeroLimits>() -> T {
+  |                             ++++++++++++++++++++
 5 | fn smallest<T: FixedInteger + numo::width::sealed::IntWidth</* R */>>() -> T {
   |                             ++++++++++++++++++++++++++++++++++++++++
