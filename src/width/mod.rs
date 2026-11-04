@@ -20,7 +20,7 @@ pub(crate) use sealed::{IntCore, IntWidth, TypenumNumber, UintCore, UintWidth};
 use sealed::{
   ArrayLimb, BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr,
   InlineIntConsts, InlineUintConsts, LimbFor, MutableRepr, NativeBitsFit, NativeReprFilled,
-  ReprFilled, Width,
+  NonZeroRepr, ReprFilled, Width,
 };
 
 use crate::{
@@ -138,6 +138,11 @@ mod sealed {
   /// own type.
   pub trait LimbFor<Bits> {}
 
+  /// Seals [`NonZeroUintRepr`](super::NonZeroUintRepr) and
+  /// [`NonZeroIntRepr`](super::NonZeroIntRepr): the native `NonZero` integers and the arrays of
+  /// limbs.
+  pub trait NonZeroRepr {}
+
   /// Seals [`InlineUintRepr`](super::InlineUintRepr) and carries the constants of `Uint`.
   pub trait InlineUintConsts: UintRepr + Copy {
     /// Zero.
@@ -164,19 +169,36 @@ mod sealed {
     type Width<B: FitsBits<Self>>: IntWidth<Self>;
   }
 
-  /// The constants of `Uint<B, R>` that depend on the width `B`.
-  pub trait UintWidth<R> {
+  /// The constants of `Uint<B, R>` that depend on the width `B`, and those of the non-zero unsigned
+  /// integer of `B` bits in the non-zero storage of `R`.
+  pub trait UintWidth<R: UintCore> {
     /// The largest value, `2^B - 1`.
     const MAX: R;
+
+    /// The smallest non-zero value, one. It is read only from one bit up.
+    const NONZERO_MIN: R::NonZeroStorage;
+
+    /// The largest non-zero value, `MAX`. It is read only from one bit up: at zero bits, `MAX` is
+    /// zero.
+    const NONZERO_MAX: R::NonZeroStorage;
   }
 
-  /// The constants of `Int<B, R>` that depend on the width `B`.
-  pub trait IntWidth<R> {
+  /// The constants of `Int<B, R>` that depend on the width `B`, and those of the non-zero signed
+  /// integer of `B` bits in the non-zero storage of `R`.
+  pub trait IntWidth<R: IntCore> {
     /// The smallest value, `-2^(B - 1)`, or zero for zero bits.
     const MIN: R;
 
     /// The largest value, `2^(B - 1) - 1`, or zero for zero bits.
     const MAX: R;
+
+    /// The smallest non-zero value, `MIN`. It is read only from one bit up: at zero bits, `MIN` is
+    /// zero.
+    const NONZERO_MIN: R::NonZeroStorage;
+
+    /// The largest non-zero value: `MAX` from two bits, and `MIN`, -1, at one bit, whose `MAX` is
+    /// zero. It is read only from one bit up.
+    const NONZERO_MAX: R::NonZeroStorage;
   }
 
   /// Carries the constants of the width `B` in the inline storage `R`, as its impls of
@@ -200,10 +222,12 @@ mod sealed {
     + FitsBits<<Self as DefaultRepr<Small>>::Signed>
   {
     /// The default storage of `Uint<Self>`.
-    type Unsigned: InlineUintRepr + UintRepr<Signed = <Self as DefaultRepr<Small>>::Signed>;
+    type Unsigned: InlineUintRepr
+      + UintRepr<Signed = <Self as DefaultRepr<Small>>::Signed, NonZero: Copy>;
 
     /// The default storage of `Int<Self>`.
-    type Signed: InlineIntRepr + IntRepr<Unsigned = <Self as DefaultRepr<Small>>::Unsigned>;
+    type Signed: InlineIntRepr
+      + IntRepr<Unsigned = <Self as DefaultRepr<Small>>::Unsigned, NonZero: Copy>;
   }
 
   /// Implemented only for `B1`, the result of `Bits <= 65536`, with the array of 64-bit limbs that
@@ -219,8 +243,8 @@ mod sealed {
     /// `Limbs<Bits>`.
     type Array: InlineUintRepr
       + InlineIntRepr
-      + IntRepr<Unsigned = Self::Array>
-      + UintRepr<Signed = Self::Array>;
+      + IntRepr<Unsigned = Self::Array, NonZero = Self::Array>
+      + UintRepr<Signed = Self::Array, NonZero = Self::Array>;
   }
 
   /// A limb type of the array storages: `[L; N]` holds `N << L::BitsLog2` bits.
@@ -239,6 +263,11 @@ mod sealed {
     /// The storage of the two's complement integer of the same size, which holds the bits of a
     /// value read with a sign: [`UintRepr::Signed`](super::UintRepr::Signed).
     type Complement;
+
+    /// The storage of a value that is not zero: [`UintRepr::NonZero`](super::UintRepr::NonZero),
+    /// the native `NonZero` of a native integer, whose niche gives `Option` the size of the
+    /// integer, and the array itself for an array of limbs.
+    type NonZeroStorage;
 
     /// Zero.
     fn zero(token: Token) -> Self;
@@ -438,6 +467,25 @@ mod sealed {
     /// sign-extended from bit `bits - 1`, or zero for zero bits. Requires `bits` to be at most the
     /// bits of the storage and the value to have `bits` bits.
     fn cast_signed_bits(self, bits: u32, token: Token) -> Self::Complement;
+
+    /// The non-zero storage of the value, or `None` if it is zero.
+    fn to_nonzero(self, token: Token) -> Option<Self::NonZeroStorage>;
+
+    /// The value of a non-zero storage.
+    fn from_nonzero(nonzero: Self::NonZeroStorage, token: Token) -> Self;
+
+    /// Calls `f` with the value of a non-zero storage, which an array lends and a native integer
+    /// copies.
+    fn with_nonzero<T>(
+      nonzero: &Self::NonZeroStorage,
+      f: impl FnOnce(&Self) -> T,
+      token: Token,
+    ) -> T;
+
+    /// The non-zero storage of a value that is not zero, as every non-zero result of the
+    /// arithmetic is. A zero is a bug of this crate: it panics in a native integer, whose non-zero
+    /// storage cannot hold it, and fails a debug assertion in an array.
+    fn known_nonzero(self, token: Token) -> Self::NonZeroStorage;
   }
 
   /// Seals [`IntRepr`](super::IntRepr) and gives the trait implementations of [`Int`](crate::Int)
@@ -450,6 +498,10 @@ mod sealed {
     /// absolute value of the smallest value and the two's complement bits of every value:
     /// [`IntRepr::Unsigned`](super::IntRepr::Unsigned).
     type Magnitude;
+
+    /// The storage of a value that is not zero: [`IntRepr::NonZero`](super::IntRepr::NonZero), as
+    /// for [`UintCore::NonZeroStorage`].
+    type NonZeroStorage;
 
     /// Zero.
     fn zero(token: Token) -> Self;
@@ -671,6 +723,24 @@ mod sealed {
     /// The `bits` bits of the value, its two's complement, as the unsigned storage of the same
     /// size. Requires `bits` to be at most the bits of the storage.
     fn cast_unsigned_bits(self, bits: u32, token: Token) -> Self::Magnitude;
+
+    /// The non-zero storage of the value, or `None` if it is zero.
+    fn to_nonzero(self, token: Token) -> Option<Self::NonZeroStorage>;
+
+    /// The value of a non-zero storage.
+    fn from_nonzero(nonzero: Self::NonZeroStorage, token: Token) -> Self;
+
+    /// Calls `f` with the value of a non-zero storage, which an array lends and a native integer
+    /// copies.
+    fn with_nonzero<T>(
+      nonzero: &Self::NonZeroStorage,
+      f: impl FnOnce(&Self) -> T,
+      token: Token,
+    ) -> T;
+
+    /// The non-zero storage of a value that is not zero, as for
+    /// [`UintCore::known_nonzero`].
+    fn known_nonzero(self, token: Token) -> Self::NonZeroStorage;
   }
 }
 
@@ -771,13 +841,22 @@ where
   message = "`{Self}` is not a storage of `Uint`",
   note = "`Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`"
 )]
-pub trait UintRepr: Eq + UintCore<Complement = <Self as UintRepr>::Signed> {
+pub trait UintRepr:
+  Eq + UintCore<Complement = <Self as UintRepr>::Signed, NonZeroStorage = <Self as UintRepr>::NonZero>
+{
   /// The storage of [`Int`](crate::Int) of the same size: `i8` for `u8`, `i16` for `u16`, and so
   /// on, and the same array for an array of limbs. It holds the bits of a value read in two's
   /// complement, as [`cast_signed`](crate::UnsignedBits::cast_signed) reads them, and its
   /// [`Unsigned`](IntRepr::Unsigned) is this storage again, so that generic code over the width
   /// casts `Uint<B>` to `Int<B>` and back.
   type Signed: IntRepr<Unsigned = Self>;
+
+  /// The storage of the values of this storage that are not zero: `core::num::NonZero<u8>` for
+  /// `u8`, and so on, and the same array for an array of limbs. Its
+  /// [`Integer`](NonZeroUintRepr::Integer) is this storage again, and its
+  /// [`Signed`](NonZeroUintRepr::Signed), the storage of a cast, is the
+  /// [`NonZero`](IntRepr::NonZero) of [`Signed`](Self::Signed).
+  type NonZero: NonZeroUintRepr<Integer = Self, Signed = <Self::Signed as IntRepr>::NonZero>;
 }
 
 /// A storage of [`Int`](crate::Int): a native signed integer, `i8`, `i16`, `i32`, `i64` or `i128`,
@@ -798,10 +877,69 @@ pub trait UintRepr: Eq + UintCore<Complement = <Self as UintRepr>::Signed> {
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
 )]
-pub trait IntRepr: Eq + IntCore<Magnitude = <Self as IntRepr>::Unsigned> {
+pub trait IntRepr:
+  Eq + IntCore<Magnitude = <Self as IntRepr>::Unsigned, NonZeroStorage = <Self as IntRepr>::NonZero>
+{
   /// The storage of [`Uint`](crate::Uint) of the same size: `u8` for `i8`, `u16` for `i16`, and so
   /// on, and the same array for an array of limbs.
   type Unsigned: UintRepr;
+
+  /// The storage of the values of this storage that are not zero: `core::num::NonZero<i8>` for
+  /// `i8`, and so on, and the same array for an array of limbs. Its
+  /// [`Integer`](NonZeroIntRepr::Integer) is this storage again, and its
+  /// [`Unsigned`](NonZeroIntRepr::Unsigned), the storage of a cast, is the
+  /// [`NonZero`](UintRepr::NonZero) of [`Unsigned`](Self::Unsigned).
+  type NonZero: NonZeroIntRepr<Integer = Self, Unsigned = <Self::Unsigned as UintRepr>::NonZero>;
+}
+
+/// A storage of the non-zero unsigned integers: `core::num::NonZero<u8>`, `NonZero<u16>`,
+/// `NonZero<u32>`, `NonZero<u64>` or `NonZero<u128>`, which holds a value that is not zero, or an
+/// array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, which holds it in `N` limbs,
+/// least significant first, as for [`Uint`](crate::Uint).
+///
+/// Each is the [`NonZero`](UintRepr::NonZero) of a storage of `Uint`, its
+/// [`Integer`](Self::Integer). This trait is sealed and cannot be implemented outside this crate.
+#[diagnostic::on_unimplemented(
+  message = "`{Self}` is not a storage of `NonZeroUint`",
+  note = "`NonZeroUint` stores `core::num::NonZero<u8>` to `NonZero<u128>`, or an array `[u8; N]` to `[u128; N]`"
+)]
+pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
+  /// The storage of the integer that may be zero: `u8` for `core::num::NonZero<u8>`, and so on,
+  /// and the array itself for an array of limbs. Its [`NonZero`](UintRepr::NonZero) is this
+  /// storage again.
+  type Integer: UintRepr<NonZero = Self>;
+
+  /// The non-zero storage of the signed integer of the same size: `core::num::NonZero<i8>` for
+  /// `NonZero<u8>`, and so on, and the array itself for an array of limbs. Its
+  /// [`Integer`](NonZeroIntRepr::Integer) is the [`Signed`](UintRepr::Signed) of this storage's
+  /// `Integer`, which holds the bits of a cast, and it is the [`NonZero`](IntRepr::NonZero) of
+  /// that storage, as [`UintRepr::NonZero`] states.
+  type Signed: NonZeroIntRepr<Integer = <Self::Integer as UintRepr>::Signed>;
+}
+
+/// A storage of the non-zero signed integers: `core::num::NonZero<i8>`, `NonZero<i16>`,
+/// `NonZero<i32>`, `NonZero<i64>` or `NonZero<i128>`, which holds a value that is not zero, or an
+/// array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, which holds it in `N` limbs,
+/// least significant first, in two's complement, as for [`Int`](crate::Int).
+///
+/// Each is the [`NonZero`](IntRepr::NonZero) of a storage of `Int`, its
+/// [`Integer`](Self::Integer). This trait is sealed and cannot be implemented outside this crate.
+#[diagnostic::on_unimplemented(
+  message = "`{Self}` is not a storage of `NonZeroInt`",
+  note = "`NonZeroInt` stores `core::num::NonZero<i8>` to `NonZero<i128>`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
+)]
+pub trait NonZeroIntRepr: Eq + Clone + NonZeroRepr {
+  /// The storage of the integer that may be zero: `i8` for `core::num::NonZero<i8>`, and so on,
+  /// and the array itself for an array of limbs. Its [`NonZero`](IntRepr::NonZero) is this
+  /// storage again.
+  type Integer: IntRepr<NonZero = Self>;
+
+  /// The non-zero storage of the unsigned integer of the same size: `core::num::NonZero<u8>` for
+  /// `NonZero<i8>`, and so on, and the array itself for an array of limbs. Its
+  /// [`Integer`](NonZeroUintRepr::Integer) is the [`Unsigned`](IntRepr::Unsigned) of this
+  /// storage's `Integer`, which holds the bits of a cast, and it is the
+  /// [`NonZero`](UintRepr::NonZero) of that storage, as [`IntRepr::NonZero`] states.
+  type Unsigned: NonZeroUintRepr<Integer = <Self::Integer as IntRepr>::Unsigned>;
 }
 
 /// A storage of [`Uint`](crate::Uint) that holds the value in place, so that the integers have the
@@ -846,8 +984,9 @@ pub trait InlineUintRepr: UintReprMut + Copy + InlineUintConsts {}
 pub trait InlineIntRepr: IntReprMut + Copy + InlineIntConsts {}
 
 /// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`],
-/// [`InlineUintRepr`] and [`InlineIntRepr`] for the arrays of each limb type, written
-/// `limb: BitsLog2, lower, upper`, where `lower` and `upper` are the modules of its limb layers.
+/// [`InlineUintRepr`], [`InlineIntRepr`], [`NonZeroUintRepr`] and [`NonZeroIntRepr`] for the arrays
+/// of each limb type, written `limb: BitsLog2, lower, upper`, where `lower` and `upper` are the
+/// modules of its limb layers.
 macro_rules! array_storage {
   ($($limb:ident: $bits_log2:ident, $lower:ident, $upper:ident);+ $(;)?) => {$(
     impl ArrayLimb for $limb {
@@ -856,10 +995,12 @@ macro_rules! array_storage {
 
     impl<const N: usize> UintRepr for [$limb; N] {
       type Signed = Self;
+      type NonZero = Self;
     }
 
     impl<const N: usize> UintCore for [$limb; N] {
       type Complement = Self;
+      type NonZeroStorage = Self;
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -1120,14 +1261,41 @@ macro_rules! array_storage {
       fn cast_signed_bits(self, bits: u32, _: Token) -> Self {
         unsigned::$lower::cast_signed_bits(&self, bits)
       }
+
+      #[inline]
+      fn to_nonzero(self, _: Token) -> Option<Self> {
+        if unsigned::$lower::is_zero(&self) {
+          None
+        } else {
+          Some(self)
+        }
+      }
+
+      #[inline]
+      fn from_nonzero(nonzero: Self, _: Token) -> Self {
+        nonzero
+      }
+
+      #[inline]
+      fn with_nonzero<T>(nonzero: &Self, f: impl FnOnce(&Self) -> T, _: Token) -> T {
+        f(nonzero)
+      }
+
+      #[inline]
+      fn known_nonzero(self, _: Token) -> Self {
+        debug_assert!(!unsigned::$lower::is_zero(&self), "a non-zero result is zero");
+        self
+      }
     }
 
     impl<const N: usize> IntRepr for [$limb; N] {
       type Unsigned = Self;
+      type NonZero = Self;
     }
 
     impl<const N: usize> IntCore for [$limb; N] {
       type Magnitude = Self;
+      type NonZeroStorage = Self;
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -1408,6 +1576,43 @@ macro_rules! array_storage {
       fn cast_unsigned_bits(self, bits: u32, _: Token) -> Self {
         signed::$upper::cast_unsigned_bits(&self, bits)
       }
+
+      #[inline]
+      fn to_nonzero(self, _: Token) -> Option<Self> {
+        if signed::$upper::is_zero(&self) {
+          None
+        } else {
+          Some(self)
+        }
+      }
+
+      #[inline]
+      fn from_nonzero(nonzero: Self, _: Token) -> Self {
+        nonzero
+      }
+
+      #[inline]
+      fn with_nonzero<T>(nonzero: &Self, f: impl FnOnce(&Self) -> T, _: Token) -> T {
+        f(nonzero)
+      }
+
+      #[inline]
+      fn known_nonzero(self, _: Token) -> Self {
+        debug_assert!(!signed::$upper::is_zero(&self), "a non-zero result is zero");
+        self
+      }
+    }
+
+    impl<const N: usize> NonZeroRepr for [$limb; N] {}
+
+    impl<const N: usize> NonZeroUintRepr for [$limb; N] {
+      type Integer = Self;
+      type Signed = Self;
+    }
+
+    impl<const N: usize> NonZeroIntRepr for [$limb; N] {
+      type Integer = Self;
+      type Unsigned = Self;
     }
 
     impl<const N: usize> MutableRepr for [$limb; N] {}
@@ -1427,6 +1632,8 @@ macro_rules! array_storage {
 
     impl<B: FitsBits<[$limb; N]>, const N: usize> UintWidth<[$limb; N]> for Width<B, [$limb; N]> {
       const MAX: [$limb; N] = unsigned::$lower::max_of_bits(B::U32);
+      const NONZERO_MIN: [$limb; N] = unsigned::$lower::one();
+      const NONZERO_MAX: [$limb; N] = unsigned::$lower::max_of_bits(B::U32);
     }
 
     impl<const N: usize> InlineIntRepr for [$limb; N] {}
@@ -1441,6 +1648,13 @@ macro_rules! array_storage {
     impl<B: FitsBits<[$limb; N]>, const N: usize> IntWidth<[$limb; N]> for Width<B, [$limb; N]> {
       const MIN: [$limb; N] = signed::$upper::min_of_bits(B::U32);
       const MAX: [$limb; N] = signed::$upper::max_of_bits(B::U32);
+      const NONZERO_MIN: [$limb; N] = signed::$upper::min_of_bits(B::U32);
+      // One bit holds -1 and 0, so its largest non-zero value is -1.
+      const NONZERO_MAX: [$limb; N] = if B::U32 == 1 {
+        signed::$upper::min_of_bits(B::U32)
+      } else {
+        signed::$upper::max_of_bits(B::U32)
+      };
     }
   )+};
 }
@@ -1454,8 +1668,9 @@ array_storage!(
 );
 
 /// Implements [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`], [`InlineUintRepr`] and
-/// [`InlineIntRepr`] for the native integers, and their width relations, written
-/// `unsigned, signed: Bits`, where `Bits` is the number of bits of both.
+/// [`InlineIntRepr`] for the native integers, and their width relations, and [`NonZeroUintRepr`]
+/// and [`NonZeroIntRepr`] for their `NonZero`, written `unsigned, signed: Bits`, where `Bits` is
+/// the number of bits of both.
 // Each native type has width impls of its own, as each array type constructor has: one impl over
 // every storage, bounded by a trait of the storages, would degrade the diagnostics of the arrays.
 macro_rules! native_storage {
@@ -1465,10 +1680,12 @@ macro_rules! native_storage {
 
     impl UintRepr for $uint {
       type Signed = $int;
+      type NonZero = core::num::NonZero<$uint>;
     }
 
     impl UintCore for $uint {
       type Complement = $int;
+      type NonZeroStorage = core::num::NonZero<$uint>;
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -1731,14 +1948,40 @@ macro_rules! native_storage {
       fn cast_signed_bits(self, bits: u32, _: Token) -> $int {
         int::$uint::cast_signed_bits(self, bits)
       }
+
+      #[inline]
+      fn to_nonzero(self, _: Token) -> Option<core::num::NonZero<$uint>> {
+        core::num::NonZero::new(self)
+      }
+
+      #[inline]
+      fn from_nonzero(nonzero: core::num::NonZero<$uint>, _: Token) -> Self {
+        nonzero.get()
+      }
+
+      #[inline]
+      fn with_nonzero<T>(
+        nonzero: &core::num::NonZero<$uint>,
+        f: impl FnOnce(&Self) -> T,
+        _: Token,
+      ) -> T {
+        f(&nonzero.get())
+      }
+
+      #[inline]
+      fn known_nonzero(self, _: Token) -> core::num::NonZero<$uint> {
+        int::$uint::known_nonzero(self)
+      }
     }
 
     impl IntRepr for $int {
       type Unsigned = $uint;
+      type NonZero = core::num::NonZero<$int>;
     }
 
     impl IntCore for $int {
       type Magnitude = $uint;
+      type NonZeroStorage = core::num::NonZero<$int>;
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -2013,6 +2256,44 @@ macro_rules! native_storage {
       fn cast_unsigned_bits(self, bits: u32, _: Token) -> $uint {
         int::$int::cast_unsigned_bits(self, bits)
       }
+
+      #[inline]
+      fn to_nonzero(self, _: Token) -> Option<core::num::NonZero<$int>> {
+        core::num::NonZero::new(self)
+      }
+
+      #[inline]
+      fn from_nonzero(nonzero: core::num::NonZero<$int>, _: Token) -> Self {
+        nonzero.get()
+      }
+
+      #[inline]
+      fn with_nonzero<T>(
+        nonzero: &core::num::NonZero<$int>,
+        f: impl FnOnce(&Self) -> T,
+        _: Token,
+      ) -> T {
+        f(&nonzero.get())
+      }
+
+      #[inline]
+      fn known_nonzero(self, _: Token) -> core::num::NonZero<$int> {
+        int::$int::known_nonzero(self)
+      }
+    }
+
+    impl NonZeroRepr for core::num::NonZero<$uint> {}
+
+    impl NonZeroRepr for core::num::NonZero<$int> {}
+
+    impl NonZeroUintRepr for core::num::NonZero<$uint> {
+      type Integer = $uint;
+      type Signed = core::num::NonZero<$int>;
+    }
+
+    impl NonZeroIntRepr for core::num::NonZero<$int> {
+      type Integer = $int;
+      type Unsigned = core::num::NonZero<$uint>;
     }
 
     impl MutableRepr for $uint {}
@@ -2034,6 +2315,9 @@ macro_rules! native_storage {
 
     impl<B: FitsBits<$uint>> UintWidth<$uint> for Width<B, $uint> {
       const MAX: $uint = int::$uint::max_of_bits(B::U32);
+      const NONZERO_MIN: core::num::NonZero<$uint> = core::num::NonZero::<$uint>::MIN;
+      const NONZERO_MAX: core::num::NonZero<$uint> =
+        int::$uint::known_nonzero(int::$uint::max_of_bits(B::U32));
     }
 
     impl InlineIntRepr for $int {}
@@ -2048,6 +2332,14 @@ macro_rules! native_storage {
     impl<B: FitsBits<$int>> IntWidth<$int> for Width<B, $int> {
       const MIN: $int = int::$int::min_of_bits(B::U32);
       const MAX: $int = int::$int::max_of_bits(B::U32);
+      const NONZERO_MIN: core::num::NonZero<$int> =
+        int::$int::known_nonzero(int::$int::min_of_bits(B::U32));
+      // One bit holds -1 and 0, so its largest non-zero value is -1.
+      const NONZERO_MAX: core::num::NonZero<$int> = int::$int::known_nonzero(if B::U32 == 1 {
+        int::$int::min_of_bits(B::U32)
+      } else {
+        int::$int::max_of_bits(B::U32)
+      });
     }
   )+};
   (@width $native:ident, $bits:ident) => {
@@ -2187,10 +2479,32 @@ pub trait BitWidth:
   TypenumNumber + FitsBits<<Self as BitWidth>::Unsigned> + FitsBits<<Self as BitWidth>::Signed>
 {
   /// The default storage of `Uint<Self>`.
-  type Unsigned: InlineUintRepr + UintRepr<Signed = <Self as BitWidth>::Signed>;
+  type Unsigned: InlineUintRepr
+    + UintRepr<Signed = <Self as BitWidth>::Signed, NonZero = <Self as BitWidth>::NonZeroUnsigned>;
 
   /// The default storage of `Int<Self>`, of the same size as `Unsigned`.
-  type Signed: InlineIntRepr + IntRepr<Unsigned = <Self as BitWidth>::Unsigned>;
+  type Signed: InlineIntRepr
+    + IntRepr<Unsigned = <Self as BitWidth>::Unsigned, NonZero = <Self as BitWidth>::NonZeroSigned>;
+
+  /// The default storage of the non-zero unsigned integer of `Self` bits, the
+  /// [`NonZero`](UintRepr::NonZero) of `Unsigned`: `[u64; 0]` for zero bits,
+  /// `core::num::NonZero<u8>` to `NonZero<u128>` for 1 to 128 bits, and the array of `Unsigned`
+  /// above. It is `Copy`, and its [`Signed`](NonZeroUintRepr::Signed) is `NonZeroSigned`, whose
+  /// [`Unsigned`](NonZeroIntRepr::Unsigned) is this storage again, so that generic code over the
+  /// width casts between the two.
+  type NonZeroUnsigned: NonZeroUintRepr<
+      Integer = <Self as BitWidth>::Unsigned,
+      Signed = <Self as BitWidth>::NonZeroSigned,
+    > + Copy;
+
+  /// The default storage of the non-zero signed integer of `Self` bits, the
+  /// [`NonZero`](IntRepr::NonZero) of `Signed`: `[u64; 0]` for zero bits,
+  /// `core::num::NonZero<i8>` to `NonZero<i128>` for 1 to 128 bits, and the array of `Signed`
+  /// above. It is `Copy`, and its [`Unsigned`](NonZeroIntRepr::Unsigned) is `NonZeroUnsigned`.
+  type NonZeroSigned: NonZeroIntRepr<
+      Integer = <Self as BitWidth>::Signed,
+      Unsigned = <Self as BitWidth>::NonZeroUnsigned,
+    > + Copy;
 }
 
 // The impls are on the numbers of `typenum`, `UTerm` and `UInt`, rather than over every type, so
@@ -2199,6 +2513,8 @@ pub trait BitWidth:
 impl BitWidth for UTerm {
   type Unsigned = [u64; 0];
   type Signed = [u64; 0];
+  type NonZeroUnsigned = [u64; 0];
+  type NonZeroSigned = [u64; 0];
 }
 
 impl<U, X> BitWidth for UInt<U, X>
@@ -2207,6 +2523,8 @@ where
 {
   type Unsigned = <Self as DefaultRepr<LeEq<Self, U128>>>::Unsigned;
   type Signed = <Self as DefaultRepr<LeEq<Self, U128>>>::Signed;
+  type NonZeroUnsigned = <<Self as DefaultRepr<LeEq<Self, U128>>>::Unsigned as UintRepr>::NonZero;
+  type NonZeroSigned = <<Self as DefaultRepr<LeEq<Self, U128>>>::Signed as IntRepr>::NonZero;
 }
 
 impl<B> DefaultRepr<B0> for B
@@ -2222,8 +2540,10 @@ where
 impl<B> DefaultArray<B> for B1
 where
   u64: LimbArray<B>,
-  Limbs<B>:
-    InlineUintRepr + InlineIntRepr + IntRepr<Unsigned = Limbs<B>> + UintRepr<Signed = Limbs<B>>,
+  Limbs<B>: InlineUintRepr
+    + InlineIntRepr
+    + IntRepr<Unsigned = Limbs<B>, NonZero = Limbs<B>>
+    + UintRepr<Signed = Limbs<B>, NonZero = Limbs<B>>,
 {
   type Array = Limbs<B>;
 }

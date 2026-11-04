@@ -1038,6 +1038,16 @@ macro_rules! native {
       value == 0
     }
 
+    /// The non-zero storage of `value`, which is not zero. Panics if it is zero: the non-zero
+    /// integers pass only a value that is not zero, such as a product of values that are not.
+    #[inline]
+    pub(crate) const fn known_nonzero(value: $int) -> core::num::NonZero<$int> {
+      match core::num::NonZero::new(value) {
+        Some(value) => value,
+        None => panic!("a non-zero result is zero"),
+      }
+    }
+
     #[inline]
     pub(crate) const fn is_positive(value: $int) -> bool {
       value > 0
