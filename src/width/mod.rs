@@ -762,9 +762,11 @@ where
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
 /// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
 /// [`UncheckedOps`](crate::UncheckedOps), the math traits [`IntegerMath`](crate::IntegerMath) and
-/// [`UnsignedMath`](crate::UnsignedMath), and the operators `+`, `-`, `*`, `/` and `%` on two
-/// references, as in `&a + &b`, for every `Repr` that implements this trait. This trait is sealed
-/// and cannot be implemented outside this crate.
+/// [`UnsignedMath`](crate::UnsignedMath), the bit traits [`IntegerBits`](crate::IntegerBits) and
+/// [`UnsignedBits`](crate::UnsignedBits), the operators `+`, `-`, `*`, `/`, `%`, `&`, `|` and `^`
+/// on two references, as in `&a + &b`, and `!`, `<<` and `>>` on a reference, as in `&a << 3`, for
+/// every `Repr` that implements this trait. This trait is sealed and cannot be implemented outside
+/// this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
   note = "`Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`"
@@ -772,7 +774,9 @@ where
 pub trait UintRepr: Eq + UintCore<Complement = <Self as UintRepr>::Signed> {
   /// The storage of [`Int`](crate::Int) of the same size: `i8` for `u8`, `i16` for `u16`, and so
   /// on, and the same array for an array of limbs. It holds the bits of a value read in two's
-  /// complement.
+  /// complement, as [`cast_signed`](crate::UnsignedBits::cast_signed) reads them, and its
+  /// [`Unsigned`](IntRepr::Unsigned) is this storage again, so that generic code over the width
+  /// casts `Uint<B>` to `Int<B>` and back.
   type Signed: IntRepr<Unsigned = Self>;
 }
 
@@ -785,9 +789,11 @@ pub trait UintRepr: Eq + UintCore<Complement = <Self as UintRepr>::Signed> {
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
 /// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
 /// [`UncheckedOps`](crate::UncheckedOps), the math traits [`IntegerMath`](crate::IntegerMath) and
-/// [`SignedMath`](crate::SignedMath), the operators `+`, `-`, `*`, `/` and `%` on two references,
-/// as in `&a + &b`, and the negation `-` of a reference, for every `Repr` that implements this
-/// trait. This trait is sealed and cannot be implemented outside this crate.
+/// [`SignedMath`](crate::SignedMath), the bit traits [`IntegerBits`](crate::IntegerBits) and
+/// [`SignedBits`](crate::SignedBits), the operators `+`, `-`, `*`, `/`, `%`, `&`, `|` and `^` on
+/// two references, as in `&a + &b`, and the negation `-`, `!`, `<<` and `>>` on a reference, for
+/// every `Repr` that implements this trait. This trait is sealed and cannot be implemented outside
+/// this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
@@ -799,14 +805,14 @@ pub trait IntRepr: Eq + IntCore<Magnitude = <Self as IntRepr>::Unsigned> {
 }
 
 /// A storage of [`Uint`](crate::Uint) that holds the value in place, so that the integers have the
-/// compound assignment operators `+=`, `-=`, `*=`, `/=` and `%=`.
+/// compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=` and `>>=`.
 ///
 /// Every storage of this crate implements it: the native unsigned integers and the arrays of
 /// limbs. This trait is sealed and cannot be implemented outside this crate.
 pub trait UintReprMut: UintRepr + MutableRepr {}
 
 /// A storage of [`Int`](crate::Int) that holds the value in place, so that the integers have the
-/// compound assignment operators `+=`, `-=`, `*=`, `/=` and `%=`.
+/// compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=` and `>>=`.
 ///
 /// Every storage of this crate implements it: the native signed integers and the arrays of limbs.
 /// This trait is sealed and cannot be implemented outside this crate.
@@ -817,7 +823,7 @@ pub trait IntReprMut: IntRepr + MutableRepr {}
 ///
 /// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
 /// [`FixedInteger`](crate::FixedInteger) and [`ConstFixedInteger`](crate::ConstFixedInteger), with
-/// the operators `+`, `-`, `*`, `/` and `%` and `Sum`,
+/// the operators `+`, `-`, `*`, `/`, `%`, `!`, `&`, `|`, `^`, `<<` and `>>` on values and `Sum`,
 /// [`UnsignedFixedInteger`](crate::UnsignedFixedInteger)
 /// and [`SaturatingOps`](crate::SaturatingOps), and from one bit it has the constant `ONE` and
 /// implements [`IntegerOne`](crate::IntegerOne) and [`ConstIntegerOne`](crate::ConstIntegerOne),
@@ -830,7 +836,7 @@ pub trait InlineUintRepr: UintReprMut + Copy + InlineUintConsts {}
 ///
 /// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
 /// [`FixedInteger`](crate::FixedInteger) and [`ConstFixedInteger`](crate::ConstFixedInteger), with
-/// the operators `+`, `-`, `*`, `/` and `%` and `Sum`,
+/// the operators `+`, `-`, `*`, `/`, `%`, `!`, `&`, `|`, `^`, `<<` and `>>` on values and `Sum`,
 /// [`SignedFixedInteger`](crate::SignedFixedInteger),
 /// with the operator `-`, and [`SaturatingOps`](crate::SaturatingOps), and from two bits it has the
 /// constant `ONE` and implements [`IntegerOne`](crate::IntegerOne) and

@@ -31,6 +31,8 @@ miri_rest_shard=3
 miri_groups=(
   "1 integer::arithmetic::tests::division::"
   "1 integer::arithmetic::tests::powers::"
+  "6 integer::arithmetic::tests::bits::"
+  "6 integer::arithmetic::tests::shifts::"
   "1 integer::arithmetic::"
   "2 integer::tests::int_"
   "2 integer::tests::uint_"

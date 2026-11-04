@@ -448,10 +448,11 @@ pub trait FromLimbs: ArrayInteger {
   fn from_limbs(limbs: Self::Array) -> Self;
 }
 
-/// Overflowing addition, subtraction, multiplication, negation, division, remainder and
-/// exponentiation: the result wrapped to the range of the type, and whether the exact result is
-/// outside that range. The division and the remainder, rounded toward zero and Euclidean, panic on
-/// a zero divisor.
+/// Overflowing addition, subtraction, multiplication, negation, division, remainder,
+/// exponentiation and shifts: the result wrapped to the range of the type, and whether the exact
+/// result is outside that range, or for a shift, whose amount wraps modulo `Bits`, whether the
+/// amount is `Bits` or more. The division and the remainder, rounded toward zero and Euclidean,
+/// panic on a zero divisor.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -474,9 +475,10 @@ pub trait OverflowingOps: Sealed + Sized {
   overflowing_table!(trait_items![]);
 }
 
-/// Checked addition, subtraction, multiplication, negation, division, remainder and exponentiation,
-/// the next multiple and the exact division, which return `None` when the exact result is outside
-/// the range of the type, or for a zero divisor, or when an exact division leaves a remainder.
+/// Checked addition, subtraction, multiplication, negation, division, remainder, exponentiation and
+/// shifts, the next multiple and the exact division, which return `None` when the exact result is
+/// outside the range of the type, or for a zero divisor, or when an exact division leaves a
+/// remainder, or when a shift amount is `Bits` or more.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -500,7 +502,8 @@ pub trait CheckedOps: Sealed + Sized {
 }
 
 /// Wrapping addition, subtraction, multiplication, negation, division, remainder and
-/// exponentiation, modulo `2^Bits`. The division and the remainder panic on a zero divisor.
+/// exponentiation, modulo `2^Bits`, and the wrapping shifts, which take the amount modulo `Bits`.
+/// The division and the remainder panic on a zero divisor.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -549,9 +552,9 @@ pub trait SaturatingOps: Sealed + Sized {
   saturating_table!(Uint, trait_items![]);
 }
 
-/// Strict addition, subtraction, multiplication, negation, division, remainder and exponentiation,
-/// which panic when the exact result is outside the range of the type, and on a zero divisor,
-/// whatever the `overflow-checks` setting.
+/// Strict addition, subtraction, multiplication, negation, division, remainder, exponentiation and
+/// shifts, which panic when the exact result is outside the range of the type, on a zero divisor,
+/// and on a shift amount of `Bits` or more, whatever the `overflow-checks` setting.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -575,8 +578,8 @@ pub trait StrictOps: Sealed + Sized {
 }
 
 /// Unchecked addition, subtraction and multiplication, which assume that the exact result is in
-/// the range of the type, and unchecked exact division, which also assumes that the divisor
-/// divides the value.
+/// the range of the type, unchecked exact division, which also assumes that the divisor divides the
+/// value, and unchecked shifts, which assume that the amount is below `Bits`.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const unsafe fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -650,8 +653,8 @@ pub trait IntegerMath: Sealed + Sized {
   integer_math_table!(trait_items![]);
 }
 
-/// The functions of [`Uint`] alone that have no overflow prefix: `is_multiple_of` and the next
-/// power of two in its forms.
+/// The functions of [`Uint`] alone that have no overflow prefix: `is_multiple_of`,
+/// `is_power_of_two` and the next power of two in its forms.
 ///
 /// [`Uint`] implements it for every storage, with the results of the inherent `const fn`s of the
 /// same names, which a concrete type reaches without this trait, also in constant contexts.
@@ -668,6 +671,7 @@ pub trait IntegerMath: Sealed + Sized {
 /// assert_eq!(capacity(u7::new(65)), None);
 /// assert_eq!(u7::new(65).wrapping_next_power_of_two(), u7::ZERO);
 /// assert!(u7::new(42).is_multiple_of(&u7::new(7)));
+/// assert!(u7::new(64).is_power_of_two() && !u7::new(65).is_power_of_two());
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.

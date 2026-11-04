@@ -182,18 +182,53 @@ FEATURES
     and a reference, for every storage: as the native operators do, they panic on a zero divisor
     and on `MIN / -1` in every build, report the expression of the caller, and leave the target of a
     panicking compound assignment unchanged. `FixedInteger` requires them.
+  - The bit operations of the native integers at the width `Bits`, as `const fn`s of every storage:
+    `count_ones`, `count_zeros`, `leading_zeros`, `trailing_zeros`, `leading_ones` and
+    `trailing_ones`, `highest_one` and `lowest_one`, `isolate_highest_one` and
+    `isolate_lowest_one`, `reverse_bits`, `rotate_left` and `rotate_right`, the shifts in the
+    `overflowing_*`, `checked_*`, `wrapping_*` and `strict_*` forms, `unbounded_shl` and
+    `unbounded_shr`, and `shl_exact` and `shr_exact`, which follow the native methods, still
+    unstable (#144336); `bit`, which reads the bit at an index, and `set_bit`, which writes one;
+    `bit_width`, `is_power_of_two` and `cast_signed` for `Uint`, and `cast_unsigned` for `Int`, the
+    casts reading the bits as the integer of the same width and the other sign in a storage of the
+    same size. They compute the results of the native integers at the width `Bits`: the counts and
+    indexes ignore the bits of the storage above the width, so the ones of -1 are `Bits`, the
+    reversal and the rotations move the `Bits` bits alone, also at a width that is not a whole
+    number of bytes, the right shifts of `Int` are arithmetic, a shift amount is a `u32` that
+    overflows from `Bits` up, the wrapping shifts take it modulo `Bits`, and at zero bits every
+    amount overflows and no rotation takes a remainder by zero. `set_bit` on the sign bit of `Int`
+    changes the sign. The strict shifts panic in every build with the messages of the native ones,
+    `set_bit` panics on an index of `Bits` or more, and every panic reports the caller.
+  - The operators `!`, `&`, `|` and `^` in every form of values and references, and `&=`, `|=` and
+    `^=` for a value and a reference, for every storage; they cannot overflow. The operators `<<`
+    and `>>`, arithmetic for `Int`, with every primitive integer as the amount, by value and by
+    reference, on values and references, and `<<=` and `>>=` with an amount and a reference to one,
+    for every storage. An amount that is negative or `Bits` or more, as every amount is at zero
+    bits, repeats the overflow of a native shift, so that `overflow-checks` decides whether the
+    operator panics, with the message of the native one and reporting the caller, or shifts by the
+    amount modulo `Bits`, taken as a mathematical integer, which at a width that is a power of two
+    is the mask of the native operators; a panicking compound assignment leaves its target
+    unchanged. `FixedInteger` requires the bitwise operators and the shifts by a `u32`, with their
+    compound assignments, so that `x << 3` shifts by a `u32` in code bounded by it alone. `bitand`,
+    `bitor`, `bitxor` and `not` do the bitwise operations as `const fn`s for constant contexts; they
+    take their operands by value, as the methods of the operator traits do, so that method syntax on
+    a value calls them also where those traits are in scope.
   - The sealed traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`,
     `UncheckedOps` and `IntegerOne`, each with one implementation for every storage; `is_one`, the
     operators, their compound assignments and `Sum` on `FixedInteger`, the methods of each sign on
     `UnsignedFixedInteger` and `SignedFixedInteger`, which also requires `Neg` and has
-    `unchecked_neg`, and `Product` on `IntegerOne`. The families have the division, the remainder
-    and the power in their forms, `CheckedOps` also `checked_next_multiple_of` and
-    `checked_div_exact`, and `UncheckedOps` also `unchecked_div_exact`. The sealed traits
-    `IntegerMath`, with the functions without an overflow prefix and the associated type
-    `Magnitude`, the type of `abs_diff`: `Self` for `Uint`, and for `Int` the `Uint` of the same
-    width, the type that `SignedFixedInteger::Unsigned` also names; `UnsignedMath`, with
-    `is_multiple_of` and the next power of two; and `SignedMath`, with `checked_isqrt`. These need
-    only the storage traits `UintRepr` and `IntRepr`. The unsafe methods of the traits have the
+    `unchecked_neg`, and `Product` on `IntegerOne`. The families have the division, the remainder,
+    the power and the shifts in their forms, `CheckedOps` also `checked_next_multiple_of` and
+    `checked_div_exact`, and `UncheckedOps` also `unchecked_div_exact`, `unchecked_shl` and
+    `unchecked_shr`. The sealed traits `IntegerMath`, with the functions without an overflow prefix
+    and the associated type `Magnitude`, the type of `abs_diff`: `Self` for `Uint`, and for `Int`
+    the `Uint` of the same width, the type that `SignedFixedInteger::Unsigned` also names;
+    `UnsignedMath`, with `is_multiple_of`, `is_power_of_two` and the next power of two; and
+    `SignedMath`, with `checked_isqrt`. The sealed traits `IntegerBits`, with the bit methods of
+    both kinds, `UnsignedBits`, with `bit_width`, `cast_signed` and the associated type `Signed`,
+    the `Int` of the same width in a storage of the same size, and `SignedBits`, with
+    `cast_unsigned`, which returns the `Magnitude` of `IntegerMath`. These need only the storage
+    traits `UintRepr` and `IntRepr`. The unsafe methods of the traits have the
     contract of the inherent ones. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` the
     families and the operators, and `IntegerOne` and `ConstIntegerOne` with `B: NonZero` for
     `Uint<B>` or `B: IsGreater<U1, Output = True>` for `Int<B>`. The sealed storage traits
@@ -210,7 +245,9 @@ FEATURES
     `FitsBits` requires the width in canonical form, as every `typenum` constant and operator result
     is, instead of `NonZero`: zero bits fit every storage, and a width written with leading zero
     bits, such as `UInt<UTerm, B0>`, which `typenum` compares by its length rather than its value,
-    is rejected.
+    is rejected. `UintRepr` has the associated type `Signed`, the storage of `Int` of the same size,
+    whose `IntRepr::Unsigned` is the storage again, and `BitWidth` states the pair for the default
+    storages, so that `cast_signed` of `Uint<B>` is `Int<B>` in code over `B: BitWidth`.
   - The constants `BITS`, `ZERO`, `MIN` and `MAX` are defined once for every storage, so a constant
     whose storage the expected type names resolves: `let x: Uint<U7> = Uint::MAX;`,
     `let y: u256 = Uint::MAX;` and `Uint::MAX` passed for a parameter of a concrete type compile,
@@ -234,6 +271,8 @@ FEATURES
     traits. The trait methods are not `const`; constant contexts use the inherent `const fn`s.
 - The arithmetic methods of `Decimal`, `Uint` and `Int`, inherent and in the traits, take the
   receiver and the operands by reference, as in `a.checked_add(&b)`, so that a call does not copy a
-  wide value, while the operators keep the signatures of their standard traits.
+  wide value, while the operators keep the signatures of their standard traits. The casts between
+  `Uint` and `Int` and the bitwise `const fn`s take their operands by value, as the native casts
+  and the methods of the operator traits do; a shift amount or a bit index is a `u32`.
 - `Storage`, `DigitCount`, `FitsDigits`, `Layout`, `Widen`, `WidenRepr` and `Pick`: the type-level
   capacity and sign checks, with compile-time diagnostics for invalid digit counts and storages.

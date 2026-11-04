@@ -138,8 +138,34 @@ mod traits;
 /// `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the storage to inference, such as
 /// `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
 ///
+/// Each storage also has the bit operations of the native unsigned integers at the width `Bits`, as
+/// `const fn`s: the counts [`count_ones`](Self::count_ones), [`count_zeros`](Self::count_zeros),
+/// [`leading_zeros`](Self::leading_zeros), [`trailing_zeros`](Self::trailing_zeros),
+/// [`leading_ones`](Self::leading_ones) and [`trailing_ones`](Self::trailing_ones),
+/// [`bit_width`](Self::bit_width), [`highest_one`](Self::highest_one) and
+/// [`lowest_one`](Self::lowest_one) and their isolation, such as
+/// [`isolate_highest_one`](Self::isolate_highest_one), [`is_power_of_two`](Self::is_power_of_two),
+/// [`reverse_bits`](Self::reverse_bits), [`rotate_left`](Self::rotate_left) and
+/// [`rotate_right`](Self::rotate_right), the shifts in the `checked_*`, `wrapping_*`,
+/// `overflowing_*` and `strict_*` forms, [`unbounded_shl`](Self::unbounded_shl) and
+/// [`unbounded_shr`](Self::unbounded_shr), and the exact shifts [`shl_exact`](Self::shl_exact) and
+/// [`shr_exact`](Self::shr_exact), which follow the native methods, still unstable
+/// ([#144336](https://github.com/rust-lang/rust/issues/144336)). [`bit`](Self::bit) reads a bit and
+/// [`set_bit`](Self::set_bit) writes one, and [`cast_signed`](Self::cast_signed) reads the bits as
+/// the [`Int`] of the same width in a storage of the same size. Every count, index and rotation
+/// stays within the `Bits` bits, whatever the storage holds: `u7::MAX.leading_ones()` is 7, and
+/// [`reverse_bits`](Self::reverse_bits) works at a width that is not a whole number of bytes. The
+/// operators `!`, `&`, `|`, `^`, `<<` and `>>`, with an amount of any primitive integer type, and
+/// their compound assignments work for every storage, and the traits
+/// [`IntegerBits`](crate::IntegerBits) and [`UnsignedBits`](crate::UnsignedBits) give generic code
+/// the bit methods. The operators cannot be `const`, so [`bitand`](Self::bitand),
+/// [`bitor`](Self::bitor), [`bitxor`](Self::bitxor) and [`not`](Self::not) do the bitwise
+/// operations as `const fn`s for constant contexts, and other code uses the operators. They take
+/// their operands by value, as the methods of the operator traits do, so that method syntax on a
+/// value, such as `A.bitand(B)`, calls them also where `core::ops::BitAnd` is in scope.
+///
 /// ```
-/// use numo::{Uint, typenum::U200, u7};
+/// use numo::{Uint, i7, typenum::U200, u7};
 ///
 /// assert_eq!(u7::MAX.checked_add(&u7::ONE), None);
 /// assert_eq!(u7::MAX.wrapping_add(&u7::ONE), u7::ZERO);
@@ -167,6 +193,17 @@ mod traits;
 /// assert_eq!(top.overflowing_mul(&two), (U200x4::ZERO, true));
 /// assert_eq!(top / &two, top.wrapping_div(&two));
 /// assert_eq!(top.checked_ilog2(), Some(199));
+///
+/// // The bits of 7 bits: the counts, the rotations and the shifts stay within them.
+/// assert_eq!(u7::MAX.count_ones(), 7);
+/// assert_eq!(u7::ONE.rotate_right(1), u7::new(64));
+/// assert_eq!(u7::new(3) << 5u32, u7::new(96));
+/// assert_eq!(u7::new(3).checked_shl(7), None);
+/// assert_eq!(u7::new(3).shl_exact(6), None);
+/// assert_eq!(u7::MAX.cast_signed(), i7::new(-1));
+/// assert_eq!(top.trailing_zeros(), 199);
+/// const LOW: u7 = u7::MAX.bitand(u7::new(0b11));
+/// assert_eq!(LOW, u7::new(3));
 /// ```
 ///
 /// # Overflow
@@ -184,13 +221,24 @@ mod traits;
 /// compile in every build. At zero bits, which hold no one, `pow(0)` and the next power of two of
 /// zero overflow: `checked_pow(0)` returns `None` there.
 ///
+/// The operators `<<` and `>>` overflow on an amount that is `Bits` or more, or negative, of any
+/// primitive integer type, and forward the overflow to a native shift, so that with overflow
+/// checks they panic with its message and without them they shift by the amount modulo `Bits`,
+/// taken as a mathematical integer: at 7 bits, an amount of 7 shifts by 0 places and an amount of
+/// -1 by 6. At a width that is a power of two, this is the mask that the native operators apply.
+/// The amount is bounded by `Bits`, not by the storage, so `u7 << 7` overflows although the `u8`
+/// holds 8 bits, and at zero bits every amount overflows, so `u0 << 0` panics with overflow checks.
+/// A panicking `<<=` or `>>=` leaves its target unchanged, and the bitwise operators cannot
+/// overflow.
+///
 /// A division or a remainder by zero, in the methods and in the operators `/` and `%`, a logarithm
 /// of zero or to a base below 2, and a root of degree zero panic in every build, as for the native
-/// integers. [`div_exact`](Self::div_exact) panics on a zero divisor with the message of the
-/// remainder: the native `div_exact` is unstable, and numo follows what it does, which computes the
-/// remainder first, rather than its documentation. Every panic reports the caller, where the native
-/// methods sometimes report a line in `core`, except that of `pow`, which reports the line in
-/// `core` that the native `pow` reports.
+/// integers. A bit index of `Bits` or more panics in [`set_bit`](Self::set_bit), in every build.
+/// [`div_exact`](Self::div_exact) panics on a zero divisor with the message of the remainder: the
+/// native `div_exact` is unstable, and numo follows what it does, which computes the remainder
+/// first, rather than its documentation. Every panic reports the caller, where the native methods
+/// sometimes report a line in `core`, except that of `pow`, which reports the line in `core` that
+/// the native `pow` reports.
 #[repr(transparent)]
 pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits` or above is zero, so the
@@ -293,6 +341,16 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). As for [`Uint`], a
 /// path to a method names the storage.
 ///
+/// The bit operations are those of [`Uint`] but for `bit_width` and `is_power_of_two`, on the
+/// `Bits` bits of the two's complement: the counts leave out the copies of the sign that the
+/// storage holds above them, so `i7::new(-1).count_ones()` is 7, the right shifts are arithmetic
+/// and copy the sign, and the rotations and [`reverse_bits`](Self::reverse_bits) move the sign bit
+/// like any other, so they can change the sign. [`set_bit`](Self::set_bit) at bit `Bits - 1` sets
+/// or clears the sign, and [`cast_unsigned`](Self::cast_unsigned) reads the bits as the [`Uint`] of
+/// the same width in a storage of the same size. The traits [`IntegerBits`](crate::IntegerBits) and
+/// [`SignedBits`](crate::SignedBits) give generic code the bit methods, and the operators and the
+/// bitwise `const fn`s are those of [`Uint`].
+///
 /// ```
 /// use numo::{i7, u7};
 ///
@@ -312,6 +370,15 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// assert_eq!(i7::MIN.checked_div(&-i7::ONE), None);
 /// assert_eq!(i7::MIN.abs_diff(&i7::MAX), u7::MAX);
 /// assert_eq!(i7::new(-27).nth_root(3), i7::new(-3));
+///
+/// // The bits of the two's complement of 7 bits.
+/// assert_eq!(i7::new(-1).count_ones(), 7);
+/// assert_eq!(i7::MIN >> 3u32, i7::new(-8));
+/// assert_eq!(i7::new(-2).cast_unsigned(), u7::new(126));
+/// assert_eq!(i7::new(1).rotate_right(1), i7::MIN);
+/// let mut value = i7::ZERO;
+/// value.set_bit(6, true);
+/// assert_eq!(value, i7::MIN);
 /// ```
 ///
 /// # Overflow
@@ -329,15 +396,17 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// (`i8::MIN`). One bit holds -1 and 0 and no one, so `MIN.pow(0)`, which is one, overflows to -1:
 /// it panics with overflow checks and returns -1 without them, `saturating_pow(0)` returns `MAX`,
 /// which is zero, and `checked_pow(0)` returns `None`, while `MIN.pow(3)` is -1; zero bits overflow
-/// on `pow(0)` as for [`Uint`].
+/// on `pow(0)` as for [`Uint`]. The operators `<<` and `>>` overflow as for [`Uint`], on an amount
+/// that is `Bits` or more or negative, and every amount overflows zero bits: `i1 >> 1` overflows
+/// one bit, and without overflow checks shifts by nothing.
 ///
 /// As for [`Uint`], a division or a remainder by zero, a logarithm of a value that is not positive
 /// or to a base below 2, and a root of degree zero panic in every build, and so do `MIN / -1` and
 /// `MIN % -1` in the strict methods, the Euclidean and rounded division and the operators `/` and
 /// `%`, the square root and a root of even degree of a negative value, as for the native integers.
 /// [`div_exact`](Self::div_exact) panics on a zero divisor and on `MIN / -1` with the messages of
-/// the remainder, as the unstable native method does. Every panic reports the caller, but that of
-/// `pow`.
+/// the remainder, as the unstable native method does, and [`set_bit`](Self::set_bit) on an index of
+/// `Bits` or more. Every panic reports the caller, but that of `pow`.
 #[repr(transparent)]
 pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits - 1` or above equals bit
