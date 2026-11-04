@@ -396,7 +396,7 @@ macro_rules! nonzero_int_table {
 
       /// The absolute value, `|self|`. The absolute value of `MIN` is outside the range of the
       /// type: the method then panics or returns `MIN`, as `overflow-checks` decides for the native
-      /// integers (see [Overflow](crate::Int#overflow)).
+      /// integers (see [Overflow](crate::NonZeroInt#overflow)).
       #[track_caller]
       fn abs(&self) -> Self {
         match self.overflowing_abs() {

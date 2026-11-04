@@ -269,6 +269,47 @@ FEATURES
     `FromLimbs`, with `from_limbs`. Each mirrors the inherent items for generic code; the bound
     `B: BitWidth` gives `Uint<B>` and `Int<B>` `FixedInteger`, `ConstFixedInteger` and the sign
     traits. The trait methods are not `const`; constant contexts use the inherent `const fn`s.
+- `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: the integers of `Bits` bits that are not
+  zero, as the native `NonZero` integers are at the native widths.
+  - The storage is the native `NonZero` of a native storage, `core::num::NonZero<u8>` to
+    `NonZero<u128>` for `NonZeroUint` and `NonZero<i8>` to `NonZero<i128>` for `NonZeroInt`, or an
+    array of limbs as for `Uint` and `Int`. The sealed storage traits `NonZeroUintRepr` and
+    `NonZeroIntRepr` name them, with the storage of the integer as `Integer`, and
+    `UintRepr::NonZero` and `IntRepr::NonZero` name the non-zero storage of each storage. Without
+    `Repr`, the storage is that of the default storage of the width, which
+    `BitWidth::NonZeroUnsigned` and `BitWidth::NonZeroSigned` name, so `NonZeroUint<U7>` holds a
+    `NonZero<u8>` and `NonZeroUint<U200>` a `[u64; 4]`.
+  - The size, alignment and ABI of the storage; in a native storage, `Option` takes the niche of
+    zero, so `Option<NonZeroUint<U7>>` takes one byte.
+  - `const fn` `new`, which takes the `Uint` or the `Int` of the same width and storage and returns
+    `None` for zero, and `get`, and `From` to the integer. The constants `BITS`, and from one bit
+    `MIN` and `MAX`: one for `NonZeroUint<U1>`, and -1 for `NonZeroInt<U1>`. Zero bits hold no
+    value that is not zero.
+  - The methods of the native `NonZero` integers at the width, as `const fn`s of every storage:
+    `leading_zeros`, `trailing_zeros`, `count_ones`, which returns a `core::num::NonZero<u32>`,
+    `highest_one`, `lowest_one`, `isolate_highest_one`, `isolate_lowest_one`, `reverse_bits`,
+    `rotate_left` and `rotate_right`, which follow the native methods, still unstable (#128281),
+    `checked_mul`, `saturating_mul`, `checked_pow` and `saturating_pow`; for `NonZeroUint`
+    `checked_add` and `saturating_add` of a `Uint`, which may be zero, `checked_next_power_of_two`,
+    `ilog2`, `ilog10`, `midpoint`, `is_power_of_two`, `isqrt`, `div_ceil`, `bit_width` and
+    `cast_signed`; and for `NonZeroInt` `is_negative`, `is_positive`, the negation and the
+    absolute value in the `checked_*`, `overflowing_*`, `wrapping_*` and `saturating_*` forms,
+    `abs`, `unsigned_abs`, which returns a `NonZeroUint`, and `cast_unsigned`. A saturating method
+    returns the bound of the range that the result passes, which at one signed bit is -1. `abs` of
+    `MIN` repeats a native negation, as the operator `-` does.
+  - `Clone`, `Copy`, `PartialEq`, `Eq`, `PartialOrd`, `Ord`, `Hash`, `Display` and `Debug` as for
+    the integer of the same value, and no `Default`.
+  - `Uint / NonZeroUint` and `Uint % NonZeroUint`, with `/=` and `%=`, which cannot panic; `|` of
+    two non-zero integers and of a non-zero integer and its integer either way, with `|=`; and the
+    negation `-` of `NonZeroInt`, which overflows at `MIN` as the native one does. The operators
+    work on references for every storage, and on values for a storage whose integer holds the value
+    inline. `Int` has no division by a `NonZeroInt`, as `MIN / -1` overflows.
+  - The sealed traits `FixedNonZero`, with `Integer`, `BITS`, `new`, `get`, `new_unchecked`, which
+    checks the value in every build, and the methods of both signs, `UnsignedNonZero` and
+    `SignedNonZero`, with the methods of each sign, and `NonZeroLimits`, with `min_value` and
+    `max_value` from one bit, which need only the storage traits, and `ConstNonZeroLimits`, with
+    `MIN` and `MAX`, for a storage whose integer holds the value inline. `IntegerNonZero` and the
+    alias `NonZeroOf<T>` name the non-zero integer of an integer, as in `NonZeroOf<u7>`.
 - The arithmetic methods of `Decimal`, `Uint` and `Int`, inherent and in the traits, take the
   receiver and the operands by reference, as in `a.checked_add(&b)`, so that a call does not copy a
   wide value, while the operators keep the signatures of their standard traits. The casts between

@@ -242,6 +242,32 @@
 //! assert_eq!(total(&[Uint::<U200>::MAX, Uint::<U200>::MAX]), None);
 //! ```
 //!
+//! [`NonZeroUint<Bits, Repr>`](NonZeroUint) and [`NonZeroInt<Bits, Repr>`](NonZeroInt) are the
+//! integers of `Bits` bits that are not zero, as the native `NonZero` integers are at the native
+//! widths. `Repr` is the storage of a value that is not zero, the [`NonZero`](UintRepr::NonZero)
+//! of a storage of the integer: the native `NonZero` of a native storage, such as
+//! `core::num::NonZero<u8>`, whose niche gives `Option` the size of the integer, or the array
+//! itself. Without `Repr`, the storage is that of the default storage, so `NonZeroUint<U7>` holds a
+//! `NonZero<u8>`, and [`NonZeroOf<T>`](NonZeroOf) names the non-zero integer of the integer `T`, as
+//! in `NonZeroOf<u7>`. In each storage, `new` makes a value of the integer of the same width and
+//! storage, returning `None` for zero, and `get` returns it. The non-zero integers have the methods
+//! of the native `NonZero` integers at the width as `const fn`s, such as `checked_mul`, `ilog2` and
+//! `cast_signed`, the division and the remainder of a [`Uint`] by a [`NonZeroUint`], which cannot
+//! panic, `|`, and the negation of a [`NonZeroInt`]. Generic code reaches them through traits in
+//! two layers, as for the integers: [`FixedNonZero`], [`UnsignedNonZero`], [`SignedNonZero`] and
+//! [`NonZeroLimits`], which every storage implements, and [`ConstNonZeroLimits`], with the
+//! constants `MIN` and `MAX`; [`IntegerNonZero`] relates an integer to its non-zero integer.
+//!
+//! ```
+//! use numo::{NonZeroOf, NonZeroUint, typenum::U7, u7};
+//!
+//! let parts = NonZeroUint::<U7>::new(u7::new(4)).unwrap();
+//! assert_eq!(u7::new(100) / parts, u7::new(25));
+//! assert_eq!(parts.checked_mul(&parts).map(|square| square.get()), Some(u7::new(16)));
+//! assert_eq!(NonZeroOf::<u7>::new(u7::ZERO), None);
+//! assert_eq!(size_of::<Option<NonZeroOf<u7>>>(), 1);
+//! ```
+//!
 //! # `typenum`
 //!
 //! The crate re-exports [`typenum`], so no direct dependency is needed. Digit counts are written

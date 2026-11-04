@@ -1,4 +1,5 @@
-//! The traits that [`Uint`] and [`Int`] implement for their storages.
+//! The traits that [`Uint`] and [`Int`] implement for their storages, and those of the non-zero
+//! integers [`NonZeroUint`] and [`NonZeroInt`].
 //!
 //! Zero, the limits and one reach generic code in two layers. The general layer, [`FixedInteger`]
 //! and [`IntegerOne`], requires `Clone` but not `Copy` and has them as the functions `zero`,
@@ -9,6 +10,11 @@
 //! also in constant contexts. Generic code reaches the items through the traits, which have one
 //! implementation for every storage of a kind: the bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
 //! every trait that their default storages implement.
+//!
+//! The non-zero traits have the same two layers: [`FixedNonZero`], [`UnsignedNonZero`],
+//! [`SignedNonZero`] and [`NonZeroLimits`] need neither `Copy` nor a constant, so that every storage
+//! implements them, and [`ConstNonZeroLimits`] adds `Copy` and the limits as constants.
+//! [`IntegerNonZero`] names the non-zero integer of an integer, which [`NonZeroOf`] abbreviates.
 
 use core::{
   fmt::{Debug, Display},
