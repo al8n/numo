@@ -764,7 +764,13 @@ macro_rules! limb_layer {
 
     /// `value << shift` modulo `2^(B * N)`, zero for `shift >= B * N`.
     pub(crate) const fn shift_left<const N: usize>(value: &[Limb; N], shift: u32) -> [Limb; N] {
-      let limbs = (shift / Limb::BITS) as usize;
+      let whole = shift / Limb::BITS;
+      // The offset is compared before it is narrowed to `usize`, which can have fewer bits than
+      // `u32`.
+      if whole as u64 >= N as u64 {
+        return [0; N];
+      }
+      let limbs = whole as usize;
       let bits = shift % Limb::BITS;
       let mut shifted = [0; N];
       let mut i = N;
@@ -783,7 +789,13 @@ macro_rules! limb_layer {
 
     /// `value >> shift`, zero for `shift >= B * N`.
     pub(crate) const fn shift_right<const N: usize>(value: &[Limb; N], shift: u32) -> [Limb; N] {
-      let limbs = (shift / Limb::BITS) as usize;
+      let whole = shift / Limb::BITS;
+      // The offset is compared before it is narrowed to `usize`, which can have fewer bits than
+      // `u32`.
+      if whole as u64 >= N as u64 {
+        return [0; N];
+      }
+      let limbs = whole as usize;
       let bits = shift % Limb::BITS;
       let mut shifted = [0; N];
       let mut i = 0;
@@ -2252,7 +2264,13 @@ macro_rules! limb_layer {
     /// `B * N` bits or more leaves the sign alone, 0 or -1.
     pub(crate) const fn sar<const N: usize>(value: &[Limb; N], shift: u32) -> [Limb; N] {
       let fill = if is_negative(value) { Limb::MAX } else { 0 };
-      let limbs = (shift / Limb::BITS) as usize;
+      let whole = shift / Limb::BITS;
+      // The offset is compared before it is narrowed to `usize`, which can have fewer bits than
+      // `u32`.
+      if whole as u64 >= N as u64 {
+        return [fill; N];
+      }
+      let limbs = whole as usize;
       let bits = shift % Limb::BITS;
       let mut shifted = [fill; N];
       let mut i = 0;

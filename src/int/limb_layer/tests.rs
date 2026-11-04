@@ -1075,6 +1075,21 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@bits false, cast_signed_bits);
 
+    /// A shift whose whole-limb offset does not fit in 16 bits leaves nothing of a value, as the
+    /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
+    #[test]
+    fn shifts_by_offsets_wider_than_16_bits_clear_the_value() {
+      fn check<const N: usize>() {
+        let width = B * N as u32;
+        for shift in [B << 16, (B << 16) + 1, u32::MAX, width] {
+          assert_eq!(shift_left(&[1; N], shift), [0; N], "<< {shift}");
+          assert_eq!(shift_right(&[Limb::MAX; N], shift), [0; N], ">> {shift}");
+        }
+      }
+      check::<1>();
+      check::<3>();
+    }
+
     /// Checks the count of ones and the shifts of whole limbs on `p`, a pattern of `B * N` bits,
     /// against the bit model, at each amount of `shifts`.
     fn check_whole_limbs<const N: usize>(p: &[bool], shifts: &[u32]) {
@@ -1865,6 +1880,21 @@ macro_rules! limb_layer_tests {
     }
 
     limb_layer_tests!(@bits true, cast_unsigned_bits);
+
+    /// A shift whose whole-limb offset does not fit in 16 bits leaves the sign alone, as the
+    /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
+    #[test]
+    fn shifts_by_offsets_wider_than_16_bits_leave_the_sign() {
+      fn check<const N: usize>() {
+        let width = B * N as u32;
+        for shift in [B << 16, (B << 16) + 1, u32::MAX, width] {
+          assert_eq!(sar(&[Limb::MAX; N], shift), [Limb::MAX; N], ">> {shift}");
+          assert_eq!(sar(&[1; N], shift), [0; N], ">> {shift}");
+        }
+      }
+      check::<1>();
+      check::<3>();
+    }
 
     /// Checks the arithmetic shift of whole limbs on `p`, a pattern of `B * N` bits in two's
     /// complement, against the bit model, at each amount of `shifts`.

@@ -678,3 +678,18 @@ fn shift_operators_need_only_the_storage_trait() {
   check!(signed, i7::new(-21));
   check!(signed, i256::MIN);
 }
+
+/// An amount whose whole-limb offset does not fit in 16 bits, as a `usize` of a 16-bit target
+/// reads it, shifts every bit out of the value.
+#[test]
+fn unbounded_shifts_by_a_wide_offset() {
+  type Byte = Uint<U8, [u8; 1]>;
+  type SignedByte = Int<U8, [u8; 1]>;
+  assert_eq!(Byte::ONE.unbounded_shl(524_288), Byte::ZERO);
+  assert_eq!(Byte::MAX.unbounded_shr(524_288), Byte::ZERO);
+  assert_eq!(
+    SignedByte::from_limbs([u8::MAX]).unbounded_shr(524_288),
+    -SignedByte::ONE
+  );
+  assert_eq!(SignedByte::ONE.unbounded_shr(524_288), SignedByte::ZERO);
+}
