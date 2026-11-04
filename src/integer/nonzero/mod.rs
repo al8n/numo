@@ -1,7 +1,8 @@
 //! The non-zero integers [`NonZeroUint`](crate::NonZeroUint) and [`NonZeroInt`](crate::NonZeroInt):
 //! their constants, the constructor, the value and the method tables of each storage, the helpers
-//! of the generic implementations of their traits, and the standard traits, which compare, hash and
-//! format a non-zero integer as the integer of the same value.
+//! of the generic implementations of their traits, the standard traits, which compare, hash and
+//! format a non-zero integer as the integer of the same value, and the operators: the division and
+//! the remainder of a `Uint` by a `NonZeroUint`, `|` and `|=`, and the negation of a `NonZeroInt`.
 //!
 //! A non-zero integer holds a [`Uint`] or an [`Int`] over its storage, the `NonZero` of a native
 //! integer or an array of limbs, and lends the value to the integer: an array as itself, and a
@@ -22,17 +23,19 @@ use core::{
   cmp::Ordering,
   fmt,
   hash::{Hash, Hasher},
+  ops::{BitOr, BitOrAssign, Div, DivAssign, Neg, Rem, RemAssign},
 };
 
 use typenum::NonZero;
 
-use super::{Int, NonZeroInt, NonZeroUint, Uint};
+use super::{Int, NonZeroInt, NonZeroUint, SignedNonZero, Uint, arithmetic::overflow};
 use crate::{
   int,
   layout::Token,
   width::{
-    FitsBits, InlineIntConsts, InlineIntRepr, InlineUintConsts, InlineUintRepr, IntCore, IntWidth,
-    NonZeroIntRepr, NonZeroUintRepr, UintCore, UintWidth,
+    FitsBits, InlineIntConsts, InlineIntRepr, InlineUintConsts, InlineUintRepr, IntCore, IntRepr,
+    IntReprMut, IntWidth, NonZeroIntRepr, NonZeroUintRepr, UintCore, UintRepr, UintReprMut,
+    UintWidth,
   },
 };
 
@@ -838,6 +841,359 @@ macro_rules! nonzero_traits {
 
 nonzero_traits!(NonZeroUint, Uint, NonZeroUintRepr, UintCore);
 nonzero_traits!(NonZeroInt, Int, NonZeroIntRepr, IntCore);
+
+/// Implements the division `$op` of [`Uint`], `/` or `%`, by the [`NonZeroUint`] of the same width
+/// over the non-zero storage of its storage, in the four forms of values and references, and its
+/// compound assignment `$assign` for a value and a reference, with the element `$part` of the
+/// quotient and the remainder. The divisor is not zero and an unsigned quotient cannot overflow,
+/// so nothing panics, and as for the native integers the methods are not `#[track_caller]`. The
+/// form on two references divides the storage by the divisor that the non-zero storage lends, for
+/// every storage; the forms with an owned operand, for a storage that holds the value inline, pass
+/// references to it; and the compound assignments, for a storage that holds the value in place,
+/// store the result.
+macro_rules! nonzero_division {
+  ($op:ident $method:ident, $assign:ident $assign_method:ident, $part:tt) => {
+    impl<B: FitsBits<R>, R: InlineUintRepr> $op<NonZeroUint<B, <R as UintRepr>::NonZero>>
+      for Uint<B, R>
+    {
+      type Output = Self;
+
+      #[inline]
+      fn $method(self, rhs: NonZeroUint<B, <R as UintRepr>::NonZero>) -> Self {
+        $op::$method(&self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: InlineUintRepr> $op<&NonZeroUint<B, <R as UintRepr>::NonZero>>
+      for Uint<B, R>
+    {
+      type Output = Self;
+
+      #[inline]
+      fn $method(self, rhs: &NonZeroUint<B, <R as UintRepr>::NonZero>) -> Self {
+        $op::$method(&self, rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: InlineUintRepr> $op<NonZeroUint<B, <R as UintRepr>::NonZero>>
+      for &Uint<B, R>
+    {
+      type Output = Uint<B, R>;
+
+      #[inline]
+      fn $method(self, rhs: NonZeroUint<B, <R as UintRepr>::NonZero>) -> Uint<B, R> {
+        $op::$method(self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: UintRepr> $op<&NonZeroUint<B, <R as UintRepr>::NonZero>>
+      for &Uint<B, R>
+    {
+      type Output = Uint<B, R>;
+
+      #[inline]
+      fn $method(self, rhs: &NonZeroUint<B, <R as UintRepr>::NonZero>) -> Uint<B, R> {
+        let division = R::with_nonzero(
+          &rhs.value.repr,
+          |divisor| self.repr.div_rem_bits(divisor, B::U32, Token::new()),
+          Token::new(),
+        );
+        match division {
+          Some(parts) => Uint::wrap(parts.$part),
+          None => zero(),
+        }
+      }
+    }
+
+    impl<B: FitsBits<R>, R: UintReprMut> $assign<NonZeroUint<B, <R as UintRepr>::NonZero>>
+      for Uint<B, R>
+    {
+      #[inline]
+      fn $assign_method(&mut self, rhs: NonZeroUint<B, <R as UintRepr>::NonZero>) {
+        $assign::$assign_method(self, &rhs);
+      }
+    }
+
+    impl<B: FitsBits<R>, R: UintReprMut> $assign<&NonZeroUint<B, <R as UintRepr>::NonZero>>
+      for Uint<B, R>
+    {
+      #[inline]
+      fn $assign_method(&mut self, rhs: &NonZeroUint<B, <R as UintRepr>::NonZero>) {
+        let result = $op::$method(&*self, rhs);
+        *self = result;
+      }
+    }
+  };
+}
+
+nonzero_division!(Div div, DivAssign div_assign, 0);
+nonzero_division!(Rem rem, RemAssign rem_assign, 1);
+
+/// Implements `|` of the non-zero integer `$name` with itself, with its integer `$integer` and of
+/// the integer with it, in the four forms of values and references each, with the non-zero
+/// integer as the result, and `|=` of `$name` by both, for a value and a reference. The storages of
+/// `$repr` are the non-zero ones, of `$core` the sealed trait of their integer, and of `$integer`,
+/// `$inline` and `$repr_mut` the integer's own. A value that is not zero has a one, which `|`
+/// keeps, so nothing panics, and as for the native integers the methods are not `#[track_caller]`.
+/// The forms on two references combine the storages that the non-zero storages lend, for every
+/// storage; the forms with an owned operand, for a storage whose integer holds the value inline,
+/// pass references; and the compound assignments, for a storage whose integer holds the value in
+/// place, store the result. Each impl is keyed on the storage of its `Self` type.
+macro_rules! nonzero_bitor {
+  (
+    $name:ident, $repr:ident, $core:ident;
+    $integer:ident: $integer_repr:ident, $inline:ident, $repr_mut:ident
+  ) => {
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<&$name<B, R>> for &$name<B, R> {
+      type Output = $name<B, R>;
+
+      #[inline]
+      fn bitor(self, rhs: &$name<B, R>) -> $name<B, R> {
+        let or = <R::Integer as $core>::with_nonzero(
+          &self.value.repr,
+          |lhs| {
+            <R::Integer as $core>::with_nonzero(
+              &rhs.value.repr,
+              |rhs| lhs.or(rhs, Token::new()),
+              Token::new(),
+            )
+          },
+          Token::new(),
+        );
+        $name {
+          value: $integer::wrap(or.known_nonzero(Token::new())),
+        }
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$name<B, R>> for $name<B, R>
+    where
+      R::Integer: $inline,
+    {
+      type Output = Self;
+
+      #[inline]
+      fn bitor(self, rhs: Self) -> Self {
+        BitOr::bitor(&self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<&$name<B, R>> for $name<B, R>
+    where
+      R::Integer: $inline,
+    {
+      type Output = Self;
+
+      #[inline]
+      fn bitor(self, rhs: &Self) -> Self {
+        BitOr::bitor(&self, rhs)
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$name<B, R>> for &$name<B, R>
+    where
+      R::Integer: $inline,
+    {
+      type Output = $name<B, R>;
+
+      #[inline]
+      fn bitor(self, rhs: $name<B, R>) -> $name<B, R> {
+        BitOr::bitor(self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<&$integer<B, R::Integer>> for &$name<B, R> {
+      type Output = $name<B, R>;
+
+      #[inline]
+      fn bitor(self, rhs: &$integer<B, R::Integer>) -> $name<B, R> {
+        let or = <R::Integer as $core>::with_nonzero(
+          &self.value.repr,
+          |lhs| lhs.or(&rhs.repr, Token::new()),
+          Token::new(),
+        );
+        $name {
+          value: $integer::wrap(or.known_nonzero(Token::new())),
+        }
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$integer<B, R::Integer>> for $name<B, R>
+    where
+      R::Integer: $inline,
+    {
+      type Output = Self;
+
+      #[inline]
+      fn bitor(self, rhs: $integer<B, R::Integer>) -> Self {
+        BitOr::bitor(&self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<&$integer<B, R::Integer>> for $name<B, R>
+    where
+      R::Integer: $inline,
+    {
+      type Output = Self;
+
+      #[inline]
+      fn bitor(self, rhs: &$integer<B, R::Integer>) -> Self {
+        BitOr::bitor(&self, rhs)
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$integer<B, R::Integer>> for &$name<B, R>
+    where
+      R::Integer: $inline,
+    {
+      type Output = $name<B, R>;
+
+      #[inline]
+      fn bitor(self, rhs: $integer<B, R::Integer>) -> $name<B, R> {
+        BitOr::bitor(self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $integer_repr> BitOr<&$name<B, <R as $integer_repr>::NonZero>>
+      for &$integer<B, R>
+    {
+      type Output = $name<B, <R as $integer_repr>::NonZero>;
+
+      #[inline]
+      fn bitor(
+        self,
+        rhs: &$name<B, <R as $integer_repr>::NonZero>,
+      ) -> $name<B, <R as $integer_repr>::NonZero> {
+        let or = R::with_nonzero(
+          &rhs.value.repr,
+          |rhs| self.repr.or(rhs, Token::new()),
+          Token::new(),
+        );
+        $name {
+          value: $integer::wrap(or.known_nonzero(Token::new())),
+        }
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $inline> BitOr<$name<B, <R as $integer_repr>::NonZero>>
+      for $integer<B, R>
+    {
+      type Output = $name<B, <R as $integer_repr>::NonZero>;
+
+      #[inline]
+      fn bitor(
+        self,
+        rhs: $name<B, <R as $integer_repr>::NonZero>,
+      ) -> $name<B, <R as $integer_repr>::NonZero> {
+        BitOr::bitor(&self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $inline> BitOr<&$name<B, <R as $integer_repr>::NonZero>>
+      for $integer<B, R>
+    {
+      type Output = $name<B, <R as $integer_repr>::NonZero>;
+
+      #[inline]
+      fn bitor(
+        self,
+        rhs: &$name<B, <R as $integer_repr>::NonZero>,
+      ) -> $name<B, <R as $integer_repr>::NonZero> {
+        BitOr::bitor(&self, rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $inline> BitOr<$name<B, <R as $integer_repr>::NonZero>>
+      for &$integer<B, R>
+    {
+      type Output = $name<B, <R as $integer_repr>::NonZero>;
+
+      #[inline]
+      fn bitor(
+        self,
+        rhs: $name<B, <R as $integer_repr>::NonZero>,
+      ) -> $name<B, <R as $integer_repr>::NonZero> {
+        BitOr::bitor(self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOrAssign<$name<B, R>> for $name<B, R>
+    where
+      R::Integer: $repr_mut,
+    {
+      #[inline]
+      fn bitor_assign(&mut self, rhs: Self) {
+        BitOrAssign::bitor_assign(self, &rhs);
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOrAssign<&$name<B, R>> for $name<B, R>
+    where
+      R::Integer: $repr_mut,
+    {
+      #[inline]
+      fn bitor_assign(&mut self, rhs: &Self) {
+        let or = BitOr::bitor(&*self, rhs);
+        *self = or;
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOrAssign<$integer<B, R::Integer>> for $name<B, R>
+    where
+      R::Integer: $repr_mut,
+    {
+      #[inline]
+      fn bitor_assign(&mut self, rhs: $integer<B, R::Integer>) {
+        BitOrAssign::bitor_assign(self, &rhs);
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOrAssign<&$integer<B, R::Integer>> for $name<B, R>
+    where
+      R::Integer: $repr_mut,
+    {
+      #[inline]
+      fn bitor_assign(&mut self, rhs: &$integer<B, R::Integer>) {
+        let or = BitOr::bitor(&*self, rhs);
+        *self = or;
+      }
+    }
+  };
+}
+
+nonzero_bitor!(NonZeroUint, NonZeroUintRepr, UintCore; Uint: UintRepr, InlineUintRepr, UintReprMut);
+nonzero_bitor!(NonZeroInt, NonZeroIntRepr, IntCore; Int: IntRepr, InlineIntRepr, IntReprMut);
+
+// As for `Int`, the negation of a reference computes for every storage, and the negation of a
+// value, for a storage whose integer holds it inline, passes a reference. `-MIN` overflows as a
+// native negation does: with overflow checks it panics, reporting the caller, and without them it
+// returns `MIN`.
+impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> Neg for NonZeroInt<B, R>
+where
+  R::Integer: InlineIntRepr,
+{
+  type Output = Self;
+
+  #[inline]
+  #[track_caller]
+  fn neg(self) -> Self {
+    Neg::neg(&self)
+  }
+}
+
+impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> Neg for &NonZeroInt<B, R> {
+  type Output = NonZeroInt<B, R>;
+
+  #[inline]
+  #[track_caller]
+  fn neg(self) -> NonZeroInt<B, R> {
+    let (negated, overflow) = SignedNonZero::overflowing_neg(self);
+    if overflow {
+      overflow::forward_neg();
+    }
+    negated
+  }
+}
 
 /// The value of a non-zero integer as the integer that may be zero, and the non-zero integer of a
 /// value that is not zero, for the generic implementations of the traits, over every storage.

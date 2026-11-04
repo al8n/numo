@@ -3,7 +3,8 @@
 //! traits against the integer of the same value, and the table of zero bits and one bit; and their
 //! rows, through the inherent `const fn`s and the traits, against the rows of the integer up to 8
 //! bits and at wider widths, against the native non-zero integers at 8 and 16 bits, in constant
-//! contexts and in code over the width, with the overflow of `abs`.
+//! contexts and in code over the width, with the overflow of `abs`; and their operators, `/` and
+//! `%` of `Uint` by `NonZeroUint`, `|` and the negation, against the methods and the native ones.
 
 use core::{
   cmp::Ordering,
@@ -1592,12 +1593,12 @@ fn one_bit_rows() {
   signed_bit!(NonZeroInt<U1, NonZero<i8>>, NonZeroInt<U1, [u16; 1]>);
 }
 
-/// `abs` of `MIN` overflows as the native `abs` does: with overflow checks it panics with the
-/// message of a native negation and reports the caller, through the inherent `const fn` and the
-/// trait, and without them it returns `MIN`; at 7 bits, at the full width of a native integer, at
-/// one bit and at 256 bits.
+/// `abs`, `-x` and `-&x` of `MIN` overflow as the native `abs` and `-` do: with overflow checks
+/// they panic with the message of a native negation and report the caller, through the inherent
+/// `const fn` and the trait, and without them they return `MIN`; at 7 bits, at the full width of a
+/// native integer, at one bit and at 256 bits.
 #[test]
-fn abs_of_min_overflows() {
+fn negation_and_abs_of_min_overflow() {
   let message = "attempt to negate with overflow".to_string();
   let small = NonZeroInt::<U7>::MIN;
   let full = NonZeroInt::<U8, NonZero<i8>>::MIN;
@@ -1605,10 +1606,367 @@ fn abs_of_min_overflows() {
   let wide = NonZeroInt::<U256>::MIN;
   overflows_here!(small.abs(), message, small);
   overflows_here!(SignedNonZero::abs(&small), message, small);
+  overflows_here!(-small, message, small);
+  overflows_here!(-&small, message, small);
   overflows_here!(full.abs(), message, full);
   overflows_here!(SignedNonZero::abs(&full), message, full);
+  overflows_here!(-full, message, full);
+  overflows_here!(-&full, message, full);
   overflows_here!(bit.abs(), message, bit);
   overflows_here!(SignedNonZero::abs(&bit), message, bit);
+  overflows_here!(-bit, message, bit);
+  overflows_here!(-&bit, message, bit);
   overflows_here!(wide.abs(), message, wide);
   overflows_here!(SignedNonZero::abs(&wide), message, wide);
+  overflows_here!(-wide, message, wide);
+  overflows_here!(-&wide, message, wide);
+}
+
+/// Checks the operators of the non-zero integer of `$ty`, the integer of the sign `$sign` and of
+/// `$bits` bits, whose values `$from` creates from an `i128`, at the pairs of `$samples`, as
+/// [`sweep_storage`] passes them, against the methods of the integer: `/` and `%` of the integer by
+/// a non-zero divisor and their compound assignments, `|` of two non-zero values and of a non-zero
+/// value and an integer either way, `|=` by both, and for `NonZeroInt` the negation of a value
+/// that is not `MIN`, in every form of values and references.
+macro_rules! sweep_nonzero_operators {
+  ($sign:ident; $ty:ty, $bits:expr, $samples:expr, $from:expr, $value:expr, $magnitude:expr) => {{
+    let from: fn(i128) -> $ty = $from;
+    let (_, pairs): (Vec<i128>, Vec<(i128, i128)>) = $samples;
+    for (a, b) in pairs {
+      let (i, j) = (from(a), from(b));
+      division_by_nonzero!($sign; $ty; i, j, a, b);
+      let Some(x) = NonZeroOf::<$ty>::new(i) else {
+        continue;
+      };
+      let or = NonZeroOf::<$ty>::new(i | j).expect("not zero");
+      assert_eq!([x | j, x | &j, &x | j, &x | &j], [or; 4], "{a} | {b}");
+      assert_eq!([j | x, j | &x, &j | x, &j | &x], [or; 4], "{b} | {a}");
+      let mut targets = [x; 2];
+      targets[0] |= j;
+      targets[1] |= &j;
+      assert_eq!(targets, [or; 2], "{a} |= {b}");
+      if let Some(y) = NonZeroOf::<$ty>::new(j) {
+        assert_eq!([x | y, x | &y, &x | y, &x | &y], [or; 4], "{a} | {b}");
+        let mut targets = [x; 2];
+        targets[0] |= y;
+        targets[1] |= &y;
+        assert_eq!(targets, [or; 2], "{a} |= {b}");
+      }
+      negation_of_nonzero!($sign; x, a);
+    }
+  }};
+}
+
+/// Checks `/`, `%`, `/=` and `%=` of the unsigned integer `$i` of `$ty` by `$j` where it is not
+/// zero, the values `$a` and `$b`, against the checked division and remainder of the integer;
+/// signed integers have none.
+macro_rules! division_by_nonzero {
+  (unsigned; $ty:ty; $i:expr, $j:expr, $a:expr, $b:expr) => {{
+    let (i, j) = ($i, $j);
+    if let Some(d) = NonZeroOf::<$ty>::new(j) {
+      let quotient = i.checked_div(&j).expect("not zero");
+      let remainder = i.checked_rem(&j).expect("not zero");
+      assert_eq!(
+        [i / d, i / &d, &i / d, &i / &d],
+        [quotient; 4],
+        "{} / {}",
+        $a,
+        $b
+      );
+      assert_eq!(
+        [i % d, i % &d, &i % d, &i % &d],
+        [remainder; 4],
+        "{} % {}",
+        $a,
+        $b
+      );
+      let mut targets = [i; 4];
+      targets[0] /= d;
+      targets[1] /= &d;
+      targets[2] %= d;
+      targets[3] %= &d;
+      assert_eq!(
+        targets,
+        [quotient, quotient, remainder, remainder],
+        "{} and {}",
+        $a,
+        $b
+      );
+    }
+  }};
+  (signed; $ty:ty; $i:expr, $j:expr, $a:expr, $b:expr) => {{}};
+}
+
+/// Checks `-$x` and `-&$x` of a signed value `$x`, `$a`, where it is not `MIN`, against the checked
+/// negation; unsigned values have none.
+macro_rules! negation_of_nonzero {
+  (unsigned; $x:expr, $a:expr) => {{}};
+  (signed; $x:expr, $a:expr) => {{
+    let x = $x;
+    if let Some(negated) = x.checked_neg() {
+      assert_eq!([-x, -&x], [negated; 2], "-{}", $a);
+    }
+  }};
+}
+
+/// Checks the operators at the width `B`, `bits` bits, at most 8, at the pairs of
+/// [`nonzero_samples`], in the storages of [`nonzero_of_small_widths`].
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn operators_of_small_widths<B>(bits: u32)
+where
+  B: FitsBits<u8> + FitsBits<i8> + FitsBits<u16> + FitsBits<i16> + FitsBits<u128> + FitsBits<i128>,
+  B: FitsBits<[u8; 1]> + FitsBits<[u8; 2]> + FitsBits<[u16; 1]>,
+  B: FitsBits<[u64; 1]> + FitsBits<[u128; 1]>,
+{
+  let everywhere = |bits, signed| nonzero_samples(bits, signed, true, true);
+  let primary = |bits, signed| nonzero_samples(bits, signed, true, false);
+  let secondary = |bits, signed| nonzero_samples(bits, signed, false, false);
+  sweep_storage!(sweep_nonzero_operators, everywhere, native B, bits, u8, i8);
+  sweep_storage!(sweep_nonzero_operators, everywhere, array B, bits, [u8; 1]);
+  sweep_storage!(sweep_nonzero_operators, primary, array B, bits, [u8; 2]);
+  sweep_storage!(sweep_nonzero_operators, primary, array B, bits, [u16; 1]);
+  sweep_storage!(sweep_nonzero_operators, secondary, native B, bits, u16, i16);
+  sweep_storage!(sweep_nonzero_operators, secondary, native B, bits, u128, i128);
+  sweep_storage!(sweep_nonzero_operators, secondary, array B, bits, [u64; 1]);
+  sweep_storage!(sweep_nonzero_operators, secondary, array B, bits, [u128; 1]);
+}
+
+/// Every form of `/`, `%`, `/=` and `%=` of `Uint` by `NonZeroUint`, of `|` and `|=`, and of the
+/// negation of `NonZeroInt`, at the pairs of each width up to 8 bits that the tier takes, against
+/// the methods of the integers, in native integers and in arrays of one and two limbs. Miri checks
+/// 1, 2, 7 and 8 bits.
+#[test]
+fn nonzero_operators_of_up_to_8_bits() {
+  operators_of_small_widths::<U1>(1);
+  operators_of_small_widths::<U2>(2);
+  operators_of_small_widths::<U7>(7);
+  operators_of_small_widths::<U8>(8);
+  if !tier().is_miri() {
+    operators_of_small_widths::<U3>(3);
+    operators_of_small_widths::<U4>(4);
+    operators_of_small_widths::<U5>(5);
+    operators_of_small_widths::<U6>(6);
+  }
+}
+
+/// Checks the operators of `$ty`, a non-zero integer of the sign `$sign` and of the width of the
+/// native `$native`, whose integer `$integer` creates from a native value and `$value` reads back,
+/// against those of `NonZero<$native>` at the pairs `$pairs`: the division and the remainder of the
+/// integer by a non-zero divisor and their compound assignments, for the unsigned ones, `|` in the
+/// three pairings, `|=` by both, and the negation, for the signed ones, where it does not overflow.
+macro_rules! operators_against_std {
+  ($sign:ident; $ty:ty, $native:ident; $integer:expr, $value:expr; $pairs:expr) => {{
+    let (integer, value) = ($integer, $value);
+    let read = |x: $ty| value(&x.get());
+    for (v, w) in $pairs.into_iter().map(|(v, w)| (v as $native, w as $native)) {
+      let (i, j) = (integer(v), integer(w));
+      native_division_by_nonzero!($sign; $ty; i, j, v, w, value);
+      let (Some(x), Some(n)) = (<$ty>::new(i), NonZero::<$native>::new(v)) else {
+        continue;
+      };
+      assert_eq!(
+        [read(x | j), read(j | x)],
+        [(n | w).get(), (w | n).get()],
+        "{v} | {w}"
+      );
+      let (mut target, mut native) = (x, n);
+      target |= j;
+      native |= w;
+      assert_eq!(read(target), native.get(), "{v} |= {w}");
+      if let (Some(y), Some(m)) = (<$ty>::new(j), NonZero::<$native>::new(w)) {
+        assert_eq!(read(x | y), (n | m).get(), "{v} | {w}");
+        let (mut target, mut native) = (x, n);
+        target |= y;
+        native |= m;
+        assert_eq!(read(target), native.get(), "{v} |= {w}");
+      }
+      native_negation_of_nonzero!($sign; $native; x, n, v, read);
+    }
+  }};
+}
+
+/// Checks `/` and `%` of the unsigned integer `$i` by `$j` where it is not zero, and their compound
+/// assignments, against those of the native `$v` by the native `NonZero` of `$w`, reading the
+/// results with `$value`; signed integers have none.
+macro_rules! native_division_by_nonzero {
+  (unsigned; $ty:ty; $i:expr, $j:expr, $v:expr, $w:expr, $value:expr) => {{
+    let (i, j, v, w, value) = ($i, $j, $v, $w, $value);
+    if let (Some(d), Some(m)) = (<$ty>::new(j), NonZero::new(w)) {
+      assert_eq!(
+        [value(&(i / d)), value(&(i % d))],
+        [v / m, v % m],
+        "{v} and {w}"
+      );
+      let (mut quotient, mut remainder) = (i, i);
+      quotient /= d;
+      remainder %= d;
+      let (mut native_quotient, mut native_remainder) = (v, v);
+      native_quotient /= m;
+      native_remainder %= m;
+      assert_eq!(
+        [value(&quotient), value(&remainder)],
+        [native_quotient, native_remainder],
+        "{v} and {w}"
+      );
+    }
+  }};
+  (signed; $ty:ty; $i:expr, $j:expr, $v:expr, $w:expr, $value:expr) => {{}};
+}
+
+/// Checks `-$x` and `-&$x` against the negation of `$n`, the native `NonZero` of `$v`, where it
+/// is not `MIN` of the native `$native`, reading the results with `$read`; unsigned values have no
+/// negation.
+macro_rules! native_negation_of_nonzero {
+  (unsigned; $native:ident; $x:expr, $n:expr, $v:expr, $read:expr) => {{}};
+  (signed; $native:ident; $x:expr, $n:expr, $v:expr, $read:expr) => {{
+    let (x, n, v, read) = ($x, $n, $v, $read);
+    if v != $native::MIN {
+      assert_eq!([read(-x), read(-&x)], [(-n).get(), (-&n).get()], "-{v}");
+    }
+  }};
+}
+
+/// The operators of the non-zero integers of 8 bits in `u8`, `i8` and `[u8; 1]`, and of 16 bits in
+/// `u16` and `i16`, against those of the native non-zero integers, at the pairs that the tier
+/// takes: as [`nonzero_against_the_native_nonzero`] takes them, every pair of 8 bits in an
+/// optimized build, and Miri the ends of 8 bits.
+#[test]
+fn nonzero_operators_against_the_native_nonzero() {
+  let pairs = |signed| {
+    if tier().is_miri() {
+      let ends = ends(8, signed);
+      ends
+        .iter()
+        .flat_map(|&a| ends.iter().map(move |&b| (a, b)))
+        .collect::<Vec<(i128, i128)>>()
+    } else {
+      small_pairs(8, signed, true)
+    }
+  };
+  operators_against_std!(
+    unsigned; NonZeroUint<U8, NonZero<u8>>, u8;
+    Uint::<U8, u8>::new, |i: &Uint<U8, u8>| i.value();
+    pairs(false)
+  );
+  operators_against_std!(
+    unsigned; NonZeroUint<U8, [u8; 1]>, u8;
+    |v| Uint::<U8, [u8; 1]>::from_limbs([v]), |i: &Uint<U8, [u8; 1]>| i.to_limbs()[0];
+    pairs(false)
+  );
+  operators_against_std!(
+    signed; NonZeroInt<U8, NonZero<i8>>, i8;
+    Int::<U8, i8>::new, |i: &Int<U8, i8>| i.value();
+    pairs(true)
+  );
+  operators_against_std!(
+    signed; NonZeroInt<U8, [u8; 1]>, i8;
+    |v: i8| Int::<U8, [u8; 1]>::from_limbs([v as u8]), |i: &Int<U8, [u8; 1]>| i.to_limbs()[0] as i8;
+    pairs(true)
+  );
+  if tier().is_miri() {
+    return;
+  }
+  operators_against_std!(
+    unsigned; NonZeroUint<U16, NonZero<u16>>, u16;
+    Uint::<U16, u16>::new, |i: &Uint<U16, u16>| i.value();
+    large_pairs(16, false)
+  );
+  operators_against_std!(
+    signed; NonZeroInt<U16, NonZero<i16>>, i16;
+    Int::<U16, i16>::new, |i: &Int<U16, i16>| i.value();
+    large_pairs(16, true)
+  );
+}
+
+/// The operators of code over `B: BitWidth`, on values and on references, each value used again
+/// after it is passed by value, which `Copy` allows, as text: `/`, `%`, `/=` and `%=` of `total`
+/// by `parts`, `|` of `parts` with `other` and with `total` either way, `|=` by both, `|` of
+/// `signed` with `nonzero` either way, and the negation of `nonzero` where it does not overflow.
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn operators_over_the_width<B: BitWidth>(
+  total: Uint<B>,
+  parts: NonZeroUint<B>,
+  other: NonZeroUint<B>,
+  signed: Int<B>,
+  nonzero: NonZeroInt<B>,
+) -> [String; 4] {
+  let (mut quotient, mut remainder) = (total, total);
+  quotient /= parts;
+  remainder %= &parts;
+  let mut or = parts;
+  or |= other;
+  or |= &total;
+  let negated: Option<[NonZeroInt<B>; 2]> = nonzero.checked_neg().map(|_| [-nonzero, -&nonzero]);
+  [
+    format!(
+      "{:?}",
+      [
+        total / parts,
+        &total / &parts,
+        total % parts,
+        &total % &parts,
+        quotient,
+        remainder,
+      ]
+    ),
+    format!(
+      "{:?}",
+      [
+        parts | other,
+        &parts | &other,
+        parts | total,
+        &parts | &total,
+        total | parts,
+        &total | &parts,
+        or,
+      ]
+    ),
+    format!(
+      "{:?}",
+      [signed | nonzero, &signed | &nonzero, nonzero | signed]
+    ),
+    format!("{negated:?}"),
+  ]
+}
+
+/// Code over `B: BitWidth` uses the operators of `NonZeroUint<B>` and `NonZeroInt<B>` on values and
+/// on references, which give the results of the methods of the integers of the default storages,
+/// at widths of each kind of default storage, for the limits and a value between them. Miri leaves
+/// out 1024 bits.
+#[test]
+fn nonzero_operators_over_the_width() {
+  macro_rules! agrees {
+    ($($width:ident),+ $(,)?) => {$({
+      type U = NonZeroUint<$width>;
+      type I = NonZeroInt<$width>;
+      let (total, other, signed) = (Uint::<$width>::MAX, U::MAX.isqrt(), Int::<$width>::MIN);
+      for (parts, nonzero) in [(U::MIN, I::MIN), (U::MAX, I::MAX), (other, I::MAX.wrapping_neg())] {
+        let quotient = total.checked_div(&parts.get()).expect("not zero");
+        let remainder = total.checked_rem(&parts.get()).expect("not zero");
+        let with = |value: Uint<$width>| U::new(parts.get().bitor(value)).expect("not zero");
+        let (with_other, with_total) = (with(other.get()), with(total));
+        let assigned = U::new(parts.get().bitor(other.get()).bitor(total)).expect("not zero");
+        let signed_or = I::new(signed.bitor(nonzero.get())).expect("not zero");
+        let expected = [
+          format!("{:?}", [quotient, quotient, remainder, remainder, quotient, remainder]),
+          format!(
+            "{:?}",
+            [with_other, with_other, with_total, with_total, with_total, with_total, assigned]
+          ),
+          format!("{:?}", [signed_or; 3]),
+          format!("{:?}", nonzero.checked_neg().map(|negated| [negated; 2])),
+        ];
+        assert_eq!(
+          operators_over_the_width::<$width>(total, parts, other, signed, nonzero),
+          expected,
+          "{parts} and {nonzero}"
+        );
+      }
+    })+};
+  }
+
+  agrees!(U1, U7, U8, U64, U65, U128, U129, U200);
+  if !tier().is_miri() {
+    agrees!(U1024);
+  }
 }
