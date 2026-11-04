@@ -14,7 +14,10 @@ use core::{
   fmt::{Debug, Display},
   hash::Hash,
   iter::{Product, Sum},
-  ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
+  ops::{
+    Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign,
+    Mul, MulAssign, Neg, Not, Rem, RemAssign, Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign,
+  },
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -50,9 +53,12 @@ mod sealed {
 /// this trait, which the bound `B: BitWidth` provides on `Uint<B>` and `Int<B>`; a method call
 /// needs the trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`. The
 /// supertraits give generic code the operators `+`, `-` and `*`, their compound assignments and
-/// `Sum`, which on overflow panic or wrap as `overflow-checks` decides, and `/` and `%` and their
+/// `Sum`, which on overflow panic or wrap as `overflow-checks` decides, `/` and `%` and their
 /// compound assignments, which panic on a zero divisor and on overflow in every build, as for the
-/// native integers.
+/// native integers, the bitwise operators `!`, `&`, `|` and `^` and their compound assignments, and
+/// the shifts `<<` and `>>` and their compound assignments by a `u32`, so that a literal amount, as
+/// in `x << 3`, is a `u32` in code bounded by this trait alone; a concrete type takes every
+/// primitive integer as the amount.
 /// The functions `zero`, `min_value` and `max_value`, and [`one`](IntegerOne::one), have the names
 /// of those of `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by traits of
 /// both crates names the trait in the path, as in `FixedInteger::zero()`.
@@ -109,6 +115,17 @@ pub trait FixedInteger:
   + MulAssign
   + DivAssign
   + RemAssign
+  + Not<Output = Self>
+  + BitAnd<Output = Self>
+  + BitOr<Output = Self>
+  + BitXor<Output = Self>
+  + BitAndAssign
+  + BitOrAssign
+  + BitXorAssign
+  + Shl<u32, Output = Self>
+  + Shr<u32, Output = Self>
+  + ShlAssign<u32>
+  + ShrAssign<u32>
   + Sum
 {
   /// The number of bits, `Bits`.

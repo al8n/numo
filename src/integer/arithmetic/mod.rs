@@ -1333,6 +1333,21 @@ pub(super) mod overflow {
     let _ = -black_box(i8::MIN);
   }
 
+  /// Repeats the overflow of a native shift left, as [`forward_add`] does: a shift by the width of
+  /// the native integer, which the native operator reports with the message of a shift left.
+  #[inline]
+  #[track_caller]
+  pub(crate) const fn forward_shl() {
+    let _ = black_box(1u8) << black_box(8u32);
+  }
+
+  /// Repeats the overflow of a native shift right, as [`forward_shl`] does for a shift left.
+  #[inline]
+  #[track_caller]
+  pub(crate) const fn forward_shr() {
+    let _ = black_box(1u8) >> black_box(8u32);
+  }
+
   /// Repeats the overflow of a native exponentiation, as [`forward_add`] does. The native `pow`
   /// is not `#[track_caller]`, so the panic reports a line in `core`, as that of the native `pow`
   /// does. It reads `overflow-checks` where the native `pow` is instantiated, so the setting of the

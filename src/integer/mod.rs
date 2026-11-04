@@ -485,6 +485,7 @@ macro_rules! array_integers {
       uint_math_table!(inherent_items![unsigned, $lower, &]);
       integer_bits_table!(inherent_items![unsigned, $lower, &]);
       uint_bits_table!(inherent_items![unsigned, $lower, &, Int<B, [$limb; N]>]);
+      bitwise_table!(inherent_items![unsigned, $lower, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -648,6 +649,7 @@ macro_rules! array_integers {
       int_math_table!(inherent_items![signed, $upper, &]);
       integer_bits_table!(inherent_items![signed, $upper, &]);
       int_bits_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
+      bitwise_table!(inherent_items![signed, $upper, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -980,6 +982,7 @@ macro_rules! native_integers {
       uint_math_table!(inherent_items![$uint]);
       integer_bits_table!(inherent_items![$uint]);
       uint_bits_table!(inherent_items![$uint, Int<B, $int>]);
+      bitwise_table!(inherent_items![$uint]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1134,6 +1137,7 @@ macro_rules! native_integers {
       int_math_table!(inherent_items![$int]);
       integer_bits_table!(inherent_items![$int]);
       int_bits_table!(inherent_items![$int, Uint<B, $uint>]);
+      bitwise_table!(inherent_items![$int]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///

@@ -491,3 +491,149 @@ fn shifts_need_only_the_storage_trait() {
     "((-1, false), Some(-10), -2, -5, -2, Some(-10))"
   );
 }
+
+/// Asserts that `$x << n` and `$x >> n`, for each amount `n` of `$amounts` below `Bits` that the
+/// primitive integer `$amount` holds, give the checked shifts by `n` in every form: by value and by
+/// reference, on a value and a reference, and as compound assignments with the amount and a
+/// reference to it.
+macro_rules! shifts_by {
+  ($x:expr, $amounts:expr; $($amount:ty),+ $(,)?) => {{
+    let x = $x;
+    for &n in $amounts {
+      let (Some(left), Some(right)) = (x.checked_shl(n), x.checked_shr(n)) else {
+        continue;
+      };
+      $(
+        if u128::from(n) <= <$amount>::MAX as u128 {
+          let amount = n as $amount;
+          let name = stringify!($amount);
+          assert_eq!(
+            [x << amount, x << &amount, &x << amount, &x << &amount],
+            [left; 4],
+            "{x:?} << {amount}{name}"
+          );
+          assert_eq!(
+            [x >> amount, x >> &amount, &x >> amount, &x >> &amount],
+            [right; 4],
+            "{x:?} >> {amount}{name}"
+          );
+          let mut targets = [x; 4];
+          targets[0] <<= amount;
+          targets[1] <<= &amount;
+          targets[2] >>= amount;
+          targets[3] >>= &amount;
+          assert_eq!(targets, [left, left, right, right], "{x:?} by {amount}{name}");
+        }
+      )+
+    }
+  }};
+}
+
+/// `<<` and `>>` take every primitive integer as the amount, by value and by reference, on values
+/// and references, and so do `<<=` and `>>=`: below `Bits`, every form gives the checked shift, in
+/// native integers and arrays, at partial and full widths and at one signed bit.
+#[test]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn shift_operators_take_every_amount_type() {
+  macro_rules! every_amount_type {
+    ($($x:expr),+ $(,)?) => {$({
+      let x = $x;
+      let amounts: Vec<u32> = (0..x.count_ones() + x.count_zeros()).collect();
+      shifts_by!(x, &amounts; u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
+    })+};
+  }
+  every_amount_type!(
+    u7::new(0b101_0011),
+    Uint::<U8, u8>::MAX,
+    Uint::<U16, [u8; 2]>::from_limbs([0x5a, 0xa5]),
+    i7::new(-21),
+    Int::<U8, i8>::MIN,
+    Int::<U1, [u16; 1]>::MIN,
+    i256::from_limbs([u64::MAX, 3, 0, 1 << 62]),
+    -i256::ONE,
+  );
+  // A literal amount on a concrete type falls back to `i32`, as for the native integers.
+  assert_eq!((u7::ONE << 3, i256::MIN >> 255), (u7::new(8), -i256::ONE));
+}
+
+/// An amount that is negative or `Bits` or more overflows `<<` and `>>` as a native shift does:
+/// with overflow checks they panic with the messages of the native operators and report the
+/// caller, and without them they shift by the amount modulo `Bits`, taken as a mathematical
+/// integer, whatever its type. Every amount overflows zero bits, whose shifts give zero. A
+/// panicking compound assignment leaves its target unchanged.
+#[test]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn shift_operators_follow_overflow_checks() {
+  // The messages of the native shifts that overflow, which only a build with checks has.
+  let left =
+    panic_of(|| black_box(1u8) << black_box(8u32)).map_or_else(String::new, |panic| panic.0);
+  let right =
+    panic_of(|| black_box(1u8) >> black_box(8u32)).map_or_else(String::new, |panic| panic.0);
+  type U0x8 = Uint<U0, u8>;
+  type I0x0 = Int<U0, [u8; 0]>;
+  type I1 = Int<U1, i8>;
+  // Modulo 7, 7 is 0, -1 is 6, -13 is 1, `u128::MAX = 2^128 - 1` is 3 and `i128::MIN = -2^127`
+  // is 5.
+  overflows_here!(u7::ONE << 7u32, left, u7::ONE);
+  overflows_here!(u7::ONE << -1i32, left, u7::new(64));
+  overflows_here!(u7::ONE << u128::MAX, left, u7::new(8));
+  overflows_here!(&u7::ONE << &-13i64, left, u7::new(2));
+  overflows_here!(i7::MIN >> -1i8, right, i7::new(-1));
+  overflows_here!(i7::MIN >> i128::MIN, right, i7::new(-2));
+  overflows_here!(Uint::<U8, u8>::MAX << 8usize, left, Uint::<U8, u8>::MAX);
+  overflows_here!(Int::<U8, i8>::MIN >> isize::MIN, right, Int::<U8, i8>::MIN);
+  overflows_here!(U0x8::ZERO << 0u8, left, U0x8::ZERO);
+  overflows_here!(I0x0::ZERO >> 0i16, right, I0x0::ZERO);
+  overflows_here!(I1::MIN >> 1i64, right, I1::MIN);
+  overflows_here!(i256::MIN >> 256u16, right, i256::MIN);
+  overflows_here!(u256::ONE << 257u64, left, u256::from_limbs([2, 0, 0, 0]));
+
+  let checks = overflow_checks();
+  let mut target = u7::ONE;
+  let panic = panic_of(|| target <<= 8u8);
+  assert_eq!(panic.is_some(), checks);
+  assert_eq!(target, if checks { u7::ONE } else { u7::new(2) });
+  let mut target = i256::MIN;
+  let panic = panic_of(|| target >>= &-1i32);
+  assert_eq!(panic.is_some(), checks);
+  assert_eq!(target, if checks { i256::MIN } else { -i256::ONE });
+}
+
+/// The shift operators need only the storage trait, `UintRepr` or `IntRepr`, on a reference, and
+/// reach code bounded by `FixedInteger` alone on a value, where a literal amount is a `u32`, as in
+/// `x << 3`: in a native integer and in an array, they give the results of the checked shifts.
+#[test]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn shift_operators_need_only_the_storage_trait() {
+  fn unsigned<B: FitsBits<R>, R: UintRepr>(a: &Uint<B, R>) -> [Uint<B, R>; 3] {
+    [a << 3u32, a >> 1i8, a << &2usize]
+  }
+
+  fn signed<B: FitsBits<R>, R: IntRepr>(a: &Int<B, R>) -> [Int<B, R>; 3] {
+    [a << 3u32, a >> 1i8, a << &2usize]
+  }
+
+  fn fixed<T: FixedInteger>(a: T) -> [T; 2] {
+    let mut assigned = a.clone();
+    assigned <<= 2;
+    assigned >>= 1;
+    [a << 3, assigned]
+  }
+
+  // `$results` gives the shifts by 3 places left, one right and 2 left.
+  macro_rules! check {
+    ($results:ident, $a:expr) => {{
+      let a = $a;
+      let [three, two] = [3, 2].map(|n| a.checked_shl(n).expect("below the width"));
+      let right = a.checked_shr(1).expect("below the width");
+      assert_eq!($results(&a), [three, right, two], "{a}");
+      let assigned = two.checked_shr(1).expect("below the width");
+      assert_eq!(fixed(a), [three, assigned], "{a}");
+    }};
+  }
+
+  check!(unsigned, u7::new(0b101_0011));
+  check!(unsigned, u256::from_limbs([5, 0, 0, 1 << 63]));
+  check!(signed, i7::new(-21));
+  check!(signed, i256::MIN);
+}

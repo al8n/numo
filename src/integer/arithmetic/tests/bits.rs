@@ -685,8 +685,9 @@ macro_rules! zero_and_one_bit {
 
 /// The table of zero bits and one bit, row by row: `u0` and `i0`, which hold only zero, `u1`,
 /// which holds 0 and 1, and `i1`, which holds -1 and 0, each in a native integer and in an array.
-/// Every amount overflows zero bits and takes no remainder by zero, and every amount but zero
-/// overflows one bit, whose rotations, reversal and exact shifts by zero return the value.
+/// Every amount overflows zero bits and takes no remainder by zero, and zero is its own complement
+/// there; every amount but zero overflows one bit, whose rotations, reversal and exact shifts by
+/// zero return the value, and whose bitwise operations are those of booleans.
 #[test]
 fn zero_bits_and_one_bit() {
   macro_rules! zero_bits {
@@ -701,7 +702,12 @@ fn zero_bits_and_one_bit() {
         overflowing_shr(5) = (T::ZERO, true), checked_shl(0) = None, checked_shr(0) = None,
         wrapping_shl(0) = T::ZERO, wrapping_shr(u32::MAX) = T::ZERO,
         unbounded_shl(0) = T::ZERO, unbounded_shr(1) = T::ZERO, shl_exact(0) = None,
-        shr_exact(0) = None, bit(0) = false,
+        shr_exact(0) = None, bit(0) = false, not() = T::ZERO, bitand(T::ZERO) = T::ZERO,
+        bitor(T::ZERO) = T::ZERO, bitxor(T::ZERO) = T::ZERO,
+      );
+      assert_eq!(
+        [!T::ZERO, T::ZERO & T::ZERO, T::ZERO | T::ZERO, T::ZERO ^ T::ZERO],
+        [T::ZERO; 4]
       );
     })+};
   }
@@ -718,8 +724,10 @@ fn zero_bits_and_one_bit() {
     ($($ty:ty: $one:expr),+) => {$({
       type T = $ty;
       for (x, one) in [(T::ZERO, false), ($one, true)] {
-        // `x` again for every amount of a rotation, and for a shift by zero.
+        // `x` again for every amount of a rotation, and for a shift by zero. The bitwise
+        // operations are those of booleans, the complement flips the only bit.
         let ones = u32::from(one);
+        let flipped = if one { T::ZERO } else { $one };
         zero_and_one_bit!(T; x;
           count_ones() = ones, count_zeros() = 1 - ones, leading_zeros() = 1 - ones,
           trailing_zeros() = 1 - ones, leading_ones() = ones, trailing_ones() = ones,
@@ -730,7 +738,9 @@ fn zero_bits_and_one_bit() {
           checked_shl(1) = None, wrapping_shl(1) = x, unbounded_shl(0) = x,
           unbounded_shl(1) = T::ZERO, shl_exact(0) = Some(x), shl_exact(1) = None,
           shr_exact(0) = Some(x), shr_exact(1) = None, bit(0) = one, bit(1) = false,
+          not() = flipped, bitand($one) = x, bitor(T::ZERO) = x, bitxor($one) = flipped,
         );
+        assert_eq!([!x, x & $one, x | T::ZERO, x ^ $one], [flipped, x, x, flipped]);
       }
     })+};
   }
@@ -756,4 +766,227 @@ fn zero_bits_and_one_bit() {
     ),
     (1, true)
   );
+}
+
+/// Checks `&`, `|`, `^` and `!` of `$ty`, of the sign `$sign` and of `$bits` bits, whose values
+/// `$from` creates from an `i128`, at each pair of `$pairs`: the bitwise `const fn`s give the bit
+/// model's results, and so do the operators in their four forms of values and references, their
+/// compound assignments with a value and a reference, and `!` on a value and a reference.
+macro_rules! sweep_bitwise {
+  ($sign:ident; $ty:ty, $bits:expr, $pairs:expr, $from:expr, $value:expr, $magnitude:expr) => {{
+    let (bits, signed) = ($bits, is_signed!($sign));
+    let from: fn(i128) -> $ty = $from;
+    let read = |pattern: &[bool]| from(value_of(pattern, signed));
+    for (a, b) in $pairs {
+      let (x, y) = (from(a), from(b));
+      let (p, q) = (pattern_of(a, bits), pattern_of(b, bits));
+      let (and, or, xor) = (
+        read(&model::and(&p, &q)),
+        read(&model::or(&p, &q)),
+        read(&model::xor(&p, &q)),
+      );
+      assert_eq!(
+        [x.bitand(y), x.bitor(y), x.bitxor(y)],
+        [and, or, xor],
+        "{a} and {b} in {bits} bits"
+      );
+      assert_eq!([x & y, x & &y, &x & y, &x & &y], [and; 4], "{a} & {b}");
+      assert_eq!([x | y, x | &y, &x | y, &x | &y], [or; 4], "{a} | {b}");
+      assert_eq!([x ^ y, x ^ &y, &x ^ y, &x ^ &y], [xor; 4], "{a} ^ {b}");
+      let mut targets = [x; 6];
+      targets[0] &= y;
+      targets[1] &= &y;
+      targets[2] |= y;
+      targets[3] |= &y;
+      targets[4] ^= y;
+      targets[5] ^= &y;
+      assert_eq!(targets, [and, and, or, or, xor, xor], "{a} and {b}");
+      let not = read(&model::not(&p));
+      assert_eq!([x.not(), !x, !&x], [not; 3], "!{a} in {bits} bits");
+    }
+  }};
+}
+
+/// Checks the bitwise operations at the width `B`, `bits` bits, at most 8, in `u8` and `i8`,
+/// `[u8; 1]`, `[u8; 2]` and `[u16; 1]` at the pairs of [`small_pairs`] for a storage that every
+/// tier checks, and in `u16` and `i16`, `u128` and `i128`, `[u64; 1]` and `[u128; 1]` at those for
+/// another.
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn bitwise_of_small_widths<B>(bits: u32)
+where
+  B: FitsBits<u8> + FitsBits<i8> + FitsBits<u16> + FitsBits<i16> + FitsBits<u128> + FitsBits<i128>,
+  B: FitsBits<[u8; 1]> + FitsBits<[u8; 2]> + FitsBits<[u16; 1]>,
+  B: FitsBits<[u64; 1]> + FitsBits<[u128; 1]>,
+{
+  let primary = |bits, signed| small_pairs(bits, signed, true);
+  let secondary = |bits, signed| small_pairs(bits, signed, false);
+  sweep_storage!(sweep_bitwise, primary, native B, bits, u8, i8);
+  sweep_storage!(sweep_bitwise, primary, array B, bits, [u8; 1]);
+  sweep_storage!(sweep_bitwise, primary, array B, bits, [u8; 2]);
+  sweep_storage!(sweep_bitwise, primary, array B, bits, [u16; 1]);
+  sweep_storage!(sweep_bitwise, secondary, native B, bits, u16, i16);
+  sweep_storage!(sweep_bitwise, secondary, native B, bits, u128, i128);
+  sweep_storage!(sweep_bitwise, secondary, array B, bits, [u64; 1]);
+  sweep_storage!(sweep_bitwise, secondary, array B, bits, [u128; 1]);
+}
+
+/// Checks the bitwise operations at the width `B`, `bits` bits, from 9 to 16, in `u16` and `i16`,
+/// `[u8; 2]` and `[u16; 1]`, at the pairs of [`large_pairs`].
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn bitwise_of_large_widths<B>(bits: u32)
+where
+  B: FitsBits<u16> + FitsBits<i16> + FitsBits<[u8; 2]> + FitsBits<[u16; 1]>,
+{
+  sweep_storage!(sweep_bitwise, large_pairs, native B, bits, u16, i16);
+  sweep_storage!(sweep_bitwise, large_pairs, array B, bits, [u8; 2]);
+  sweep_storage!(sweep_bitwise, large_pairs, array B, bits, [u16; 1]);
+}
+
+/// Every pair of values of each width up to 8 bits, or the pairs that the tier takes, and the
+/// pairs that the tier takes of widths from 9 to 16 bits: `&`, `|`, `^` and `!` and the bitwise
+/// `const fn`s against the bit model, in native integers and in arrays, at zero bits, at one
+/// signed bit, and at partial and full widths. Miri checks 0, 1, 2, 7, 8, 9 and 16 bits.
+#[test]
+fn bitwise_operations_of_up_to_16_bits() {
+  bitwise_of_small_widths::<U0>(0);
+  bitwise_of_small_widths::<U1>(1);
+  bitwise_of_small_widths::<U2>(2);
+  bitwise_of_small_widths::<U7>(7);
+  bitwise_of_small_widths::<U8>(8);
+  bitwise_of_large_widths::<U9>(9);
+  bitwise_of_large_widths::<U16>(16);
+  if !tier().is_miri() {
+    bitwise_of_small_widths::<U3>(3);
+    bitwise_of_small_widths::<U4>(4);
+    bitwise_of_small_widths::<U5>(5);
+    bitwise_of_small_widths::<U6>(6);
+    bitwise_of_large_widths::<U12>(12);
+    bitwise_of_large_widths::<U15>(15);
+  }
+  if tier().is_full() {
+    bitwise_of_large_widths::<U10>(10);
+    bitwise_of_large_widths::<U11>(11);
+    bitwise_of_large_widths::<U13>(13);
+    bitwise_of_large_widths::<U14>(14);
+  }
+}
+
+/// `&`, `|`, `^` and `!` on references need only the storage trait, `UintRepr` or `IntRepr`, not a
+/// storage that holds the value inline, and the operators on values, with their compound
+/// assignments, reach code bounded by `FixedInteger` alone: in a native integer and in an array,
+/// they give the results of the bitwise `const fn`s.
+#[test]
+fn bitwise_operators_need_only_the_storage_trait() {
+  fn unsigned<B: FitsBits<R>, R: UintRepr>(a: &Uint<B, R>, b: &Uint<B, R>) -> [Uint<B, R>; 4] {
+    [a & b, a | b, a ^ b, !a]
+  }
+
+  fn signed<B: FitsBits<R>, R: IntRepr>(a: &Int<B, R>, b: &Int<B, R>) -> [Int<B, R>; 4] {
+    [a & b, a | b, a ^ b, !a]
+  }
+
+  fn fixed<T: FixedInteger>(a: T, b: T) -> [T; 4] {
+    let mut assigned = a.clone();
+    assigned &= b.clone();
+    assigned |= !b.clone();
+    assigned ^= a.clone();
+    [
+      a.clone() & b.clone(),
+      a.clone() | b.clone(),
+      a ^ b,
+      assigned,
+    ]
+  }
+
+  // The generic function `$results` gives the results of the bitwise `const fn`s.
+  macro_rules! check {
+    ($results:ident, $a:expr, $b:expr) => {{
+      let (a, b) = ($a, $b);
+      let expected = [a.bitand(b), a.bitor(b), a.bitxor(b), a.not()];
+      assert_eq!($results(&a, &b), expected, "{a} and {b}");
+      let assigned = a.bitand(b).bitor(b.not()).bitxor(a);
+      assert_eq!(
+        fixed(a, b),
+        [expected[0], expected[1], expected[2], assigned],
+        "{a} and {b}"
+      );
+    }};
+  }
+
+  check!(unsigned, u7::new(0b101_1010), u7::new(0b011_0110));
+  check!(unsigned, u256::from_limbs([5, 0, 0, 1 << 63]), u256::MAX);
+  check!(signed, i7::MIN, i7::new(-6));
+  check!(signed, i256::MIN, i256::ONE);
+  check!(unsigned, Uint::<U0, u8>::ZERO, Uint::<U0, u8>::ZERO);
+  check!(signed, Int::<U1, [u8; 1]>::MIN, Int::<U1, [u8; 1]>::ZERO);
+}
+
+/// The bitwise `const fn`s take their operands by value, as the methods of the operator traits
+/// do, so that method syntax on a value finds them first, also where those traits are in scope:
+/// constants built with them evaluate, in a native integer and in an array, and equal the results
+/// of the operators. On a reference, method syntax reaches the methods of the traits.
+mod with_the_operator_traits {
+  use core::ops::{BitAnd, BitOr, BitXor, Not};
+
+  use typenum::U24;
+
+  use crate::{Int, i7, u7};
+
+  #[test]
+  fn bitwise_const_fns_come_first() {
+    type Bytes = Int<U24, [u8; 3]>;
+    const NATIVE: [u7; 4] = [
+      u7::MAX.bitand(u7::new(5)),
+      u7::new(64).bitor(u7::new(5)),
+      u7::MAX.bitxor(u7::new(5)),
+      u7::new(5).not(),
+    ];
+    const SIGNED: [i7; 3] = [
+      i7::MIN.bitor(i7::new(5)),
+      i7::new(-1).bitxor(i7::MIN),
+      i7::new(-6).not(),
+    ];
+    const ARRAY: [Bytes; 4] = [
+      Bytes::MIN.bitand(Bytes::MAX),
+      Bytes::MIN.bitor(Bytes::MAX),
+      Bytes::MIN.bitxor(Bytes::MIN),
+      Bytes::ZERO.not(),
+    ];
+
+    assert_eq!(
+      NATIVE,
+      [
+        u7::MAX & u7::new(5),
+        u7::new(64) | u7::new(5),
+        u7::MAX ^ u7::new(5),
+        !u7::new(5)
+      ]
+    );
+    assert_eq!(
+      NATIVE,
+      [u7::new(5), u7::new(69), u7::new(122), u7::new(122)]
+    );
+    assert_eq!(
+      SIGNED,
+      [i7::MIN | i7::new(5), i7::new(-1) ^ i7::MIN, !i7::new(-6)]
+    );
+    assert_eq!(SIGNED, [i7::new(-59), i7::MAX, i7::new(5)]);
+    assert_eq!(
+      ARRAY,
+      [
+        Bytes::MIN & Bytes::MAX,
+        Bytes::MIN | Bytes::MAX,
+        Bytes::MIN ^ Bytes::MIN,
+        !Bytes::ZERO
+      ]
+    );
+    assert_eq!(ARRAY, [Bytes::ZERO, -Bytes::ONE, Bytes::ZERO, -Bytes::ONE]);
+
+    // On references, the methods of the traits.
+    let (five, max) = (u7::new(5), u7::MAX);
+    assert_eq!((&max).bitand(&five), five);
+    assert_eq!((&five).bitor(&u7::new(64)), u7::new(69));
+    assert_eq!((&max).bitxor(&five), u7::new(122));
+    assert_eq!((&five).not(), u7::new(122));
+  }
 }
