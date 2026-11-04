@@ -36,7 +36,7 @@ miri_groups=(
   "1 integer::arithmetic::"
   "2 integer::tests::int_"
   "2 integer::tests::uint_"
-  "3 integer::tests::"
+  "2 integer::tests::"
   "3 integer::"
   "3 decimal::"
   "4 int::tests::"
@@ -51,6 +51,14 @@ miri_groups=(
   "9 int::signed::b16::"
   "10 int::signed::b32::"
   "10 int::signed::b128::"
+  # The tests of `tests/oracle.rs` have no module path of the crate, so these groups match parts of
+  # their names. They come last, so they take only the tests that no group before them matched.
+  "4 ::arithmetic"
+  "5 ::parse"
+  "7 convert_"
+  "8 ::exp"
+  "8 ::text"
+  "9 round_"
 )
 
 # Exit with an error unless the argument is a shard number, from 1 to `miri_shards`.
