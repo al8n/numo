@@ -8,11 +8,12 @@
 
 use core::{
   cmp::Ordering,
+  num::IntErrorKind,
   ops::{Not, Shl, Sub},
 };
 
 use num_bigint::{BigInt, Sign};
-use std::{vec, vec::Vec};
+use std::{format, string::String, vec, vec::Vec};
 
 use crate::{
   FitsBits, FixedInteger, InlineIntRepr, InlineUintRepr, Int, RoundingMode, SignedFixedInteger,
@@ -724,6 +725,147 @@ pub(crate) fn limbs_of_pattern<L: Limb, const N: usize>(pattern: &[bool], signed
         .fold(0, |limb, &bit| limb << 1 | u128::from(bit)),
     )
   })
+}
+
+/// The symbols of the texts that the parsers of the integers are checked on: the digits 0, 1 and
+/// 9, the letters `a` and `z`, digits from radix 11 and in radix 36, both signs, and `_`, which no
+/// radix reads.
+const TEXT_SYMBOLS: &[u8] = b"019az+-_";
+
+/// Every text of up to `length` symbols of [`TEXT_SYMBOLS`], the empty text first.
+fn texts_up_to(length: usize) -> Vec<Vec<u8>> {
+  let mut texts = vec![Vec::new()];
+  // The texts of the length before, from which the next length grows.
+  let mut start = 0;
+  for _ in 0..length {
+    let end = texts.len();
+    for k in start..end {
+      for &symbol in TEXT_SYMBOLS {
+        let mut text = texts[k].clone();
+        text.push(symbol);
+        texts.push(text);
+      }
+    }
+    start = end;
+  }
+  texts
+}
+
+/// The texts at which the parsers of the integers are checked, as the tier takes them: every text
+/// of up to four symbols of [`TEXT_SYMBOLS`] in an optimized build, of up to three in an
+/// unoptimized one, and of up to two under Miri.
+pub(crate) fn parse_texts() -> Vec<Vec<u8>> {
+  texts_up_to(match tier() {
+    Tier::Full => 4,
+    Tier::Debug => 3,
+    Tier::Miri => 2,
+  })
+}
+
+/// The radixes at which the parsers of the integers are checked: 2, 10, 16 and 36, or under Miri
+/// 10 and 36.
+pub(crate) fn parse_radixes() -> &'static [u32] {
+  if tier().is_miri() {
+    &[10, 36]
+  } else {
+    &[2, 10, 16, 36]
+  }
+}
+
+/// The smallest and the largest value of `bits` bits, at most 127, unsigned or in two's
+/// complement.
+fn text_range(bits: u32, signed: bool) -> (i128, i128) {
+  match (bits, signed) {
+    (0, _) => (0, 0),
+    (_, false) => (0, i128::MAX >> (127 - bits)),
+    (_, true) => (i128::MIN >> (128 - bits), i128::MAX >> (128 - bits)),
+  }
+}
+
+/// What the native `from_str_radix` of an integer of `bits` bits, at most 127, unsigned or in two's
+/// complement, returns for `src`: the value, or the kind of the error. Written as the native parser
+/// reads, one digit at a time: an empty text is `Empty`, a lone sign `InvalidDigit`, `-` a sign only
+/// for a signed integer, and at each digit the product by `radix`, then the digit, whose absence is
+/// `InvalidDigit`, then the overflow of the product or the sum out of the range of `bits` bits.
+pub(crate) fn parse(src: &[u8], radix: u32, bits: u32, signed: bool) -> Result<i128, IntErrorKind> {
+  let (min, max) = text_range(bits, signed);
+  let (negative, digits) = match src {
+    [] => return Err(IntErrorKind::Empty),
+    [b'+' | b'-'] => return Err(IntErrorKind::InvalidDigit),
+    [b'+', rest @ ..] => (false, rest),
+    [b'-', rest @ ..] if signed => (true, rest),
+    _ => (false, src),
+  };
+  let overflow = if negative {
+    IntErrorKind::NegOverflow
+  } else {
+    IntErrorKind::PosOverflow
+  };
+  let mut value: i128 = 0;
+  for &byte in digits {
+    let product = value.checked_mul(i128::from(radix));
+    let digit = char::from(byte)
+      .to_digit(radix)
+      .ok_or(IntErrorKind::InvalidDigit)?;
+    let next = product.and_then(|product| {
+      if negative {
+        product.checked_sub(i128::from(digit))
+      } else {
+        product.checked_add(i128::from(digit))
+      }
+    });
+    value = next
+      .filter(|next| (min..=max).contains(next))
+      .ok_or(overflow)?;
+  }
+  Ok(value)
+}
+
+/// The digits of `magnitude` in `radix`, at most 36, most significant first and in lowercase, and
+/// `0` for zero.
+pub(crate) fn radix_digits(mut magnitude: u128, radix: u32) -> String {
+  let mut digits = Vec::new();
+  loop {
+    let digit = (magnitude % u128::from(radix)) as u32;
+    digits.push(char::from_digit(digit, radix).expect("a digit of the radix"));
+    magnitude /= u128::from(radix);
+    if magnitude == 0 {
+      return digits.iter().rev().collect();
+    }
+  }
+}
+
+/// The texts in `radix` of the values next to the limits of `bits` bits, at most 127, unsigned or
+/// in two's complement: zero, one, each limit and the values next to it on both sides, with `-`
+/// before a negative value, each also after two leading zeros and a non-negative one after `+`, and
+/// each also followed by `x`, a digit only from radix 34, and by `_`, which no radix reads.
+pub(crate) fn limit_texts(bits: u32, signed: bool, radix: u32) -> Vec<Vec<u8>> {
+  let (min, max) = text_range(bits, signed);
+  // Each value as its sign and magnitude, which hold one more than the largest value of 127
+  // unsigned bits.
+  let mut values: Vec<(bool, u128)> = [min - 1, min, min + 1, -1, 0, 1, max - 1, max]
+    .into_iter()
+    .filter(|&value| signed || value >= 0)
+    .map(|value| (value < 0, value.unsigned_abs()))
+    .collect();
+  values.push((false, max as u128 + 1));
+  values.sort_unstable();
+  values.dedup();
+  let mut texts = Vec::new();
+  for (negative, magnitude) in values {
+    let digits = radix_digits(magnitude, radix);
+    let sign = if negative { "-" } else { "" };
+    let mut forms = vec![format!("{sign}{digits}"), format!("{sign}00{digits}")];
+    if !negative {
+      forms.push(format!("+{digits}"));
+    }
+    for form in forms {
+      for suffix in ["", "x", "_"] {
+        texts.push(format!("{form}{suffix}").into_bytes());
+      }
+    }
+  }
+  texts
 }
 
 /// The bit operations on patterns of bits, bit 0 first, as wide as the integers that hold them:

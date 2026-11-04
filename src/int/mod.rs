@@ -47,6 +47,11 @@ pub(crate) type DigitBuf = [core::primitive::u8; DIGIT_BUF_LEN];
 mod half_limbs;
 mod limb_layer;
 
+#[cfg_attr(
+  not(test),
+  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
+)]
+pub(crate) mod parse_errors;
 pub(crate) mod signed;
 pub(crate) mod unsigned;
 

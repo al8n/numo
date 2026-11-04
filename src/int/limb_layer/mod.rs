@@ -24,10 +24,10 @@ macro_rules! limb_layer {
     carrying_mul_add: $carrying_mul_add:path,
     div_rem_wide: $div_rem_wide:path
   ) => {
-    use ::core::cmp::Ordering;
+    use ::core::{cmp::Ordering, num::ParseIntError};
 
     use $crate::{
-      int::DigitBuf,
+      int::{DigitBuf, parse_errors},
       rounding::{self, RoundingMode},
     };
 
@@ -622,6 +622,137 @@ macro_rules! limb_layer {
         i += 1;
       }
       append(&value, scale, chunk)
+    }
+
+    /// The number of digits of `radix` that a `u64` gathers before they are appended: the largest
+    /// `k` with `radix^k <= u64::MAX`, such as 63 for binary, 19 for decimal and 12 for radix 36.
+    /// Requires `2 <= radix <= 36`.
+    #[inline]
+    const fn chunk_digits(radix: u32) -> u32 {
+      u64::MAX.ilog(radix as u64)
+    }
+
+    /// The value of the digit `byte` in `radix`, an ASCII digit or letter of either case below
+    /// `radix`, as `char::to_digit` reads it, or `None` for every other byte. Requires
+    /// `2 <= radix <= 36`.
+    #[inline]
+    const fn digit_value(byte: u8, radix: u32) -> Option<u32> {
+      (byte as char).to_digit(radix)
+    }
+
+    /// `value * scale + add` modulo `2^(B * N)`, and what carried out of the top limb, which is
+    /// below `2^64`.
+    const fn mul_add_chunk<const N: usize>(
+      value: &[Limb; N],
+      scale: u64,
+      add: u64,
+    ) -> ([Limb; N], u64) {
+      // A limb of 128 bits holds the factor and the addend.
+      if Limb::BITS > 64 {
+        let (product, carry) = mul_add_limb(value, scale as Limb, add as Limb);
+        return (product, carry as u64);
+      }
+      let mut product = [0; N];
+      let mut carry = add;
+      let mut i = 0;
+      while i < N {
+        // At most `(2^B - 1) * (2^64 - 1) + 2^64 - 1 < 2^B * 2^64`, so it fits in a `u128`, and
+        // the bits above the limb fit in a `u64`.
+        let wide = value[i] as u128 * scale as u128 + carry as u128;
+        product[i] = wide as Limb;
+        // The shift by the 128 bits of the widest limb would overflow; that limb returned above.
+        carry = match wide.checked_shr(Limb::BITS) {
+          Some(high) => high as u64,
+          None => 0,
+        };
+        i += 1;
+      }
+      (product, carry)
+    }
+
+    /// `value * scale + chunk` if it is at most `2^limit - 1`, or `2^limit` if `power`, and `None`
+    /// otherwise. Requires `limit <= B * N`, and `limit < B * N` if `power`.
+    const fn append_chunk<const N: usize>(
+      value: &[Limb; N],
+      scale: u64,
+      chunk: u64,
+      limit: u32,
+      power: bool,
+    ) -> Option<[Limb; N]> {
+      match mul_add_chunk(value, scale, chunk) {
+        (next, 0) if fits_bits(&next, limit) || (power && eq(&next, &pow2(limit))) => Some(next),
+        _ => None,
+      }
+    }
+
+    /// Parses `digits`, the digits of `radix` without a sign, as a magnitude of at most
+    /// `2^limit - 1`, or of at most `2^limit` if `power`, with the errors of the native
+    /// `from_str_radix` from the left: a byte that is not a digit of `radix` is `InvalidDigit`,
+    /// unless the digits before it already exceed the limit, which is `PosOverflow`, or
+    /// `NegOverflow` if `negative`. No digits are zero. Requires `2 <= radix <= 36` and
+    /// `limit <= B * N`, and `limit < B * N` if `power`.
+    ///
+    /// The digits are gathered in a `u64` and appended `chunk_digits(radix)` at a time, each chunk
+    /// with one pass over the limbs. The value only grows with each digit, so the limit checked
+    /// after each chunk and before a byte that is not a digit gives the error that a check after
+    /// each digit gives.
+    pub(crate) const fn parse_magnitude<const N: usize>(
+      digits: &[u8],
+      radix: u32,
+      limit: u32,
+      power: bool,
+      negative: bool,
+    ) -> Result<[Limb; N], ParseIntError> {
+      let per_chunk = chunk_digits(radix);
+      let mut value = [0; N];
+      // The digits since the last append, `radix` to their number, and their number: the first
+      // two stay at most `radix^per_chunk <= u64::MAX`.
+      let (mut chunk, mut scale, mut count) = (0, 1, 0);
+      let mut i = 0;
+      while i < digits.len() {
+        let digit = match digit_value(digits[i], radix) {
+          Some(digit) => digit,
+          // The digits before the byte decide whether an overflow came first.
+          None => {
+            return match append_chunk(&value, scale, chunk, limit, power) {
+              Some(_) => Err(parse_errors::INVALID_DIGIT),
+              None => Err(parse_errors::overflow(negative)),
+            };
+          }
+        };
+        chunk = chunk * radix as u64 + digit as u64;
+        scale *= radix as u64;
+        count += 1;
+        if count == per_chunk {
+          value = match append_chunk(&value, scale, chunk, limit, power) {
+            Some(value) => value,
+            None => return Err(parse_errors::overflow(negative)),
+          };
+          (chunk, scale, count) = (0, 1, 0);
+        }
+        i += 1;
+      }
+      match append_chunk(&value, scale, chunk, limit, power) {
+        Some(value) => Ok(value),
+        None => Err(parse_errors::overflow(negative)),
+      }
+    }
+
+    /// Parses `src`, an optional `+` and the digits of `radix`, as a value of `bits` bits, with the
+    /// errors of the native `from_str_radix`: `Empty` for no bytes, `InvalidDigit` for a lone sign,
+    /// and those of [`parse_magnitude`] for the digits. A `-` is a byte that is not a digit, as for
+    /// the native unsigned integers. Requires `2 <= radix <= 36` and `bits <= B * N`.
+    pub(crate) const fn from_str_radix_bits<const N: usize>(
+      src: &[u8],
+      radix: u32,
+      bits: u32,
+    ) -> Result<[Limb; N], ParseIntError> {
+      match src {
+        [] => Err(parse_errors::EMPTY),
+        [b'+' | b'-'] => Err(parse_errors::INVALID_DIGIT),
+        [b'+', digits @ ..] => parse_magnitude(digits, radix, bits, false, false),
+        digits => parse_magnitude(digits, radix, bits, false, false),
+      }
     }
 
     /// Returns `true` if `value < 2^bits`: every bit at index `bits` or above is zero.
@@ -1485,10 +1616,13 @@ macro_rules! limb_layer {
     }
   };
   (signed limb: $limb:ident, signed: $signed:ident, unsigned: $unsigned:ident) => {
-    use ::core::cmp::Ordering;
+    use ::core::{cmp::Ordering, num::ParseIntError};
 
     use $crate::int::unsigned::$unsigned;
-    use $crate::{int::DigitBuf, rounding::RoundingMode};
+    use $crate::{
+      int::{DigitBuf, parse_errors},
+      rounding::RoundingMode,
+    };
 
     /// The type of a limb: an unsigned integer of `B` bits.
     type Limb = $limb;
@@ -1789,6 +1923,37 @@ macro_rules! limb_layer {
       end: usize,
     ) -> [Limb; N] {
       from_magnitude(&$unsigned::push_digits(value, bytes, start, end), false)
+    }
+
+    /// Parses `src`, an optional `+` or `-` and the digits of `radix`, as a value of `bits` bits in
+    /// two's complement, with the errors of the native `from_str_radix`: `Empty` for no bytes,
+    /// `InvalidDigit` for a lone sign, and those of `parse_magnitude` for the magnitude, which is
+    /// at most `2^(bits - 1) - 1`, or `2^(bits - 1)` after `-`, and zero at zero bits. Requires
+    /// `2 <= radix <= 36` and `bits <= B * N`.
+    pub(crate) const fn from_str_radix_bits<const N: usize>(
+      src: &[u8],
+      radix: u32,
+      bits: u32,
+    ) -> Result<[Limb; N], ParseIntError> {
+      let (negative, digits) = match src {
+        [] => return Err(parse_errors::EMPTY),
+        [b'+' | b'-'] => return Err(parse_errors::INVALID_DIGIT),
+        [b'+', digits @ ..] => (false, digits),
+        [b'-', digits @ ..] => (true, digits),
+        digits => (false, digits),
+      };
+      // Zero bits hold only zero, the one magnitude below `2^0`.
+      let (limit, power) = if bits == 0 {
+        (0, false)
+      } else {
+        (bits - 1, negative)
+      };
+      match $unsigned::parse_magnitude(digits, radix, limit, power, negative) {
+        // A magnitude of at most `2^(bits - 1)` negates in `N` limbs to a value whose bits above
+        // the width copy its sign.
+        Ok(magnitude) if negative => Ok(wrapping_neg(&magnitude)),
+        result => result,
+      }
     }
 
     /// Sign-extends or truncates `value` to `M` limbs.
