@@ -390,9 +390,9 @@ pub use decimal::{
 };
 pub use integer::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs, Int,
-  IntegerBits, IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedBits,
-  SignedFixedInteger, SignedMath, StrictOps, TryNewError, Uint, UncheckedOps, UnsignedBits,
-  UnsignedFixedInteger, UnsignedMath, WrappingOps,
+  IntegerBits, IntegerMath, IntegerOne, NativeInteger, NonZeroInt, NonZeroUint, OverflowingOps,
+  SaturatingOps, SignedBits, SignedFixedInteger, SignedMath, StrictOps, TryNewError, Uint,
+  UncheckedOps, UnsignedBits, UnsignedFixedInteger, UnsignedMath, WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

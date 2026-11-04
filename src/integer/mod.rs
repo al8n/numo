@@ -33,6 +33,7 @@ mod tables;
 mod arithmetic;
 #[macro_use]
 mod bits;
+mod nonzero;
 mod traits;
 
 /// An unsigned integer of `Bits` bits, stored in `Repr`.
@@ -423,6 +424,53 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // which is stated through `checked_*`, so they do not rely on it either.
   repr: Repr,
   bits: PhantomData<Bits>,
+}
+
+/// A non-zero unsigned integer of `Bits` bits, stored in `Repr`.
+///
+/// The value runs from one to `2^Bits - 1`. `Repr` is the storage of a value that is not zero:
+/// `core::num::NonZero<u8>`, `NonZero<u16>`, `NonZero<u32>`, `NonZero<u64>` or `NonZero<u128>`,
+/// whose integer holds at least `Bits` bits, or an array of limbs, least significant first,
+/// `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, as for [`Uint`]. Without `Repr`,
+/// the storage is the non-zero storage of the default storage of [`Uint`], which [`BitWidth`]
+/// names: `NonZeroUint<U7>` is `NonZeroUint<U7, NonZero<u8>>` and `NonZeroUint<U200>` is
+/// `NonZeroUint<U200, [u64; 4]>`.
+///
+/// In each storage, [`new`](Self::new) creates a value from the [`Uint`] of the same width and
+/// storage, returning `None` for zero, and [`get`](Self::get) returns it. The constants are `BITS`,
+/// and from one bit `MIN`, which is one, and `MAX`. Values compare, hash and format as the
+/// integers of the same values.
+#[repr(transparent)]
+pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
+  // `Repr` is the storage of the value itself: `core::num::NonZero<u8>` to `NonZero<u128>` for a
+  // native storage, whose niche `Option` uses, and the array for an array storage, which the
+  // methods lend as a `Uint`. The value has `Bits` bits, as that of `Uint` does, and is not zero.
+  // In a native storage the validity of `core::num::NonZero` excludes zero; in an array both are
+  // logical invariants, as the width of `Uint` is, which no `unsafe` code may rely on. A `Uint`
+  // over a storage that is not one of `Uint`, such as `NonZero<u8>`, has no methods: only `Clone`,
+  // `Copy`, `PartialEq`, `Eq` and the seal of the integer traits.
+  value: Uint<Bits, Repr>,
+}
+
+/// A non-zero signed integer of `Bits` bits in two's complement, stored in `Repr`.
+///
+/// The value runs from `-2^(Bits - 1)` to `2^(Bits - 1) - 1`, without zero, so one bit holds only
+/// -1. `Repr` is the storage of a value that is not zero: `core::num::NonZero<i8>`,
+/// `NonZero<i16>`, `NonZero<i32>`, `NonZero<i64>` or `NonZero<i128>`, whose integer holds at least
+/// `Bits` bits, or an array of limbs, least significant first, in two's complement, as for
+/// [`Int`]. Without `Repr`, the storage is the non-zero storage of the default storage of [`Int`],
+/// which [`BitWidth`] names: `NonZeroInt<U7>` is `NonZeroInt<U7, NonZero<i8>>` and
+/// `NonZeroInt<U200>` is `NonZeroInt<U200, [u64; 4]>`.
+///
+/// As for [`NonZeroUint`], [`new`](Self::new) creates a value from the [`Int`] of the same width
+/// and storage, returning `None` for zero, and [`get`](Self::get) returns it. The constants are
+/// `BITS`, and from one bit `MIN` and `MAX`, both -1 at one bit. Values compare, hash and format
+/// as the integers of the same values.
+#[repr(transparent)]
+pub struct NonZeroInt<Bits, Repr = <Bits as BitWidth>::NonZeroSigned> {
+  // As for `NonZeroUint`: `Repr` is the storage of the value itself, and the value has `Bits` bits
+  // in two's complement, as that of `Int` does, and is not zero.
+  value: Int<Bits, Repr>,
 }
 
 impl<B, R> Uint<B, R> {

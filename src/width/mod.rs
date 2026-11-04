@@ -15,12 +15,13 @@ use typenum::{
 };
 
 pub use array_size::ArraySize;
-pub(crate) use sealed::{IntCore, IntWidth, TypenumNumber, UintCore, UintWidth};
+pub(crate) use sealed::{
+  InlineIntConsts, InlineUintConsts, IntCore, IntWidth, TypenumNumber, UintCore, UintWidth,
+};
 
 use sealed::{
   ArrayLimb, BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr,
-  InlineIntConsts, InlineUintConsts, LimbFor, MutableRepr, NativeBitsFit, NativeReprFilled,
-  NonZeroRepr, ReprFilled, Width,
+  LimbFor, MutableRepr, NativeBitsFit, NativeReprFilled, NonZeroRepr, ReprFilled, Width,
 };
 
 use crate::{
