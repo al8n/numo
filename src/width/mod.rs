@@ -200,7 +200,7 @@ mod sealed {
     + FitsBits<<Self as DefaultRepr<Small>>::Signed>
   {
     /// The default storage of `Uint<Self>`.
-    type Unsigned: InlineUintRepr;
+    type Unsigned: InlineUintRepr + UintRepr<Signed = <Self as DefaultRepr<Small>>::Signed>;
 
     /// The default storage of `Int<Self>`.
     type Signed: InlineIntRepr + IntRepr<Unsigned = <Self as DefaultRepr<Small>>::Unsigned>;
@@ -217,7 +217,10 @@ mod sealed {
   )]
   pub trait DefaultArray<Bits> {
     /// `Limbs<Bits>`.
-    type Array: InlineUintRepr + InlineIntRepr + IntRepr<Unsigned = Self::Array>;
+    type Array: InlineUintRepr
+      + InlineIntRepr
+      + IntRepr<Unsigned = Self::Array>
+      + UintRepr<Signed = Self::Array>;
   }
 
   /// A limb type of the array storages: `[L; N]` holds `N << L::BitsLog2` bits.
@@ -233,6 +236,10 @@ mod sealed {
   /// They rely on the width invariant of `Uint`: the representation, read as an unsigned integer,
   /// equals the value.
   pub trait UintCore: Sized {
+    /// The storage of the two's complement integer of the same size, which holds the bits of a
+    /// value read with a sign: [`UintRepr::Signed`](super::UintRepr::Signed).
+    type Complement;
+
     /// Zero.
     fn zero(token: Token) -> Self;
 
@@ -336,6 +343,101 @@ mod sealed {
     /// or more. Requires `bits` to be at most the bits of the storage and the value to have `bits`
     /// bits.
     fn next_power_of_two_bits(&self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self & rhs`.
+    fn and(&self, rhs: &Self, token: Token) -> Self;
+
+    /// `self | rhs`.
+    fn or(&self, rhs: &Self, token: Token) -> Self;
+
+    /// `self ^ rhs`.
+    fn xor(&self, rhs: &Self, token: Token) -> Self;
+
+    /// `!self` modulo `2^bits`: every bit below index `bits` flipped. Requires `bits` to be at most
+    /// the bits of the storage and the value to have `bits` bits.
+    fn not_bits(&self, bits: u32, token: Token) -> Self;
+
+    /// The number of ones of the value, which has `bits` bits.
+    fn count_ones_bits(&self, bits: u32, token: Token) -> u32;
+
+    /// The number of zeros of the value from bit `bits - 1` down to its highest one, or `bits` for
+    /// zero. Requires `bits` to be at most the bits of the storage and the value to have `bits`
+    /// bits.
+    fn leading_zeros_bits(&self, bits: u32, token: Token) -> u32;
+
+    /// The number of zeros of the value below its lowest one, or `bits` for zero. Requires the
+    /// value to have `bits` bits.
+    fn trailing_zeros_bits(&self, bits: u32, token: Token) -> u32;
+
+    /// The number of ones of the value from bit `bits - 1` down. Requires `bits` to be at most the
+    /// bits of the storage and the value to have `bits` bits.
+    fn leading_ones_bits(&self, bits: u32, token: Token) -> u32;
+
+    /// The number of ones of the value from bit 0 up. Requires `bits` to be at most the bits of the
+    /// storage and the value to have `bits` bits.
+    fn trailing_ones_bits(&self, bits: u32, token: Token) -> u32;
+
+    /// The index of the highest one of the value, which has `bits` bits, or `None` for zero.
+    fn highest_one_bits(&self, bits: u32, token: Token) -> Option<u32>;
+
+    /// The index of the lowest one of the value, or `None` for zero.
+    fn lowest_one(&self, token: Token) -> Option<u32>;
+
+    /// The value with only its highest one, or zero for zero.
+    fn isolate_highest_one_bits(&self, bits: u32, token: Token) -> Self;
+
+    /// The value with only its lowest one, or zero for zero.
+    fn isolate_lowest_one_bits(&self, bits: u32, token: Token) -> Self;
+
+    /// The bits of the value below index `bits` in reverse order. Requires `bits` to be at most
+    /// the bits of the storage and the value to have `bits` bits.
+    fn reverse_bits_bits(&self, bits: u32, token: Token) -> Self;
+
+    /// The value rotated left by `n` places within `bits` bits. Requires `bits` to be at most the
+    /// bits of the storage and the value to have `bits` bits.
+    fn rotate_left_bits(&self, n: u32, bits: u32, token: Token) -> Self;
+
+    /// The value rotated right by `n` places within `bits` bits. Requires `bits` to be at most the
+    /// bits of the storage and the value to have `bits` bits.
+    fn rotate_right_bits(&self, n: u32, bits: u32, token: Token) -> Self;
+
+    /// `self << (rhs % bits)` modulo `2^bits`, and whether `rhs >= bits`, as it always is at zero
+    /// bits. Requires `bits` to be at most the bits of the storage and the value to have `bits`
+    /// bits.
+    fn overflowing_shl_bits(&self, rhs: u32, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self >> (rhs % bits)`, and whether `rhs >= bits`, as it always is at zero bits. Requires
+    /// `bits` to be at most the bits of the storage and the value to have `bits` bits.
+    fn overflowing_shr_bits(&self, rhs: u32, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self << rhs` modulo `2^bits`, which is zero for `rhs >= bits`. Requires `bits` to be at
+    /// most the bits of the storage.
+    fn unbounded_shl_bits(&self, rhs: u32, bits: u32, token: Token) -> Self;
+
+    /// `self >> rhs`, which is zero for `rhs >= bits`. Requires the value to have `bits` bits.
+    fn unbounded_shr_bits(&self, rhs: u32, bits: u32, token: Token) -> Self;
+
+    /// `self << rhs` if `rhs < bits` and the shift moves no one out of `bits` bits, or `None`
+    /// otherwise. Requires `bits` to be at most the bits of the storage and the value to have
+    /// `bits` bits.
+    fn shl_exact_bits(&self, rhs: u32, bits: u32, token: Token) -> Option<Self>;
+
+    /// `self >> rhs` if `rhs < bits` and the shift moves no one out, or `None` otherwise. Requires
+    /// the value to have `bits` bits.
+    fn shr_exact_bits(&self, rhs: u32, bits: u32, token: Token) -> Option<Self>;
+
+    /// The bit at `index` of the value, or `false` for `index >= bits`. Requires `bits` to be at
+    /// most the bits of the storage.
+    fn bit(&self, index: u32, bits: u32, token: Token) -> bool;
+
+    /// The value with the bit at `index` set if `set`, and cleared otherwise, or `None` for
+    /// `index >= bits`. Requires `bits` to be at most the bits of the storage.
+    fn with_bit(&self, index: u32, set: bool, bits: u32, token: Token) -> Option<Self>;
+
+    /// The bits of the value read in two's complement, as the signed storage of the same size,
+    /// sign-extended from bit `bits - 1`, or zero for zero bits. Requires `bits` to be at most the
+    /// bits of the storage and the value to have `bits` bits.
+    fn cast_signed_bits(self, bits: u32, token: Token) -> Self::Complement;
   }
 
   /// Seals [`IntRepr`](super::IntRepr) and gives the trait implementations of [`Int`](crate::Int)
@@ -345,7 +447,8 @@ mod sealed {
   /// `Int`: the representation, read as a two's complement integer, equals the value.
   pub trait IntCore: Sized {
     /// The storage of the absolute value of a value as an unsigned integer, which also holds the
-    /// absolute value of the smallest value: [`IntRepr::Unsigned`](super::IntRepr::Unsigned).
+    /// absolute value of the smallest value and the two's complement bits of every value:
+    /// [`IntRepr::Unsigned`](super::IntRepr::Unsigned).
     type Magnitude;
 
     /// Zero.
@@ -467,6 +570,107 @@ mod sealed {
 
     /// `|self - rhs|` as an unsigned integer, which has the bits of the values.
     fn abs_diff(&self, rhs: &Self, token: Token) -> Self::Magnitude;
+
+    /// `self & rhs`, which keeps the copies of the sign as the signs combine.
+    fn and(&self, rhs: &Self, token: Token) -> Self;
+
+    /// `self | rhs`, which keeps the copies of the sign as the signs combine.
+    fn or(&self, rhs: &Self, token: Token) -> Self;
+
+    /// `self ^ rhs`, which keeps the copies of the sign as the signs combine.
+    fn xor(&self, rhs: &Self, token: Token) -> Self;
+
+    /// `!self`: every bit flipped, or zero for zero bits. Requires the value to have `bits` bits.
+    fn not_bits(&self, bits: u32, token: Token) -> Self;
+
+    /// The number of ones of the value in `bits` bits, without the copies of the sign above them.
+    /// Requires `bits` to be at most the bits of the storage.
+    fn count_ones_bits(&self, bits: u32, token: Token) -> u32;
+
+    /// The number of zeros of the value from bit `bits - 1` down to its highest one: none for a
+    /// negative value, and `bits` for zero. Requires `bits` to be at most the bits of the storage
+    /// and the value to have `bits` bits.
+    fn leading_zeros_bits(&self, bits: u32, token: Token) -> u32;
+
+    /// The number of zeros of the value below its lowest one, or `bits` for zero. Requires the
+    /// value to have `bits` bits.
+    fn trailing_zeros_bits(&self, bits: u32, token: Token) -> u32;
+
+    /// The number of ones of the value from bit `bits - 1` down: none for a value at least zero.
+    /// Requires `bits` to be at most the bits of the storage and the value to have `bits` bits.
+    fn leading_ones_bits(&self, bits: u32, token: Token) -> u32;
+
+    /// The number of ones of the value from bit 0 up: `bits` for -1. Requires `bits` to be at most
+    /// the bits of the storage and the value to have `bits` bits.
+    fn trailing_ones_bits(&self, bits: u32, token: Token) -> u32;
+
+    /// The index of the highest one of the value in `bits` bits: `bits - 1` for a negative value,
+    /// or `None` for zero. Requires the value to have `bits` bits.
+    fn highest_one_bits(&self, bits: u32, token: Token) -> Option<u32>;
+
+    /// The index of the lowest one of the value, or `None` for zero.
+    fn lowest_one(&self, token: Token) -> Option<u32>;
+
+    /// The value with only its highest one in `bits` bits: the smallest value for a negative
+    /// value, or zero for zero. Requires `bits` to be at most the bits of the storage and the
+    /// value to have `bits` bits.
+    fn isolate_highest_one_bits(&self, bits: u32, token: Token) -> Self;
+
+    /// The value with only its lowest one, sign-extended from `bits` bits: the smallest value for
+    /// the smallest value, or zero for zero. Requires `bits` to be at most the bits of the storage
+    /// and the value to have `bits` bits.
+    fn isolate_lowest_one_bits(&self, bits: u32, token: Token) -> Self;
+
+    /// The `bits` bits of the value in reverse order, read in two's complement. Requires `bits` to
+    /// be at most the bits of the storage and the value to have `bits` bits.
+    fn reverse_bits_bits(&self, bits: u32, token: Token) -> Self;
+
+    /// The `bits` bits of the value rotated left by `n` places, read in two's complement. Requires
+    /// `bits` to be at most the bits of the storage and the value to have `bits` bits.
+    fn rotate_left_bits(&self, n: u32, bits: u32, token: Token) -> Self;
+
+    /// The `bits` bits of the value rotated right by `n` places, read in two's complement.
+    /// Requires `bits` to be at most the bits of the storage and the value to have `bits` bits.
+    fn rotate_right_bits(&self, n: u32, bits: u32, token: Token) -> Self;
+
+    /// `self << (rhs % bits)` wrapped to `bits` bits, and whether `rhs >= bits`, as it always is
+    /// at zero bits. Requires `bits` to be at most the bits of the storage and the value to have
+    /// `bits` bits.
+    fn overflowing_shl_bits(&self, rhs: u32, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self >> (rhs % bits)`, an arithmetic shift, and whether `rhs >= bits`, as it always is at
+    /// zero bits. Requires the value to have `bits` bits.
+    fn overflowing_shr_bits(&self, rhs: u32, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self << rhs` wrapped to `bits` bits, which is zero for `rhs >= bits`. Requires `bits` to
+    /// be at most the bits of the storage.
+    fn unbounded_shl_bits(&self, rhs: u32, bits: u32, token: Token) -> Self;
+
+    /// `self >> rhs`, an arithmetic shift, which is 0 or -1 for `rhs >= bits`. Requires the value
+    /// to have `bits` bits.
+    fn unbounded_shr_bits(&self, rhs: u32, bits: u32, token: Token) -> Self;
+
+    /// `self << rhs` if every bit that the shift moves out of `bits` bits, and the new bit
+    /// `bits - 1`, equal the sign, or `None` otherwise. Requires `bits` to be at most the bits of
+    /// the storage and the value to have `bits` bits.
+    fn shl_exact_bits(&self, rhs: u32, bits: u32, token: Token) -> Option<Self>;
+
+    /// `self >> rhs`, an arithmetic shift, if `rhs < bits` and the shift moves no one out, or
+    /// `None` otherwise. Requires the value to have `bits` bits.
+    fn shr_exact_bits(&self, rhs: u32, bits: u32, token: Token) -> Option<Self>;
+
+    /// The bit at `index` of the value, or `false` for `index >= bits`. Requires `bits` to be at
+    /// most the bits of the storage.
+    fn bit(&self, index: u32, bits: u32, token: Token) -> bool;
+
+    /// The value with the bit at `index` set if `set`, and cleared otherwise, sign-extended from
+    /// `bits` bits, or `None` for `index >= bits`. Requires `bits` to be at most the bits of the
+    /// storage and the value to have `bits` bits.
+    fn with_bit(&self, index: u32, set: bool, bits: u32, token: Token) -> Option<Self>;
+
+    /// The `bits` bits of the value, its two's complement, as the unsigned storage of the same
+    /// size. Requires `bits` to be at most the bits of the storage.
+    fn cast_unsigned_bits(self, bits: u32, token: Token) -> Self::Magnitude;
   }
 }
 
@@ -565,7 +769,12 @@ where
   message = "`{Self}` is not a storage of `Uint`",
   note = "`Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`"
 )]
-pub trait UintRepr: Eq + UintCore {}
+pub trait UintRepr: Eq + UintCore<Complement = <Self as UintRepr>::Signed> {
+  /// The storage of [`Int`](crate::Int) of the same size: `i8` for `u8`, `i16` for `u16`, and so
+  /// on, and the same array for an array of limbs. It holds the bits of a value read in two's
+  /// complement.
+  type Signed: IntRepr<Unsigned = Self>;
+}
 
 /// A storage of [`Int`](crate::Int): a native signed integer, `i8`, `i16`, `i32`, `i64` or `i128`,
 /// holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
@@ -639,9 +848,13 @@ macro_rules! array_storage {
       type BitsLog2 = $bits_log2;
     }
 
-    impl<const N: usize> UintRepr for [$limb; N] {}
+    impl<const N: usize> UintRepr for [$limb; N] {
+      type Signed = Self;
+    }
 
     impl<const N: usize> UintCore for [$limb; N] {
+      type Complement = Self;
+
       #[inline]
       fn zero(_: Token) -> Self {
         [0; N]
@@ -775,6 +988,131 @@ macro_rules! array_storage {
       #[inline]
       fn next_power_of_two_bits(&self, bits: u32, _: Token) -> (Self, bool) {
         unsigned::$lower::next_power_of_two_bits(self, bits)
+      }
+
+      #[inline]
+      fn and(&self, rhs: &Self, _: Token) -> Self {
+        unsigned::$lower::and(self, rhs)
+      }
+
+      #[inline]
+      fn or(&self, rhs: &Self, _: Token) -> Self {
+        unsigned::$lower::or(self, rhs)
+      }
+
+      #[inline]
+      fn xor(&self, rhs: &Self, _: Token) -> Self {
+        unsigned::$lower::xor(self, rhs)
+      }
+
+      #[inline]
+      fn not_bits(&self, bits: u32, _: Token) -> Self {
+        unsigned::$lower::not_bits(self, bits)
+      }
+
+      #[inline]
+      fn count_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        unsigned::$lower::count_ones_bits(self, bits)
+      }
+
+      #[inline]
+      fn leading_zeros_bits(&self, bits: u32, _: Token) -> u32 {
+        unsigned::$lower::leading_zeros_bits(self, bits)
+      }
+
+      #[inline]
+      fn trailing_zeros_bits(&self, bits: u32, _: Token) -> u32 {
+        unsigned::$lower::trailing_zeros_bits(self, bits)
+      }
+
+      #[inline]
+      fn leading_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        unsigned::$lower::leading_ones_bits(self, bits)
+      }
+
+      #[inline]
+      fn trailing_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        unsigned::$lower::trailing_ones_bits(self, bits)
+      }
+
+      #[inline]
+      fn highest_one_bits(&self, bits: u32, _: Token) -> Option<u32> {
+        unsigned::$lower::highest_one_bits(self, bits)
+      }
+
+      #[inline]
+      fn lowest_one(&self, _: Token) -> Option<u32> {
+        unsigned::$lower::lowest_one(self)
+      }
+
+      #[inline]
+      fn isolate_highest_one_bits(&self, bits: u32, _: Token) -> Self {
+        unsigned::$lower::isolate_highest_one_bits(self, bits)
+      }
+
+      #[inline]
+      fn isolate_lowest_one_bits(&self, bits: u32, _: Token) -> Self {
+        unsigned::$lower::isolate_lowest_one_bits(self, bits)
+      }
+
+      #[inline]
+      fn reverse_bits_bits(&self, bits: u32, _: Token) -> Self {
+        unsigned::$lower::reverse_bits_bits(self, bits)
+      }
+
+      #[inline]
+      fn rotate_left_bits(&self, n: u32, bits: u32, _: Token) -> Self {
+        unsigned::$lower::rotate_left_bits(self, n, bits)
+      }
+
+      #[inline]
+      fn rotate_right_bits(&self, n: u32, bits: u32, _: Token) -> Self {
+        unsigned::$lower::rotate_right_bits(self, n, bits)
+      }
+
+      #[inline]
+      fn overflowing_shl_bits(&self, rhs: u32, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_shl_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_shr_bits(&self, rhs: u32, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::overflowing_shr_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn unbounded_shl_bits(&self, rhs: u32, bits: u32, _: Token) -> Self {
+        unsigned::$lower::unbounded_shl_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn unbounded_shr_bits(&self, rhs: u32, bits: u32, _: Token) -> Self {
+        unsigned::$lower::unbounded_shr_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn shl_exact_bits(&self, rhs: u32, bits: u32, _: Token) -> Option<Self> {
+        unsigned::$lower::shl_exact_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn shr_exact_bits(&self, rhs: u32, bits: u32, _: Token) -> Option<Self> {
+        unsigned::$lower::shr_exact_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn bit(&self, index: u32, bits: u32, _: Token) -> bool {
+        unsigned::$lower::bit(self, index, bits)
+      }
+
+      #[inline]
+      fn with_bit(&self, index: u32, set: bool, bits: u32, _: Token) -> Option<Self> {
+        unsigned::$lower::with_bit(self, index, set, bits)
+      }
+
+      #[inline]
+      fn cast_signed_bits(self, bits: u32, _: Token) -> Self {
+        unsigned::$lower::cast_signed_bits(&self, bits)
       }
     }
 
@@ -938,6 +1276,132 @@ macro_rules! array_storage {
       fn abs_diff(&self, rhs: &Self, _: Token) -> Self {
         signed::$upper::abs_diff(self, rhs)
       }
+
+      // The limbs combine as unsigned ones do, and so do the copies of the signs.
+      #[inline]
+      fn and(&self, rhs: &Self, _: Token) -> Self {
+        unsigned::$lower::and(self, rhs)
+      }
+
+      #[inline]
+      fn or(&self, rhs: &Self, _: Token) -> Self {
+        unsigned::$lower::or(self, rhs)
+      }
+
+      #[inline]
+      fn xor(&self, rhs: &Self, _: Token) -> Self {
+        unsigned::$lower::xor(self, rhs)
+      }
+
+      #[inline]
+      fn not_bits(&self, bits: u32, _: Token) -> Self {
+        signed::$upper::not_bits(self, bits)
+      }
+
+      #[inline]
+      fn count_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        signed::$upper::count_ones_bits(self, bits)
+      }
+
+      #[inline]
+      fn leading_zeros_bits(&self, bits: u32, _: Token) -> u32 {
+        signed::$upper::leading_zeros_bits(self, bits)
+      }
+
+      #[inline]
+      fn trailing_zeros_bits(&self, bits: u32, _: Token) -> u32 {
+        signed::$upper::trailing_zeros_bits(self, bits)
+      }
+
+      #[inline]
+      fn leading_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        signed::$upper::leading_ones_bits(self, bits)
+      }
+
+      #[inline]
+      fn trailing_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        signed::$upper::trailing_ones_bits(self, bits)
+      }
+
+      #[inline]
+      fn highest_one_bits(&self, bits: u32, _: Token) -> Option<u32> {
+        signed::$upper::highest_one_bits(self, bits)
+      }
+
+      #[inline]
+      fn lowest_one(&self, _: Token) -> Option<u32> {
+        signed::$upper::lowest_one(self)
+      }
+
+      #[inline]
+      fn isolate_highest_one_bits(&self, bits: u32, _: Token) -> Self {
+        signed::$upper::isolate_highest_one_bits(self, bits)
+      }
+
+      #[inline]
+      fn isolate_lowest_one_bits(&self, bits: u32, _: Token) -> Self {
+        signed::$upper::isolate_lowest_one_bits(self, bits)
+      }
+
+      #[inline]
+      fn reverse_bits_bits(&self, bits: u32, _: Token) -> Self {
+        signed::$upper::reverse_bits_bits(self, bits)
+      }
+
+      #[inline]
+      fn rotate_left_bits(&self, n: u32, bits: u32, _: Token) -> Self {
+        signed::$upper::rotate_left_bits(self, n, bits)
+      }
+
+      #[inline]
+      fn rotate_right_bits(&self, n: u32, bits: u32, _: Token) -> Self {
+        signed::$upper::rotate_right_bits(self, n, bits)
+      }
+
+      #[inline]
+      fn overflowing_shl_bits(&self, rhs: u32, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_shl_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_shr_bits(&self, rhs: u32, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::overflowing_shr_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn unbounded_shl_bits(&self, rhs: u32, bits: u32, _: Token) -> Self {
+        signed::$upper::unbounded_shl_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn unbounded_shr_bits(&self, rhs: u32, bits: u32, _: Token) -> Self {
+        signed::$upper::unbounded_shr_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn shl_exact_bits(&self, rhs: u32, bits: u32, _: Token) -> Option<Self> {
+        signed::$upper::shl_exact_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn shr_exact_bits(&self, rhs: u32, bits: u32, _: Token) -> Option<Self> {
+        signed::$upper::shr_exact_bits(self, rhs, bits)
+      }
+
+      #[inline]
+      fn bit(&self, index: u32, bits: u32, _: Token) -> bool {
+        signed::$upper::bit(self, index, bits)
+      }
+
+      #[inline]
+      fn with_bit(&self, index: u32, set: bool, bits: u32, _: Token) -> Option<Self> {
+        signed::$upper::with_bit(self, index, set, bits)
+      }
+
+      #[inline]
+      fn cast_unsigned_bits(self, bits: u32, _: Token) -> Self {
+        signed::$upper::cast_unsigned_bits(&self, bits)
+      }
     }
 
     impl<const N: usize> MutableRepr for [$limb; N] {}
@@ -993,9 +1457,13 @@ macro_rules! native_storage {
     native_storage!(@width $uint, $bits);
     native_storage!(@width $int, $bits);
 
-    impl UintRepr for $uint {}
+    impl UintRepr for $uint {
+      type Signed = $int;
+    }
 
     impl UintCore for $uint {
+      type Complement = $int;
+
       #[inline]
       fn zero(_: Token) -> Self {
         0
@@ -1131,6 +1599,131 @@ macro_rules! native_storage {
       #[inline]
       fn next_power_of_two_bits(&self, bits: u32, _: Token) -> (Self, bool) {
         int::$uint::next_power_of_two_bits(*self, bits)
+      }
+
+      #[inline]
+      fn and(&self, rhs: &Self, _: Token) -> Self {
+        int::$uint::and(*self, *rhs)
+      }
+
+      #[inline]
+      fn or(&self, rhs: &Self, _: Token) -> Self {
+        int::$uint::or(*self, *rhs)
+      }
+
+      #[inline]
+      fn xor(&self, rhs: &Self, _: Token) -> Self {
+        int::$uint::xor(*self, *rhs)
+      }
+
+      #[inline]
+      fn not_bits(&self, bits: u32, _: Token) -> Self {
+        int::$uint::not_bits(*self, bits)
+      }
+
+      #[inline]
+      fn count_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        int::$uint::count_ones_bits(*self, bits)
+      }
+
+      #[inline]
+      fn leading_zeros_bits(&self, bits: u32, _: Token) -> u32 {
+        int::$uint::leading_zeros_bits(*self, bits)
+      }
+
+      #[inline]
+      fn trailing_zeros_bits(&self, bits: u32, _: Token) -> u32 {
+        int::$uint::trailing_zeros_bits(*self, bits)
+      }
+
+      #[inline]
+      fn leading_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        int::$uint::leading_ones_bits(*self, bits)
+      }
+
+      #[inline]
+      fn trailing_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        int::$uint::trailing_ones_bits(*self, bits)
+      }
+
+      #[inline]
+      fn highest_one_bits(&self, bits: u32, _: Token) -> Option<u32> {
+        int::$uint::highest_one_bits(*self, bits)
+      }
+
+      #[inline]
+      fn lowest_one(&self, _: Token) -> Option<u32> {
+        int::$uint::lowest_one(*self)
+      }
+
+      #[inline]
+      fn isolate_highest_one_bits(&self, bits: u32, _: Token) -> Self {
+        int::$uint::isolate_highest_one_bits(*self, bits)
+      }
+
+      #[inline]
+      fn isolate_lowest_one_bits(&self, bits: u32, _: Token) -> Self {
+        int::$uint::isolate_lowest_one_bits(*self, bits)
+      }
+
+      #[inline]
+      fn reverse_bits_bits(&self, bits: u32, _: Token) -> Self {
+        int::$uint::reverse_bits_bits(*self, bits)
+      }
+
+      #[inline]
+      fn rotate_left_bits(&self, n: u32, bits: u32, _: Token) -> Self {
+        int::$uint::rotate_left_bits(*self, n, bits)
+      }
+
+      #[inline]
+      fn rotate_right_bits(&self, n: u32, bits: u32, _: Token) -> Self {
+        int::$uint::rotate_right_bits(*self, n, bits)
+      }
+
+      #[inline]
+      fn overflowing_shl_bits(&self, rhs: u32, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_shl_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_shr_bits(&self, rhs: u32, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::overflowing_shr_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn unbounded_shl_bits(&self, rhs: u32, bits: u32, _: Token) -> Self {
+        int::$uint::unbounded_shl_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn unbounded_shr_bits(&self, rhs: u32, bits: u32, _: Token) -> Self {
+        int::$uint::unbounded_shr_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn shl_exact_bits(&self, rhs: u32, bits: u32, _: Token) -> Option<Self> {
+        int::$uint::shl_exact_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn shr_exact_bits(&self, rhs: u32, bits: u32, _: Token) -> Option<Self> {
+        int::$uint::shr_exact_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn bit(&self, index: u32, bits: u32, _: Token) -> bool {
+        int::$uint::bit(*self, index, bits)
+      }
+
+      #[inline]
+      fn with_bit(&self, index: u32, set: bool, bits: u32, _: Token) -> Option<Self> {
+        int::$uint::with_bit(*self, index, set, bits)
+      }
+
+      #[inline]
+      fn cast_signed_bits(self, bits: u32, _: Token) -> $int {
+        int::$uint::cast_signed_bits(self, bits)
       }
     }
 
@@ -1288,6 +1881,131 @@ macro_rules! native_storage {
       #[inline]
       fn abs_diff(&self, rhs: &Self, _: Token) -> $uint {
         int::$int::abs_diff(*self, *rhs)
+      }
+
+      #[inline]
+      fn and(&self, rhs: &Self, _: Token) -> Self {
+        int::$int::and(*self, *rhs)
+      }
+
+      #[inline]
+      fn or(&self, rhs: &Self, _: Token) -> Self {
+        int::$int::or(*self, *rhs)
+      }
+
+      #[inline]
+      fn xor(&self, rhs: &Self, _: Token) -> Self {
+        int::$int::xor(*self, *rhs)
+      }
+
+      #[inline]
+      fn not_bits(&self, bits: u32, _: Token) -> Self {
+        int::$int::not_bits(*self, bits)
+      }
+
+      #[inline]
+      fn count_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        int::$int::count_ones_bits(*self, bits)
+      }
+
+      #[inline]
+      fn leading_zeros_bits(&self, bits: u32, _: Token) -> u32 {
+        int::$int::leading_zeros_bits(*self, bits)
+      }
+
+      #[inline]
+      fn trailing_zeros_bits(&self, bits: u32, _: Token) -> u32 {
+        int::$int::trailing_zeros_bits(*self, bits)
+      }
+
+      #[inline]
+      fn leading_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        int::$int::leading_ones_bits(*self, bits)
+      }
+
+      #[inline]
+      fn trailing_ones_bits(&self, bits: u32, _: Token) -> u32 {
+        int::$int::trailing_ones_bits(*self, bits)
+      }
+
+      #[inline]
+      fn highest_one_bits(&self, bits: u32, _: Token) -> Option<u32> {
+        int::$int::highest_one_bits(*self, bits)
+      }
+
+      #[inline]
+      fn lowest_one(&self, _: Token) -> Option<u32> {
+        int::$int::lowest_one(*self)
+      }
+
+      #[inline]
+      fn isolate_highest_one_bits(&self, bits: u32, _: Token) -> Self {
+        int::$int::isolate_highest_one_bits(*self, bits)
+      }
+
+      #[inline]
+      fn isolate_lowest_one_bits(&self, bits: u32, _: Token) -> Self {
+        int::$int::isolate_lowest_one_bits(*self, bits)
+      }
+
+      #[inline]
+      fn reverse_bits_bits(&self, bits: u32, _: Token) -> Self {
+        int::$int::reverse_bits_bits(*self, bits)
+      }
+
+      #[inline]
+      fn rotate_left_bits(&self, n: u32, bits: u32, _: Token) -> Self {
+        int::$int::rotate_left_bits(*self, n, bits)
+      }
+
+      #[inline]
+      fn rotate_right_bits(&self, n: u32, bits: u32, _: Token) -> Self {
+        int::$int::rotate_right_bits(*self, n, bits)
+      }
+
+      #[inline]
+      fn overflowing_shl_bits(&self, rhs: u32, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_shl_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn overflowing_shr_bits(&self, rhs: u32, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::overflowing_shr_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn unbounded_shl_bits(&self, rhs: u32, bits: u32, _: Token) -> Self {
+        int::$int::unbounded_shl_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn unbounded_shr_bits(&self, rhs: u32, bits: u32, _: Token) -> Self {
+        int::$int::unbounded_shr_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn shl_exact_bits(&self, rhs: u32, bits: u32, _: Token) -> Option<Self> {
+        int::$int::shl_exact_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn shr_exact_bits(&self, rhs: u32, bits: u32, _: Token) -> Option<Self> {
+        int::$int::shr_exact_bits(*self, rhs, bits)
+      }
+
+      #[inline]
+      fn bit(&self, index: u32, bits: u32, _: Token) -> bool {
+        int::$int::bit(*self, index, bits)
+      }
+
+      #[inline]
+      fn with_bit(&self, index: u32, set: bool, bits: u32, _: Token) -> Option<Self> {
+        int::$int::with_bit(*self, index, set, bits)
+      }
+
+      #[inline]
+      fn cast_unsigned_bits(self, bits: u32, _: Token) -> $uint {
+        int::$int::cast_unsigned_bits(self, bits)
       }
     }
 
@@ -1463,7 +2181,7 @@ pub trait BitWidth:
   TypenumNumber + FitsBits<<Self as BitWidth>::Unsigned> + FitsBits<<Self as BitWidth>::Signed>
 {
   /// The default storage of `Uint<Self>`.
-  type Unsigned: InlineUintRepr;
+  type Unsigned: InlineUintRepr + UintRepr<Signed = <Self as BitWidth>::Signed>;
 
   /// The default storage of `Int<Self>`, of the same size as `Unsigned`.
   type Signed: InlineIntRepr + IntRepr<Unsigned = <Self as BitWidth>::Unsigned>;
@@ -1498,7 +2216,8 @@ where
 impl<B> DefaultArray<B> for B1
 where
   u64: LimbArray<B>,
-  Limbs<B>: InlineUintRepr + InlineIntRepr + IntRepr<Unsigned = Limbs<B>>,
+  Limbs<B>:
+    InlineUintRepr + InlineIntRepr + IntRepr<Unsigned = Limbs<B>> + UintRepr<Signed = Limbs<B>>,
 {
   type Array = Limbs<B>;
 }
