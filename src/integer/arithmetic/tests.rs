@@ -26,7 +26,9 @@ use crate::{
   BitWidth, CheckedOps, ConstFixedInteger, ConstIntegerOne, FitsBits, FixedInteger, Int,
   IntReprMut, IntegerMath, IntegerOne, OverflowingOps, SaturatingOps, SignedFixedInteger,
   SignedMath, StrictOps, Uint, UintReprMut, UncheckedOps, UnsignedFixedInteger, UnsignedMath,
-  WrappingOps, bigint, i7, i256, u7, u256, u4096,
+  WrappingOps,
+  bigint::{self, Tier, tier},
+  i7, i256, u7, u256, u4096,
 };
 
 /// The smallest and the largest value of `bits` bits, unsigned or in two's complement.
@@ -1951,31 +1953,6 @@ fn the_math_traits_need_only_the_storage_trait() {
   let minus_seven = i256::from_limbs([u64::MAX - 6, u64::MAX, u64::MAX, u64::MAX]);
   let two = i256::from_limbs([2, 0, 0, 0]);
   assert_eq!(signed(&minus_seven, &two), "(-4, 9, None, 49)");
-}
-
-/// How thoroughly the sweeps of the division and of the powers check: every value and pair that is
-/// cheap enough in an optimized build, which runs them fast; fewer in an unoptimized build, which
-/// every feature combination and every sanitizer of the tests runs; and the fewest under Miri.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, derive_more::IsVariant)]
-enum Tier {
-  /// Under Miri.
-  Miri,
-  /// In an unoptimized build, with debug assertions.
-  Debug,
-  /// In an optimized build.
-  Full,
-}
-
-/// The tier of this build. `--cfg all_tests` does not raise it: the sanitizers that set that flag
-/// run unoptimized code.
-fn tier() -> Tier {
-  if cfg!(miri) {
-    Tier::Miri
-  } else if cfg!(debug_assertions) {
-    Tier::Debug
-  } else {
-    Tier::Full
-  }
 }
 
 /// The value of the integer of at most 128 bits in `limbs`, least significant first, read in two's

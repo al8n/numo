@@ -744,6 +744,336 @@ macro_rules! limb_layer {
       result
     }
 
+    /// `lhs | rhs`.
+    pub(crate) const fn or<const N: usize>(lhs: &[Limb; N], rhs: &[Limb; N]) -> [Limb; N] {
+      let mut result = [0; N];
+      let mut i = 0;
+      while i < N {
+        result[i] = lhs[i] | rhs[i];
+        i += 1;
+      }
+      result
+    }
+
+    /// `!value` modulo `2^bits`: every bit below index `bits` flipped. Requires `bits <= B * N` and
+    /// `value < 2^bits`.
+    #[inline]
+    pub(crate) const fn not_bits<const N: usize>(value: &[Limb; N], bits: u32) -> [Limb; N] {
+      xor(value, &max_of_bits(bits))
+    }
+
+    /// `value << shift` modulo `2^(B * N)`, zero for `shift >= B * N`.
+    pub(crate) const fn shift_left<const N: usize>(value: &[Limb; N], shift: u32) -> [Limb; N] {
+      let limbs = (shift / Limb::BITS) as usize;
+      let bits = shift % Limb::BITS;
+      let mut shifted = [0; N];
+      let mut i = N;
+      while i > limbs {
+        i -= 1;
+        let source = i - limbs;
+        shifted[i] = value[source] << bits;
+        // The top `bits` bits of the limb below: a shift by zero bits takes none, and the shift by
+        // `B - bits` would overflow there.
+        if bits > 0 && source > 0 {
+          shifted[i] |= value[source - 1] >> (Limb::BITS - bits);
+        }
+      }
+      shifted
+    }
+
+    /// `value >> shift`, zero for `shift >= B * N`.
+    pub(crate) const fn shift_right<const N: usize>(value: &[Limb; N], shift: u32) -> [Limb; N] {
+      let limbs = (shift / Limb::BITS) as usize;
+      let bits = shift % Limb::BITS;
+      let mut shifted = [0; N];
+      let mut i = 0;
+      while i + limbs < N {
+        let source = i + limbs;
+        shifted[i] = value[source] >> bits;
+        // The low bits of the limb above, as in `shift_left`.
+        if bits > 0 && source + 1 < N {
+          shifted[i] |= value[source + 1] << (Limb::BITS - bits);
+        }
+        i += 1;
+      }
+      shifted
+    }
+
+    /// The number of ones in `value`. Requires it to be below `2^32`, as it is in every value of a
+    /// width.
+    pub(crate) const fn count_ones<const N: usize>(value: &[Limb; N]) -> u32 {
+      let mut count = 0;
+      let mut i = 0;
+      while i < N {
+        count += value[i].count_ones();
+        i += 1;
+      }
+      count
+    }
+
+    /// The number of ones in `value`, a value of `bits` bits, which has none above them.
+    #[inline]
+    pub(crate) const fn count_ones_bits<const N: usize>(value: &[Limb; N], _bits: u32) -> u32 {
+      count_ones(value)
+    }
+
+    /// The index of the lowest one of `value`, or `None` for zero. Requires that index to be below
+    /// `2^32`, as it is in every value of a width.
+    pub(crate) const fn lowest_one<const N: usize>(value: &[Limb; N]) -> Option<u32> {
+      let mut i = 0;
+      while i < N {
+        if value[i] != 0 {
+          return Some(i as u32 * Limb::BITS + value[i].trailing_zeros());
+        }
+        i += 1;
+      }
+      None
+    }
+
+    /// The index of the highest one of `value`, or `None` for zero: a value of `bits` bits has none
+    /// above them, so the width does not change it.
+    #[inline]
+    pub(crate) const fn highest_one_bits<const N: usize>(
+      value: &[Limb; N],
+      _bits: u32,
+    ) -> Option<u32> {
+      checked_ilog2(value)
+    }
+
+    /// The number of zeros of `value` from bit `bits - 1` down to its highest one, or `bits` for
+    /// zero. Requires `bits <= B * N` and `value < 2^bits`.
+    pub(crate) const fn leading_zeros_bits<const N: usize>(value: &[Limb; N], bits: u32) -> u32 {
+      match checked_ilog2(value) {
+        Some(log) => bits - 1 - log,
+        None => bits,
+      }
+    }
+
+    /// The number of zeros of `value` below its lowest one, or `bits` for zero. Requires
+    /// `value < 2^bits`.
+    pub(crate) const fn trailing_zeros_bits<const N: usize>(value: &[Limb; N], bits: u32) -> u32 {
+      match lowest_one(value) {
+        Some(index) => index,
+        None => bits,
+      }
+    }
+
+    /// The number of ones of `value` from bit `bits - 1` down, the leading zeros of its complement
+    /// in `bits` bits. Requires `bits <= B * N` and `value < 2^bits`.
+    #[inline]
+    pub(crate) const fn leading_ones_bits<const N: usize>(value: &[Limb; N], bits: u32) -> u32 {
+      leading_zeros_bits(&not_bits(value, bits), bits)
+    }
+
+    /// The number of ones of `value` from bit 0 up, the trailing zeros of its complement in `bits`
+    /// bits. Requires `bits <= B * N` and `value < 2^bits`.
+    #[inline]
+    pub(crate) const fn trailing_ones_bits<const N: usize>(value: &[Limb; N], bits: u32) -> u32 {
+      trailing_zeros_bits(&not_bits(value, bits), bits)
+    }
+
+    /// `value` with only its highest one, or zero for zero.
+    pub(crate) const fn isolate_highest_one_bits<const N: usize>(
+      value: &[Limb; N],
+      _bits: u32,
+    ) -> [Limb; N] {
+      match checked_ilog2(value) {
+        Some(log) => pow2(log),
+        None => [0; N],
+      }
+    }
+
+    /// `value` with only its lowest one, or zero for zero.
+    pub(crate) const fn isolate_lowest_one_bits<const N: usize>(
+      value: &[Limb; N],
+      _bits: u32,
+    ) -> [Limb; N] {
+      match lowest_one(value) {
+        Some(index) => pow2(index),
+        None => [0; N],
+      }
+    }
+
+    /// The bits of `value` below index `bits` in reverse order: bit `i` moves to bit
+    /// `bits - 1 - i`. Requires `bits <= B * N` and `value < 2^bits`.
+    pub(crate) const fn reverse_bits_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> [Limb; N] {
+      // The limbs that hold the width, reversed limb by limb and bit by bit, hold the pattern
+      // reversed above `gap` zero bits, those that the top limb holds above the width.
+      let limbs = bits.div_ceil(Limb::BITS) as usize;
+      let mut reversed = [0; N];
+      let mut i = 0;
+      while i < limbs {
+        reversed[i] = value[limbs - 1 - i].reverse_bits();
+        i += 1;
+      }
+      let gap = (Limb::BITS - bits % Limb::BITS) % Limb::BITS;
+      shr(&reversed, gap)
+    }
+
+    /// `value` rotated left by `n` places within `bits` bits: the bits shifted out past bit
+    /// `bits - 1` come back at bit 0. Requires `bits <= B * N` and `value < 2^bits`.
+    pub(crate) const fn rotate_left_bits<const N: usize>(
+      value: &[Limb; N],
+      n: u32,
+      bits: u32,
+    ) -> [Limb; N] {
+      // Zero bits hold only zero, which no rotation changes, and take no remainder by zero.
+      if bits == 0 {
+        return *value;
+      }
+      let amount = n % bits;
+      if amount == 0 {
+        return *value;
+      }
+      let rotated = or(&shift_left(value, amount), &shift_right(value, bits - amount));
+      zero_extend(&rotated, bits)
+    }
+
+    /// `value` rotated right by `n` places within `bits` bits, the left rotation by the rest of the
+    /// width. Requires `bits <= B * N` and `value < 2^bits`.
+    pub(crate) const fn rotate_right_bits<const N: usize>(
+      value: &[Limb; N],
+      n: u32,
+      bits: u32,
+    ) -> [Limb; N] {
+      if bits == 0 {
+        return *value;
+      }
+      match n % bits {
+        0 => *value,
+        amount => rotate_left_bits(value, bits - amount, bits),
+      }
+    }
+
+    /// `value << (rhs % bits)` modulo `2^bits`, and whether `rhs >= bits`, as the native
+    /// `overflowing_shl` gives them for its width; zero bits overflow on every amount. Requires
+    /// `bits <= B * N` and `value < 2^bits`.
+    pub(crate) const fn overflowing_shl_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      // Zero bits hold only zero, and take no remainder by zero.
+      if bits == 0 {
+        return ([0; N], true);
+      }
+      let amount = if rhs < bits { rhs } else { rhs % bits };
+      (zero_extend(&shift_left(value, amount), bits), rhs >= bits)
+    }
+
+    /// `value >> (rhs % bits)`, and whether `rhs >= bits`, as [`overflowing_shl_bits`] gives them.
+    /// Requires `bits <= B * N` and `value < 2^bits`.
+    pub(crate) const fn overflowing_shr_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      if bits == 0 {
+        return ([0; N], true);
+      }
+      let amount = if rhs < bits { rhs } else { rhs % bits };
+      (shift_right(value, amount), rhs >= bits)
+    }
+
+    /// `value << rhs` modulo `2^bits`, which is zero for `rhs >= bits`. Requires `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn unbounded_shl_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      bits: u32,
+    ) -> [Limb; N] {
+      zero_extend(&shift_left(value, rhs), bits)
+    }
+
+    /// `value >> rhs`, which is zero for `rhs >= bits`: a value of `bits` bits has no one above
+    /// them, so the width does not change it.
+    #[inline]
+    pub(crate) const fn unbounded_shr_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      _bits: u32,
+    ) -> [Limb; N] {
+      shift_right(value, rhs)
+    }
+
+    /// `value << rhs` if `rhs < bits` and the shift moves no one out of `bits` bits, so that
+    /// `>> rhs` gives `value` back, or `None` otherwise. Requires `bits <= B * N` and
+    /// `value < 2^bits`.
+    pub(crate) const fn shl_exact_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      if rhs < bits && rhs <= leading_zeros_bits(value, bits) {
+        Some(shift_left(value, rhs))
+      } else {
+        None
+      }
+    }
+
+    /// `value >> rhs` if `rhs < bits` and the shift moves no one out, so that `<< rhs` gives
+    /// `value` back, or `None` otherwise. Requires `value < 2^bits`.
+    pub(crate) const fn shr_exact_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      if rhs < bits && rhs <= trailing_zeros_bits(value, bits) {
+        Some(shift_right(value, rhs))
+      } else {
+        None
+      }
+    }
+
+    /// `value`, a pattern of `bits` bits, read in two's complement: every bit at index `bits` or
+    /// above set to bit `bits - 1`, or zero for zero bits. Requires `bits <= B * N` and
+    /// `value < 2^bits`.
+    pub(crate) const fn cast_signed_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> [Limb; N] {
+      if bits == 0 {
+        return [0; N];
+      }
+      let top = bits - 1;
+      if (value[(top / Limb::BITS) as usize] >> (top % Limb::BITS)) & 1 == 1 {
+        // The bits from index `bits` up, every bit that `max_of_bits` leaves clear.
+        or(value, &xor(&max_of_bits(bits), &[Limb::MAX; N]))
+      } else {
+        *value
+      }
+    }
+
+    /// The bit at `index` of `value`, or `false` for `index >= bits`. Requires `bits <= B * N`.
+    pub(crate) const fn bit<const N: usize>(value: &[Limb; N], index: u32, bits: u32) -> bool {
+      index < bits && (value[(index / Limb::BITS) as usize] >> (index % Limb::BITS)) & 1 == 1
+    }
+
+    /// `value` with the bit at `index` set if `set`, and cleared otherwise, or `None` for
+    /// `index >= bits`. Requires `bits <= B * N`.
+    pub(crate) const fn with_bit<const N: usize>(
+      value: &[Limb; N],
+      index: u32,
+      set: bool,
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      if index >= bits {
+        return None;
+      }
+      let mut changed = *value;
+      let limb = (index / Limb::BITS) as usize;
+      let mask: Limb = 1 << (index % Limb::BITS);
+      if set {
+        changed[limb] |= mask;
+      } else {
+        changed[limb] &= !mask;
+      }
+      Some(changed)
+    }
+
     /// `2^exp`. Requires `exp < B * N`.
     pub(crate) const fn pow2<const N: usize>(exp: u32) -> [Limb; N] {
       let mut power = [0; N];
@@ -1886,6 +2216,297 @@ macro_rules! limb_layer {
         None
       } else {
         $unsigned::checked_resize(value)
+      }
+    }
+
+    /// `lhs & rhs`, limb by limb, as the lower layer computes it: the copies of the signs combine
+    /// as the signs do.
+    #[inline]
+    pub(crate) const fn and<const N: usize>(lhs: &[Limb; N], rhs: &[Limb; N]) -> [Limb; N] {
+      $unsigned::and(lhs, rhs)
+    }
+
+    /// `lhs | rhs`, as [`and`] computes it.
+    #[inline]
+    pub(crate) const fn or<const N: usize>(lhs: &[Limb; N], rhs: &[Limb; N]) -> [Limb; N] {
+      $unsigned::or(lhs, rhs)
+    }
+
+    /// `lhs ^ rhs`, as [`and`] computes it.
+    #[inline]
+    pub(crate) const fn xor<const N: usize>(lhs: &[Limb; N], rhs: &[Limb; N]) -> [Limb; N] {
+      $unsigned::xor(lhs, rhs)
+    }
+
+    /// `!value`: every bit flipped, which keeps the copies of the sign, or zero for zero bits.
+    /// Requires `bits <= B * N` and `value` within the range of `bits` bits.
+    pub(crate) const fn not_bits<const N: usize>(value: &[Limb; N], bits: u32) -> [Limb; N] {
+      // Zero bits hold only zero, whose flipped limbs would read as -1.
+      if bits == 0 {
+        return [0; N];
+      }
+      $unsigned::xor(value, &[Limb::MAX; N])
+    }
+
+    /// `value >> shift`, an arithmetic shift: the bits shifted in copy the sign, and a shift of
+    /// `B * N` bits or more leaves the sign alone, 0 or -1.
+    pub(crate) const fn sar<const N: usize>(value: &[Limb; N], shift: u32) -> [Limb; N] {
+      let fill = if is_negative(value) { Limb::MAX } else { 0 };
+      let limbs = (shift / Limb::BITS) as usize;
+      let bits = shift % Limb::BITS;
+      let mut shifted = [fill; N];
+      let mut i = 0;
+      while i + limbs < N {
+        let source = i + limbs;
+        // The limb above the top one reads as a copy of the sign.
+        let next = if source + 1 < N { value[source + 1] } else { fill };
+        // The shift by `B - bits` would overflow at zero bits, which take nothing from `next`.
+        shifted[i] = if bits == 0 {
+          value[source]
+        } else {
+          (value[source] >> bits) | (next << (Limb::BITS - bits))
+        };
+        i += 1;
+      }
+      shifted
+    }
+
+    /// The number of ones of `value` in `bits` bits, without the copies of the sign above them.
+    /// Requires `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn count_ones_bits<const N: usize>(value: &[Limb; N], bits: u32) -> u32 {
+      $unsigned::count_ones(&$unsigned::zero_extend(value, bits))
+    }
+
+    /// The number of zeros of `value` from bit `bits - 1` down to its highest one: none for a
+    /// negative value, whose bit `bits - 1` is one, and `bits` for zero. Requires `bits <= B * N`
+    /// and `value` within the range of `bits` bits.
+    pub(crate) const fn leading_zeros_bits<const N: usize>(value: &[Limb; N], bits: u32) -> u32 {
+      if is_negative(value) {
+        0
+      } else {
+        $unsigned::leading_zeros_bits(value, bits)
+      }
+    }
+
+    /// The number of zeros of `value` below its lowest one, or `bits` for zero: a value other than
+    /// zero has a one below index `bits`, so the lower layer counts them.
+    #[inline]
+    pub(crate) const fn trailing_zeros_bits<const N: usize>(value: &[Limb; N], bits: u32) -> u32 {
+      $unsigned::trailing_zeros_bits(value, bits)
+    }
+
+    /// The number of ones of `value` from bit `bits - 1` down: the leading zeros of the complement
+    /// for a negative value, and none for a value at least zero. Requires `bits <= B * N` and
+    /// `value` within the range of `bits` bits.
+    pub(crate) const fn leading_ones_bits<const N: usize>(value: &[Limb; N], bits: u32) -> u32 {
+      if is_negative(value) {
+        $unsigned::leading_zeros_bits(&not_bits(value, bits), bits)
+      } else {
+        0
+      }
+    }
+
+    /// The number of ones of `value` from bit 0 up, the trailing zeros of its complement: `bits`
+    /// for -1. Requires `bits <= B * N` and `value` within the range of `bits` bits.
+    #[inline]
+    pub(crate) const fn trailing_ones_bits<const N: usize>(value: &[Limb; N], bits: u32) -> u32 {
+      $unsigned::trailing_zeros_bits(&not_bits(value, bits), bits)
+    }
+
+    /// The index of the highest one of `value` in `bits` bits: the sign bit, `bits - 1`, for a
+    /// negative value, or `None` for zero. Requires `value` within the range of `bits` bits.
+    pub(crate) const fn highest_one_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> Option<u32> {
+      if is_negative(value) {
+        Some(bits - 1)
+      } else {
+        $unsigned::checked_ilog2(value)
+      }
+    }
+
+    /// The index of the lowest one of `value`, or `None` for zero, as the lower layer finds it: a
+    /// value other than zero has a one below the copies of its sign.
+    #[inline]
+    pub(crate) const fn lowest_one<const N: usize>(value: &[Limb; N]) -> Option<u32> {
+      $unsigned::lowest_one(value)
+    }
+
+    /// `value` with only its highest one in `bits` bits: `MIN` for a negative value, whose highest
+    /// one is the sign bit, or zero for zero. Requires `bits <= B * N` and `value` within the range
+    /// of `bits` bits.
+    pub(crate) const fn isolate_highest_one_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> [Limb; N] {
+      if is_negative(value) {
+        min_of_bits(bits)
+      } else {
+        $unsigned::isolate_highest_one_bits(value, bits)
+      }
+    }
+
+    /// `value` with only its lowest one, sign-extended from `bits` bits: `MIN` for `MIN`, whose
+    /// lowest one is the sign bit, or zero for zero. Requires `bits <= B * N` and `value` within
+    /// the range of `bits` bits.
+    pub(crate) const fn isolate_lowest_one_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> [Limb; N] {
+      match $unsigned::lowest_one(value) {
+        Some(index) => sign_extend(&$unsigned::pow2(index), bits),
+        None => [0; N],
+      }
+    }
+
+    /// The `bits` bits of `value` in reverse order, read in two's complement: old bit 0 is the new
+    /// sign bit. Requires `bits <= B * N` and `value` within the range of `bits` bits.
+    pub(crate) const fn reverse_bits_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> [Limb; N] {
+      let pattern = $unsigned::zero_extend(value, bits);
+      sign_extend(&$unsigned::reverse_bits_bits(&pattern, bits), bits)
+    }
+
+    /// The `bits` bits of `value` rotated left by `n` places, read in two's complement, so that
+    /// the rotation can change the sign. Requires `bits <= B * N` and `value` within the range of
+    /// `bits` bits.
+    pub(crate) const fn rotate_left_bits<const N: usize>(
+      value: &[Limb; N],
+      n: u32,
+      bits: u32,
+    ) -> [Limb; N] {
+      let pattern = $unsigned::zero_extend(value, bits);
+      sign_extend(&$unsigned::rotate_left_bits(&pattern, n, bits), bits)
+    }
+
+    /// The `bits` bits of `value` rotated right by `n` places, read in two's complement, as
+    /// [`rotate_left_bits`] reads them.
+    pub(crate) const fn rotate_right_bits<const N: usize>(
+      value: &[Limb; N],
+      n: u32,
+      bits: u32,
+    ) -> [Limb; N] {
+      let pattern = $unsigned::zero_extend(value, bits);
+      sign_extend(&$unsigned::rotate_right_bits(&pattern, n, bits), bits)
+    }
+
+    /// `value << (rhs % bits)` wrapped to `bits` bits, whose bit `bits - 1` is the new sign, and
+    /// whether `rhs >= bits`; zero bits overflow on every amount. Requires `bits <= B * N` and
+    /// `value` within the range of `bits` bits.
+    pub(crate) const fn overflowing_shl_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      // Zero bits hold only zero, and take no remainder by zero.
+      if bits == 0 {
+        return ([0; N], true);
+      }
+      let amount = if rhs < bits { rhs } else { rhs % bits };
+      (sign_extend(&$unsigned::shift_left(value, amount), bits), rhs >= bits)
+    }
+
+    /// `value >> (rhs % bits)`, an arithmetic shift, and whether `rhs >= bits`, as
+    /// [`overflowing_shl_bits`] gives them. Requires `value` within the range of `bits` bits.
+    pub(crate) const fn overflowing_shr_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      if bits == 0 {
+        return ([0; N], true);
+      }
+      let amount = if rhs < bits { rhs } else { rhs % bits };
+      (sar(value, amount), rhs >= bits)
+    }
+
+    /// `value << rhs` wrapped to `bits` bits, which is zero for `rhs >= bits`. Requires
+    /// `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn unbounded_shl_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      bits: u32,
+    ) -> [Limb; N] {
+      sign_extend(&$unsigned::shift_left(value, rhs), bits)
+    }
+
+    /// `value >> rhs`, an arithmetic shift, which is 0 or -1 for `rhs >= bits`: the bits of
+    /// `value` from bit `bits - 1` up already copy the sign, so the width does not change it.
+    #[inline]
+    pub(crate) const fn unbounded_shr_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      _bits: u32,
+    ) -> [Limb; N] {
+      sar(value, rhs)
+    }
+
+    /// `value << rhs` if every bit that the shift moves out of `bits` bits, and the new bit
+    /// `bits - 1`, equal the sign, so that `>> rhs` gives `value` back, or `None` otherwise.
+    /// Requires `bits <= B * N` and `value` within the range of `bits` bits.
+    pub(crate) const fn shl_exact_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      // `rhs` below the leading zeros or ones keeps the sign and every bit above it, so the shifted
+      // limbs hold the copies of the sign above the width; and `rhs < bits`.
+      if rhs < leading_zeros_bits(value, bits) || rhs < leading_ones_bits(value, bits) {
+        Some($unsigned::shift_left(value, rhs))
+      } else {
+        None
+      }
+    }
+
+    /// `value >> rhs`, an arithmetic shift, if `rhs < bits` and the shift moves no one out, so
+    /// that `<< rhs` gives `value` back, or `None` otherwise. Requires `value` within the range of
+    /// `bits` bits.
+    pub(crate) const fn shr_exact_bits<const N: usize>(
+      value: &[Limb; N],
+      rhs: u32,
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      if rhs < bits && rhs <= trailing_zeros_bits(value, bits) {
+        Some(sar(value, rhs))
+      } else {
+        None
+      }
+    }
+
+    /// The `bits` bits of `value`, its two's complement, as an unsigned pattern of `bits` bits.
+    /// Requires `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn cast_unsigned_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> [Limb; N] {
+      $unsigned::zero_extend(value, bits)
+    }
+
+    /// The bit at `index` of `value`, or `false` for `index >= bits`, which reads no copy of the
+    /// sign. Requires `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn bit<const N: usize>(value: &[Limb; N], index: u32, bits: u32) -> bool {
+      $unsigned::bit(value, index, bits)
+    }
+
+    /// `value` with the bit at `index` set if `set`, and cleared otherwise, sign-extended from
+    /// `bits` bits, so that a change of the sign bit changes its copies, or `None` for
+    /// `index >= bits`. Requires `bits <= B * N` and `value` within the range of `bits` bits.
+    pub(crate) const fn with_bit<const N: usize>(
+      value: &[Limb; N],
+      index: u32,
+      set: bool,
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      match $unsigned::with_bit(value, index, set, bits) {
+        Some(changed) => Some(sign_extend(&changed, bits)),
+        None => None,
       }
     }
   };

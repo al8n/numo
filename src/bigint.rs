@@ -2,6 +2,9 @@
 //! big integers, the limits, powers of ten and bit patterns that they test, rounding by distance,
 //! and fewer samples, exponents and bit indexes under Miri. A limb is any unsigned integer type
 //! from `u8` to `u128`; the functions without a limb type parameter take `u64` limbs.
+//!
+//! The tests of the bit operations compare with no big integer: [`model`] computes their results
+//! one bit at a time, and the tiers of [`tier`] size every sweep by the build.
 
 use core::{
   cmp::Ordering,
@@ -38,6 +41,9 @@ pub(crate) trait Limb: Copy {
 
   /// The limb as a `u128`, which holds every limb.
   fn to_u128(self) -> u128;
+
+  /// The limb of the low `BITS` bits of `value`.
+  fn from_u128(value: u128) -> Self;
 }
 
 macro_rules! limb {
@@ -59,11 +65,40 @@ macro_rules! limb {
       fn to_u128(self) -> u128 {
         u128::from(self)
       }
+
+      fn from_u128(value: u128) -> Self {
+        value as $limb
+      }
     }
   )+};
 }
 
 limb!(u8, u16, u32, u64, u128);
+
+/// How thoroughly a sweep checks: every value, pair and pattern that is cheap enough in an
+/// optimized build, which runs them fast; fewer in an unoptimized build, which every feature
+/// combination and every sanitizer of the tests runs; and the fewest under Miri.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, derive_more::IsVariant)]
+pub(crate) enum Tier {
+  /// Under Miri.
+  Miri,
+  /// In an unoptimized build, with debug assertions.
+  Debug,
+  /// In an optimized build.
+  Full,
+}
+
+/// The tier of this build. `--cfg all_tests` does not raise it: the sanitizers that set that flag
+/// run unoptimized code.
+pub(crate) fn tier() -> Tier {
+  if cfg!(miri) {
+    Tier::Miri
+  } else if cfg!(debug_assertions) {
+    Tier::Debug
+  } else {
+    Tier::Full
+  }
+}
 
 /// Every rounding mode.
 pub(crate) const MODES: [RoundingMode; 7] = [
@@ -604,8 +639,17 @@ pub(crate) fn bit_patterns_of<L, const N: usize>(widths: &[u32]) -> Vec<[L; N]>
 where
   L: Limb + Not<Output = L> + Shl<u32, Output = L> + Sub<Output = L>,
 {
+  bit_patterns_by(widths, cfg!(miri))
+}
+
+/// The bit patterns of [`bit_patterns_of`], at every index, or if `reduced` only at the indexes
+/// that it keeps under Miri.
+pub(crate) fn bit_patterns_by<L, const N: usize>(widths: &[u32], reduced: bool) -> Vec<[L; N]>
+where
+  L: Limb + Not<Output = L> + Shl<u32, Output = L> + Sub<Output = L>,
+{
   let bits = L::BITS * N as u32;
-  let indexes: Vec<u32> = if cfg!(miri) {
+  let indexes: Vec<u32> = if reduced {
     let mut indexes = vec![
       0,
       1,
@@ -641,4 +685,245 @@ where
     patterns.extend([single, single.map(|l| !l), below, below.map(|l| !l)]);
   }
   patterns
+}
+
+/// The amounts of the shifts and the rotations, which also serve as bit indexes, at which the bit
+/// operations of `width` bits in words of `word_bits` bits are checked: 0, 1, `word_bits - 1`,
+/// `word_bits`, `word_bits + 1`, `width - 1`, `width`, `width + 1`, `2 * width + 1` and
+/// `u32::MAX`, or under Miri 0, 1, `width - 1`, `width`, `width + 1` and `u32::MAX`.
+pub(crate) fn bit_amounts(word_bits: u32, width: u32) -> Vec<u32> {
+  let mut amounts = vec![0, 1, width.saturating_sub(1), width, width + 1, u32::MAX];
+  if !tier().is_miri() {
+    amounts.extend([word_bits - 1, word_bits, word_bits + 1, 2 * width + 1]);
+  }
+  amounts.sort_unstable();
+  amounts.dedup();
+  amounts
+}
+
+/// The pattern of the low `width` bits of `limbs`, least significant limb first, reading each bit
+/// of a limb alone. Requires `width` to be at most the bits of the limbs.
+pub(crate) fn pattern_of_limbs<L: Limb>(limbs: &[L], width: u32) -> Vec<bool> {
+  model::pattern(width, |i| {
+    (limbs[(i / L::BITS) as usize].to_u128() >> (i % L::BITS)) & 1 == 1
+  })
+}
+
+/// The `N` limbs of type `L`, least significant first, that hold `pattern` extended by zeros, or
+/// if `signed` by copies of its sign, written one bit at a time. Requires the limbs to have at
+/// least the bits of `pattern`.
+pub(crate) fn limbs_of_pattern<L: Limb, const N: usize>(pattern: &[bool], signed: bool) -> [L; N] {
+  let size = L::BITS as usize;
+  let extended = model::extend(pattern, L::BITS * N as u32, signed);
+  core::array::from_fn(|k| {
+    let bits = &extended[size * k..size * (k + 1)];
+    L::from_u128(
+      bits
+        .iter()
+        .rev()
+        .fold(0, |limb, &bit| limb << 1 | u128::from(bit)),
+    )
+  })
+}
+
+/// The bit operations on patterns of bits, bit 0 first, as wide as the integers that hold them:
+/// the model that the tests of the bit operations compare with. Each operation is written from its
+/// definition, one bit at a time, and reads a pattern as unsigned, or in two's complement where it
+/// takes `signed`.
+pub(crate) mod model {
+  use std::{format, string::String, vec::Vec};
+
+  /// The pattern of `width` bits whose bit `i` is `bit(i)`.
+  pub(crate) fn pattern(width: u32, bit: impl FnMut(u32) -> bool) -> Vec<bool> {
+    (0..width).map(bit).collect()
+  }
+
+  /// The width of `p`, its number of bits.
+  pub(crate) fn width(p: &[bool]) -> u32 {
+    p.len() as u32
+  }
+
+  /// `p` as text, from the top bit down, for the messages of the assertions.
+  pub(crate) fn text(p: &[bool]) -> String {
+    let digits: String = p
+      .iter()
+      .rev()
+      .map(|&bit| if bit { '1' } else { '0' })
+      .collect();
+    format!("0b{digits}")
+  }
+
+  /// The bit at `index` of `p`, or `false` from its width up.
+  pub(crate) fn bit(p: &[bool], index: u32) -> bool {
+    p.get(index as usize).copied().unwrap_or(false)
+  }
+
+  /// The sign of `p` in two's complement: its top bit, or `false` for zero bits.
+  pub(crate) fn sign(p: &[bool]) -> bool {
+    p.last().copied().unwrap_or(false)
+  }
+
+  /// `p` extended to `width` bits by zeros, or if `signed` by copies of its sign. Requires `width`
+  /// to be at least the width of `p`.
+  pub(crate) fn extend(p: &[bool], width: u32, signed: bool) -> Vec<bool> {
+    let fill = signed && sign(p);
+    pattern(width, |i| p.get(i as usize).copied().unwrap_or(fill))
+  }
+
+  /// Every bit of `p` flipped.
+  pub(crate) fn not(p: &[bool]) -> Vec<bool> {
+    p.iter().map(|&bit| !bit).collect()
+  }
+
+  /// `p & q`, bit by bit. Requires `q` to have the width of `p`.
+  pub(crate) fn and(p: &[bool], q: &[bool]) -> Vec<bool> {
+    p.iter().zip(q).map(|(&a, &b)| a && b).collect()
+  }
+
+  /// `p | q`, bit by bit. Requires `q` to have the width of `p`.
+  pub(crate) fn or(p: &[bool], q: &[bool]) -> Vec<bool> {
+    p.iter().zip(q).map(|(&a, &b)| a || b).collect()
+  }
+
+  /// `p ^ q`, bit by bit. Requires `q` to have the width of `p`.
+  pub(crate) fn xor(p: &[bool], q: &[bool]) -> Vec<bool> {
+    p.iter().zip(q).map(|(&a, &b)| a != b).collect()
+  }
+
+  /// The number of ones of `p`.
+  pub(crate) fn count_ones(p: &[bool]) -> u32 {
+    p.iter().filter(|&&bit| bit).count() as u32
+  }
+
+  /// The number of zeros of `p` from its top bit down: its width for zero.
+  pub(crate) fn leading_zeros(p: &[bool]) -> u32 {
+    p.iter().rev().take_while(|&&bit| !bit).count() as u32
+  }
+
+  /// The number of zeros of `p` from bit 0 up: its width for zero.
+  pub(crate) fn trailing_zeros(p: &[bool]) -> u32 {
+    p.iter().take_while(|&&bit| !bit).count() as u32
+  }
+
+  /// The number of ones of `p` from its top bit down.
+  pub(crate) fn leading_ones(p: &[bool]) -> u32 {
+    p.iter().rev().take_while(|&&bit| bit).count() as u32
+  }
+
+  /// The number of ones of `p` from bit 0 up.
+  pub(crate) fn trailing_ones(p: &[bool]) -> u32 {
+    p.iter().take_while(|&&bit| bit).count() as u32
+  }
+
+  /// The index of the highest one of `p`, or `None` for zero.
+  pub(crate) fn highest_one(p: &[bool]) -> Option<u32> {
+    p.iter().rposition(|&bit| bit).map(|index| index as u32)
+  }
+
+  /// The index of the lowest one of `p`, or `None` for zero.
+  pub(crate) fn lowest_one(p: &[bool]) -> Option<u32> {
+    p.iter().position(|&bit| bit).map(|index| index as u32)
+  }
+
+  /// The pattern of `width` bits whose only one is at `index`, or zero for `None`.
+  pub(crate) fn only(width: u32, index: Option<u32>) -> Vec<bool> {
+    pattern(width, |i| Some(i) == index)
+  }
+
+  /// The bits of `p` in reverse order.
+  pub(crate) fn reverse(p: &[bool]) -> Vec<bool> {
+    p.iter().rev().copied().collect()
+  }
+
+  /// `p` rotated left by `n` places within its width: bit `i` moves to bit `(i + n) % width`.
+  pub(crate) fn rotate_left(p: &[bool], n: u32) -> Vec<bool> {
+    let width = width(p);
+    if width == 0 {
+      return Vec::new();
+    }
+    let k = n % width;
+    pattern(width, |i| p[((i + width - k) % width) as usize])
+  }
+
+  /// `p` rotated right by `n` places within its width: bit `(i + n) % width` moves to bit `i`.
+  pub(crate) fn rotate_right(p: &[bool], n: u32) -> Vec<bool> {
+    let width = width(p);
+    if width == 0 {
+      return Vec::new();
+    }
+    let k = n % width;
+    pattern(width, |i| p[((i + k) % width) as usize])
+  }
+
+  /// `p` shifted left by `n` places within its width: zeros come in, and the bits that pass the top
+  /// are lost, every bit once `n` is the width or more.
+  pub(crate) fn shl(p: &[bool], n: u32) -> Vec<bool> {
+    pattern(width(p), |i| i >= n && p[(i - n) as usize])
+  }
+
+  /// `p` shifted right by `n` places: copies of its sign come in if `signed`, and zeros otherwise.
+  pub(crate) fn shr(p: &[bool], n: u32, signed: bool) -> Vec<bool> {
+    let fill = signed && sign(p);
+    pattern(width(p), |i| match i.checked_add(n) {
+      Some(j) if j < width(p) => p[j as usize],
+      _ => fill,
+    })
+  }
+
+  /// `p` shifted left by `n` modulo its width, and whether `n` is the width or more, as it always
+  /// is at zero bits.
+  pub(crate) fn overflowing_shl(p: &[bool], n: u32) -> (Vec<bool>, bool) {
+    match width(p) {
+      0 => (Vec::new(), true),
+      width => (shl(p, n % width), n >= width),
+    }
+  }
+
+  /// `p` shifted right by `n` modulo its width, as [`shr`] shifts it, and whether `n` is the width
+  /// or more, as it always is at zero bits.
+  pub(crate) fn overflowing_shr(p: &[bool], n: u32, signed: bool) -> (Vec<bool>, bool) {
+    match width(p) {
+      0 => (Vec::new(), true),
+      width => (shr(p, n % width, signed), n >= width),
+    }
+  }
+
+  /// `p` shifted left by `n`, if `n` is below its width and shifting the result back, as [`shr`]
+  /// does, gives `p`; or `None`.
+  pub(crate) fn shl_exact(p: &[bool], n: u32, signed: bool) -> Option<Vec<bool>> {
+    let shifted = shl(p, n);
+    (n < width(p) && shr(&shifted, n, signed) == p).then_some(shifted)
+  }
+
+  /// `p` shifted right by `n`, as [`shr`] shifts it, if `n` is below its width and shifting the
+  /// result back gives `p`; or `None`.
+  pub(crate) fn shr_exact(p: &[bool], n: u32, signed: bool) -> Option<Vec<bool>> {
+    let shifted = shr(p, n, signed);
+    (n < width(p) && shl(&shifted, n) == p).then_some(shifted)
+  }
+
+  /// `p` with the bit at `index` set to `value`, or `None` from its width up.
+  pub(crate) fn with_bit(p: &[bool], index: u32, value: bool) -> Option<Vec<bool>> {
+    (index < width(p)).then(|| {
+      let mut changed = p.to_vec();
+      changed[index as usize] = value;
+      changed
+    })
+  }
+
+  /// The patterns of `width` bits that the tier of Miri checks: zero, every bit, the top bit, the
+  /// top two bits, alternating bits from bit 0, and bit 0 of each limb of `limb_bits` bits.
+  pub(crate) fn few_patterns(width: u32, limb_bits: u32) -> Vec<Vec<bool>> {
+    let mut patterns = Vec::from([
+      pattern(width, |_| false),
+      pattern(width, |_| true),
+      pattern(width, |i| i + 1 == width),
+      pattern(width, |i| i + 2 >= width),
+      pattern(width, |i| i % 2 == 0),
+      pattern(width, |i| i % limb_bits == 0),
+    ]);
+    patterns.sort_unstable();
+    patterns.dedup();
+    patterns
+  }
 }
