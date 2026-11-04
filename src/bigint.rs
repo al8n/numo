@@ -835,25 +835,67 @@ pub(crate) fn radix_digits(mut magnitude: u128, radix: u32) -> String {
   }
 }
 
-/// The texts in `radix` of the values next to the limits of `bits` bits, at most 127, unsigned or
+/// `digits`, the digits of a number in `radix`, plus one.
+fn increment(digits: &str, radix: u32) -> String {
+  let mut digits: Vec<u32> = digits
+    .chars()
+    .map(|digit| digit.to_digit(radix).expect("a digit of the radix"))
+    .collect();
+  // The carry runs from the last digit up through every `radix - 1`.
+  match digits.iter().rposition(|&digit| digit + 1 < radix) {
+    Some(k) => {
+      digits[k] += 1;
+      digits[k + 1..].fill(0);
+    }
+    None => {
+      digits.fill(0);
+      digits.insert(0, 1);
+    }
+  }
+  digits
+    .iter()
+    .map(|&digit| char::from_digit(digit, radix).expect("a digit of the radix"))
+    .collect()
+}
+
+/// The texts in `radix` of the values next to the limits of `bits` bits, at most 128, unsigned or
 /// in two's complement: zero, one, each limit and the values next to it on both sides, with `-`
 /// before a negative value, each also after two leading zeros and a non-negative one after `+`, and
 /// each also followed by `x`, a digit only from radix 34, and by `_`, which no radix reads.
 pub(crate) fn limit_texts(bits: u32, signed: bool, radix: u32) -> Vec<Vec<u8>> {
-  let (min, max) = text_range(bits, signed);
-  // Each value as its sign and magnitude, which hold one more than the largest value of 127
-  // unsigned bits.
-  let mut values: Vec<(bool, u128)> = [min - 1, min, min + 1, -1, 0, 1, max - 1, max]
-    .into_iter()
-    .filter(|&value| signed || value >= 0)
-    .map(|value| (value < 0, value.unsigned_abs()))
-    .collect();
-  values.push((false, max as u128 + 1));
+  // The largest value, and for a signed integer the magnitude of the smallest one.
+  let (max, min): (u128, u128) = match (bits, signed) {
+    (0, _) => (0, 0),
+    (_, false) => (u128::MAX >> (128 - bits), 0),
+    (1, true) => (0, 1),
+    (_, true) => (u128::MAX >> (129 - bits), 1 << (bits - 1)),
+  };
+  let text_of = |magnitude: u128| radix_digits(magnitude, radix);
+  // Each value as its sign and the digits of its magnitude: one more than the largest value of 128
+  // unsigned bits needs 129 bits.
+  let above = match max.checked_add(1) {
+    Some(above) => text_of(above),
+    None => increment(&text_of(max), radix),
+  };
+  let mut values = vec![
+    (false, text_of(0)),
+    (false, text_of(1)),
+    (false, text_of(max.saturating_sub(1))),
+    (false, text_of(max)),
+    (false, above),
+  ];
+  if signed {
+    values.extend([
+      (true, text_of(1)),
+      (true, text_of(min.saturating_sub(1))),
+      (true, text_of(min)),
+      (true, text_of(min + 1)),
+    ]);
+  }
   values.sort_unstable();
   values.dedup();
   let mut texts = Vec::new();
-  for (negative, magnitude) in values {
-    let digits = radix_digits(magnitude, radix);
+  for (negative, digits) in values {
     let sign = if negative { "-" } else { "" };
     let mut forms = vec![format!("{sign}{digits}"), format!("{sign}00{digits}")];
     if !negative {

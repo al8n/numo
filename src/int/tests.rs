@@ -1534,3 +1534,90 @@ mod bits {
     check_native!(u128, i128, wide_widths(128), wide_patterns);
   }
 }
+
+/// The parsers of the native layers, at the texts of `bigint::parse_texts` and next to the limits,
+/// in the radixes of `bigint::parse_radixes`: at the full width of each native integer against its
+/// own `from_str_radix`, and at narrower widths against `bigint::parse`, the model of the native
+/// parser at the width. Under Miri, every full width, and two narrower widths of `u8` and `i8`.
+mod text {
+  use std::{string::String, vec::Vec};
+
+  use crate::{bigint, int};
+
+  /// Checks the parsers of the native layers `$uint` and `$int`: at their full width against
+  /// their `from_str_radix`, and at each width of `$widths` against the model.
+  macro_rules! check_native {
+    ($uint:ident, $int:ident, $widths:expr) => {{
+      let texts = bigint::parse_texts();
+      let widths: &[u32] = $widths;
+      for &radix in bigint::parse_radixes() {
+        let bits = $uint::BITS;
+        for text in texts.iter().chain(&bigint::limit_texts(bits, false, radix)) {
+          let src = core::str::from_utf8(text).expect("ASCII");
+          assert_eq!(
+            int::$uint::from_str_radix_bits(text, radix, bits),
+            $uint::from_str_radix(src, radix),
+            "{src} in radix {radix}"
+          );
+        }
+        for text in texts.iter().chain(&bigint::limit_texts(bits, true, radix)) {
+          let src = core::str::from_utf8(text).expect("ASCII");
+          assert_eq!(
+            int::$int::from_str_radix_bits(text, radix, bits),
+            $int::from_str_radix(src, radix),
+            "{src} in radix {radix}"
+          );
+        }
+        for &width in widths {
+          for text in texts
+            .iter()
+            .chain(&bigint::limit_texts(width, false, radix))
+          {
+            assert_eq!(
+              int::$uint::from_str_radix_bits(text, radix, width)
+                .map(|value| value as i128)
+                .map_err(|error| *error.kind()),
+              bigint::parse(text, radix, width, false),
+              "{} in radix {radix} at {width} bits",
+              String::from_utf8_lossy(text)
+            );
+          }
+          for text in texts.iter().chain(&bigint::limit_texts(width, true, radix)) {
+            assert_eq!(
+              int::$int::from_str_radix_bits(text, radix, width)
+                .map(|value| value as i128)
+                .map_err(|error| *error.kind()),
+              bigint::parse(text, radix, width, true),
+              "{} in radix {radix} at {width} bits",
+              String::from_utf8_lossy(text)
+            );
+          }
+        }
+      }
+    }};
+  }
+
+  /// The widths below the full width of a native integer at which its parser is checked against
+  /// the model: zero, one, and those of 2, 7, 9, 15, 33, 63, 65 and 127 bits that the integer is
+  /// the narrowest to hold; under Miri, `miri`.
+  fn narrow_widths(widths: &[u32], miri: &[u32]) -> Vec<u32> {
+    if bigint::tier().is_miri() {
+      miri.to_vec()
+    } else {
+      [0, 1].iter().chain(widths).copied().collect()
+    }
+  }
+
+  #[test]
+  fn u8_and_i8_match_the_native_parser() {
+    check_native!(u8, i8, &narrow_widths(&[2, 7], &[0, 7]));
+  }
+
+  #[test]
+  fn u16_to_i128_match_the_native_parser() {
+    check_native!(u16, i16, &narrow_widths(&[9, 15], &[]));
+    check_native!(u32, i32, &narrow_widths(&[], &[]));
+    check_native!(u64, i64, &narrow_widths(&[33, 63], &[]));
+    check_native!(u128, i128, &narrow_widths(&[65, 127], &[]));
+  }
+}

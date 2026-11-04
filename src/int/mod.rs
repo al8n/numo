@@ -59,9 +59,9 @@ macro_rules! native {
   (unsigned $uint:ident => $int:ident) => {
     #[doc = concat!("Lower layer for `", stringify!($uint), "`.")]
     pub(crate) mod $uint {
-      use core::cmp::Ordering;
+      use core::{cmp::Ordering, num::ParseIntError};
 
-      use super::{DIGIT_BUF_LEN, DigitBuf};
+      use super::{DIGIT_BUF_LEN, DigitBuf, parse_errors};
       use crate::rounding::{self, RoundingMode};
 
       native!(@shared $uint);
@@ -497,6 +497,61 @@ macro_rules! native {
         index < bits && (value >> index) & 1 == 1
       }
 
+      /// The value of the digit `byte` in `radix`, an ASCII digit or letter of either case below
+      /// `radix`, as `char::to_digit` reads it, or `None` for every other byte. Requires
+      /// `2 <= radix <= 36`.
+      #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
+      )]
+      #[inline]
+      pub(crate) const fn digit_value(byte: u8, radix: u32) -> Option<u32> {
+        (byte as char).to_digit(radix)
+      }
+
+      /// Parses `src`, an optional `+` and the digits of `radix`, as a value of `bits` bits, with
+      /// the errors of the native `from_str_radix` from the left: `Empty` for no bytes and
+      /// `InvalidDigit` for a lone sign, and at each digit, as the native parser reads it, the
+      /// product by `radix` first, then `InvalidDigit` for a byte that is not a digit, then
+      /// `PosOverflow` once the product or the sum is above `2^bits - 1`. A `-` is a byte that is
+      /// not a digit. Requires `2 <= radix <= 36` and `bits <= BITS`.
+      #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
+      )]
+      pub(crate) const fn from_str_radix_bits(
+        src: &[u8],
+        radix: u32,
+        bits: u32,
+      ) -> Result<$uint, ParseIntError> {
+        let digits = match src {
+          [] => return Err(parse_errors::EMPTY),
+          [b'+' | b'-'] => return Err(parse_errors::INVALID_DIGIT),
+          [b'+', digits @ ..] => digits,
+          digits => digits,
+        };
+        let max = max_of_bits(bits);
+        let mut value: $uint = 0;
+        let mut i = 0;
+        while i < digits.len() {
+          // `radix` is at most 36, which every native integer holds.
+          let product = value.checked_mul(radix as $uint);
+          let digit = match digit_value(digits[i], radix) {
+            Some(digit) => digit as $uint,
+            None => return Err(parse_errors::INVALID_DIGIT),
+          };
+          value = match product {
+            Some(product) => match product.checked_add(digit) {
+              Some(sum) if sum <= max => sum,
+              _ => return Err(parse_errors::POS_OVERFLOW),
+            },
+            None => return Err(parse_errors::POS_OVERFLOW),
+          };
+          i += 1;
+        }
+        Ok(value)
+      }
+
       /// `value` with the bit at `index` set if `set`, and cleared otherwise, or `None` for
       /// `index >= bits`. Requires `bits <= BITS`.
       #[inline]
@@ -525,7 +580,9 @@ macro_rules! native {
       "`."
     )]
     pub(crate) mod $int {
-      use super::DigitBuf;
+      use core::num::ParseIntError;
+
+      use super::{DigitBuf, parse_errors};
       use crate::rounding::RoundingMode;
 
       native!(@shared $int);
@@ -1017,6 +1074,56 @@ macro_rules! native {
       #[inline]
       pub(crate) const fn bit(value: $int, index: u32, bits: u32) -> bool {
         index < bits && (value >> index) & 1 == 1
+      }
+
+      /// Parses `src`, an optional `+` or `-` and the digits of `radix`, as a value of `bits` bits
+      /// in two's complement, with the errors of the native `from_str_radix` from the left:
+      /// `Empty` for no bytes and `InvalidDigit` for a lone sign, and at each digit, as the native
+      /// parser reads it, the product by `radix` first, then `InvalidDigit` for a byte that is not
+      /// a digit, then `PosOverflow` once the product or the sum is above `2^(bits - 1) - 1`, or
+      /// after `-`, which subtracts the digits, `NegOverflow` once the product or the difference is
+      /// below `-2^(bits - 1)`. Zero bits hold only zero. Requires `2 <= radix <= 36` and
+      /// `bits <= BITS`.
+      #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
+      )]
+      pub(crate) const fn from_str_radix_bits(
+        src: &[u8],
+        radix: u32,
+        bits: u32,
+      ) -> Result<$int, ParseIntError> {
+        let (negative, digits) = match src {
+          [] => return Err(parse_errors::EMPTY),
+          [b'+' | b'-'] => return Err(parse_errors::INVALID_DIGIT),
+          [b'+', digits @ ..] => (false, digits),
+          [b'-', digits @ ..] => (true, digits),
+          digits => (false, digits),
+        };
+        let (min, max) = (min_of_bits(bits), max_of_bits(bits));
+        let mut value: $int = 0;
+        let mut i = 0;
+        while i < digits.len() {
+          // `radix` is at most 36, which every native integer holds.
+          let product = value.checked_mul(radix as $int);
+          let digit = match super::$uint::digit_value(digits[i], radix) {
+            Some(digit) => digit as $int,
+            None => return Err(parse_errors::INVALID_DIGIT),
+          };
+          value = match (product, negative) {
+            (Some(product), false) => match product.checked_add(digit) {
+              Some(sum) if sum <= max => sum,
+              _ => return Err(parse_errors::POS_OVERFLOW),
+            },
+            (Some(product), true) => match product.checked_sub(digit) {
+              Some(difference) if difference >= min => difference,
+              _ => return Err(parse_errors::NEG_OVERFLOW),
+            },
+            (None, _) => return Err(parse_errors::overflow(negative)),
+          };
+          i += 1;
+        }
+        Ok(value)
       }
 
       /// `value` with the bit at `index` set if `set`, and cleared otherwise, sign-extended from
