@@ -10,8 +10,9 @@ use core::{
 pub use error::TryNewError;
 pub use traits::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs,
-  IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger,
-  SignedMath, StrictOps, UncheckedOps, UnsignedFixedInteger, UnsignedMath, WrappingOps,
+  IntegerBits, IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedBits,
+  SignedFixedInteger, SignedMath, StrictOps, UncheckedOps, UnsignedBits, UnsignedFixedInteger,
+  UnsignedMath, WrappingOps,
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -30,6 +31,8 @@ mod error;
 mod tables;
 #[macro_use]
 mod arithmetic;
+#[macro_use]
+mod bits;
 mod traits;
 
 /// An unsigned integer of `Bits` bits, stored in `Repr`.
@@ -480,6 +483,8 @@ macro_rules! array_integers {
       uint_sign_table!(inherent_items![unsigned, $lower, &]);
       integer_math_table!(inherent_items![unsigned, $lower, &, Uint<B, [$limb; N]>]);
       uint_math_table!(inherent_items![unsigned, $lower, &]);
+      integer_bits_table!(inherent_items![unsigned, $lower, &]);
+      uint_bits_table!(inherent_items![unsigned, $lower, &, Int<B, [$limb; N]>]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -641,6 +646,8 @@ macro_rules! array_integers {
       int_sign_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
       integer_math_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
       int_math_table!(inherent_items![signed, $upper, &]);
+      integer_bits_table!(inherent_items![signed, $upper, &]);
+      int_bits_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -971,6 +978,8 @@ macro_rules! native_integers {
       uint_sign_table!(inherent_items![$uint]);
       integer_math_table!(inherent_items![$uint, Uint<B, $uint>]);
       uint_math_table!(inherent_items![$uint]);
+      integer_bits_table!(inherent_items![$uint]);
+      uint_bits_table!(inherent_items![$uint, Int<B, $int>]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1123,6 +1132,8 @@ macro_rules! native_integers {
       int_sign_table!(inherent_items![$int, Uint<B, $uint>]);
       integer_math_table!(inherent_items![$int, Uint<B, $uint>]);
       int_math_table!(inherent_items![$int]);
+      integer_bits_table!(inherent_items![$int]);
+      int_bits_table!(inherent_items![$int, Uint<B, $uint>]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///

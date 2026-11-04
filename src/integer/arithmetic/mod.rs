@@ -1,10 +1,10 @@
 //! The arithmetic of [`Uint`](crate::Uint) and [`Int`](crate::Int): the method tables of the
 //! overflowing, checked, wrapping, saturating and strict addition, subtraction, multiplication,
-//! negation, division, remainder and power, of the carrying addition and the borrowing subtraction
-//! of `Uint`, of the absolute value and the sign of `Int`, of the unchecked arithmetic of the
-//! traits, and of the integer functions without an overflow prefix, such as the Euclidean and
-//! rounded division, the roots and the logarithms; the panics; and the operators, `Sum` and
-//! `Product`.
+//! negation, division, remainder and power, and of the overflowing, checked, wrapping and strict
+//! shifts, of the carrying addition and the borrowing subtraction of `Uint`, of the absolute value
+//! and the sign of `Int`, of the unchecked arithmetic of the traits, and of the integer functions
+//! without an overflow prefix, such as the Euclidean and rounded division, the roots and the
+//! logarithms; the panics; and the operators, `Sum` and `Product`.
 //!
 //! Each storage computes the overflowing methods at the width `Bits`, and most other methods are
 //! derived from them. The tables pass their rows to the callbacks of `tables`, for the inherent
@@ -127,6 +127,18 @@ macro_rules! overflowing_table {
       /// where it wraps to -1, as `(-1)^2` does, while `(-1)^3` is -1.
       fn overflowing_pow(&self, exp: u32) -> (Self, bool)
         = prim pair overflowing_pow_bits(self; exp);
+
+      /// Overflowing shift left: `self << rhs` within `Bits` bits, with `rhs` taken modulo `Bits`,
+      /// and whether `rhs` is `Bits` or more, as the native method, which takes `rhs` modulo the
+      /// width of the type. Zero bits hold only zero, and every amount overflows there.
+      fn overflowing_shl(&self, rhs: u32) -> (Self, bool)
+        = prim pair overflowing_shl_bits(self; rhs);
+
+      /// Overflowing shift right: `self >> rhs`, arithmetic for `Int`, with `rhs` taken modulo
+      /// `Bits`, and whether `rhs` is `Bits` or more. Zero bits hold only zero, and every amount
+      /// overflows there.
+      fn overflowing_shr(&self, rhs: u32) -> (Self, bool)
+        = prim pair overflowing_shr_bits(self; rhs);
     }
   };
 }
@@ -137,8 +149,12 @@ macro_rules! overflowing_table {
 // `overflowing_*`, which is `prim pair overflowing_*_bits(..)` and so passes `Self::BITS`.
 // `unchecked_*` passes the flag of the same `overflowing_*_bits` call to `assert_unchecked`, or at
 // the full width of a native integer calls the native `unchecked_*`, whose precondition is then
-// that flag: either way it assumes exactly what `checked_*` tests. A change to either shape
-// requires revisiting those unsafe blocks.
+// that flag: either way it assumes exactly what `checked_*` tests. This holds for the addition,
+// the subtraction, the multiplication, the negation and the shifts: `checked_shl` and
+// `checked_shr` match on the flag of `prim pair overflowing_shl_bits(self; rhs)` and
+// `prim pair overflowing_shr_bits(self; rhs)`, which pass `rhs` and then `Self::BITS`, and whose
+// flag is `rhs >= Bits`, set for every amount at zero bits. A change to either shape requires
+// revisiting those unsafe blocks.
 macro_rules! checked_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -227,6 +243,25 @@ macro_rules! checked_table {
       fn checked_pow(&self, exp: u32) -> Option<Self> {
         match self.overflowing_pow(exp) {
           (power, false) => Some(power),
+          (_, true) => None,
+        }
+      }
+
+      /// Checked shift left: `self << rhs`, or `None` if `rhs` is `Bits` or more, as every amount
+      /// is at zero bits. The bits shifted out at the top are lost, as for the native method;
+      /// [`shl_exact`](crate::IntegerBits::shl_exact) returns `None` for them instead.
+      fn checked_shl(&self, rhs: u32) -> Option<Self> {
+        match self.overflowing_shl(rhs) {
+          (shifted, false) => Some(shifted),
+          (_, true) => None,
+        }
+      }
+
+      /// Checked shift right: `self >> rhs`, arithmetic for `Int`, or `None` if `rhs` is `Bits`
+      /// or more, as every amount is at zero bits.
+      fn checked_shr(&self, rhs: u32) -> Option<Self> {
+        match self.overflowing_shr(rhs) {
+          (shifted, false) => Some(shifted),
           (_, true) => None,
         }
       }
@@ -329,6 +364,21 @@ macro_rules! wrapping_table {
       /// Wrapping exponentiation: `self^exp` modulo `2^Bits`, within the range of the type.
       fn wrapping_pow(&self, exp: u32) -> Self {
         self.overflowing_pow(exp).0
+      }
+
+      /// Wrapping shift left: `self << (rhs % Bits)` within `Bits` bits. Unlike the other wrapping
+      /// methods, it takes the amount modulo the width rather than the result, as the native
+      /// method does; [`unbounded_shl`](crate::IntegerBits::unbounded_shl) shifts every bit out
+      /// instead. Zero bits hold only zero, which it returns for every amount.
+      fn wrapping_shl(&self, rhs: u32) -> Self {
+        self.overflowing_shl(rhs).0
+      }
+
+      /// Wrapping shift right: `self >> (rhs % Bits)`, arithmetic for `Int`, taking the amount
+      /// modulo the width as [`wrapping_shl`](Self::wrapping_shl) does;
+      /// [`unbounded_shr`](crate::IntegerBits::unbounded_shr) shifts every bit out instead.
+      fn wrapping_shr(&self, rhs: u32) -> Self {
+        self.overflowing_shr(rhs).0
       }
     }
   };
@@ -610,6 +660,34 @@ macro_rules! strict_table {
         match self.overflowing_pow(exp) {
           (power, false) => power,
           (_, true) => $crate::integer::arithmetic::overflow::pow(),
+        }
+      }
+
+      /// Strict shift left: `self << rhs`, which panics if `rhs` is `Bits` or more whatever the
+      /// `overflow-checks` setting.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is `Bits` or more, as every amount is at zero bits.
+      #[track_caller]
+      fn strict_shl(&self, rhs: u32) -> Self {
+        match self.overflowing_shl(rhs) {
+          (shifted, false) => shifted,
+          (_, true) => $crate::integer::arithmetic::overflow::shl(),
+        }
+      }
+
+      /// Strict shift right: `self >> rhs`, arithmetic for `Int`, which panics if `rhs` is `Bits`
+      /// or more whatever the `overflow-checks` setting.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `rhs` is `Bits` or more, as every amount is at zero bits.
+      #[track_caller]
+      fn strict_shr(&self, rhs: u32) -> Self {
+        match self.overflowing_shr(rhs) {
+          (shifted, false) => shifted,
+          (_, true) => $crate::integer::arithmetic::overflow::shr(),
         }
       }
     }
@@ -981,13 +1059,19 @@ macro_rules! integer_math_table {
 }
 
 /// Passes the functions of `Uint` alone that have no overflow prefix to `$callback`, after the
-/// tokens of `$args`: `is_multiple_of` and the next power of two.
+/// tokens of `$args`: `is_multiple_of`, `is_power_of_two` and the next power of two.
 macro_rules! uint_math_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
       /// Returns `true` if `self` is a multiple of `rhs`: if `self / rhs` leaves no remainder, or,
       /// for a zero `rhs`, if `self` is zero.
       fn is_multiple_of(&self, rhs: &Self) -> bool = prim is_multiple_of(self, rhs);
+
+      /// Returns `true` if `self` is a power of two: if it has exactly one set bit. Zero bits hold
+      /// only zero, which is not.
+      fn is_power_of_two(&self) -> bool {
+        self.count_ones() == 1
+      }
 
       /// Next power of two: the smallest power of two at least `self`. A power outside the range
       /// of the type overflows, as one does at zero bits: the method then panics or returns zero,
@@ -1043,9 +1127,9 @@ macro_rules! int_math_table {
   };
 }
 
-/// Passes the unchecked addition, subtraction, multiplication and exact division of `Uint` and
-/// `Int` to `$callback`, after the tokens of `$args`, for the traits alone: each storage writes out
-/// its inherent `unchecked_*` methods.
+/// Passes the unchecked addition, subtraction, multiplication, exact division and shifts of `Uint`
+/// and `Int` to `$callback`, after the tokens of `$args`, for the traits alone: each storage writes
+/// out its inherent `unchecked_*` methods.
 macro_rules! unchecked_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -1105,6 +1189,29 @@ macro_rules! unchecked_table {
           None => self.wrapping_div(rhs),
         }
       }
+
+      /// Unchecked shift left: `self << rhs`, assuming that `rhs` is below `Bits`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be below `Bits`, that is, [`checked_shl`](crate::CheckedOps::checked_shl)
+      /// would return `Some`. Otherwise the behavior is undefined. Zero bits have no amount below
+      /// `Bits`, so no call is sound there.
+      #[track_caller]
+      unsafe fn unchecked_shl(&self, rhs: u32) -> Self
+        = unchecked overflowing_shl(self, rhs), "attempt to shift left with overflow";
+
+      /// Unchecked shift right: `self >> rhs`, arithmetic for `Int`, assuming that `rhs` is below
+      /// `Bits`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be below `Bits`, that is, [`checked_shr`](crate::CheckedOps::checked_shr)
+      /// would return `Some`. Otherwise the behavior is undefined. Zero bits have no amount below
+      /// `Bits`, so no call is sound there.
+      #[track_caller]
+      unsafe fn unchecked_shr(&self, rhs: u32) -> Self
+        = unchecked overflowing_shr(self, rhs), "attempt to shift right with overflow";
     }
   };
 }
@@ -1180,6 +1287,20 @@ pub(super) mod overflow {
   #[track_caller]
   pub(crate) const fn pow() -> ! {
     panic!("attempt to exponentiate with overflow")
+  }
+
+  /// Panics as the native `strict_shl` does.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn shl() -> ! {
+    panic!("attempt to shift left with overflow")
+  }
+
+  /// Panics as the native `strict_shr` does.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn shr() -> ! {
+    panic!("attempt to shift right with overflow")
   }
 
   /// Repeats the overflow of a native addition, which panics with the message of the native
@@ -1274,6 +1395,13 @@ pub(super) mod domain {
   #[track_caller]
   pub(crate) const fn root_of_negative() -> ! {
     panic!("argument of integer root of even degree cannot be negative")
+  }
+
+  /// Panics on a bit index of `Bits` or more, where no bit of the value can be set or cleared.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn bit_index() -> ! {
+    panic!("bit index out of range")
   }
 }
 

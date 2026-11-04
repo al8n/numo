@@ -679,6 +679,95 @@ pub trait SignedMath: Sealed + Sized {
   int_math_table!(trait_items![]);
 }
 
+/// The bit counts, the highest and the lowest one and their isolation, the bit reversal, the
+/// rotations, the unbounded and exact shifts, and the bit at an index, at the width `Bits`.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope. The other shifts, such as [`checked_shl`](CheckedOps::checked_shl), are in the
+/// families, beside the other operations of their forms.
+///
+/// ```
+/// use numo::{BitWidth, IntegerBits, Uint, i7, u7};
+///
+/// // The number of ones of the values.
+/// fn ones<B: BitWidth>(values: &[Uint<B>]) -> u32 {
+///   values.iter().map(|value| value.count_ones()).sum()
+/// }
+///
+/// assert_eq!(ones(&[u7::MAX, u7::new(5)]), 9);
+/// assert_eq!(u7::new(1).leading_zeros(), 6);
+/// // The ones of -1 are its 7 bits, without the copy of the sign that the `i8` holds above them.
+/// assert_eq!(i7::new(-1).count_ones(), 7);
+/// assert_eq!(u7::new(0b100_0001).rotate_left(1), u7::new(0b000_0011));
+/// assert_eq!(i7::MIN.unbounded_shr(10), i7::new(-1));
+/// assert_eq!(u7::new(0b11).shl_exact(5), Some(u7::new(0b110_0000)));
+/// assert_eq!(u7::new(0b11).shl_exact(6), None);
+///
+/// let mut value = i7::ZERO;
+/// value.set_bit(6, true);
+/// assert_eq!(value, i7::MIN);
+/// assert!(value.bit(6) && !value.bit(7));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait IntegerBits: Sealed + Sized {
+  integer_bits_table!(trait_items![]);
+}
+
+/// The bit methods of [`Uint`] alone: the bit width, and the cast of the bits to [`Int`].
+///
+/// [`Uint`] implements it for every storage, with the results of the inherent `const fn`s of the
+/// same names, which a concrete type reaches without this trait, also in constant contexts.
+///
+/// ```
+/// use numo::{BitWidth, Int, Uint, UnsignedBits, i7, u7};
+///
+/// // The bits of an unsigned value read in two's complement.
+/// fn signed<B: BitWidth>(value: Uint<B>) -> Int<B> {
+///   value.cast_signed()
+/// }
+///
+/// assert_eq!(signed(u7::MAX), i7::new(-1));
+/// assert_eq!(signed(u7::new(63)), i7::MAX);
+/// assert_eq!(u7::new(5).bit_width(), 3);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait UnsignedBits: Sealed + Sized {
+  /// The `Int` of the same width in a storage of the same size: `Int<B, i8>` for `Uint<B, u8>`,
+  /// and so on, and `Int<B, [L; N]>` for `Uint<B, [L; N]>`.
+  type Signed;
+
+  uint_bits_table!(trait_items![]);
+}
+
+/// The bit methods of [`Int`] alone: the cast of the bits to [`Uint`].
+///
+/// [`Int`] implements it for every storage, with the results of the inherent `const fn`s of the
+/// same names, which a concrete type reaches without this trait, also in constant contexts. The
+/// cast returns the [`Magnitude`](IntegerMath::Magnitude) of [`IntegerMath`], the `Uint` of the
+/// same width in a storage of the same size.
+///
+/// ```
+/// use numo::{BitWidth, Int, SignedBits, Uint, i7, u7};
+///
+/// // The bits of a signed value, its two's complement, read unsigned.
+/// fn unsigned<B: BitWidth>(value: Int<B>) -> Uint<B> {
+///   value.cast_unsigned()
+/// }
+///
+/// assert_eq!(unsigned(i7::new(-1)), u7::MAX);
+/// assert_eq!(unsigned(i7::MIN), u7::new(64));
+/// assert_eq!(u7::new(64).cast_signed(), i7::MIN);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait SignedBits: Sealed + Sized + IntegerMath {
+  int_bits_table!(trait_items![]);
+}
+
 // The constants and methods are the inherent ones, which `Self::` names first, and the functions
 // without an inherent counterpart return the inherent constants.
 impl<B: FitsBits<R>, R: InlineUintRepr> FixedInteger for Uint<B, R> {
@@ -917,6 +1006,27 @@ impl<B: FitsBits<R>, R: UintRepr> UnsignedMath for Uint<B, R> {
 
 impl<B: FitsBits<R>, R: IntRepr> SignedMath for Int<B, R> {
   int_math_table!(generic_items![]);
+}
+
+// The bit methods read no constant either, so they need only the storage trait.
+impl<B: FitsBits<R>, R: UintRepr> IntegerBits for Uint<B, R> {
+  integer_bits_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> IntegerBits for Int<B, R> {
+  integer_bits_table!(generic_items![]);
+}
+
+// The signed storage of the size of `R` names the result, and needs no bound of its own: the
+// sealed `UintCore` returns it from `cast_signed_bits`.
+impl<B: FitsBits<R>, R: UintRepr> UnsignedBits for Uint<B, R> {
+  type Signed = Int<B, <R as UintRepr>::Signed>;
+
+  uint_bits_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> SignedBits for Int<B, R> {
+  int_bits_table!(generic_items![]);
 }
 
 #[cfg(test)]
