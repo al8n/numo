@@ -219,34 +219,21 @@ jobs:
       - name: ASAN / LSAN / TSAN (Linux)
         run: ci/sanitizer.sh
 
+  # Miri takes longer on the lib tests of one target than a job may run, so each job runs one shard
+  # of them. The shards are in `ci/miri_groups.sh`, for both borrow models.
   miri-tb:
-    name: miri-tb-${{ matrix.target }}-${{ matrix.cfg }}
+    name: miri-tb-${{ matrix.target }}-${{ matrix.cfg }}-${{ matrix.shard }}
     strategy:
+      fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
         target:
           - x86_64-unknown-linux-gnu
           - i686-unknown-linux-gnu
           - powerpc64-unknown-linux-gnu
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
         cfg:
           - all_tests
-        # Exclude invalid combinations
-        exclude:
-          - os: ubuntu-latest
-            target: x86_64-apple-darwin
-          - os: ubuntu-latest
-            target: aarch64-apple-darwin
-          - os: macos-latest
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: i686-unknown-linux-gnu
-          - os: macos-latest
-            target: powerpc64-unknown-linux-gnu
-    runs-on: ${{ matrix.os }}
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Cache cargo build and registry
@@ -264,48 +251,66 @@ jobs:
       # The build script of `alloca`, a dependency of `criterion`, compiles C for the target, and
       # `cargo miri test` builds the dev-dependencies.
       - name: Install the 32-bit C headers
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'i686-unknown-linux-gnu'
+        if: matrix.target == 'i686-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-multilib
       - name: Install the powerpc64 C cross compiler and libc headers
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'powerpc64-unknown-linux-gnu'
+        if: matrix.target == 'powerpc64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-powerpc64-linux-gnu libc6-dev-ppc64-cross
           echo "CC_powerpc64_unknown_linux_gnu=powerpc64-linux-gnu-gcc" >> "$GITHUB_ENV"
       - name: Miri
         run: |
-          bash ci/miri_tb.sh ${{ matrix.target }} ${{ matrix.cfg }}
+          bash ci/miri_tb.sh ${{ matrix.target }} ${{ matrix.cfg }} ${{ matrix.shard }}
+
+  # The macOS targets run on a push to main, the weekly schedule and a manual run. A pull request
+  # skips these jobs, so it allocates no macOS runner for Miri.
+  miri-tb-macos:
+    name: miri-tb-${{ matrix.target }}-${{ matrix.cfg }}-${{ matrix.shard }}
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+        cfg:
+          - all_tests
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache cargo build and registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-miri-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-miri-
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+      - name: Miri
+        run: |
+          bash ci/miri_tb.sh ${{ matrix.target }} ${{ matrix.cfg }} ${{ matrix.shard }}
 
   miri-sb:
-    name: miri-sb-${{ matrix.target }}-${{ matrix.cfg }}
+    name: miri-sb-${{ matrix.target }}-${{ matrix.cfg }}-${{ matrix.shard }}
     strategy:
+      fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
         target:
           - x86_64-unknown-linux-gnu
           - i686-unknown-linux-gnu
           - powerpc64-unknown-linux-gnu
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
         cfg:
           - all_tests
-        # Exclude invalid combinations
-        exclude:
-          - os: ubuntu-latest
-            target: x86_64-apple-darwin
-          - os: ubuntu-latest
-            target: aarch64-apple-darwin
-          - os: macos-latest
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: i686-unknown-linux-gnu
-          - os: macos-latest
-            target: powerpc64-unknown-linux-gnu
-    runs-on: ${{ matrix.os }}
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Cache cargo build and registry
@@ -323,19 +328,52 @@ jobs:
       # The build script of `alloca`, a dependency of `criterion`, compiles C for the target, and
       # `cargo miri test` builds the dev-dependencies.
       - name: Install the 32-bit C headers
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'i686-unknown-linux-gnu'
+        if: matrix.target == 'i686-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-multilib
       - name: Install the powerpc64 C cross compiler and libc headers
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'powerpc64-unknown-linux-gnu'
+        if: matrix.target == 'powerpc64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-powerpc64-linux-gnu libc6-dev-ppc64-cross
           echo "CC_powerpc64_unknown_linux_gnu=powerpc64-linux-gnu-gcc" >> "$GITHUB_ENV"
       - name: Miri
         run: |
-          bash ci/miri_sb.sh ${{ matrix.target }} ${{ matrix.cfg }}
+          bash ci/miri_sb.sh ${{ matrix.target }} ${{ matrix.cfg }} ${{ matrix.shard }}
+
+  # The macOS targets run on a push to main, the weekly schedule and a manual run. A pull request
+  # skips these jobs, so it allocates no macOS runner for Miri.
+  miri-sb-macos:
+    name: miri-sb-${{ matrix.target }}-${{ matrix.cfg }}-${{ matrix.shard }}
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+        cfg:
+          - all_tests
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache cargo build and registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-miri-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-miri-
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+      - name: Miri
+        run: |
+          bash ci/miri_sb.sh ${{ matrix.target }} ${{ matrix.cfg }} ${{ matrix.shard }}
 
   # valgrind
   valgrind:
