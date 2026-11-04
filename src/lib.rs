@@ -160,14 +160,14 @@
 //! and its forms, `unsigned_abs`, `signum` and `checked_isqrt` for `Int`, and the operators `+`,
 //! `-`, `*`, `/` and `%`, which panic or wrap on overflow as the native integers do (see
 //! [Overflow](Uint#overflow)): `/` and `%` panic on a zero divisor and on overflow in every build.
-//! Addition, subtraction, multiplication and exact division, and negation for `Int`, also have the
-//! `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the `checked_*` method
-//! would return `Some`. The bit operations of the native integers work at the width too: the counts
-//! of ones and zeros, the highest and the lowest one, the bit reversal, the rotations, the shifts
-//! in every form, the unbounded and the exact shifts, a bit read and written by its index, and the
-//! casts between `Uint` and `Int` of the same width, with the operators `!`, `&`, `|`, `^`, `<<`
-//! and `>>`; a shift amount is bounded by `Bits`, and `bitand`, `bitor`, `bitxor` and `not` do the
-//! bitwise operations as `const fn`s for constant contexts.
+//! Addition, subtraction, multiplication, exact division and the shifts, and negation for `Int`,
+//! also have the `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the
+//! `checked_*` method would return `Some`. The bit operations of the native integers work at the
+//! width too: the counts of ones and zeros, the highest and the lowest one, the bit reversal, the
+//! rotations, the shifts in every form, the unbounded and the exact shifts, a bit read and written
+//! by its index, and the casts between `Uint` and `Int` of the same width, with the operators `!`,
+//! `&`, `|`, `^`, `<<` and `>>`; a shift amount is bounded by `Bits`, and `bitand`, `bitor`,
+//! `bitxor` and `not` do the bitwise operations as `const fn`s for constant contexts.
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,

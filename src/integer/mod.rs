@@ -127,14 +127,15 @@ mod traits;
 /// [`ilog`](Self::ilog), [`ilog2`](Self::ilog2) and [`ilog10`](Self::ilog10),
 /// [`midpoint`](Self::midpoint), [`abs_diff`](Self::abs_diff) and
 /// [`next_power_of_two`](Self::next_power_of_two); those that can fail also have a `checked_*`
-/// form, and the next power of two a `wrapping_*` form. Addition, subtraction, multiplication and
-/// exact division also have the `unchecked_*` form, such as [`unchecked_add`](Self::unchecked_add)
-/// and [`unchecked_div_exact`](Self::unchecked_div_exact), as `const unsafe fn`s: the caller
-/// guarantees that the `checked_*` method would return `Some`, and the behavior is undefined
-/// otherwise. The operators `+`, `-`, `*`, `/` and `%`, their compound assignments, `Sum` and
-/// `Product` work for every storage, and so do the traits that give generic code the methods, such
-/// as [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). A method of a
-/// storage is called with method syntax or with a path that names the storage, such as
+/// form, and the next power of two a `wrapping_*` form. Addition, subtraction, multiplication,
+/// exact division and the shifts also have the `unchecked_*` form, such as
+/// [`unchecked_add`](Self::unchecked_add), [`unchecked_div_exact`](Self::unchecked_div_exact) and
+/// [`unchecked_shl`](Self::unchecked_shl), as `const unsafe fn`s: the caller guarantees that the
+/// `checked_*` method would return `Some`, and the behavior is undefined otherwise. The operators
+/// `+`, `-`, `*`, `/` and `%`, their compound assignments, `Sum` and `Product` work for every
+/// storage, and so do the traits that give generic code the methods, such as
+/// [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). A method of a storage
+/// is called with method syntax or with a path that names the storage, such as
 /// `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the storage to inference, such as
 /// `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
 ///
@@ -200,6 +201,8 @@ mod traits;
 /// assert_eq!(u7::new(3) << 5u32, u7::new(96));
 /// assert_eq!(u7::new(3).checked_shl(7), None);
 /// assert_eq!(u7::new(3).shl_exact(6), None);
+/// // SAFETY: 5 is below 7 bits, so `checked_shl` would return `Some`.
+/// assert_eq!(unsafe { u7::new(3).unchecked_shl(5) }, u7::new(96));
 /// assert_eq!(u7::MAX.cast_signed(), i7::new(-1));
 /// assert_eq!(top.trailing_zeros(), 199);
 /// const LOW: u7 = u7::MAX.bitand(u7::new(0b11));
@@ -331,13 +334,13 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// power of two, and with [`checked_isqrt`](Self::checked_isqrt):
 /// [`abs_diff`](Self::abs_diff) returns the [`Uint`] of the same width and storage size, and
 /// [`nth_root`](Self::nth_root) takes a negative value for an odd degree. As for [`Uint`],
-/// addition, subtraction, multiplication, negation and exact division also have the `unchecked_*`
-/// form, as `const unsafe fn`s whose caller guarantees that the `checked_*` method would return
-/// `Some`: [`unchecked_neg`](Self::unchecked_neg), for example, requires that `self` is not `MIN`,
-/// except at zero bits, and [`unchecked_div_exact`](Self::unchecked_div_exact) that `rhs` is not
-/// zero and divides `self`, and that `self` is not `MIN` with `rhs` -1. The operators `+`, `-`,
-/// `*`, `/` and `%`, their compound assignments, the negation `-`, `Sum` and `Product` work for
-/// every storage, and so do the traits that give generic code the methods, such as
+/// addition, subtraction, multiplication, negation, exact division and the shifts also have the
+/// `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the `checked_*` method
+/// would return `Some`: [`unchecked_neg`](Self::unchecked_neg), for example, requires that `self`
+/// is not `MIN`, except at zero bits, and [`unchecked_div_exact`](Self::unchecked_div_exact) that
+/// `rhs` is not zero and divides `self`, and that `self` is not `MIN` with `rhs` -1. The operators
+/// `+`, `-`, `*`, `/` and `%`, their compound assignments, the negation `-`, `Sum` and `Product`
+/// work for every storage, and so do the traits that give generic code the methods, such as
 /// [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). As for [`Uint`], a
 /// path to a method names the storage.
 ///
@@ -374,6 +377,8 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// // The bits of the two's complement of 7 bits.
 /// assert_eq!(i7::new(-1).count_ones(), 7);
 /// assert_eq!(i7::MIN >> 3u32, i7::new(-8));
+/// // SAFETY: 6 is below 7 bits, so `checked_shr` would return `Some`.
+/// assert_eq!(unsafe { i7::MIN.unchecked_shr(6) }, -i7::ONE);
 /// assert_eq!(i7::new(-2).cast_unsigned(), u7::new(126));
 /// assert_eq!(i7::new(1).rotate_right(1), i7::MIN);
 /// let mut value = i7::ZERO;
@@ -631,6 +636,46 @@ macro_rules! array_integers {
         // quotient that `checked_div_exact` returns.
         Self::wrap(unsafe { quotient.unwrap_unchecked() })
       }
+
+      /// Unchecked shift left: `self << rhs`, assuming that `rhs` is below `Bits`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be below `Bits`, that is, [`checked_shl`](Self::checked_shl) would return
+      /// `Some`. Otherwise the behavior is undefined. Zero bits have no amount below `Bits`, so no
+      /// call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_shl(&self, rhs: u32) -> Self {
+        let (shifted, overflow) =
+          int::unsigned::$lower::overflowing_shl_bits(&self.repr, rhs, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_shl` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `shifted` is the value
+        // that `wrapping_shl` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(shifted)
+      }
+
+      /// Unchecked shift right: `self >> rhs`, assuming that `rhs` is below `Bits`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be below `Bits`, that is, [`checked_shr`](Self::checked_shr) would return
+      /// `Some`. Otherwise the behavior is undefined. Zero bits have no amount below `Bits`, so no
+      /// call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_shr(&self, rhs: u32) -> Self {
+        let (shifted, overflow) =
+          int::unsigned::$lower::overflowing_shr_bits(&self.repr, rhs, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_shr` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `shifted` is the value
+        // that `wrapping_shr` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(shifted)
+      }
     }
 
     impl<B, const N: usize> Uint<B, [$limb; N]> {
@@ -815,6 +860,47 @@ macro_rules! array_integers {
         // caller guarantees that it would. Nothing else is assumed: the value it holds is the
         // quotient that `checked_div_exact` returns.
         Self::wrap(unsafe { quotient.unwrap_unchecked() })
+      }
+
+      /// Unchecked shift left: `self << rhs`, assuming that `rhs` is below `Bits`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be below `Bits`, that is, [`checked_shl`](Self::checked_shl) would return
+      /// `Some`. Otherwise the behavior is undefined. Zero bits have no amount below `Bits`, so no
+      /// call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_shl(&self, rhs: u32) -> Self {
+        let (shifted, overflow) =
+          int::signed::$upper::overflowing_shl_bits(&self.repr, rhs, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_shl` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `shifted` is the value
+        // that `wrapping_shl` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(shifted)
+      }
+
+      /// Unchecked shift right: `self >> rhs`, an arithmetic shift, assuming that `rhs` is below
+      /// `Bits`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be below `Bits`, that is, [`checked_shr`](Self::checked_shr) would return
+      /// `Some`. Otherwise the behavior is undefined. Zero bits have no amount below `Bits`, so no
+      /// call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_shr(&self, rhs: u32) -> Self {
+        let (shifted, overflow) =
+          int::signed::$upper::overflowing_shr_bits(&self.repr, rhs, Self::BITS);
+        // SAFETY: `overflow` is the flag on which `checked_shr` returns `None`, and the caller
+        // guarantees that it would return `Some`. Nothing else is assumed: `shifted` is the value
+        // that `wrapping_shr` returns.
+        unsafe { core::hint::assert_unchecked(!overflow) };
+        Self::wrap(shifted)
       }
     }
 
@@ -1149,6 +1235,58 @@ macro_rules! native_integers {
         // quotient that `checked_div_exact` returns.
         Self::wrap(unsafe { quotient.unwrap_unchecked() })
       }
+
+      /// Unchecked shift left: `self << rhs`, assuming that `rhs` is below `Bits`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be below `Bits`, that is, [`checked_shl`](Self::checked_shl) would return
+      /// `Some`. Otherwise the behavior is undefined. Zero bits have no amount below `Bits`, so no
+      /// call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_shl(&self, rhs: u32) -> Self {
+        if Self::BITS == $uint::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_shl` returns `Some`
+          // exactly when `rhs` is below that width, and the caller guarantees that it would: that
+          // is the precondition of the native `unchecked_shl`.
+          Self::wrap(unsafe { $uint::unchecked_shl(self.repr, rhs) })
+        } else {
+          let (shifted, overflow) = int::$uint::overflowing_shl_bits(self.repr, rhs, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_shl` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `shifted` is the value
+          // that `wrapping_shl` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(shifted)
+        }
+      }
+
+      /// Unchecked shift right: `self >> rhs`, assuming that `rhs` is below `Bits`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be below `Bits`, that is, [`checked_shr`](Self::checked_shr) would return
+      /// `Some`. Otherwise the behavior is undefined. Zero bits have no amount below `Bits`, so no
+      /// call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_shr(&self, rhs: u32) -> Self {
+        if Self::BITS == $uint::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_shr` returns `Some`
+          // exactly when `rhs` is below that width, and the caller guarantees that it would: that
+          // is the precondition of the native `unchecked_shr`.
+          Self::wrap(unsafe { $uint::unchecked_shr(self.repr, rhs) })
+        } else {
+          let (shifted, overflow) = int::$uint::overflowing_shr_bits(self.repr, rhs, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_shr` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `shifted` is the value
+          // that `wrapping_shr` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(shifted)
+        }
+      }
     }
 
     impl<B> Uint<B, $uint> {
@@ -1331,6 +1469,59 @@ macro_rules! native_integers {
         // caller guarantees that it would. Nothing else is assumed: the value it holds is the
         // quotient that `checked_div_exact` returns.
         Self::wrap(unsafe { quotient.unwrap_unchecked() })
+      }
+
+      /// Unchecked shift left: `self << rhs`, assuming that `rhs` is below `Bits`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be below `Bits`, that is, [`checked_shl`](Self::checked_shl) would return
+      /// `Some`. Otherwise the behavior is undefined. Zero bits have no amount below `Bits`, so no
+      /// call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_shl(&self, rhs: u32) -> Self {
+        if Self::BITS == $int::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_shl` returns `Some`
+          // exactly when `rhs` is below that width, and the caller guarantees that it would: that
+          // is the precondition of the native `unchecked_shl`.
+          Self::wrap(unsafe { $int::unchecked_shl(self.repr, rhs) })
+        } else {
+          let (shifted, overflow) = int::$int::overflowing_shl_bits(self.repr, rhs, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_shl` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `shifted` is the value
+          // that `wrapping_shl` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(shifted)
+        }
+      }
+
+      /// Unchecked shift right: `self >> rhs`, an arithmetic shift, assuming that `rhs` is below
+      /// `Bits`.
+      ///
+      /// # Safety
+      ///
+      /// `rhs` must be below `Bits`, that is, [`checked_shr`](Self::checked_shr) would return
+      /// `Some`. Otherwise the behavior is undefined. Zero bits have no amount below `Bits`, so no
+      /// call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn unchecked_shr(&self, rhs: u32) -> Self {
+        if Self::BITS == $int::BITS {
+          // SAFETY: `Bits` is the width of the native integer, so `checked_shr` returns `Some`
+          // exactly when `rhs` is below that width, and the caller guarantees that it would: that
+          // is the precondition of the native `unchecked_shr`.
+          Self::wrap(unsafe { $int::unchecked_shr(self.repr, rhs) })
+        } else {
+          let (shifted, overflow) = int::$int::overflowing_shr_bits(self.repr, rhs, Self::BITS);
+          // SAFETY: `overflow` is the flag on which `checked_shr` returns `None`, and the caller
+          // guarantees that it would return `Some`. Nothing else is assumed: `shifted` is the value
+          // that `wrapping_shr` returns.
+          unsafe { core::hint::assert_unchecked(!overflow) };
+          Self::wrap(shifted)
+        }
       }
     }
 

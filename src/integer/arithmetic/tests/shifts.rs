@@ -1,7 +1,7 @@
-//! The shifts of `Uint` and `Int`: the overflowing, checked, wrapping and strict shifts of the
-//! families and the unbounded and exact shifts of `IntegerBits`, left and right, the right shifts
-//! arithmetic for `Int`. Each through the inherent `const fn`s and the traits, against the bit
-//! model at every width up to 16 bits and at wider ones; the panics of the strict shifts; their
+//! The shifts of `Uint` and `Int`: the overflowing, checked, wrapping, strict and unchecked shifts
+//! of the families and the unbounded and exact shifts of `IntegerBits`, left and right, the right
+//! shifts arithmetic for `Int`. Each through the inherent `const fn`s and the traits, against the
+//! bit model at every width up to 16 bits and at wider ones; the panics of the strict shifts; their
 //! constants; and code generic over the width.
 
 use typenum::{U3, U4, U5, U6, U10, U11, U12, U13, U14, U15};
@@ -10,22 +10,26 @@ use super::*;
 use crate::{IntRepr, UintRepr};
 
 /// What the shift methods return for a value at one amount, each value read as `V`, left and then
-/// right: the overflowing, checked, wrapping and strict shifts of the families, the strict ones
-/// where the checked ones return a value and `None` where they would panic, and the unbounded and
-/// exact shifts of `IntegerBits`.
+/// right: the overflowing, checked, wrapping, strict and unchecked shifts of the families, the
+/// strict and the unchecked ones where the checked ones return a value and `None` elsewhere, and
+/// the unbounded and exact shifts of `IntegerBits`.
 #[derive(Debug, PartialEq)]
 struct Shift<V> {
   overflowing: [(V, bool); 2],
   checked: [Option<V>; 2],
   wrapping: [V; 2],
   strict: [Option<V>; 2],
+  unchecked: [Option<V>; 2],
   unbounded: [V; 2],
   exact: [Option<V>; 2],
 }
 
 /// The [`Shift`] of `$x`, a reference to a value, at each amount of `$amounts`, which `$value`
 /// reads, through the methods that the context reaches: the inherent `const fn`s for a concrete
-/// storage, and the traits in generic code.
+/// storage, and the traits in generic code. The unchecked shifts are called only where the
+/// checked ones return a value, which is their precondition: no test passes them another amount,
+/// since the standard library checks the preconditions of unsafe functions in debug builds and
+/// aborts on a violation, and in release builds a violation is undefined behavior.
 macro_rules! shift_results {
   ($x:expr, $amounts:expr, $value:expr) => {{
     let (x, amounts, value) = ($x, $amounts, $value);
@@ -48,6 +52,18 @@ macro_rules! shift_results {
             x.checked_shl(n).map(|_| value(&x.strict_shl(n))),
             x.checked_shr(n).map(|_| value(&x.strict_shr(n))),
           ],
+          unchecked: [
+            x.checked_shl(n).map(|_| {
+              // SAFETY: `checked_shl` returns `Some`, which is the precondition of `unchecked_shl`.
+              let shifted = unsafe { x.unchecked_shl(n) };
+              value(&shifted)
+            }),
+            x.checked_shr(n).map(|_| {
+              // SAFETY: `checked_shr` returns `Some`, which is the precondition of `unchecked_shr`.
+              let shifted = unsafe { x.unchecked_shr(n) };
+              value(&shifted)
+            }),
+          ],
           unbounded: [value(&x.unbounded_shl(n)), value(&x.unbounded_shr(n))],
           exact: [
             x.shl_exact(n).map(|shifted| value(&shifted)),
@@ -62,7 +78,7 @@ macro_rules! shift_results {
 /// The [`Shift`]s of `x` at each amount of `amounts` through the traits.
 fn shifts_through_traits<T, V>(x: &T, amounts: &[u32], value: fn(&T) -> V) -> Vec<Shift<V>>
 where
-  T: OverflowingOps + CheckedOps + WrappingOps + StrictOps + IntegerBits,
+  T: OverflowingOps + CheckedOps + WrappingOps + StrictOps + UncheckedOps + IntegerBits,
 {
   shift_results!(x, amounts, value)
 }
@@ -90,6 +106,7 @@ fn expected_shifts<V>(
         checked: [exact(left_overflow, &left), exact(right_overflow, &right)],
         wrapping: [read(&left), read(&right)],
         strict: [exact(left_overflow, &left), exact(right_overflow, &right)],
+        unchecked: [exact(left_overflow, &left), exact(right_overflow, &right)],
         unbounded: [read(&model::shl(p, n)), read(&model::shr(p, n, signed))],
         exact: [
           model::shl_exact(p, n, signed).map(|shifted| read(&shifted)),
@@ -204,7 +221,7 @@ fn shifts_of_9_to_16_bits() {
 /// bits above the width are checked too.
 fn check_shifts_against_the_model<T>(patterns: &[Vec<bool>], amounts: &[u32])
 where
-  T: Patterned + OverflowingOps + CheckedOps + WrappingOps + StrictOps + IntegerBits,
+  T: Patterned + OverflowingOps + CheckedOps + WrappingOps + StrictOps + UncheckedOps + IntegerBits,
 {
   let storage = |q: &[bool]| model::extend(q, T::STORAGE, T::SIGNED);
   for p in patterns {
@@ -255,7 +272,8 @@ macro_rules! shifts_agree {
 /// The bit patterns of 24 to 4096 bits in storages of each kind that hold them: the shifts agree
 /// with the bit model through the traits, and the inherent `const fn`s agree with the traits, at
 /// the amounts next to the limb boundaries and to the width. An optimized build adds 1024 and 4096
-/// bits; Miri checks 65 and 129 bits, in three storages each.
+/// bits; Miri checks 65 and 129 bits, in three storages each. Outside Miri, `u128` and `i128` also
+/// hold 128 bits, their full width, where the unchecked shifts call the native ones.
 #[test]
 fn storages_agree_on_the_shifts() {
   shifts_agree!(U65, 65, 2; u128, i128; [u8; 9], [u8; 9]; [u64; 2], [u64; 2]);
@@ -266,6 +284,7 @@ fn storages_agree_on_the_shifts() {
     shifts_agree!(U129, 129, 3; [u16; 9], [u16; 9]; [u32; 5], [u32; 5]);
     shifts_agree!(U200, 200, 4; [u8; 25], [u8; 25]; [u16; 13], [u16; 13]; [u32; 7], [u32; 7]);
     shifts_agree!(U200, 200, 4; [u64; 4], [u64; 4]; [u128; 2], [u128; 2]);
+    shifts_agree!(U128, 128, 2; u128, i128);
   }
   if tier().is_full() {
     shifts_agree!(U1024, 1024, 16; [u32; 32], [u32; 32]; [u64; 16], [u64; 16]);
@@ -310,7 +329,8 @@ fn strict_shift_panics_report_the_caller() {
 }
 
 /// The shifts in constant contexts, in a native integer and in an array, at zero bits and at one
-/// signed bit.
+/// signed bit, and the unchecked shifts at a partial and at the full width of a native integer and
+/// in an array.
 #[test]
 fn shifts_in_constant_contexts() {
   type Bytes = Int<U24, [u8; 3]>;
@@ -340,6 +360,18 @@ fn shifts_in_constant_contexts() {
     U0x8::ZERO.overflowing_shr(u32::MAX),
   ];
   const ONE_BIT: [(I1, bool); 2] = [I1::MIN.overflowing_shl(0), I1::MIN.overflowing_shr(1)];
+  type U8x8 = Uint<U8, u8>;
+  type I8x8 = Int<U8, i8>;
+  // SAFETY: every amount is below the width, so `checked_shl` and `checked_shr` would return
+  // `Some`.
+  const UNCHECKED: ([u7; 2], [U8x8; 2], [I8x8; 2], [Bytes; 2]) = unsafe {
+    (
+      [u7::ONE.unchecked_shl(6), u7::MAX.unchecked_shr(6)],
+      [U8x8::ONE.unchecked_shl(7), U8x8::MAX.unchecked_shr(7)],
+      [I8x8::ONE.unchecked_shl(7), I8x8::MIN.unchecked_shr(7)],
+      [Bytes::ONE.unchecked_shl(23), Bytes::MIN.unchecked_shr(23)],
+    )
+  };
 
   assert_eq!(
     OVERFLOWING,
@@ -355,6 +387,15 @@ fn shifts_in_constant_contexts() {
   assert_eq!(EXACT, [Some(u7::new(96)), None, Some(u7::new(3))]);
   assert_eq!(ZERO_BITS, [(U0x8::ZERO, true), (U0x8::ZERO, true)]);
   assert_eq!(ONE_BIT, [(I1::MIN, false), (I1::MIN, true)]);
+  assert_eq!(
+    UNCHECKED,
+    (
+      [u7::new(64), u7::ONE],
+      [U8x8::new(128), U8x8::ONE],
+      [I8x8::MIN, I8x8::new(-1)],
+      [Bytes::MIN, -Bytes::ONE],
+    )
+  );
 }
 
 /// The shifts of `a` through the traits, as text, in code over `B: BitWidth`.
