@@ -743,6 +743,24 @@ pub(crate) mod model {
     p.len() as u32
   }
 
+  /// The pattern of the low `width` bits of `value`. Requires `width <= 128`.
+  pub(crate) fn of_u128(value: u128, width: u32) -> Vec<bool> {
+    pattern(width, |i| (value >> i) & 1 == 1)
+  }
+
+  /// The unsigned integer of `p`. Requires a width of at most 128 bits.
+  pub(crate) fn to_u128(p: &[bool]) -> u128 {
+    p.iter()
+      .rev()
+      .fold(0, |value, &bit| value << 1 | u128::from(bit))
+  }
+
+  /// The integer of `p` in two's complement, zero for zero bits. Requires a width of at most 128
+  /// bits.
+  pub(crate) fn to_i128(p: &[bool]) -> i128 {
+    to_u128(&extend(p, 128, true)) as i128
+  }
+
   /// `p` as text, from the top bit down, for the messages of the assertions.
   pub(crate) fn text(p: &[bool]) -> String {
     let digits: String = p
