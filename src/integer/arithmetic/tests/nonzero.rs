@@ -1,10 +1,11 @@
 //! The non-zero integers `NonZeroUint` and `NonZeroInt`: their layout and the niche of a native
-//! storage, the constructor, the value and the constants, also in constant contexts, the standard
-//! traits against the integer of the same value, and the table of zero bits and one bit; and their
-//! rows, through the inherent `const fn`s and the traits, against the rows of the integer up to 8
-//! bits and at wider widths, against the native non-zero integers at 8 and 16 bits, in constant
-//! contexts and in code over the width, with the overflow of `abs`; and their operators, `/` and
-//! `%` of `Uint` by `NonZeroUint`, `|` and the negation, against the methods and the native ones.
+//! storage, the constructors `new` and `new_unchecked`, the value and the constants, also in
+//! constant contexts, the standard traits against the integer of the same value, and the table of
+//! zero bits and one bit; and their rows, through the inherent `const fn`s and the traits, against
+//! the rows of the integer up to 8 bits and at wider widths, against the native non-zero integers
+//! at 8 and 16 bits, in constant contexts and in code over the width, with the overflow of `abs`;
+//! and their operators, `/` and `%` of `Uint` by `NonZeroUint`, `|` and the negation, against the
+//! methods and the native ones.
 
 use core::{
   cmp::Ordering,
@@ -193,6 +194,74 @@ fn zero_bits_and_one_bit_construction() {
   assert_eq!((I1x8::MIN, I1x8::MAX.get()), (I1x8::MAX, Int::MIN));
   assert_eq!(I1x1::new(Int::MIN), Some(I1x1::MIN));
   assert_eq!((I1x1::MIN, I1x1::MAX.get()), (I1x1::MAX, Int::MIN));
+}
+
+/// `new_unchecked` of a value that is not zero gives the value that `new` gives, through the
+/// inherent `const unsafe fn` of a native and an array storage of each sign, also in constant
+/// contexts, and through the trait: at one bit, at 7 bits, at the full width of a native integer
+/// and at 200 bits, at one, -1 and the limits. Through the trait, `new_unchecked` of zero panics in
+/// every build and reports the caller, at zero bits too.
+#[test]
+fn new_unchecked_of_values_that_are_not_zero() {
+  // Checks `new_unchecked` of the values `$value` of the integer `$integer` of `$ty`, which are
+  // not zero, against `new`, through the inherent method and the trait.
+  macro_rules! unchecked {
+    ($ty:ty, $integer:ty; $($value:expr),+ $(,)?) => {$({
+      let value: $integer = $value;
+      let expected = <$ty>::new(value).expect("not zero");
+      // SAFETY: `new` returns `Some`, so `value` is not zero.
+      let inherent = unsafe { <$ty>::new_unchecked(value) };
+      // SAFETY: as above.
+      let generic = unsafe { <$ty as FixedNonZero>::new_unchecked(value) };
+      assert_eq!([inherent, generic], [expected; 2], "{}", stringify!($value));
+    })+};
+  }
+
+  unchecked!(NonZeroUint<U1>, Uint<U1>; Uint::ONE);
+  unchecked!(NonZeroUint<U1, [u8; 1]>, Uint<U1, [u8; 1]>; Uint::ONE);
+  unchecked!(NonZeroUint<U7>, u7; u7::ONE, u7::new(64), u7::MAX);
+  unchecked!(NonZeroUint<U7, [u16; 1]>, Uint<U7, [u16; 1]>; Uint::ONE, Uint::MAX);
+  unchecked!(NonZeroUint<U8, NonZero<u8>>, Uint<U8, u8>; Uint::ONE, Uint::MAX);
+  unchecked!(NonZeroUint<U128, NonZero<u128>>, Uint<U128, u128>; Uint::ONE, Uint::MAX);
+  unchecked!(NonZeroUint<U200>, Uint<U200>; Uint::ONE, Uint::MAX);
+  unchecked!(NonZeroInt<U1>, Int<U1>; Int::MIN);
+  unchecked!(NonZeroInt<U1, [u8; 1]>, Int<U1, [u8; 1]>; Int::MIN);
+  unchecked!(NonZeroInt<U7>, i7; i7::MIN, i7::new(-1), i7::ONE, i7::MAX);
+  unchecked!(NonZeroInt<U7, [u64; 1]>, Int<U7, [u64; 1]>; Int::MIN, -Int::ONE, Int::ONE, Int::MAX);
+  unchecked!(NonZeroInt<U8, NonZero<i8>>, Int<U8, i8>; Int::MIN, -Int::ONE, Int::ONE, Int::MAX);
+  unchecked!(NonZeroInt<U128, NonZero<i128>>, Int<U128, i128>; Int::MIN, -Int::ONE, Int::MAX);
+  unchecked!(NonZeroInt<U200>, Int<U200>; Int::MIN, -Int::ONE, Int::ONE, Int::MAX);
+
+  type Bytes = NonZeroUint<U7, [u8; 1]>;
+  type Wide = NonZeroInt<U200>;
+  // SAFETY: 100 is not zero.
+  const SMALL: NonZeroUint<U7> = unsafe { NonZeroUint::<U7>::new_unchecked(u7::new(100)) };
+  // SAFETY: one is not zero.
+  const LIMBS: Bytes = unsafe { Bytes::new_unchecked(Uint::ONE) };
+  // SAFETY: -1 is not zero.
+  const SIGNED: NonZeroInt<U7> = unsafe { NonZeroInt::<U7>::new_unchecked(i7::new(-1)) };
+  // SAFETY: `MIN` is not zero.
+  const WIDE: Wide = unsafe { Wide::new_unchecked(Int::<U200>::MIN) };
+  assert_eq!(SMALL.get(), u7::new(100));
+  assert_eq!(LIMBS, Bytes::MIN);
+  assert_eq!(SIGNED.get(), i7::new(-1));
+  assert_eq!(WIDE, Wide::MIN);
+
+  // `new_unchecked` of `value` through the trait, whose panic reports the caller of this function.
+  #[track_caller]
+  fn through_the_trait<T: FixedNonZero>(value: T::Integer) -> T {
+    // SAFETY: the bodies of the trait check the value and panic on zero, so a call with zero, which
+    // breaks the contract, has no undefined behavior: the test makes one to check that.
+    unsafe { T::new_unchecked(value) }
+  }
+
+  let message = "`new_unchecked` requires a value that is not zero".to_string();
+  type Byte = NonZeroInt<U8, NonZero<i8>>;
+  panics_here!(through_the_trait::<NonZeroUint<U7>>(u7::ZERO), message);
+  panics_here!(through_the_trait::<NonZeroUint<U200>>(Uint::ZERO), message);
+  panics_here!(through_the_trait::<Byte>(Int::ZERO), message);
+  panics_here!(through_the_trait::<NonZeroInt<U200>>(Int::ZERO), message);
+  panics_here!(through_the_trait::<NonZeroUint<U0>>(Uint::ZERO), message);
 }
 
 /// The exponents at which the powers are checked.

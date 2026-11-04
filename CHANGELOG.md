@@ -282,9 +282,9 @@ FEATURES
   - The size, alignment and ABI of the storage; in a native storage, `Option` takes the niche of
     zero, so `Option<NonZeroUint<U7>>` takes one byte.
   - `const fn` `new`, which takes the `Uint` or the `Int` of the same width and storage and returns
-    `None` for zero, and `get`, and `From` to the integer. The constants `BITS`, and from one bit
-    `MIN` and `MAX`: one for `NonZeroUint<U1>`, and -1 for `NonZeroInt<U1>`. Zero bits hold no
-    value that is not zero.
+    `None` for zero, `const unsafe fn` `new_unchecked`, which leaves that check to the caller, and
+    `get`, and `From` to the integer. The constants `BITS`, and from one bit `MIN` and `MAX`: one
+    for `NonZeroUint<U1>`, and -1 for `NonZeroInt<U1>`. Zero bits hold no value that is not zero.
   - The methods of the native `NonZero` integers at the width, as `const fn`s of every storage:
     `leading_zeros`, `trailing_zeros`, `count_ones`, which returns a `core::num::NonZero<u32>`,
     `highest_one`, `lowest_one`, `isolate_highest_one`, `isolate_lowest_one`, `reverse_bits`,

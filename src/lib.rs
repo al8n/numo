@@ -250,13 +250,14 @@
 //! itself. Without `Repr`, the storage is that of the default storage, so `NonZeroUint<U7>` holds a
 //! `NonZero<u8>`, and [`NonZeroOf<T>`](NonZeroOf) names the non-zero integer of the integer `T`, as
 //! in `NonZeroOf<u7>`. In each storage, `new` makes a value of the integer of the same width and
-//! storage, returning `None` for zero, and `get` returns it. The non-zero integers have the methods
-//! of the native `NonZero` integers at the width as `const fn`s, such as `checked_mul`, `ilog2` and
-//! `cast_signed`, the division and the remainder of a [`Uint`] by a [`NonZeroUint`], which cannot
-//! panic, `|`, and the negation of a [`NonZeroInt`]. Generic code reaches them through traits in
-//! two layers, as for the integers: [`FixedNonZero`], [`UnsignedNonZero`], [`SignedNonZero`] and
-//! [`NonZeroLimits`], which every storage implements, and [`ConstNonZeroLimits`], with the
-//! constants `MIN` and `MAX`; [`IntegerNonZero`] relates an integer to its non-zero integer.
+//! storage, returning `None` for zero, `new_unchecked`, a `const unsafe fn`, leaves that check to
+//! the caller, and `get` returns it. The non-zero integers have the methods of the native `NonZero`
+//! integers at the width as `const fn`s, such as `checked_mul`, `ilog2` and `cast_signed`, the
+//! division and the remainder of a [`Uint`] by a [`NonZeroUint`], which cannot panic, `|`, and the
+//! negation of a [`NonZeroInt`]. Generic code reaches them through traits in two layers, as for the
+//! integers: [`FixedNonZero`], [`UnsignedNonZero`], [`SignedNonZero`] and [`NonZeroLimits`], which
+//! every storage implements, and [`ConstNonZeroLimits`], with the constants `MIN` and `MAX`;
+//! [`IntegerNonZero`] relates an integer to its non-zero integer.
 //!
 //! ```
 //! use numo::{NonZeroOf, NonZeroUint, typenum::U7, u7};

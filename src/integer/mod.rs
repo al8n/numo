@@ -447,12 +447,14 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// type, as for [`Uint`].
 ///
 /// In each storage, [`new`](Self::new) creates a value from the [`Uint`] of the same width and
-/// storage, returning `None` for zero, and [`get`](Self::get) returns it, as `From` does. The
-/// constants are `BITS`, and from one bit `MIN`, which is one, and `MAX`, which is `2^Bits - 1`.
-/// Zero bits hold no value but zero, so `new` returns `None` there and the type has no `MIN` or
-/// `MAX`; one bit holds only one. Values compare, hash and format as the integers of the same
-/// values: `Ord` is numeric, the hash is that of the [`Uint`], and `Display` and `Debug` write
-/// decimal. There is no `Default`, as no value would be a natural one.
+/// storage, returning `None` for zero, and [`get`](Self::get) returns it, as `From` does.
+/// [`new_unchecked`](Self::new_unchecked), a `const unsafe fn`, creates a value without the check:
+/// the caller guarantees that it is not zero. The constants are `BITS`, and from one bit `MIN`,
+/// which is one, and `MAX`, which is `2^Bits - 1`. Zero bits hold no value but zero, so `new`
+/// returns `None` there and the type has no `MIN` or `MAX`; one bit holds only one. Values compare,
+/// hash and format as the integers of the same values: `Ord` is numeric, the hash is that of the
+/// [`Uint`], and `Display` and `Debug` write decimal. There is no `Default`, as no value would be a
+/// natural one.
 ///
 /// ```
 /// use core::num::NonZero;
@@ -466,6 +468,8 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// let five = NonZeroUint::<U7>::new(u7::new(5)).unwrap();
 /// assert_eq!(five.get(), u7::new(5));
 /// assert_eq!(NonZeroUint::<U7>::new(u7::ZERO), None);
+/// // SAFETY: 5 is not zero.
+/// assert_eq!(unsafe { NonZeroUint::<U7>::new_unchecked(u7::new(5)) }, five);
 /// assert_eq!(NonZeroUint::<U7>::MAX.get(), u7::MAX);
 /// assert!(NonZeroUint::<U7>::MIN < five);
 ///
@@ -547,12 +551,13 @@ pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
 /// that of the default storage of [`Int`], which [`BitWidth`] names: `NonZeroInt<U7>` is
 /// `NonZeroInt<U7, NonZero<i8>>` and `NonZeroInt<U200>` is `NonZeroInt<U200, [u64; 4]>`.
 ///
-/// As for [`NonZeroUint`], the type has the size, alignment and ABI of `Repr`, `Option` of a native
-/// storage takes the niche of zero, and [`new`](Self::new) creates a value from the [`Int`] of the
-/// same width and storage, returning `None` for zero, and [`get`](Self::get) returns it. The
-/// constants are `BITS`, and from one bit `MIN` and `MAX`. One bit holds -1 and 0, of which only
-/// -1 is not zero, so `MIN` and `MAX` of one bit are both -1; zero bits hold no value but zero.
-/// Values compare, hash and format as the integers of the same values.
+/// As for [`NonZeroUint`], the type has the size, alignment and ABI of `Repr`, and `Option` of a
+/// native storage takes the niche of zero. [`new`](Self::new) creates a value from the [`Int`] of
+/// the same width and storage, returning `None` for zero, [`new_unchecked`](Self::new_unchecked)
+/// creates it without the check, and [`get`](Self::get) returns it. The constants are `BITS`, and
+/// from one bit `MIN` and `MAX`. One bit holds -1 and 0, of which only -1 is not zero, so `MIN` and
+/// `MAX` of one bit are both -1; zero bits hold no value but zero. Values compare, hash and format
+/// as the integers of the same values.
 ///
 /// # Arithmetic
 ///

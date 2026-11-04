@@ -1,5 +1,5 @@
 //! The non-zero integers [`NonZeroUint`](crate::NonZeroUint) and [`NonZeroInt`](crate::NonZeroInt):
-//! their constants, the constructor, the value and the method tables of each storage, the helpers
+//! their constants, the constructors, the value and the method tables of each storage, the helpers
 //! of the generic implementations of their traits, the standard traits, which compare, hash and
 //! format a non-zero integer as the integer of the same value, and the operators: the division and
 //! the remainder of a `Uint` by a `NonZeroUint`, `|` and `|=`, and the negation of a `NonZeroInt`.
@@ -9,7 +9,8 @@
 //! native `NonZero` as a copy of its integer. A row computes the integer's row on the value and
 //! wraps the result, which is not zero for an operand that is not: an array checks it with a debug
 //! assertion, and a native `NonZero` with its zero test, which panics on a bug instead of making an
-//! invalid value.
+//! invalid value. Only `new_unchecked` of a native storage has unsafe code: it leaves the zero test
+//! to its caller, as the native `NonZero::new_unchecked` does.
 //!
 //! The tables pass their rows to the callbacks of `tables`, as those of `arithmetic` and `bits` do,
 //! and every row is derived. A row calls `self.integer()`, the rows of the integer, `Self::known`,
@@ -495,6 +496,26 @@ macro_rules! array_nonzero {
         }
       }
 
+      /// Creates a non-zero integer of the value `value` without checking that it is not zero.
+      ///
+      /// # Safety
+      ///
+      /// `value` must not be zero, that is, [`new`](Self::new) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold only zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn new_unchecked(value: Uint<B, [$limb; N]>) -> Self {
+        // An array has no niche: a zero breaks only the logical invariant, on which no unsafe code
+        // relies, so the body has no unsafe code and a debug assertion checks the value. The
+        // contract is that of the native storages all the same, which leaves room for a niche.
+        debug_assert!(
+          !int::unsigned::$lower::is_zero(&value.repr),
+          "`new_unchecked` requires a value that is not zero"
+        );
+        Self { value }
+      }
+
       /// Returns the value, as the integer of the same width and storage that may be zero.
       #[must_use]
       #[inline]
@@ -542,6 +563,26 @@ macro_rules! array_nonzero {
         } else {
           Some(Self { value })
         }
+      }
+
+      /// Creates a non-zero integer of the value `value` without checking that it is not zero.
+      ///
+      /// # Safety
+      ///
+      /// `value` must not be zero, that is, [`new`](Self::new) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold only zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn new_unchecked(value: Int<B, [$limb; N]>) -> Self {
+        // An array has no niche: a zero breaks only the logical invariant, on which no unsafe code
+        // relies, so the body has no unsafe code and a debug assertion checks the value. The
+        // contract is that of the native storages all the same, which leaves room for a niche.
+        debug_assert!(
+          !int::signed::$upper::is_zero(&value.repr),
+          "`new_unchecked` requires a value that is not zero"
+        );
+        Self { value }
       }
 
       /// Returns the value, as the integer of the same width and storage that may be zero.
@@ -618,6 +659,23 @@ macro_rules! native_nonzero {
         }
       }
 
+      /// Creates a non-zero integer of the value `value` without checking that it is not zero.
+      ///
+      /// # Safety
+      ///
+      /// `value` must not be zero, that is, [`new`](Self::new) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold only zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn new_unchecked(value: Uint<B, $uint>) -> Self {
+        // SAFETY: the caller guarantees that `value` is not zero. Its bits are the low `Bits` bits
+        // of `repr`, so `repr` is not zero either: the precondition of the native
+        // `NonZero::new_unchecked`.
+        let repr = unsafe { core::num::NonZero::new_unchecked(value.repr) };
+        Self { value: Uint::wrap(repr) }
+      }
+
       /// Returns the value, as the integer of the same width that may be zero.
       #[must_use]
       #[inline]
@@ -660,6 +718,23 @@ macro_rules! native_nonzero {
           Some(repr) => Some(Self { value: Int::wrap(repr) }),
           None => None,
         }
+      }
+
+      /// Creates a non-zero integer of the value `value` without checking that it is not zero.
+      ///
+      /// # Safety
+      ///
+      /// `value` must not be zero, that is, [`new`](Self::new) would return `Some`. Otherwise the
+      /// behavior is undefined. Zero bits hold only zero, so no call is sound there.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub const unsafe fn new_unchecked(value: Int<B, $int>) -> Self {
+        // SAFETY: the caller guarantees that `value` is not zero. Its bits are the low `Bits` bits
+        // of `repr`, so `repr` is not zero either: the precondition of the native
+        // `NonZero::new_unchecked`.
+        let repr = unsafe { core::num::NonZero::new_unchecked(value.repr) };
+        Self { value: Int::wrap(repr) }
       }
 
       /// Returns the value, as the integer of the same width that may be zero.

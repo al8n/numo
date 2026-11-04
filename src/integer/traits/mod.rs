@@ -810,10 +810,11 @@ pub trait SignedBits: Sealed + Sized + IntegerMath {
 /// [`Integer`](Self::Integer) is the integer of the same width and storage that may be zero, which
 /// [`new`](Self::new) takes and [`get`](Self::get) returns. `BITS`, `new`, `get` and the methods of
 /// the bits and the arithmetic are the inherent items of the same names, which a concrete type
-/// reaches without this trait, also in constant contexts. This trait requires `Clone` rather than
-/// `Copy`, and has no constant but `BITS`, so that every storage implements it at every width, zero
-/// bits included, where no value exists; [`NonZeroLimits`] and [`ConstNonZeroLimits`] add the
-/// limits from one bit. Generic code reaches the items through this trait, which the bound
+/// reaches without this trait, also in constant contexts, and so is
+/// [`new_unchecked`](Self::new_unchecked), which this trait checks. This trait requires `Clone`
+/// rather than `Copy`, and has no constant but `BITS`, so that every storage implements it at every
+/// width, zero bits included, where no value exists; [`NonZeroLimits`] and [`ConstNonZeroLimits`]
+/// add the limits from one bit. Generic code reaches the items through this trait, which the bound
 /// `B: BitWidth` provides on `NonZeroUint<B>` and `NonZeroInt<B>`; a method call needs the trait in
 /// scope. The operators that a non-zero integer has, which need a storage that holds the value
 /// inline in their forms on values, are not supertraits: generic code that uses one bounds it.
@@ -864,10 +865,10 @@ pub trait FixedNonZero: Sealed + Clone + Eq + Ord + Hash + Debug + Display {
   /// # Safety
   ///
   /// `value` must not be zero, that is, [`new`](Self::new) would return `Some`. Otherwise the
-  /// behavior is undefined. Through this trait, the method checks `value` in every build and
-  /// panics if it is zero, reporting the caller: unlike the unchecked arithmetic of
-  /// [`UncheckedOps`], whose results exist when the caller's guarantee fails, no non-zero integer
-  /// of zero exists to return.
+  /// behavior is undefined. The inherent `new_unchecked` of each storage leaves the check to the
+  /// caller; through this trait, the method checks `value` in every build and panics if it is zero,
+  /// reporting the caller: unlike the unchecked arithmetic of [`UncheckedOps`], whose results exist
+  /// when the caller's guarantee fails, no non-zero integer of zero exists to return.
   #[must_use]
   #[track_caller]
   unsafe fn new_unchecked(value: Self::Integer) -> Self;
