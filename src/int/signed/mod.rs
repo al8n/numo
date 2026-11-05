@@ -15,10 +15,6 @@ pub(crate) mod b16;
   expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
 )]
 pub(crate) mod b32;
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
 pub(crate) mod b64;
 #[cfg_attr(
   not(test),

@@ -444,7 +444,7 @@ pub use layout::{
 pub use rounding::RoundingMode;
 pub use width::{
   ArraySize, BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntReprMut,
-  LimbArray, Limbs, NonZeroIntRepr, NonZeroUintRepr, UintRepr, UintReprMut,
+  LimbArray, Limbs, NonZeroIntRepr, NonZeroUintRepr, UintRepr, UintReprMut, WholeBytes,
 };
 
 pub mod aliases;

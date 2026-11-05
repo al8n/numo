@@ -49,10 +49,6 @@ mod limb_layer;
 
 pub(crate) mod parse_errors;
 pub(crate) mod signed;
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
 pub(crate) mod slice;
 pub(crate) mod unsigned;
 
@@ -563,10 +559,6 @@ macro_rules! native {
 
       /// The byte of `value` at `index`: its bits from `8 * index` to `8 * index + 7`. Requires
       /// `index < BITS / 8`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       #[inline]
       pub(crate) const fn byte_at(value: $uint, index: usize) -> u8 {
         (value >> (8 * index) as u32) as u8
@@ -574,10 +566,6 @@ macro_rules! native {
 
       /// Writes the low `out.len()` bytes of `value` to `out`, least significant first, or most
       /// significant first if `big_endian`. Requires `out.len() <= BITS / 8`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       pub(crate) const fn write_bytes(value: $uint, out: &mut [u8], big_endian: bool) {
         let len = out.len();
         let mut k = 0;
@@ -590,10 +578,6 @@ macro_rules! native {
       /// The low `BITS` bits of the integer in `bytes`, least significant byte first, or most
       /// significant first if `big_endian`, extended beyond its bytes by copies of `fill`: zero
       /// for an unsigned integer, and the bits of its sign for one in two's complement.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       pub(crate) const fn read_bytes(bytes: &[u8], big_endian: bool, fill: u8) -> $uint {
         let mut value: $uint = 0;
         let mut k = 0;
@@ -607,10 +591,6 @@ macro_rules! native {
       /// The integer in `bytes`, least significant byte first, or most significant first if
       /// `big_endian`, unsigned, as a value of `bits` bits, or `None` if it is `2^bits` or more,
       /// whatever the number of bytes. No bytes are zero. Requires `bits <= BITS`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       pub(crate) const fn checked_read_bytes(
         bytes: &[u8],
         big_endian: bool,
@@ -625,10 +605,6 @@ macro_rules! native {
 
       /// The integer in `bytes`, read as [`checked_read_bytes`] reads it, modulo `2^bits`.
       /// Requires `bits <= BITS`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       #[inline]
       pub(crate) const fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32) -> $uint {
         zero_extend(read_bytes(bytes, big_endian, 0), bits)
@@ -638,10 +614,6 @@ macro_rules! native {
       /// native integer, shifted down by the `BITS - bits` zeros that it moves from above the
       /// width to below it. Requires `bits` to be a multiple of 8, `bits <= BITS` and
       /// `value < 2^bits`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       #[inline]
       pub(crate) const fn swap_bytes_bits(value: $uint, bits: u32) -> $uint {
         // The shift below would be by `BITS` bits at zero bits, which overflows.
@@ -1221,10 +1193,6 @@ macro_rules! native {
 
       /// The byte of the two's complement of `value` at `index`, that of the unsigned integer of
       /// its bits. Requires `index < BITS / 8`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       #[inline]
       pub(crate) const fn byte_at(value: $int, index: usize) -> u8 {
         super::$uint::byte_at(value.cast_unsigned(), index)
@@ -1233,10 +1201,6 @@ macro_rules! native {
       /// Writes the low `out.len()` bytes of the two's complement of `value` to `out`, least
       /// significant first, or most significant first if `big_endian`: those of the unsigned
       /// integer of its bits. Requires `out.len() <= BITS / 8`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       #[inline]
       pub(crate) const fn write_bytes(value: $int, out: &mut [u8], big_endian: bool) {
         super::$uint::write_bytes(value.cast_unsigned(), out, big_endian);
@@ -1246,10 +1210,6 @@ macro_rules! native {
       /// `big_endian`, in two's complement of `8 * bytes.len()` bits, as a value of `bits` bits,
       /// or `None` if it is outside their range, whatever the number of bytes. No bytes are zero,
       /// and zero bits hold only zero. Requires `bits <= BITS`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       pub(crate) const fn checked_read_bytes(
         bytes: &[u8],
         big_endian: bool,
@@ -1265,10 +1225,6 @@ macro_rules! native {
 
       /// The integer in `bytes`, read as [`checked_read_bytes`] reads it, reduced modulo
       /// `2^bits` into the range of `bits` bits, or zero for zero bits. Requires `bits <= BITS`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       #[inline]
       pub(crate) const fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32) -> $int {
         let fill = slice::fill(bytes, big_endian, true);
@@ -1283,10 +1239,6 @@ macro_rules! native {
       /// above the width to below it, shifted down by them with the arithmetic shift, which
       /// copies the new sign bit, the top bit of the old low byte, above the width. Requires
       /// `bits` to be a multiple of 8, `bits <= BITS` and `value` within the range of `bits` bits.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       #[inline]
       pub(crate) const fn swap_bytes_bits(value: $int, bits: u32) -> $int {
         // The shift below would be by `BITS` bits at zero bits, which overflows.
