@@ -154,6 +154,34 @@ FEATURES
     digits after the first half to even, as the native integers do. Every flag works as for the
     native integers, and no format allocates: a native storage writes as its native integer, and
     an array writes its radix digits through a buffer of 64 bytes.
+  - The bytes of the native integers at the width `Bits`, as `const fn`s of every storage: `BYTES`,
+    `ceil(Bits / 8)`; `to_le_bytes`, `to_be_bytes` and `to_ne_bytes`, which return an array whose
+    length is part of its type, `[u8; BYTES]`, inferred so that a wrong length fails to compile, up
+    to 8192 bits, where the bits of the last byte above the width are zeros for `Uint` and copies of
+    the sign for `Int`, as the storage holds them; `checked_from_le_bytes`, `checked_from_be_bytes`
+    and `checked_from_ne_bytes`, which return `None` unless those bits are, and at a width of whole
+    bytes, which the new sealed marker `WholeBytes` names, `from_le_bytes`, `from_be_bytes` and
+    `from_ne_bytes`, which read every array; `checked_from_le_slice` and `checked_from_be_slice`,
+    which read a slice of any length as an unsigned integer for `Uint` and in two's complement for
+    `Int`, whose sign is the top bit of its most significant byte, and return `None` if that integer
+    is outside the range of `Bits` bits, and `wrapping_from_le_slice` and `wrapping_from_be_slice`,
+    which reduce it modulo `2^Bits` into the range; `copy_le_bytes_to` and `copy_be_bytes_to`, which
+    write the bytes to the start of a buffer at any width and panic if it is shorter, reporting the
+    caller, and their `checked_*` forms, which return `None` and leave it unchanged; and `byte`,
+    which reads the byte at an index and panics from `BYTES` up, reporting the caller. The methods
+    that read a value borrow it, and nothing allocates.
+  - The byte order of the native integers at a width of whole bytes, as `const fn`s of every
+    storage: `swap_bytes`, which reverses the bytes, and `to_be`, `to_le`, `from_be` and
+    `from_le`, which convert the value to and from an order as the native integers do. For an
+    array storage they, `to_ne_bytes` and `from_ne_bytes` convert the value, not a layout: the
+    limbs stay least significant first on every target. At another width, a call of the byte order
+    or of `from_le_bytes` fails to compile with the diagnostic of `WholeBytes`.
+  - The sealed traits of the bytes: `IntegerBytes`, with `BYTES`, `byte`, the copies to a buffer
+    and the conversions from a slice, which every storage implements, `ByteArray`, with the arrays
+    as the associated type `Bytes`, which generic code reads through `AsRef<[u8]>`, up to 8192
+    bits, `FromByteArray`, with the conversions from the arrays of whole bytes, and
+    `IntegerByteOrder`, with the byte order of whole bytes. The bound `B: BitWidth` gives `Uint<B>`
+    and `Int<B>` `IntegerBytes`, and with `B: WholeBytes` `IntegerByteOrder`.
   - The arithmetic of the native integers at the width `Bits`, as `const fn`s of every storage:
     `overflowing_*`, `checked_*`, `wrapping_*` and `strict_*` addition, subtraction, multiplication
     and negation, and `saturating_*` addition, subtraction and multiplication; `carrying_add` and
@@ -270,10 +298,10 @@ FEATURES
     `let y: u256 = Uint::MAX;` and `Uint::MAX` passed for a parameter of a concrete type compile,
     while `Uint::<U7, _>::MAX` with no expected type needs a type annotation (E0283). Each storage
     has constructors of its own, so a constructor that leaves the storage to inference is ambiguous
-    (E0034): `Uint::new(5)`, `Uint::from_limbs(..)`, `Uint::checked_from_limbs(..)` and
-    `Uint::from_str_radix(..)` with only an expected type. Naming the width for the default
-    storage, as in `Uint::<U7>::new(5)` or `Uint::<U200>::MAX`, the full type, or an alias, as in
-    `u7::new(5)`, resolves it.
+    (E0034): `Uint::new(5)`, `Uint::from_limbs(..)`, `Uint::checked_from_limbs(..)`,
+    `Uint::from_str_radix(..)` and `Uint::from_le_bytes(..)` with only an expected type. Naming
+    the width for the default storage, as in `Uint::<U7>::new(5)` or `Uint::<U200>::MAX`, the full
+    type, or an alias, as in `u7::new(5)`, resolves it.
   - The sealed traits of an integer type in two layers, each with one implementation for every
     storage of a kind. The general layer requires `Clone` but not `Copy`: `FixedInteger`, with
     `BITS`, `zero`, `min_value`, `max_value`, `is_zero` and `from_str_radix`, and with
@@ -323,6 +351,11 @@ FEATURES
     and `FromStr` parse as the integer of the same width and storage does, then return the error
     of the kind `Zero` for zero, after every error of the integer, so that at zero bits every text
     is an error; the radix and exponent formats write what the integer of the same value writes.
+  - The byte order of the native `NonZero` integers at a width of whole bytes, as `const fn`s of
+    every storage: `swap_bytes`, `to_be`, `to_le`, `from_be` and `from_le`, which compute the byte
+    order of the integer of the same value, which is not zero, and follow the native methods, still
+    unstable (#128281); for an array storage they convert the value, not a layout.
+    `IntegerByteOrder` gives them to generic code.
   - `Uint / NonZeroUint` and `Uint % NonZeroUint`, with `/=` and `%=`, which cannot panic; `|` of
     two non-zero integers and of a non-zero integer and its integer either way, with `|=`; and the
     negation `-` of `NonZeroInt`, which overflows at `MIN` as the native one does. The operators

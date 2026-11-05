@@ -157,7 +157,14 @@
 //! native error, [`core::num::ParseIntError`], `Display` writes decimal, the radix formats `{:b}`,
 //! `{:o}`, `{:x}` and `{:X}` write a negative `Int` in the two's complement of its `Bits` bits, and
 //! the exponent formats `{:e}` and `{:E}` round half to even at a precision (see
-//! [Text](Uint#text)).
+//! [Text](Uint#text)). Their bytes are the low `BYTES` bytes of the storage, in two's complement
+//! for `Int`: `to_le_bytes`, `to_be_bytes` and `to_ne_bytes` return an array whose length is part
+//! of its type, up to 8192 bits, which `checked_from_le_bytes` and the other orders read back, and
+//! at a width of whole bytes, a [`WholeBytes`], `from_le_bytes` and the others; slices of any
+//! length convert back checked and wrapping, `copy_le_bytes_to` and `copy_be_bytes_to` write the
+//! bytes to a buffer at any width, and at a width of whole bytes `swap_bytes`, `to_be`, `to_le`,
+//! `from_be` and `from_le` convert the byte order as the native integers do, by value rather than
+//! by layout (see [Bytes](Uint#bytes)).
 //!
 //! Each type also has the arithmetic of the native integers at its width, as `const fn`s:
 //! addition, subtraction, multiplication, negation, division, remainder and exponentiation in the
@@ -188,12 +195,13 @@
 //! [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`], [`StrictOps`] and
 //! [`UncheckedOps`] the arithmetic, [`IntegerMath`], [`UnsignedMath`] and [`SignedMath`] the
 //! functions without an overflow prefix, [`IntegerBits`], [`UnsignedBits`] and [`SignedBits`] the
-//! bit operations, and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`] the construction of
-//! each kind. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` [`FixedInteger`] and
-//! [`ConstFixedInteger`], the sign traits, the families, the math traits and the bit traits, and
-//! [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one. The trait methods are
-//! not `const`, so constant contexts call the inherent `const fn`s, which a concrete type reaches
-//! without importing a trait.
+//! bit operations, [`IntegerBytes`], [`ByteArray`], [`FromByteArray`] and [`IntegerByteOrder`] the
+//! bytes, and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`] the construction of each kind.
+//! The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` [`FixedInteger`] and
+//! [`ConstFixedInteger`], the sign traits, the families, the math traits, the bit traits and
+//! [`IntegerBytes`]; [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one; and
+//! [`IntegerByteOrder`] with `B: WholeBytes`. The trait methods are not `const`, so constant
+//! contexts call the inherent `const fn`s, which a concrete type reaches without importing a trait.
 //!
 //! ```
 //! use numo::{
@@ -242,6 +250,10 @@
 //! assert_eq!(u7::from_str_radix("64", 16), Ok(SMALL));
 //! assert!("128".parse::<u7>().is_err());
 //!
+//! // The bytes of 7 bits, and of 24, a whole number of bytes, in reverse order.
+//! assert_eq!(SMALL.to_le_bytes(), [100]);
+//! assert_eq!(Uint::<U24>::new(0x01_0203).swap_bytes(), Uint::<U24>::new(0x03_0201));
+//!
 //! // Generic code over the width alone.
 //! fn zero_values<B: BitWidth>(values: &[Int<B>]) -> usize {
 //!   values.iter().filter(|value| value.is_zero()).count()
@@ -266,14 +278,16 @@
 //! in `NonZeroOf<u7>`. In each storage, `new` makes a value of the integer of the same width and
 //! storage, returning `None` for zero, `new_unchecked`, a `const unsafe fn`, leaves that check to
 //! the caller, and `get` returns it; `from_str_radix` and `FromStr` parse a value as the integer
-//! does, with the error of the kind `Zero` for zero, as the native `NonZero` integers do, and the
-//! formats write what the integer writes. The non-zero integers have the methods of the native
-//! `NonZero` integers at the width as `const fn`s, such as `checked_mul`, `ilog2` and
-//! `cast_signed`, the division and the remainder of a [`Uint`] by a [`NonZeroUint`], which cannot
-//! panic, `|`, and the negation of a [`NonZeroInt`]. Generic code reaches them through traits in
-//! two layers, as for the integers: [`FixedNonZero`], [`UnsignedNonZero`], [`SignedNonZero`] and
-//! [`NonZeroLimits`], which every storage implements, and [`ConstNonZeroLimits`], with the
-//! constants `MIN` and `MAX`; [`IntegerNonZero`] relates an integer to its non-zero integer.
+//! does, with the error of the kind `Zero` for zero, as the native `NonZero` integers do, the
+//! formats write what the integer writes, and at a width of whole bytes the byte order is that of
+//! the integer. The non-zero integers have the methods of the native `NonZero` integers at the
+//! width as `const fn`s, such as `checked_mul`, `ilog2` and `cast_signed`, the division and the
+//! remainder of a [`Uint`] by a [`NonZeroUint`], which cannot panic, `|`, and the negation of a
+//! [`NonZeroInt`]. Generic code reaches them through traits in two layers, as for the integers:
+//! [`FixedNonZero`], [`UnsignedNonZero`], [`SignedNonZero`] and [`NonZeroLimits`], which every
+//! storage implements, and [`ConstNonZeroLimits`], with the constants `MIN` and `MAX`;
+//! [`IntegerNonZero`] relates an integer to its non-zero integer, and [`IntegerByteOrder`] gives
+//! them the byte order, as it gives the integers.
 //!
 //! ```
 //! use numo::{NonZeroOf, NonZeroUint, typenum::U7, u7};

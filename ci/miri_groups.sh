@@ -35,6 +35,7 @@ miri_groups=(
   "6 integer::arithmetic::tests::shifts::"
   "10 integer::arithmetic::tests::nonzero::"
   "5 integer::arithmetic::tests::text::"
+  "3 integer::arithmetic::tests::bytes::"
   "1 integer::arithmetic::"
   "2 integer::tests::int_"
   "2 integer::tests::uint_"
