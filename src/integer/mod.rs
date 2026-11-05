@@ -23,8 +23,8 @@ use crate::{
   int,
   layout::Token,
   width::{
-    BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntWidth, UintRepr,
-    UintWidth,
+    BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntWidth, LimbArray,
+    UintRepr, UintWidth, WholeBytes,
   },
 };
 
@@ -35,6 +35,8 @@ mod tables;
 mod arithmetic;
 #[macro_use]
 mod bits;
+#[macro_use]
+mod bytes;
 #[macro_use]
 mod nonzero;
 mod text;
@@ -746,6 +748,10 @@ impl<B, R> Int<B, R> {
 impl<B: FitsBits<R>, R: UintRepr> Uint<B, R> {
   /// The number of bits, `Bits`.
   pub const BITS: u32 = B::U32;
+
+  /// The number of bytes of the value, `ceil(Bits / 8)`: the length of its arrays of bytes, and
+  /// of the buffer that it copies its bytes to.
+  pub const BYTES: usize = B::USIZE.div_ceil(8);
 }
 
 impl<B: FitsBits<R>, R: InlineUintRepr> Uint<B, R> {
@@ -767,6 +773,10 @@ impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> Uint<B, R> {
 impl<B: FitsBits<R>, R: IntRepr> Int<B, R> {
   /// The number of bits, `Bits`, including the sign bit.
   pub const BITS: u32 = B::U32;
+
+  /// The number of bytes of the value, `ceil(Bits / 8)`: the length of its arrays of bytes, and
+  /// of the buffer that it copies its bytes to.
+  pub const BYTES: usize = B::USIZE.div_ceil(8);
 }
 
 impl<B: FitsBits<R>, R: InlineIntRepr> Int<B, R> {
@@ -877,6 +887,7 @@ macro_rules! array_integers {
       integer_bits_table!(inherent_items![unsigned, $lower, &]);
       uint_bits_table!(inherent_items![unsigned, $lower, &, Int<B, [$limb; N]>]);
       bitwise_table!(inherent_items![unsigned, $lower, &]);
+      byte_methods!([unsigned, $lower, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1107,6 +1118,7 @@ macro_rules! array_integers {
       integer_bits_table!(inherent_items![signed, $upper, &]);
       int_bits_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
       bitwise_table!(inherent_items![signed, $upper, &]);
+      byte_methods!([signed, $upper, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1506,6 +1518,7 @@ macro_rules! native_integers {
       integer_bits_table!(inherent_items![$uint]);
       uint_bits_table!(inherent_items![$uint, Int<B, $int>]);
       bitwise_table!(inherent_items![$uint]);
+      byte_methods!([$uint]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1739,6 +1752,7 @@ macro_rules! native_integers {
       integer_bits_table!(inherent_items![$int]);
       int_bits_table!(inherent_items![$int, Uint<B, $uint>]);
       bitwise_table!(inherent_items![$int]);
+      byte_methods!([$int]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
