@@ -862,7 +862,7 @@ impl<B: FitsBits<R>, R: UintRepr> Uint<B, R> {
 
   /// The number of bytes of the value, `ceil(Bits / 8)`: the length of its arrays of bytes, and
   /// of the buffer that it copies its bytes to.
-  pub const BYTES: usize = B::USIZE.div_ceil(8);
+  pub const BYTES: usize = bytes::byte_count(B::U32);
 }
 
 impl<B: FitsBits<R>, R: InlineUintRepr> Uint<B, R> {
@@ -887,7 +887,7 @@ impl<B: FitsBits<R>, R: IntRepr> Int<B, R> {
 
   /// The number of bytes of the value, `ceil(Bits / 8)`: the length of its arrays of bytes, and
   /// of the buffer that it copies its bytes to.
-  pub const BYTES: usize = B::USIZE.div_ceil(8);
+  pub const BYTES: usize = bytes::byte_count(B::U32);
 }
 
 impl<B: FitsBits<R>, R: InlineIntRepr> Int<B, R> {

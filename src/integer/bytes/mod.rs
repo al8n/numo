@@ -16,6 +16,22 @@ use crate::{
   width::{FitsBits, IntRepr, LimbArray, NonZeroIntRepr, NonZeroUintRepr, UintRepr, WholeBytes},
 };
 
+/// The number of bytes of a value of `bits` bits, `ceil(bits / 8)`, which `BYTES` holds.
+///
+/// The count is computed in `u32`, which holds every width, and only then narrowed to `usize`,
+/// which can have fewer bits: on a 16-bit target, the `USIZE` of `typenum` is zero for a width of
+/// `2^16` bits. A count that `usize` cannot hold, which only a width whose storage does not fit in
+/// memory has, fails the evaluation of `BYTES`, and so the build, instead of giving a wrong count.
+pub(crate) const fn byte_count(bits: u32) -> usize {
+  let bytes = bits.div_ceil(8);
+  // Compared in `u64`, which holds both sides on every target.
+  assert!(
+    bytes as u64 <= usize::MAX as u64,
+    "the number of bytes of the width does not fit in `usize`"
+  );
+  bytes as usize
+}
+
 /// Panics on a byte index of `BYTES` or more, which no byte of the value has, as indexing the
 /// array of its bytes would.
 #[cold]

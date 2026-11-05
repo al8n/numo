@@ -1,13 +1,13 @@
 //! The bytes and the byte order of `Uint` and `Int`: the arrays of bytes in each order and the
 //! conversions back from them, checked and at whole bytes, the checked and wrapping conversions
 //! from slices, the copies to a buffer and the byte at an index, against the bit model at every
-//! width up to 24 bits and at wider ones; the reversal of the bytes and the conversions of the byte
-//! order at widths of whole bytes; the panics of a short buffer and of a byte index; constant
-//! contexts; and zero bits and one signed bit.
+//! width up to 24 bits and at wider ones; the number of bytes up to the widest widths; the reversal
+//! of the bytes and the conversions of the byte order at widths of whole bytes; the panics of a
+//! short buffer and of a byte index; constant contexts; and zero bits and one signed bit.
 
 use typenum::{
   U3, U4, U5, U6, U10, U11, U12, U13, U14, U15, U17, U18, U19, U20, U21, U22, U23, U201, U8192,
-  U16384,
+  U16384, U65536,
 };
 
 use super::*;
@@ -826,6 +826,87 @@ fn bytes_of_16384_bits() {
     Uint<U16384, [u64; 256]>, Int<U16384, [u64; 256]>;
     Uint<U16384, [u128; 128]>, Int<U16384, [u128; 128]>;
   );
+}
+
+/// The number of bytes of a width is counted in `u32`, which holds every width, and then narrowed to
+/// `usize`: it rounds up to whole bytes from zero bits to `u32::MAX` bits, the widest width.
+#[test]
+fn byte_counts_round_up_in_u32() {
+  use crate::integer::bytes::byte_count;
+
+  for (bits, bytes) in [
+    (0, 0),
+    (1, 1),
+    (7, 1),
+    (8, 1),
+    (9, 2),
+    (65535, 8192),
+    (65536, 8192),
+    (65537, 8193),
+  ] {
+    assert_eq!(byte_count(bits), bytes, "{bits} bits");
+  }
+  // A 16-bit `usize` cannot hold the number of bytes of the widest width, where the count fails.
+  #[cfg(not(target_pointer_width = "16"))]
+  assert_eq!(byte_count(u32::MAX), 1 << 29);
+}
+
+/// The widest default storage, 65536 bits in `[u64; 1024]`, has 8192 bytes, inherent and through
+/// `IntegerBytes`, for `Uint` and `Int`: the byte at the last index, and checked copies into a
+/// buffer of 8192 bytes, which write them all, while a buffer one byte shorter takes none. The
+/// copies, of 8192 bytes each, are left out under Miri.
+#[test]
+fn bytes_of_the_widest_default_storage() {
+  type Wide = Uint<U65536, [u64; 1024]>;
+  type WideInt = Int<U65536, [u64; 1024]>;
+  assert_eq!(
+    (
+      Wide::BYTES,
+      WideInt::BYTES,
+      <Wide as IntegerBytes>::BYTES,
+      <WideInt as IntegerBytes>::BYTES,
+    ),
+    (8192, 8192, 8192, 8192)
+  );
+  assert_eq!(
+    (
+      Wide::MAX.byte(8191),
+      WideInt::MIN.byte(8191),
+      WideInt::MIN.byte(8190),
+      IntegerBytes::byte(&WideInt::MIN, 8191),
+    ),
+    (0xff, 0x80, 0, 0x80)
+  );
+  if tier().is_miri() {
+    return;
+  }
+  let mut buf = vec![0; 8192];
+  assert_eq!(Wide::MAX.checked_copy_le_bytes_to(&mut buf), Some(8192));
+  assert!(buf.iter().all(|&byte| byte == 0xff));
+  let mut buf = vec![0xa5; 8192];
+  assert_eq!(WideInt::MIN.checked_copy_be_bytes_to(&mut buf), Some(8192));
+  assert_eq!(
+    (buf[0], buf[1..].iter().all(|&byte| byte == 0)),
+    (0x80, true)
+  );
+  let mut buf = vec![0xa5; 8192];
+  assert_eq!(
+    IntegerBytes::checked_copy_le_bytes_to(&WideInt::MIN, &mut buf),
+    Some(8192)
+  );
+  assert_eq!(
+    (buf[8191], buf[..8191].iter().all(|&byte| byte == 0)),
+    (0x80, true)
+  );
+  let mut short = vec![0xa5; 8191];
+  assert_eq!(
+    (
+      Wide::MAX.checked_copy_le_bytes_to(&mut short),
+      IntegerBytes::checked_copy_be_bytes_to(&WideInt::MIN, &mut short),
+    ),
+    (None, None)
+  );
+  assert!(short.iter().all(|&byte| byte == 0xa5));
 }
 
 /// `copy_le_bytes_to` and `copy_be_bytes_to` into a buffer shorter than the bytes of the value, and
