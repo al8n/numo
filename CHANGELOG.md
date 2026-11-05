@@ -278,17 +278,16 @@ FEATURES
     `BITS`, `zero`, `min_value`, `max_value`, `is_zero` and `from_str_radix`, and with
     `FromStr<Err = ParseIntError>`, the radix formats and the exponent formats as supertraits, so
     that code bounded by `FromStr<Err = ParseIntError>` takes the native integers and these alike,
-    and `IntegerOne`, with `one`. Its
-    functions `zero`, `min_value`, `max_value` and `one` return the inherent constants `ZERO`,
-    `MIN`, `MAX` and `ONE`. The const layer also requires `Copy` and has these constants, which a
-    generic `const fn` can read: `ConstFixedInteger`, with `ZERO`, `MIN` and `MAX`, and
-    `ConstIntegerOne`, with `ONE`. The other traits are `UnsignedFixedInteger` and
-    `SignedFixedInteger`, with `is_negative`, `is_positive` and the unsigned integer of the same
-    width, `NativeInteger`, which requires `ConstFixedInteger` and has `new`, `try_new` and
-    `value`, `ArrayInteger`, with `checked_from_limbs`, `to_limbs` and `as_limbs`, and
-    `FromLimbs`, with `from_limbs`. Each mirrors the inherent items for generic code; the bound
-    `B: BitWidth` gives `Uint<B>` and `Int<B>` `FixedInteger`, `ConstFixedInteger` and the sign
-    traits. The trait methods are not `const`; constant contexts use the inherent `const fn`s.
+    and `IntegerOne`, with `one`. Its functions `zero`, `min_value`, `max_value` and `one` return
+    the inherent constants `ZERO`, `MIN`, `MAX` and `ONE`. The const layer also requires `Copy` and
+    has these constants, which a generic `const fn` can read: `ConstFixedInteger`, with `ZERO`,
+    `MIN` and `MAX`, and `ConstIntegerOne`, with `ONE`. The other traits are `UnsignedFixedInteger`
+    and `SignedFixedInteger`, with `is_negative`, `is_positive` and the unsigned integer of the same
+    width, `NativeInteger`, which requires `ConstFixedInteger` and has `new`, `try_new` and `value`,
+    `ArrayInteger`, with `checked_from_limbs`, `to_limbs` and `as_limbs`, and `FromLimbs`, with
+    `from_limbs`. Each mirrors the inherent items for generic code; the bound `B: BitWidth` gives
+    `Uint<B>` and `Int<B>` `FixedInteger`, `ConstFixedInteger` and the sign traits. The trait
+    methods are not `const`; constant contexts use the inherent `const fn`s.
 - `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: the integers of `Bits` bits that are not
   zero, as the native `NonZero` integers are at the native widths.
   - The storage is the native `NonZero` of a native storage, `core::num::NonZero<u8>` to

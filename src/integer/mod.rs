@@ -223,14 +223,13 @@ mod traits;
 /// the native integers, [`core::num::ParseIntError`], whose
 /// [`kind`](core::num::ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a
 /// byte that is not a digit of the radix, a lone sign or `-`, which is no sign of `Uint`, and
-/// `PosOverflow` for digits above `MAX`. They
-/// read from the left, as the native parser does: a byte that is not a digit is `InvalidDigit`,
-/// unless the digits before it already exceed `MAX`, which is `PosOverflow`. The range is that of
-/// `Bits`, not of the storage, so `"200"` overflows [`u7`](crate::u7) although its `u8` holds 200,
-/// and zero bits read every spelling of zero, such as `"0"`, `"+0"` and `"00"`, and nothing else. A
-/// radix outside 2 to 36 panics in every build, reporting the caller. In a constant, a width above
-/// the default storages, or above about 16384 bits in `u8` limbs, may need
-/// `#[allow(long_running_const_eval)]` on the constant.
+/// `PosOverflow` for digits above `MAX`. They read from the left, as the native parser does: a byte
+/// that is not a digit is `InvalidDigit`, unless the digits before it already exceed `MAX`, which
+/// is `PosOverflow`. The range is that of `Bits`, not of the storage, so `"200"` overflows
+/// [`u7`](crate::u7) although its `u8` holds 200, and zero bits read every spelling of zero, such
+/// as `"0"`, `"+0"` and `"00"`, and nothing else. A radix outside 2 to 36 panics in every build,
+/// reporting the caller. In a constant, a width above the default storages, or above about 16384
+/// bits in `u8` limbs, may need `#[allow(long_running_const_eval)]` on the constant.
 ///
 /// `Display` and `Debug` write decimal, `Debug` also under `{:x?}` and `{:X?}`, whose flags the
 /// standard library does not expose. The radix formats `Binary`, `Octal`, `LowerHex` and
