@@ -135,15 +135,11 @@ pub(crate) fn write_integer_exp(
     }
   }
 
+  // The precision, or without one at most `rest.len()`, so the sum does not overflow.
   let fraction_len = head.len() + usize::from(bumped.is_some()) + zeros;
   let mut exponent_buf = [0; EXPONENT_LEN];
   let exponent_text = exponent_text(&mut exponent_buf, marker, exponent)?;
-  let point_and_fraction = if fraction_len > 0 {
-    1 + fraction_len
-  } else {
-    0
-  };
-  let len = 1 + point_and_fraction + exponent_text.len();
+  let len = exp_body_len(fraction_len, exponent_text.len());
   let sign = if negative {
     Some('-')
   } else {
@@ -161,6 +157,22 @@ pub(crate) fn write_integer_exp(
     }
     f.write_str(exponent_text)
   })
+}
+
+/// The length of the text of an exponent format after its sign: the lead digit, the point and the
+/// `fraction_len` digits after it if there are any, and the `exponent_len` bytes of the marker and
+/// the exponent. It saturates at `usize::MAX`, as the standard library saturates the length of a
+/// formatted number: the largest precision, `u16::MAX`, is `usize::MAX` on a 16-bit target, where
+/// no width exceeds the saturated length, so nothing is padded.
+pub(crate) const fn exp_body_len(fraction_len: usize, exponent_len: usize) -> usize {
+  let point_and_fraction = if fraction_len > 0 {
+    fraction_len.saturating_add(1)
+  } else {
+    0
+  };
+  point_and_fraction
+    .saturating_add(1)
+    .saturating_add(exponent_len)
 }
 
 /// Writes `marker` and the decimal digits of `exponent`, which has at most 10 of them, to the end

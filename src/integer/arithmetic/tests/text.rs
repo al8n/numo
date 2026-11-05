@@ -1,9 +1,10 @@
 //! The text of `Uint` and `Int`: `from_str_radix` and `FromStr` against the model of the native
 //! parser and by round trips, the radix formats against the bit model and the exponent formats
 //! against the native integers, with their flags, at every width up to 16 bits and at wider widths;
-//! the errors and the panic of the radix; constant contexts; zero bits and one signed bit; code
-//! generic over the width; the text that `FixedInteger` requires; and the text of the non-zero
-//! integers against the native ones.
+//! the largest precision and the saturated length of the exponent formats; the errors and the
+//! panic of the radix; constant contexts; zero bits and one signed bit; code generic over the
+//! width; the text that `FixedInteger` requires; and the text of the non-zero integers against the
+//! native ones.
 
 use core::{
   fmt::{Binary, LowerExp, LowerHex, Octal, UpperExp, UpperHex},
@@ -15,7 +16,9 @@ use num_bigint::{BigUint, Sign};
 use typenum::{U3, U4, U5, U6, U10, U11, U12, U13, U14, U15};
 
 use super::*;
-use crate::{FixedNonZero, NonZeroInt, NonZeroUint, i0, i1, int::parse_errors, u0};
+use crate::{
+  FixedNonZero, NonZeroInt, NonZeroUint, format::exp_body_len, i0, i1, int::parse_errors, u0,
+};
 
 /// The result of a parser with the kind of its error, as the model of the native parser gives it.
 fn kind<T>(result: Result<T, ParseIntError>) -> Result<T, IntErrorKind> {
@@ -451,6 +454,72 @@ fn rounding_of_nines_and_ties_is_that_of_the_native_integers() {
     assert_eq!(rounded_texts(&y), rounded_texts(&negative), "-{text}");
     let z: I200x128 = text.parse().expect("in range");
     assert_eq!(rounded_texts(&z), rounded_texts(&native), "{text}");
+  }
+}
+
+/// The length of the text of the exponent formats after the sign counts the lead digit, the point
+/// and the digits after it, and the exponent, and saturates at `usize::MAX`, which the largest
+/// precision, `u16::MAX`, reaches on a 16-bit target: below, at and above `usize::MAX`.
+#[test]
+fn the_length_of_the_exponent_formats_saturates() {
+  // `1e0`, `1.5e1`, and 41 digits with `e40`.
+  assert_eq!(exp_body_len(0, 2), 3);
+  assert_eq!(exp_body_len(1, 2), 5);
+  assert_eq!(exp_body_len(40, 3), 45);
+  let max = usize::MAX;
+  // `usize::MAX` digits after the point with `e0`, as at the largest precision on a 16-bit target,
+  // and the fractions next to `usize::MAX - 4`, the longest whose length is exactly `usize::MAX`.
+  assert_eq!(exp_body_len(max, 2), max);
+  assert_eq!(exp_body_len(max - 1, 2), max);
+  assert_eq!(exp_body_len(max - 3, 2), max);
+  assert_eq!(exp_body_len(max - 4, 2), max);
+  assert_eq!(exp_body_len(max - 5, 2), max - 1);
+  assert_eq!(exp_body_len(max, 11), max);
+  // The exponent alone, next to `usize::MAX`.
+  assert_eq!(exp_body_len(0, max), max);
+  assert_eq!(exp_body_len(0, max - 1), max);
+  assert_eq!(exp_body_len(0, max - 2), max - 1);
+}
+
+/// The texts of `x` at the largest precision, `u16::MAX`, in both exponent formats, alone and with
+/// the largest width, also `u16::MAX`, which the 65535 digits after the point exceed, so nothing
+/// is padded: plain, with `+` and the `0` flag, and with a fill and an alignment.
+fn largest_precision_texts<T: LowerExp + UpperExp>(x: &T) -> Vec<String> {
+  vec![
+    format!("{x:.65535e}"),
+    format!("{x:.65535E}"),
+    format!("{x:65535.65535e}"),
+    format!("{x:+065535.65535E}"),
+    format!("{x:*^65535.65535e}"),
+  ]
+}
+
+/// The exponent formats at the largest precision, `u16::MAX`, which is `usize::MAX` on a 16-bit
+/// target, write the 65535 digits after the point as the native integers do, alone and with the
+/// largest width, in an array and in a native storage of 128 bits, at zero, one and the limits of
+/// both signs. Skipped under Miri, where each text has 65535 digits.
+#[test]
+fn the_largest_precision_is_that_of_the_native_integers() {
+  if tier().is_miri() {
+    return;
+  }
+  type U128x64 = Uint<U128, [u64; 2]>;
+  type U128x128 = Uint<U128, u128>;
+  type I128x32 = Int<U128, [u32; 4]>;
+  type I128x128 = Int<U128, i128>;
+  for value in [0, 1, u128::MAX] {
+    let expected = largest_precision_texts(&value);
+    let array = U128x64::from_limbs([value as u64, (value >> 64) as u64]);
+    assert_eq!(largest_precision_texts(&array), expected, "{value}");
+    let native = U128x128::new(value);
+    assert_eq!(largest_precision_texts(&native), expected, "{value}");
+  }
+  for value in [i128::MIN, -1, 1] {
+    let expected = largest_precision_texts(&value);
+    let array = I128x32::from_limbs(limbs_of(value));
+    assert_eq!(largest_precision_texts(&array), expected, "{value}");
+    let native = I128x128::new(value);
+    assert_eq!(largest_precision_texts(&native), expected, "{value}");
   }
 }
 
