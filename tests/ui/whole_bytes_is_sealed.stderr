@@ -1,0 +1,24 @@
+error[E0277]: the trait bound `Local: Unsigned` is not satisfied
+ --> tests/ui/whole_bytes_is_sealed.rs:7:21
+  |
+7 | impl WholeBytes for Local {}
+  |                     ^^^^^ unsatisfied trait bound
+  |
+help: the trait `Unsigned` is not implemented for `Local`
+ --> tests/ui/whole_bytes_is_sealed.rs:5:1
+  |
+5 | struct Local;
+  | ^^^^^^^^^^^^
+help: the following other types implement trait `Unsigned`
+ --> $CARGO/typenum-$VERSION/src/uint.rs
+  |
+  | impl Unsigned for UTerm {
+  | ^^^^^^^^^^^^^^^^^^^^^^^ `UTerm`
+...
+  | impl<U: Unsigned, B: Bit> Unsigned for UInt<U, B> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `UInt<U, B>`
+note: required by a bound in `WholeBytes`
+ --> src/width/mod.rs
+  |
+  | pub trait WholeBytes: Unsigned {}
+  |                       ^^^^^^^^ required by this bound in `WholeBytes`
