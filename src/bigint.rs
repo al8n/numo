@@ -961,6 +961,25 @@ pub(crate) mod model {
     p.get(index as usize).copied().unwrap_or(false)
   }
 
+  /// The digits of `p`, read unsigned, in the radix `2^shift`, binary for 1, octal for 3 and
+  /// hexadecimal for 4, in uppercase if `upper`: each digit from `shift` bits of the pattern, from
+  /// the digit of the highest one down, and `0` for zero.
+  pub(crate) fn radix_text(p: &[bool], shift: u32, upper: bool) -> String {
+    let len = highest_one(p).map_or(0, |index| index + 1);
+    (0..len.div_ceil(shift).max(1))
+      .rev()
+      .map(|k| {
+        let digit = (0..shift).fold(0, |digit, i| digit | u32::from(bit(p, k * shift + i)) << i);
+        let digit = char::from_digit(digit, 1 << shift).expect("a digit of the radix");
+        if upper {
+          digit.to_ascii_uppercase()
+        } else {
+          digit
+        }
+      })
+      .collect()
+  }
+
   /// The sign of `p` in two's complement: its top bit, or `false` for zero bits.
   pub(crate) fn sign(p: &[bool]) -> bool {
     p.last().copied().unwrap_or(false)

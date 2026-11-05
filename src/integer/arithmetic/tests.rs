@@ -2293,3 +2293,4 @@ mod division;
 mod nonzero;
 mod powers;
 mod shifts;
+mod text;

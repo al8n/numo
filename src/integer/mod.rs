@@ -5,6 +5,7 @@ use core::{
   fmt,
   hash::{Hash, Hasher},
   marker::PhantomData,
+  num::ParseIntError,
 };
 
 pub use error::TryNewError;
@@ -36,6 +37,7 @@ mod arithmetic;
 mod bits;
 #[macro_use]
 mod nonzero;
+mod text;
 mod traits;
 
 /// An unsigned integer of `Bits` bits, stored in `Repr`.
@@ -735,6 +737,31 @@ macro_rules! array_integers {
         }
       }
 
+      /// Parses an integer from the digits of `radix` after an optional `+`, as the native
+      /// `from_str_radix` does at the width `Bits`: the ASCII digits and letters of either case
+      /// below `radix`, with no whitespace, `_` or prefix.
+      ///
+      /// # Errors
+      ///
+      /// Returns the [`ParseIntError`] of the native integers, whose
+      /// [`kind`](ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a byte
+      /// that is not a digit of `radix`, a lone sign or `-`, and `PosOverflow` for digits above
+      /// `MAX`; an overflow of the digits before a byte that is not a digit comes first.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `radix` is not from 2 to 36, reporting the caller, so in a constant such a
+      /// radix fails to compile.
+      #[inline]
+      #[track_caller]
+      pub const fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+        text::check_radix(radix);
+        match int::unsigned::$lower::from_str_radix_bits(src.as_bytes(), radix, Self::BITS) {
+          Ok(limbs) => Ok(Self::wrap(limbs)),
+          Err(error) => Err(error),
+        }
+      }
+
       overflowing_table!(inherent_items![unsigned, $lower, &]);
       checked_table!(inherent_items![unsigned, $lower, &]);
       wrapping_table!(inherent_items![unsigned, $lower, &]);
@@ -936,6 +963,32 @@ macro_rules! array_integers {
           Some(Self::wrap(limbs))
         } else {
           None
+        }
+      }
+
+      /// Parses an integer from the digits of `radix` after an optional `+` or `-`, as the native
+      /// `from_str_radix` does at the width `Bits`: the ASCII digits and letters of either case
+      /// below `radix`, with no whitespace, `_` or prefix.
+      ///
+      /// # Errors
+      ///
+      /// Returns the [`ParseIntError`] of the native integers, whose
+      /// [`kind`](ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a byte
+      /// that is not a digit of `radix` or a lone sign, `PosOverflow` for digits above `MAX` and
+      /// `NegOverflow` for digits after `-` below `MIN`; an overflow of the digits before a byte
+      /// that is not a digit comes first.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `radix` is not from 2 to 36, reporting the caller, so in a constant such a
+      /// radix fails to compile.
+      #[inline]
+      #[track_caller]
+      pub const fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+        text::check_radix(radix);
+        match int::signed::$upper::from_str_radix_bits(src.as_bytes(), radix, Self::BITS) {
+          Ok(limbs) => Ok(Self::wrap(limbs)),
+          Err(error) => Err(error),
         }
       }
 
@@ -1313,6 +1366,31 @@ macro_rules! native_integers {
         }
       }
 
+      /// Parses an integer from the digits of `radix` after an optional `+`, as the native
+      /// `from_str_radix` does at the width `Bits`: the ASCII digits and letters of either case
+      /// below `radix`, with no whitespace, `_` or prefix.
+      ///
+      /// # Errors
+      ///
+      /// Returns the [`ParseIntError`] of the native integers, whose
+      /// [`kind`](ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a byte
+      /// that is not a digit of `radix`, a lone sign or `-`, and `PosOverflow` for digits above
+      /// `MAX`; an overflow of the digits before a byte that is not a digit comes first.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `radix` is not from 2 to 36, reporting the caller, so in a constant such a
+      /// radix fails to compile.
+      #[inline]
+      #[track_caller]
+      pub const fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+        text::check_radix(radix);
+        match int::$uint::from_str_radix_bits(src.as_bytes(), radix, Self::BITS) {
+          Ok(value) => Ok(Self::wrap(value)),
+          Err(error) => Err(error),
+        }
+      }
+
       overflowing_table!(inherent_items![$uint]);
       checked_table!(inherent_items![$uint]);
       wrapping_table!(inherent_items![$uint]);
@@ -1517,6 +1595,32 @@ macro_rules! native_integers {
           Ok(Self::wrap(value))
         } else {
           Err(TryNewError::new(Self::BITS))
+        }
+      }
+
+      /// Parses an integer from the digits of `radix` after an optional `+` or `-`, as the native
+      /// `from_str_radix` does at the width `Bits`: the ASCII digits and letters of either case
+      /// below `radix`, with no whitespace, `_` or prefix.
+      ///
+      /// # Errors
+      ///
+      /// Returns the [`ParseIntError`] of the native integers, whose
+      /// [`kind`](ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a byte
+      /// that is not a digit of `radix` or a lone sign, `PosOverflow` for digits above `MAX` and
+      /// `NegOverflow` for digits after `-` below `MIN`; an overflow of the digits before a byte
+      /// that is not a digit comes first.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `radix` is not from 2 to 36, reporting the caller, so in a constant such a
+      /// radix fails to compile.
+      #[inline]
+      #[track_caller]
+      pub const fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+        text::check_radix(radix);
+        match int::$int::from_str_radix_bits(src.as_bytes(), radix, Self::BITS) {
+          Ok(value) => Ok(Self::wrap(value)),
+          Err(error) => Err(error),
         }
       }
 
