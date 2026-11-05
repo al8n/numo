@@ -728,39 +728,49 @@ fn byte_patterns<const K: usize>(bits: u32) -> Vec<Vec<bool>> {
 /// Checks the bytes of `Uint` and `Int` of `$bits` bits, the width `$width`, in each storage of
 /// `$storages`, written `unsigned, signed;`, at the patterns of [`byte_patterns`] in `$words` words
 /// of 64 bits: the arrays, the slices, the copies and the bytes, and with `whole`, at a width of
-/// whole bytes, the conversions from arrays of whole bytes and the byte order.
+/// whole bytes, the conversions from arrays of whole bytes and the byte order. Each storage checks
+/// in a frame of its own, because the temporaries of every width in one frame exceed the stack of a
+/// test thread in an unoptimized build.
 macro_rules! bytes_agree {
   (whole $width:ty, $bits:literal, $words:literal; $($uint:ty, $int:ty);+ $(;)?) => {{
     bytes_agree!($width, $bits, $words; $($uint, $int);+);
     let patterns = byte_patterns::<$words>($bits);
     $({
-      type U = Uint<$width, $uint>;
-      type I = Int<$width, $int>;
-      for p in &patterns {
-        let (unsigned, signed) = (U::from_pattern(p), I::from_pattern(p));
-        check_whole_arrays!(U, unsigned, |q: &[bool]| U::from_pattern(q));
-        check_whole_arrays!(I, signed, |q: &[bool]| I::from_pattern(q));
-        check_byte_order!(U, unsigned, p, |q: &[bool]| U::from_pattern(q));
-        check_byte_order!(I, signed, p, |q: &[bool]| I::from_pattern(q));
-        assert_eq!(whole_results!(U, unsigned), whole_through_traits(&unsigned));
-        assert_eq!(whole_results!(I, signed), whole_through_traits(&signed));
+      #[inline(never)]
+      fn storage(patterns: &[Vec<bool>]) {
+        type U = Uint<$width, $uint>;
+        type I = Int<$width, $int>;
+        for p in patterns {
+          let (unsigned, signed) = (U::from_pattern(p), I::from_pattern(p));
+          check_whole_arrays!(U, unsigned, |q: &[bool]| U::from_pattern(q));
+          check_whole_arrays!(I, signed, |q: &[bool]| I::from_pattern(q));
+          check_byte_order!(U, unsigned, p, |q: &[bool]| U::from_pattern(q));
+          check_byte_order!(I, signed, p, |q: &[bool]| I::from_pattern(q));
+          assert_eq!(whole_results!(U, unsigned), whole_through_traits(&unsigned));
+          assert_eq!(whole_results!(I, signed), whole_through_traits(&signed));
+        }
       }
+      storage(&patterns);
     })+
   }};
   ($width:ty, $bits:literal, $words:literal; $($uint:ty, $int:ty);+ $(;)?) => {{
     let patterns = byte_patterns::<$words>($bits);
     $({
-      type U = Uint<$width, $uint>;
-      type I = Int<$width, $int>;
-      for p in &patterns {
-        let (unsigned, signed) = (U::from_pattern(p), I::from_pattern(p));
-        check_arrays!(U, unsigned, p, false, |q: &[bool]| U::from_pattern(q));
-        check_arrays!(I, signed, p, true, |q: &[bool]| I::from_pattern(q));
-        check_slices!(U, unsigned, p, false, |q: &[bool]| U::from_pattern(q));
-        check_slices!(I, signed, p, true, |q: &[bool]| I::from_pattern(q));
-        traits_agree!(U, unsigned, p, false);
-        traits_agree!(I, signed, p, true);
+      #[inline(never)]
+      fn storage(patterns: &[Vec<bool>]) {
+        type U = Uint<$width, $uint>;
+        type I = Int<$width, $int>;
+        for p in patterns {
+          let (unsigned, signed) = (U::from_pattern(p), I::from_pattern(p));
+          check_arrays!(U, unsigned, p, false, |q: &[bool]| U::from_pattern(q));
+          check_arrays!(I, signed, p, true, |q: &[bool]| I::from_pattern(q));
+          check_slices!(U, unsigned, p, false, |q: &[bool]| U::from_pattern(q));
+          check_slices!(I, signed, p, true, |q: &[bool]| I::from_pattern(q));
+          traits_agree!(U, unsigned, p, false);
+          traits_agree!(I, signed, p, true);
+        }
       }
+      storage(&patterns);
     })+
   }};
 }
@@ -798,27 +808,33 @@ fn bytes_of_16384_bits() {
   if !tier().is_full() {
     return;
   }
+  // Each storage checks in a frame of its own, to keep every frame within the stack of a test
+  // thread in an unoptimized build.
   macro_rules! check {
     ($($uint:ty, $int:ty);+ $(;)?) => {$({
-      for p in &byte_patterns::<256>(16384) {
-        let (unsigned, signed) = (<$uint>::from_pattern(p), <$int>::from_pattern(p));
-        check_slices!($uint, unsigned, p, false, |q: &[bool]| <$uint>::from_pattern(q));
-        check_slices!($int, signed, p, true, |q: &[bool]| <$int>::from_pattern(q));
-        check_byte_order!($uint, unsigned, p, |q: &[bool]| <$uint>::from_pattern(q));
-        check_byte_order!($int, signed, p, |q: &[bool]| <$int>::from_pattern(q));
-        let slices = bigint::byte_slices(p, false);
-        assert_eq!(
-          slice_results!($uint, unsigned, &slices),
-          slices_through_traits(&unsigned, &slices)
-        );
-        let slices = bigint::byte_slices(p, true);
-        assert_eq!(
-          slice_results!($int, signed, &slices),
-          slices_through_traits(&signed, &slices)
-        );
-        assert_eq!(order_results!($uint, unsigned), order_through_traits(&unsigned));
-        assert_eq!(order_results!($int, signed), order_through_traits(&signed));
+      #[inline(never)]
+      fn storage() {
+        for p in &byte_patterns::<256>(16384) {
+          let (unsigned, signed) = (<$uint>::from_pattern(p), <$int>::from_pattern(p));
+          check_slices!($uint, unsigned, p, false, |q: &[bool]| <$uint>::from_pattern(q));
+          check_slices!($int, signed, p, true, |q: &[bool]| <$int>::from_pattern(q));
+          check_byte_order!($uint, unsigned, p, |q: &[bool]| <$uint>::from_pattern(q));
+          check_byte_order!($int, signed, p, |q: &[bool]| <$int>::from_pattern(q));
+          let slices = bigint::byte_slices(p, false);
+          assert_eq!(
+            slice_results!($uint, unsigned, &slices),
+            slices_through_traits(&unsigned, &slices)
+          );
+          let slices = bigint::byte_slices(p, true);
+          assert_eq!(
+            slice_results!($int, signed, &slices),
+            slices_through_traits(&signed, &slices)
+          );
+          assert_eq!(order_results!($uint, unsigned), order_through_traits(&unsigned));
+          assert_eq!(order_results!($int, signed), order_through_traits(&signed));
+        }
       }
+      storage();
     })+};
   }
   check!(
