@@ -471,8 +471,8 @@ pub trait ArrayInteger: Sealed + Sized {
   /// hold a value of `Bits` bits.
   fn checked_from_limbs(limbs: Self::Array) -> Option<Self>;
 
-  /// Returns the limbs of the value, least significant first.
-  fn to_limbs(self) -> Self::Array;
+  /// Returns a copy of the limbs of the value, least significant first.
+  fn to_limbs(&self) -> Self::Array;
 
   /// Borrows the limbs of the value, least significant first.
   fn as_limbs(&self) -> &Self::Array;
@@ -1259,7 +1259,7 @@ where
   }
 
   #[inline]
-  fn to_limbs(self) -> [L; N] {
+  fn to_limbs(&self) -> [L; N] {
     self.repr
   }
 
@@ -1286,7 +1286,7 @@ where
   }
 
   #[inline]
-  fn to_limbs(self) -> [L; N] {
+  fn to_limbs(&self) -> [L; N] {
     self.repr
   }
 

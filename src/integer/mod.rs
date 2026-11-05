@@ -1009,14 +1009,14 @@ macro_rules! array_integers {
 
     impl<B, const N: usize> Uint<B, [$limb; N]> {
       #[doc = concat!(
-        "Returns the ",
+        "Returns a copy of the ",
         stringify!($bits),
         "-bit limbs of the value, least significant first. The bits above `Bits`, if any,"
       )]
       /// are zero.
       #[must_use]
       #[inline]
-      pub const fn to_limbs(self) -> [$limb; N] {
+      pub const fn to_limbs(&self) -> [$limb; N] {
         self.repr
       }
 
@@ -1262,14 +1262,14 @@ macro_rules! array_integers {
 
     impl<B, const N: usize> Int<B, [$limb; N]> {
       #[doc = concat!(
-        "Returns the ",
+        "Returns a copy of the ",
         stringify!($bits),
         "-bit limbs of the value, least significant first, in two's complement. The bits"
       )]
       /// above `Bits`, if any, are copies of the sign bit.
       #[must_use]
       #[inline]
-      pub const fn to_limbs(self) -> [$limb; N] {
+      pub const fn to_limbs(&self) -> [$limb; N] {
         self.repr
       }
 

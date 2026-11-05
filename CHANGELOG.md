@@ -129,8 +129,9 @@ FEATURES
     panics if the value does not fit in `Bits` bits, so that such a value fails to compile in a
     constant, `try_new`, which returns the new `TryNewError` instead, and `value`; for an array,
     `from_limbs` for a width that fills its limbs, `checked_from_limbs` for any width, which
-    returns `None` unless the limbs hold a value of `Bits` bits, and `to_limbs` and `as_limbs`;
-    `is_zero`, plus `is_negative` and `is_positive` for `Int`.
+    returns `None` unless the limbs hold a value of `Bits` bits, `to_limbs`, which takes `&self`
+    and returns a copy of the limbs, and `as_limbs`, which borrows them; `is_zero`, plus
+    `is_negative` and `is_positive` for `Int`.
   - Zero bits: `Uint<U0, R>` and `Int<U0, R>` hold only 0, in every storage, so `ZERO`, `MIN` and
     `MAX` are 0, `try_new` and `checked_from_limbs` accept only 0, and a value writes no word to a
     hasher and formats as 0. Zero bits fill the arrays of no limbs, `[L; 0]`, which take no space.
@@ -284,10 +285,10 @@ FEATURES
     `MIN` and `MAX`, and `ConstIntegerOne`, with `ONE`. The other traits are `UnsignedFixedInteger`
     and `SignedFixedInteger`, with `is_negative`, `is_positive` and the unsigned integer of the same
     width, `NativeInteger`, which requires `ConstFixedInteger` and has `new`, `try_new` and `value`,
-    `ArrayInteger`, with `checked_from_limbs`, `to_limbs` and `as_limbs`, and `FromLimbs`, with
-    `from_limbs`. Each mirrors the inherent items for generic code; the bound `B: BitWidth` gives
-    `Uint<B>` and `Int<B>` `FixedInteger`, `ConstFixedInteger` and the sign traits. The trait
-    methods are not `const`; constant contexts use the inherent `const fn`s.
+    `ArrayInteger`, with `checked_from_limbs`, `to_limbs` by reference and `as_limbs`, and
+    `FromLimbs`, with `from_limbs`. Each mirrors the inherent items for generic code; the bound
+    `B: BitWidth` gives `Uint<B>` and `Int<B>` `FixedInteger`, `ConstFixedInteger` and the sign
+    traits. The trait methods are not `const`; constant contexts use the inherent `const fn`s.
 - `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: the integers of `Bits` bits that are not
   zero, as the native `NonZero` integers are at the native widths.
   - The storage is the native `NonZero` of a native storage, `core::num::NonZero<u8>` to
