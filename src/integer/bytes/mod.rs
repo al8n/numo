@@ -1,12 +1,20 @@
-//! The bytes of [`Uint`](crate::Uint) and [`Int`](crate::Int): the byte methods of every storage,
-//! which `byte_methods!` emits as inherent `const fn`s, and the panics of the methods that index
-//! the bytes or copy them to a buffer.
+//! The bytes of [`Uint`] and [`Int`]: the byte methods of every storage, which `byte_methods!`
+//! emits as inherent `const fn`s, the traits that give them to generic code, and the panics of the
+//! methods that index the bytes or copy them to a buffer.
 //!
 //! Every storage holds the value of `Bits` bits in its low `BYTES` bytes, zero-extended for `Uint`
 //! and sign-extended for `Int`, so those bytes, least significant first, are the bytes of the
 //! value. The arrays of bytes have their length in their type, `[u8; BYTES]`, through a constant
 //! `M` that the bound `u8: LimbArray<B, Array = [u8; M]>` fixes; the slices and the copies to a
-//! buffer take any width.
+//! buffer take any width. The traits come in one per bound: [`IntegerBytes`] for every width and
+//! storage, [`ByteArray`] for the widths that have an array, [`FromByteArray`] for those of whole
+//! bytes, and [`IntegerByteOrder`] for every width of whole bytes.
+
+use super::{Int, Uint, traits::Sealed};
+use crate::{
+  layout::Token,
+  width::{FitsBits, IntRepr, LimbArray, UintRepr, WholeBytes},
+};
 
 /// Panics on a byte index of `BYTES` or more, which no byte of the value has, as indexing the
 /// array of its bytes would.
@@ -406,3 +414,423 @@ macro_rules! byte_methods {
     }
   };
 }
+
+/// The bytes of an integer through slices, at any width: [`Uint`] and [`Int`] over every storage.
+///
+/// [`BYTES`](Self::BYTES) and the methods are the inherent items of the same names, which a
+/// concrete type reaches without this trait, also in constant contexts: the byte at an index, the
+/// copies of the bytes to a buffer, and the conversions from a slice of any length, checked and
+/// wrapping, which read it unsigned for `Uint` and in two's complement for `Int`. The trait needs
+/// neither `Copy` nor a constant of a value, and every storage implements it, so the bound
+/// `B: BitWidth` provides it on `Uint<B>` and `Int<B>`; generic code calls the methods with the
+/// trait in scope.
+///
+/// ```
+/// use numo::{Int, IntegerBytes, Uint, i7, typenum::U200};
+///
+/// // The bytes of a value, most significant first, as hexadecimal digits.
+/// fn hex<T: IntegerBytes>(value: &T) -> String {
+///   let mut buf = [0; 64];
+///   let len = value.copy_be_bytes_to(&mut buf);
+///   buf[..len].iter().map(|byte| format!("{byte:02x}")).collect()
+/// }
+///
+/// assert_eq!(hex(&Uint::<numo::typenum::U12>::MAX), "0fff");
+/// assert_eq!(hex(&i7::new(-1)), "ff");
+/// assert_eq!(hex(&Uint::<U200>::MAX), "ff".repeat(25));
+/// // A slice of any length, whose value decides: 0xfff is 4095, which 12 signed bits do not hold.
+/// type U12 = Uint<numo::typenum::U12>;
+/// type I12 = Int<numo::typenum::U12>;
+/// assert_eq!(<U12 as IntegerBytes>::checked_from_le_slice(&[0xff, 0x0f, 0]), Some(U12::MAX));
+/// assert_eq!(<I12 as IntegerBytes>::checked_from_le_slice(&[0xff, 0x0f]), None);
+/// assert_eq!(<I12 as IntegerBytes>::wrapping_from_le_slice(&[0x80]), I12::new(-128));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait IntegerBytes: Sealed + Sized {
+  /// The number of bytes of the value, `ceil(Bits / 8)`.
+  const BYTES: usize;
+
+  /// The byte of the value at `index`, its bits from `8 * index` to `8 * index + 7`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `index` is `BYTES` or more, reporting the caller.
+  #[must_use]
+  #[track_caller]
+  fn byte(&self, index: usize) -> u8;
+
+  /// Writes the bytes of the value, least significant first, to the start of `buf`, and returns
+  /// their number, `BYTES`; the rest of `buf` is unchanged.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `buf` is shorter than `BYTES`, reporting the caller.
+  #[track_caller]
+  fn copy_le_bytes_to(&self, buf: &mut [u8]) -> usize;
+
+  /// Writes the bytes of the value, most significant first, to the start of `buf`, and returns
+  /// their number, `BYTES`; the rest of `buf` is unchanged.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `buf` is shorter than `BYTES`, reporting the caller.
+  #[track_caller]
+  fn copy_be_bytes_to(&self, buf: &mut [u8]) -> usize;
+
+  /// Writes the bytes of the value, least significant first, to the start of `buf`, and returns
+  /// their number, or returns `None` if `buf` is shorter than `BYTES`, and leaves it unchanged.
+  #[must_use]
+  fn checked_copy_le_bytes_to(&self, buf: &mut [u8]) -> Option<usize>;
+
+  /// Writes the bytes of the value, most significant first, to the start of `buf`, and returns
+  /// their number, or returns `None` if `buf` is shorter than `BYTES`, and leaves it unchanged.
+  #[must_use]
+  fn checked_copy_be_bytes_to(&self, buf: &mut [u8]) -> Option<usize>;
+
+  /// Creates an integer from the integer in `bytes`, least significant byte first, of any length,
+  /// unsigned for `Uint` and in two's complement of `8 * bytes.len()` bits for `Int`, or returns
+  /// `None` if it is outside the range of `Bits` bits.
+  #[must_use]
+  fn checked_from_le_slice(bytes: &[u8]) -> Option<Self>;
+
+  /// Creates an integer from the integer in `bytes`, most significant byte first, as
+  /// [`checked_from_le_slice`](Self::checked_from_le_slice) does from them in reverse order.
+  #[must_use]
+  fn checked_from_be_slice(bytes: &[u8]) -> Option<Self>;
+
+  /// Creates an integer from the integer in `bytes`, least significant byte first, read as
+  /// [`checked_from_le_slice`](Self::checked_from_le_slice) reads it, modulo `2^Bits`.
+  #[must_use]
+  fn wrapping_from_le_slice(bytes: &[u8]) -> Self;
+
+  /// Creates an integer from the integer in `bytes`, most significant byte first, as
+  /// [`wrapping_from_le_slice`](Self::wrapping_from_le_slice) does from them in reverse order.
+  #[must_use]
+  fn wrapping_from_be_slice(bytes: &[u8]) -> Self;
+}
+
+/// The bytes of an integer as an array whose length is part of its type: [`Uint`] and [`Int`]
+/// over every storage, up to 8192 bits, where [`Limbs<Bits, u8>`](crate::Limbs) exists.
+///
+/// [`Bytes`](Self::Bytes) is `[u8; BYTES]`, which generic code reads through `AsRef<[u8]>` and
+/// writes through `AsMut<[u8]>`, without a constant for its length. The methods are the inherent
+/// items of the same names: the arrays in each order and the checked conversions from them, which
+/// at a width that is not a whole number of bytes check the bits of the last byte above the width.
+/// Generic code adds the bound `T: ByteArray`, which `B: BitWidth` does not imply, since the arrays
+/// stop at 8192 bits.
+///
+/// ```
+/// use numo::{
+///   ByteArray, Int, Uint,
+///   typenum::{U12, U24},
+/// };
+///
+/// // The most significant byte of a value.
+/// fn top<T: ByteArray>(value: &T) -> u8 {
+///   value.to_be_bytes().as_ref()[0]
+/// }
+///
+/// assert_eq!(top(&Uint::<U24>::new(0x01_0203)), 0x01);
+/// assert_eq!(top(&Int::<U12>::new(-1)), 0xff);
+/// // 12 bits leave four bits of the last byte, which must be zeros for `Uint`.
+/// assert_eq!(<Uint<U12> as ByteArray>::checked_from_le_bytes([0xff, 0x1f]), None);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait ByteArray: IntegerBytes {
+  /// The array of the bytes, `[u8; BYTES]`.
+  type Bytes: Copy + AsRef<[u8]> + AsMut<[u8]>;
+
+  /// The bytes of the value, least significant first, in two's complement for `Int`.
+  #[must_use]
+  fn to_le_bytes(&self) -> Self::Bytes;
+
+  /// The bytes of the value, most significant first.
+  #[must_use]
+  fn to_be_bytes(&self) -> Self::Bytes;
+
+  /// The bytes of the value in the byte order of the target.
+  #[must_use]
+  fn to_ne_bytes(&self) -> Self::Bytes;
+
+  /// Creates an integer from its bytes, least significant first, or returns `None` if they hold no
+  /// value of `Bits` bits.
+  #[must_use]
+  fn checked_from_le_bytes(bytes: Self::Bytes) -> Option<Self>;
+
+  /// Creates an integer from its bytes, most significant first, or returns `None` if they hold no
+  /// value of `Bits` bits.
+  #[must_use]
+  fn checked_from_be_bytes(bytes: Self::Bytes) -> Option<Self>;
+
+  /// Creates an integer from its bytes in the byte order of the target, or returns `None` if they
+  /// hold no value of `Bits` bits.
+  #[must_use]
+  fn checked_from_ne_bytes(bytes: Self::Bytes) -> Option<Self>;
+}
+
+/// An integer of whole bytes from its array of bytes, every one of which holds a value: [`Uint`]
+/// and [`Int`] whose `Bits` is [`WholeBytes`], up to 8192 bits.
+///
+/// The methods are the inherent items of the same names, which never fail.
+///
+/// ```
+/// use numo::{FromByteArray, Int, Uint, typenum::U24};
+///
+/// // A value from the bytes of the network order, most significant first.
+/// fn from_network<T: FromByteArray>(bytes: T::Bytes) -> T {
+///   T::from_be_bytes(bytes)
+/// }
+///
+/// assert_eq!(from_network::<Int<U24>>([0xff, 0xff, 0xfe]), Int::<U24>::new(-2));
+/// assert_eq!(from_network::<Uint<U24>>([1, 2, 3]), Uint::<U24>::new(0x01_0203));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait FromByteArray: ByteArray {
+  /// Creates an integer from its bytes, least significant first, in two's complement for `Int`.
+  #[must_use]
+  fn from_le_bytes(bytes: Self::Bytes) -> Self;
+
+  /// Creates an integer from its bytes, most significant first.
+  #[must_use]
+  fn from_be_bytes(bytes: Self::Bytes) -> Self;
+
+  /// Creates an integer from its bytes in the byte order of the target.
+  #[must_use]
+  fn from_ne_bytes(bytes: Self::Bytes) -> Self;
+}
+
+/// The byte order of an integer of whole bytes: [`Uint`] and [`Int`] whose `Bits` is
+/// [`WholeBytes`], over every storage.
+///
+/// The methods are the inherent items of the same names: the reversal of the bytes, and the
+/// conversions of the native integers to and from an order, which convert the value, not a layout.
+/// The trait needs neither `Copy` nor a constant of a value; generic code adds the bound
+/// `B: WholeBytes` to `B: BitWidth`. Its implementations need a storage that is `Clone`, as every
+/// storage is, to return the value itself where the order is that of the target.
+///
+/// ```
+/// use numo::{BitWidth, IntegerByteOrder, Uint, WholeBytes, typenum::U24};
+///
+/// fn reversed<B: BitWidth + WholeBytes>(value: &Uint<B>) -> Uint<B> {
+///   value.swap_bytes()
+/// }
+///
+/// let value = Uint::<U24>::new(0x01_0203);
+/// assert_eq!(reversed(&value), Uint::<U24>::new(0x03_0201));
+/// assert_eq!(IntegerByteOrder::to_be(&value), value.to_be());
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait IntegerByteOrder: Sealed + Sized {
+  /// The value with its bytes in reverse order.
+  #[must_use]
+  fn swap_bytes(&self) -> Self;
+
+  /// Converts the value to big-endian order: `self` on a big-endian target and its bytes reversed
+  /// on a little-endian one.
+  #[must_use]
+  fn to_be(&self) -> Self;
+
+  /// Converts the value to little-endian order: `self` on a little-endian target and its bytes
+  /// reversed on a big-endian one.
+  #[must_use]
+  fn to_le(&self) -> Self;
+
+  /// Converts `x` from big-endian order: `x.to_be()`.
+  #[must_use]
+  fn from_be(x: Self) -> Self;
+
+  /// Converts `x` from little-endian order: `x.to_le()`.
+  #[must_use]
+  fn from_le(x: Self) -> Self;
+}
+
+/// Implements the byte traits for [`Uint`] and [`Int`], written `Integer: Repr`, with the sealed
+/// methods of the storage trait `Repr`, which neither need `Copy` nor read a constant of a value.
+/// [`IntegerByteOrder`] also needs `Repr: Clone`, to return the value itself where the order is
+/// that of the target.
+// Trait methods cannot be `const`.
+macro_rules! byte_traits {
+  ($($integer:ident: $repr:ident),+ $(,)?) => {$(
+    impl<B: FitsBits<R>, R: $repr> IntegerBytes for $integer<B, R> {
+      const BYTES: usize = Self::BYTES;
+
+      #[inline]
+      #[track_caller]
+      fn byte(&self, index: usize) -> u8 {
+        if index >= Self::BYTES {
+          byte_index();
+        }
+        self.repr.byte_at(index, Token::new())
+      }
+
+      #[inline]
+      #[track_caller]
+      fn copy_le_bytes_to(&self, buf: &mut [u8]) -> usize {
+        match IntegerBytes::checked_copy_le_bytes_to(self, buf) {
+          Some(written) => written,
+          None => short_le_buffer(),
+        }
+      }
+
+      #[inline]
+      #[track_caller]
+      fn copy_be_bytes_to(&self, buf: &mut [u8]) -> usize {
+        match IntegerBytes::checked_copy_be_bytes_to(self, buf) {
+          Some(written) => written,
+          None => short_be_buffer(),
+        }
+      }
+
+      #[inline]
+      fn checked_copy_le_bytes_to(&self, buf: &mut [u8]) -> Option<usize> {
+        let (head, _) = buf.split_at_mut_checked(Self::BYTES)?;
+        self.repr.write_bytes(head, false, Token::new());
+        Some(Self::BYTES)
+      }
+
+      #[inline]
+      fn checked_copy_be_bytes_to(&self, buf: &mut [u8]) -> Option<usize> {
+        let (head, _) = buf.split_at_mut_checked(Self::BYTES)?;
+        self.repr.write_bytes(head, true, Token::new());
+        Some(Self::BYTES)
+      }
+
+      #[inline]
+      fn checked_from_le_slice(bytes: &[u8]) -> Option<Self> {
+        R::checked_read_bytes(bytes, false, B::U32, Token::new()).map(Self::wrap)
+      }
+
+      #[inline]
+      fn checked_from_be_slice(bytes: &[u8]) -> Option<Self> {
+        R::checked_read_bytes(bytes, true, B::U32, Token::new()).map(Self::wrap)
+      }
+
+      #[inline]
+      fn wrapping_from_le_slice(bytes: &[u8]) -> Self {
+        Self::wrap(R::wrapping_read_bytes(bytes, false, B::U32, Token::new()))
+      }
+
+      #[inline]
+      fn wrapping_from_be_slice(bytes: &[u8]) -> Self {
+        Self::wrap(R::wrapping_read_bytes(bytes, true, B::U32, Token::new()))
+      }
+    }
+
+    // The bound on `u8` fixes `M` at `BYTES`, so that `Bytes` is the array of the width.
+    impl<B: FitsBits<R>, R: $repr, const M: usize> ByteArray for $integer<B, R>
+    where
+      u8: LimbArray<B, Array = [u8; M]>,
+    {
+      type Bytes = [u8; M];
+
+      #[inline]
+      fn to_le_bytes(&self) -> [u8; M] {
+        let mut bytes = [0; M];
+        self.repr.write_bytes(&mut bytes, false, Token::new());
+        bytes
+      }
+
+      #[inline]
+      fn to_be_bytes(&self) -> [u8; M] {
+        let mut bytes = [0; M];
+        self.repr.write_bytes(&mut bytes, true, Token::new());
+        bytes
+      }
+
+      #[inline]
+      fn to_ne_bytes(&self) -> [u8; M] {
+        let mut bytes = [0; M];
+        self
+          .repr
+          .write_bytes(&mut bytes, cfg!(target_endian = "big"), Token::new());
+        bytes
+      }
+
+      #[inline]
+      fn checked_from_le_bytes(bytes: [u8; M]) -> Option<Self> {
+        IntegerBytes::checked_from_le_slice(&bytes)
+      }
+
+      #[inline]
+      fn checked_from_be_bytes(bytes: [u8; M]) -> Option<Self> {
+        IntegerBytes::checked_from_be_slice(&bytes)
+      }
+
+      #[inline]
+      fn checked_from_ne_bytes(bytes: [u8; M]) -> Option<Self> {
+        let big_endian = cfg!(target_endian = "big");
+        R::checked_read_bytes(&bytes, big_endian, B::U32, Token::new()).map(Self::wrap)
+      }
+    }
+
+    impl<B: FitsBits<R> + WholeBytes, R: $repr, const M: usize> FromByteArray for $integer<B, R>
+    where
+      u8: LimbArray<B, Array = [u8; M]>,
+    {
+      #[inline]
+      fn from_le_bytes(bytes: [u8; M]) -> Self {
+        IntegerBytes::wrapping_from_le_slice(&bytes)
+      }
+
+      #[inline]
+      fn from_be_bytes(bytes: [u8; M]) -> Self {
+        IntegerBytes::wrapping_from_be_slice(&bytes)
+      }
+
+      #[inline]
+      fn from_ne_bytes(bytes: [u8; M]) -> Self {
+        let big_endian = cfg!(target_endian = "big");
+        Self::wrap(R::wrapping_read_bytes(&bytes, big_endian, B::U32, Token::new()))
+      }
+    }
+
+    impl<B: FitsBits<R> + WholeBytes, R: $repr + Clone> IntegerByteOrder for $integer<B, R> {
+      #[inline]
+      fn swap_bytes(&self) -> Self {
+        Self::wrap(self.repr.swap_bytes_bits(B::U32, Token::new()))
+      }
+
+      #[inline]
+      fn to_be(&self) -> Self {
+        if cfg!(target_endian = "big") {
+          Self::wrap(self.repr.clone())
+        } else {
+          IntegerByteOrder::swap_bytes(self)
+        }
+      }
+
+      #[inline]
+      fn to_le(&self) -> Self {
+        if cfg!(target_endian = "big") {
+          IntegerByteOrder::swap_bytes(self)
+        } else {
+          Self::wrap(self.repr.clone())
+        }
+      }
+
+      #[inline]
+      fn from_be(x: Self) -> Self {
+        if cfg!(target_endian = "big") {
+          x
+        } else {
+          IntegerByteOrder::swap_bytes(&x)
+        }
+      }
+
+      #[inline]
+      fn from_le(x: Self) -> Self {
+        if cfg!(target_endian = "big") {
+          IntegerByteOrder::swap_bytes(&x)
+        } else {
+          x
+        }
+      }
+    }
+  )+};
+}
+
+byte_traits!(Uint: UintRepr, Int: IntRepr);

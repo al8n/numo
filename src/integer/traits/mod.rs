@@ -30,7 +30,7 @@ use core::{
 
 use typenum::{IsGreater, NonZero, True, U1};
 
-use sealed::Sealed;
+pub(super) use sealed::Sealed;
 
 use super::{
   Int, NonZeroInt, NonZeroUint, TryNewError, Uint,

@@ -8,6 +8,7 @@ use core::{
   num::ParseIntError,
 };
 
+pub use bytes::{ByteArray, FromByteArray, IntegerByteOrder, IntegerBytes};
 pub use error::TryNewError;
 pub use traits::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,

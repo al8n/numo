@@ -11,7 +11,10 @@ use typenum::{
 };
 
 use super::*;
-use crate::{LimbArray, WholeBytes, i0, i1, u0};
+use crate::{
+  ByteArray, FromByteArray, IntRepr, IntegerByteOrder, IntegerBytes, LimbArray, UintRepr,
+  WholeBytes, i0, i1, u0,
+};
 
 /// Checks the arrays of bytes of `$x`, a value of `$ty` whose pattern is `$p`, of the width of
 /// `$ty`, read in two's complement if `$signed`, through the inherent `const fn`s, against the bit
@@ -106,7 +109,7 @@ macro_rules! check_slices {
     }
     let le = model::le_bytes(p, size, signed);
     let be: Vec<u8> = le.iter().rev().copied().collect();
-    for len in [size, size + 2].into_iter().chain(size.checked_sub(1)) {
+    for len in buffer_lengths(size) {
       let fits = len >= size;
       for (big_endian, bytes) in [(false, &le), (true, &be)] {
         let mut expected = vec![0xa5; len];
@@ -213,32 +216,262 @@ macro_rules! check_byte_order {
   }};
 }
 
+/// The lengths of the buffers that the bytes of a value of `size` bytes are copied to: `size`, two
+/// more, and one less, which is too short.
+fn buffer_lengths(size: usize) -> Vec<usize> {
+  [size, size + 2]
+    .into_iter()
+    .chain(size.checked_sub(1))
+    .collect()
+}
+
+/// What the arrays of bytes of a value give, through the inherent `const fn`s in `array_results!`
+/// and through `ByteArray` in [`arrays_through_traits`], which must agree.
+#[derive(Debug, PartialEq)]
+struct ArrayResults<T> {
+  /// `to_le_bytes`, `to_be_bytes` and `to_ne_bytes`.
+  arrays: [Vec<u8>; 3],
+  /// `checked_from_le_bytes`, `checked_from_be_bytes` and `checked_from_ne_bytes` of those arrays.
+  from_arrays: [Option<T>; 3],
+}
+
+/// What the slices, the copies and the bytes of a value give at some slices and at the buffers of
+/// [`buffer_lengths`], through the inherent `const fn`s in `slice_results!` and through
+/// `IntegerBytes` in [`slices_through_traits`], which must agree.
+#[derive(Debug, PartialEq)]
+struct SliceResults<T> {
+  /// At each slice, `checked_from_le_slice` and `wrapping_from_le_slice`, and the same of the
+  /// reversed slice from big-endian.
+  reads: Vec<[(Option<T>, T); 2]>,
+  /// At each buffer, `checked_copy_le_bytes_to` and `checked_copy_be_bytes_to`, with the buffers
+  /// that they leave.
+  copies: Vec<[(Option<usize>, Vec<u8>); 2]>,
+  /// `byte` at each index below `BYTES`.
+  bytes: Vec<u8>,
+}
+
+/// The [`ArrayResults`] of `$x`, a value of `$ty`, through the inherent `const fn`s.
+macro_rules! array_results {
+  ($ty:ty, $x:expr) => {{
+    let x: $ty = $x;
+    let arrays = (x.to_le_bytes(), x.to_be_bytes(), x.to_ne_bytes());
+    ArrayResults {
+      arrays: [arrays.0.to_vec(), arrays.1.to_vec(), arrays.2.to_vec()],
+      from_arrays: [
+        <$ty>::checked_from_le_bytes(arrays.0),
+        <$ty>::checked_from_be_bytes(arrays.1),
+        <$ty>::checked_from_ne_bytes(arrays.2),
+      ],
+    }
+  }};
+}
+
+/// The [`ArrayResults`] of `x` through `ByteArray`.
+fn arrays_through_traits<T: ByteArray>(x: &T) -> ArrayResults<T> {
+  let arrays = (x.to_le_bytes(), x.to_be_bytes(), x.to_ne_bytes());
+  ArrayResults {
+    arrays: [
+      arrays.0.as_ref().to_vec(),
+      arrays.1.as_ref().to_vec(),
+      arrays.2.as_ref().to_vec(),
+    ],
+    from_arrays: [
+      T::checked_from_le_bytes(arrays.0),
+      T::checked_from_be_bytes(arrays.1),
+      T::checked_from_ne_bytes(arrays.2),
+    ],
+  }
+}
+
+/// The [`SliceResults`] of `$x`, a value of `$ty`, at the slices of `$slices`, through the
+/// inherent `const fn`s.
+macro_rules! slice_results {
+  ($ty:ty, $x:expr, $slices:expr) => {{
+    let (x, slices): ($ty, &[Vec<u8>]) = ($x, $slices);
+    SliceResults {
+      reads: slices
+        .iter()
+        .map(|slice| {
+          let reversed: Vec<u8> = slice.iter().rev().copied().collect();
+          [
+            (
+              <$ty>::checked_from_le_slice(slice),
+              <$ty>::wrapping_from_le_slice(slice),
+            ),
+            (
+              <$ty>::checked_from_be_slice(&reversed),
+              <$ty>::wrapping_from_be_slice(&reversed),
+            ),
+          ]
+        })
+        .collect(),
+      copies: buffer_lengths(<$ty>::BYTES)
+        .into_iter()
+        .map(|len| {
+          let (mut little, mut big) = (vec![0xa5; len], vec![0xa5; len]);
+          [
+            (x.checked_copy_le_bytes_to(&mut little), little),
+            (x.checked_copy_be_bytes_to(&mut big), big),
+          ]
+        })
+        .collect(),
+      bytes: (0..<$ty>::BYTES).map(|index| x.byte(index)).collect(),
+    }
+  }};
+}
+
+/// The [`SliceResults`] of `x` at the slices of `slices` through `IntegerBytes`.
+fn slices_through_traits<T: IntegerBytes>(x: &T, slices: &[Vec<u8>]) -> SliceResults<T> {
+  SliceResults {
+    reads: slices
+      .iter()
+      .map(|slice| {
+        let reversed: Vec<u8> = slice.iter().rev().copied().collect();
+        [
+          (
+            T::checked_from_le_slice(slice),
+            T::wrapping_from_le_slice(slice),
+          ),
+          (
+            T::checked_from_be_slice(&reversed),
+            T::wrapping_from_be_slice(&reversed),
+          ),
+        ]
+      })
+      .collect(),
+    copies: buffer_lengths(T::BYTES)
+      .into_iter()
+      .map(|len| {
+        let (mut little, mut big) = (vec![0xa5; len], vec![0xa5; len]);
+        [
+          (x.checked_copy_le_bytes_to(&mut little), little),
+          (x.checked_copy_be_bytes_to(&mut big), big),
+        ]
+      })
+      .collect(),
+    bytes: (0..T::BYTES).map(|index| x.byte(index)).collect(),
+  }
+}
+
+/// `from_le_bytes`, `from_be_bytes` and `from_ne_bytes` of the arrays of `$x`, a value of `$ty`
+/// of a width of whole bytes, and `swap_bytes`, `to_be`, `to_le`, `from_be` and `from_le` of it,
+/// through the inherent `const fn`s.
+macro_rules! whole_results {
+  ($ty:ty, $x:expr) => {{
+    let x: $ty = $x;
+    (
+      [
+        <$ty>::from_le_bytes(x.to_le_bytes()),
+        <$ty>::from_be_bytes(x.to_be_bytes()),
+        <$ty>::from_ne_bytes(x.to_ne_bytes()),
+      ],
+      order_results!($ty, x),
+    )
+  }};
+}
+
+/// `swap_bytes`, `to_be`, `to_le`, `from_be` and `from_le` of `$x`, a value of `$ty` of a width of
+/// whole bytes, through the inherent `const fn`s.
+macro_rules! order_results {
+  ($ty:ty, $x:expr) => {{
+    let x: $ty = $x;
+    [
+      x.swap_bytes(),
+      x.to_be(),
+      x.to_le(),
+      <$ty>::from_be(x),
+      <$ty>::from_le(x),
+    ]
+  }};
+}
+
+/// What `whole_results!` gives for `x`, through `FromByteArray` and `IntegerByteOrder`.
+fn whole_through_traits<T: FromByteArray + IntegerByteOrder + Copy>(x: &T) -> ([T; 3], [T; 5]) {
+  (
+    [
+      T::from_le_bytes(x.to_le_bytes()),
+      T::from_be_bytes(x.to_be_bytes()),
+      T::from_ne_bytes(x.to_ne_bytes()),
+    ],
+    order_through_traits(x),
+  )
+}
+
+/// What `order_results!` gives for `x`, through `IntegerByteOrder`.
+fn order_through_traits<T: IntegerByteOrder + Copy>(x: &T) -> [T; 5] {
+  [
+    x.swap_bytes(),
+    x.to_be(),
+    x.to_le(),
+    T::from_be(*x),
+    T::from_le(*x),
+  ]
+}
+
+/// Asserts that the arrays, the slices, the copies and the bytes of `$x`, a value of `$ty` whose
+/// pattern is `$p`, read in two's complement if `$signed`, through `ByteArray` and `IntegerBytes`
+/// give what the inherent `const fn`s give, at the slices of `bigint::byte_slices`.
+macro_rules! traits_agree {
+  ($ty:ty, $x:expr, $p:expr, $signed:expr) => {{
+    let (x, p): ($ty, &[bool]) = ($x, $p);
+    let slices = bigint::byte_slices(p, $signed);
+    assert_eq!(
+      array_results!($ty, x),
+      arrays_through_traits(&x),
+      "{}",
+      model::text(p)
+    );
+    assert_eq!(
+      slice_results!($ty, x, &slices),
+      slices_through_traits(&x, &slices),
+      "{}",
+      model::text(p)
+    );
+  }};
+}
+
 /// Checks the arrays, the slices, the copies and the bytes of `$ty`, of the sign `$sign` and of
-/// `$bits` bits, whose values `$from` creates from an `i128`, at each value of `$values`.
+/// `$bits` bits, whose values `$from` creates from an `i128`, at each value of `$values`, through
+/// the inherent `const fn`s against the bit model, and at the ends of the width through the traits
+/// against the inherent `const fn`s.
 macro_rules! sweep_bytes {
   ($sign:ident; $ty:ty, $bits:expr, $values:expr, $from:expr, $value:expr, $magnitude:expr) => {{
     let (bits, signed) = ($bits, is_signed!($sign));
     let from: fn(i128) -> $ty = $from;
     let read = |q: &[bool]| from(value_of(q, signed));
+    let ends = ends(bits, signed);
     for a in $values {
-      let p = pattern_of(a, bits);
-      check_arrays!($ty, from(a), &p, signed, read);
-      check_slices!($ty, from(a), &p, signed, read);
+      let (x, p) = (from(a), pattern_of(a, bits));
+      check_arrays!($ty, x, &p, signed, read);
+      check_slices!($ty, x, &p, signed, read);
+      if ends.contains(&a) {
+        traits_agree!($ty, x, &p, signed);
+      }
     }
   }};
 }
 
 /// Checks the conversions from arrays of whole bytes and the byte order of `$ty`, of the sign
 /// `$sign` and of `$bits` bits, a whole number of bytes, whose values `$from` creates from an
-/// `i128`, at each value of `$values`.
+/// `i128`, at each value of `$values`, through the inherent `const fn`s against the bit model,
+/// and at the ends of the width through the traits against the inherent `const fn`s.
 macro_rules! sweep_whole_bytes {
   ($sign:ident; $ty:ty, $bits:expr, $values:expr, $from:expr, $value:expr, $magnitude:expr) => {{
     let (bits, signed) = ($bits, is_signed!($sign));
     let from: fn(i128) -> $ty = $from;
     let read = |q: &[bool]| from(value_of(q, signed));
+    let ends = ends(bits, signed);
     for a in $values {
-      check_whole_arrays!($ty, from(a), read);
-      check_byte_order!($ty, from(a), &pattern_of(a, bits), read);
+      let x = from(a);
+      check_whole_arrays!($ty, x, read);
+      check_byte_order!($ty, x, &pattern_of(a, bits), read);
+      if ends.contains(&a) {
+        assert_eq!(
+          whole_results!($ty, x),
+          whole_through_traits(&x),
+          "{a} in {bits} bits"
+        );
+      }
     }
   }};
 }
@@ -477,6 +710,8 @@ macro_rules! bytes_agree {
         check_whole_arrays!(I, signed, |q: &[bool]| I::from_pattern(q));
         check_byte_order!(U, unsigned, p, |q: &[bool]| U::from_pattern(q));
         check_byte_order!(I, signed, p, |q: &[bool]| I::from_pattern(q));
+        assert_eq!(whole_results!(U, unsigned), whole_through_traits(&unsigned));
+        assert_eq!(whole_results!(I, signed), whole_through_traits(&signed));
       }
     })+
   }};
@@ -491,6 +726,8 @@ macro_rules! bytes_agree {
         check_arrays!(I, signed, p, true, |q: &[bool]| I::from_pattern(q));
         check_slices!(U, unsigned, p, false, |q: &[bool]| U::from_pattern(q));
         check_slices!(I, signed, p, true, |q: &[bool]| I::from_pattern(q));
+        traits_agree!(U, unsigned, p, false);
+        traits_agree!(I, signed, p, true);
       }
     })+
   }};
@@ -537,6 +774,18 @@ fn bytes_of_16384_bits() {
         check_slices!($int, signed, p, true, |q: &[bool]| <$int>::from_pattern(q));
         check_byte_order!($uint, unsigned, p, |q: &[bool]| <$uint>::from_pattern(q));
         check_byte_order!($int, signed, p, |q: &[bool]| <$int>::from_pattern(q));
+        let slices = bigint::byte_slices(p, false);
+        assert_eq!(
+          slice_results!($uint, unsigned, &slices),
+          slices_through_traits(&unsigned, &slices)
+        );
+        let slices = bigint::byte_slices(p, true);
+        assert_eq!(
+          slice_results!($int, signed, &slices),
+          slices_through_traits(&signed, &slices)
+        );
+        assert_eq!(order_results!($uint, unsigned), order_through_traits(&unsigned));
+        assert_eq!(order_results!($int, signed), order_through_traits(&signed));
       }
     })+};
   }
@@ -549,45 +798,40 @@ fn bytes_of_16384_bits() {
 
 /// `copy_le_bytes_to` and `copy_be_bytes_to` into a buffer shorter than the bytes of the value, and
 /// `byte` at an index of the number of bytes or more, panic in every build with their messages and
-/// report the caller, leaving the buffer unchanged, in native integers and arrays, at zero bits,
-/// where every index panics and every buffer is long enough, and above 8192 bits.
+/// report the caller, through the inherent `const fn`s and `IntegerBytes`, leaving the buffer
+/// unchanged, in native integers and arrays, at zero bits, where every index panics, and above 8192
+/// bits.
 #[test]
 fn short_buffers_and_byte_indexes_panic() {
   let le = "copy_le_bytes_to: the buffer is shorter than the bytes of the value".to_string();
   let be = "copy_be_bytes_to: the buffer is shorter than the bytes of the value".to_string();
   let index = "byte index out of range".to_string();
-  // A value, and a buffer one byte shorter than its bytes.
-  macro_rules! short {
+  // The copies of `$x`, a value of `$ty`, to a buffer one byte shorter than its bytes, and its byte
+  // at its number of bytes, one more and `usize::MAX`.
+  macro_rules! panics {
     ($ty:ty, $x:expr) => {{
       let x: $ty = $x;
-      (x, vec![0xa5; <$ty>::BYTES - 1])
+      let mut buf = vec![0xa5; <$ty>::BYTES - 1];
+      panics_here!(x.copy_le_bytes_to(&mut buf), le);
+      panics_here!(x.copy_be_bytes_to(&mut buf), be);
+      panics_here!(IntegerBytes::copy_le_bytes_to(&x, &mut buf), le);
+      panics_here!(IntegerBytes::copy_be_bytes_to(&x, &mut buf), be);
+      assert_eq!(buf, vec![0xa5; <$ty>::BYTES - 1]);
+      for k in [0, 1, usize::MAX - <$ty>::BYTES] {
+        panics_here!(x.byte(<$ty>::BYTES + k), index);
+        panics_here!(IntegerBytes::byte(&x, <$ty>::BYTES + k), index);
+      }
     }};
   }
   type Bytes = Int<U24, [u8; 3]>;
   type Wide = Uint<U16384, [u64; 256]>;
-  let (x, mut buf) = short!(u7, u7::MAX);
-  panics_here!(x.copy_le_bytes_to(&mut buf), le);
-  panics_here!(x.copy_be_bytes_to(&mut buf), be);
-  assert!(buf.is_empty());
-  let (x, mut buf) = short!(Bytes, Bytes::MIN);
-  panics_here!(x.copy_le_bytes_to(&mut buf), le);
-  panics_here!(x.copy_be_bytes_to(&mut buf), be);
-  assert_eq!(buf, [0xa5; 2]);
-  let (x, mut buf) = short!(i256, i256::MIN);
-  panics_here!(x.copy_le_bytes_to(&mut buf), le);
-  panics_here!(x.copy_be_bytes_to(&mut buf), be);
-  assert_eq!(buf, [0xa5; 31]);
-  let (x, mut buf) = short!(Wide, Wide::MAX);
-  panics_here!(x.copy_le_bytes_to(&mut buf), le);
-  panics_here!(x.copy_be_bytes_to(&mut buf), be);
-  assert_eq!(buf, vec![0xa5; 2047]);
-  for k in [0, 1, usize::MAX - 1] {
-    panics_here!(u7::MAX.byte(u7::BYTES.saturating_add(k)), index);
-    panics_here!(Bytes::MIN.byte(Bytes::BYTES.saturating_add(k)), index);
-    panics_here!(i256::MIN.byte(i256::BYTES.saturating_add(k)), index);
-    panics_here!(Wide::MAX.byte(Wide::BYTES.saturating_add(k)), index);
+  panics!(u7, u7::MAX);
+  panics!(Bytes, Bytes::MIN);
+  panics!(i256, i256::MIN);
+  panics!(Wide, Wide::MAX);
+  for k in [0, 1, usize::MAX] {
     panics_here!(u0::ZERO.byte(k), index);
-    panics_here!(Int::<U0, [u16; 1]>::ZERO.byte(k), index);
+    panics_here!(IntegerBytes::byte(&Int::<U0, [u16; 1]>::ZERO, k), index);
   }
 }
 
@@ -755,4 +999,236 @@ fn zero_bits_and_one_signed_bit() {
     })+};
   }
   one_signed_bit!(i1, Int<U1, [u16; 1]>, Int<U1, [u64; 1]>);
+}
+
+/// `IntegerBytes` needs only the storage trait, `UintRepr` or `IntRepr`, and `IntegerByteOrder` a
+/// storage that is also `Clone`, not one that holds the value inline, and `ByteArray` and
+/// `FromByteArray` add the bound of the array, whose `Bytes` reads as a slice: code bounded by them
+/// gives the results of the inherent `const fn`s, in native integers and arrays.
+#[test]
+fn byte_traits_need_no_inline_storage() {
+  fn unsigned<B: FitsBits<R>, R: UintRepr>(a: &Uint<B, R>) -> String {
+    let mut buf = [0xa5; 34];
+    let written = a.copy_le_bytes_to(&mut buf);
+    format!(
+      "{:?}",
+      (
+        a.byte(0),
+        Uint::<B, R>::checked_from_be_slice(&[1, 2]),
+        Uint::<B, R>::wrapping_from_le_slice(&[0xff; 40]),
+        written,
+        buf,
+      )
+    )
+  }
+
+  fn signed<B: FitsBits<R> + WholeBytes, R: IntRepr + Clone>(a: &Int<B, R>) -> String {
+    format!(
+      "{:?}",
+      (a.swap_bytes(), a.to_be(), Int::<B, R>::from_le(a.to_le()))
+    )
+  }
+
+  fn top<T: ByteArray>(a: &T) -> u8 {
+    a.to_be_bytes().as_ref()[0]
+  }
+
+  // The value with the lowest bit of its first byte flipped.
+  fn flipped<T: FromByteArray>(a: &T) -> T {
+    let mut bytes = a.to_le_bytes();
+    bytes.as_mut()[0] ^= 1;
+    T::from_le_bytes(bytes)
+  }
+
+  // The inherent results that the generic code must give.
+  macro_rules! unsigned_inherent {
+    ($ty:ty, $a:expr) => {{
+      let a: $ty = $a;
+      let mut buf = [0xa5; 34];
+      let written = a.copy_le_bytes_to(&mut buf);
+      format!(
+        "{:?}",
+        (
+          a.byte(0),
+          <$ty>::checked_from_be_slice(&[1, 2]),
+          <$ty>::wrapping_from_le_slice(&[0xff; 40]),
+          written,
+          buf,
+        )
+      )
+    }};
+  }
+  macro_rules! signed_inherent {
+    ($ty:ty, $a:expr) => {{
+      let a: $ty = $a;
+      format!(
+        "{:?}",
+        (a.swap_bytes(), a.to_be(), <$ty>::from_le(a.to_le()))
+      )
+    }};
+  }
+  type Bytes = Int<U24, i32>;
+  let four = u256::from_limbs([4, 0, 0, 0]);
+  assert_eq!(unsigned(&u7::new(5)), unsigned_inherent!(u7, u7::new(5)));
+  assert_eq!(unsigned(&four), unsigned_inherent!(u256, four));
+  assert_eq!(
+    signed(&Bytes::new(-2)),
+    signed_inherent!(Bytes, Bytes::new(-2))
+  );
+  assert_eq!(signed(&i256::MIN), signed_inherent!(i256, i256::MIN));
+  assert_eq!(
+    (top(&Uint::<U24>::new(0x01_0203)), top(&i7::new(-1))),
+    (1, 0xff)
+  );
+  assert_eq!(
+    flipped(&Uint::<U24>::new(0x01_0203)),
+    Uint::<U24>::new(0x01_0202)
+  );
+  assert_eq!(
+    flipped(&Int::<U16, [u8; 2]>::from_limbs([0, 0x80])),
+    Int::<U16, [u8; 2]>::from_limbs([1, 0x80])
+  );
+}
+
+/// The slices at which code over the width reads its values.
+const OVER_THE_WIDTH: [&[u8]; 3] = [&[], &[0x80], &[0xff, 0x7f, 1]];
+
+/// The bytes of `a` and `b` through `IntegerBytes` and `ByteArray`, as text, in code over
+/// `B: BitWidth` with the bound of the arrays, which every width up to 8192 bits meets.
+fn bytes_over_the_width<B: BitWidth>(a: Uint<B>, b: Int<B>) -> Vec<String>
+where
+  Uint<B>: ByteArray,
+  Int<B>: ByteArray,
+{
+  let mut buf = [0xa5; 130];
+  let written = (
+    a.copy_be_bytes_to(&mut buf),
+    b.checked_copy_le_bytes_to(&mut buf[1..]),
+  );
+  vec![
+    format!(
+      "{:?}",
+      (
+        a.to_le_bytes().as_ref(),
+        a.to_be_bytes().as_ref(),
+        b.to_le_bytes().as_ref(),
+        b.to_ne_bytes().as_ref(),
+      )
+    ),
+    format!(
+      "{:?}",
+      (
+        Uint::<B>::checked_from_le_bytes(a.to_le_bytes()),
+        Int::<B>::checked_from_be_bytes(b.to_be_bytes()),
+      )
+    ),
+    format!(
+      "{:?}",
+      OVER_THE_WIDTH.map(|slice| (
+        Uint::<B>::checked_from_le_slice(slice),
+        Int::<B>::wrapping_from_be_slice(slice)
+      ))
+    ),
+    format!("{written:?} {buf:?}"),
+    format!(
+      "{:?}",
+      (0..Uint::<B>::BYTES)
+        .map(|index| a.byte(index))
+        .collect::<Vec<_>>()
+    ),
+  ]
+}
+
+/// The byte order of `a` and `b` through `IntegerByteOrder`, as text, in code over `B: BitWidth`
+/// at a width of whole bytes.
+fn order_over_the_width<B: BitWidth + WholeBytes>(a: Uint<B>, b: Int<B>) -> String {
+  format!(
+    "{:?}",
+    (
+      a.swap_bytes(),
+      a.to_be(),
+      b.to_le(),
+      Uint::<B>::from_be(a),
+      Int::<B>::from_le(b),
+    )
+  )
+}
+
+/// Code over `B: BitWidth` reaches the bytes of `Uint<B>` and `Int<B>` through `IntegerBytes`,
+/// their arrays through `ByteArray` with the bound of the arrays, and at a width of whole bytes
+/// their byte order through `IntegerByteOrder` with `B: WholeBytes`: they give the results of the
+/// inherent `const fn`s of the default storages, at widths of each kind of default storage, at
+/// zero, the limits and values that wrap from them. Under Miri, at 0, 7, 65 and 129 bits.
+#[test]
+fn bytes_over_the_width_match_the_default_storages() {
+  macro_rules! agrees {
+    ($($width:ident),+ $(,)?) => {$({
+      type U = Uint<$width>;
+      type I = Int<$width>;
+      for (a, b) in [
+        (U::ZERO, I::ZERO),
+        (U::MAX, I::MIN),
+        (U::MAX.wrapping_mul(&U::MAX), I::MAX),
+        (U::MAX.wrapping_add(&U::MAX), I::MIN.wrapping_sub(&I::MAX)),
+      ] {
+        let mut buf = [0xa5; 130];
+        let written = (
+          a.copy_be_bytes_to(&mut buf),
+          b.checked_copy_le_bytes_to(&mut buf[1..]),
+        );
+        let inherent = vec![
+          format!(
+            "{:?}",
+            (
+              &a.to_le_bytes()[..],
+              &a.to_be_bytes()[..],
+              &b.to_le_bytes()[..],
+              &b.to_ne_bytes()[..],
+            )
+          ),
+          format!(
+            "{:?}",
+            (
+              U::checked_from_le_bytes(a.to_le_bytes()),
+              I::checked_from_be_bytes(b.to_be_bytes()),
+            )
+          ),
+          format!(
+            "{:?}",
+            OVER_THE_WIDTH.map(|slice| (
+              U::checked_from_le_slice(slice),
+              I::wrapping_from_be_slice(slice)
+            ))
+          ),
+          format!("{written:?} {buf:?}"),
+          format!(
+            "{:?}",
+            (0..U::BYTES).map(|index| a.byte(index)).collect::<Vec<_>>()
+          ),
+        ];
+        assert_eq!(bytes_over_the_width::<$width>(a, b), inherent, "{a} and {b}");
+      }
+    })+};
+  }
+  // The byte order at a width of whole bytes.
+  macro_rules! order_agrees {
+    ($($width:ident),+ $(,)?) => {$({
+      type U = Uint<$width>;
+      type I = Int<$width>;
+      for (a, b) in [(U::ZERO, I::ZERO), (U::MAX, I::MIN), (U::MAX.wrapping_mul(&U::MAX), I::MAX)] {
+        let inherent = format!(
+          "{:?}",
+          (a.swap_bytes(), a.to_be(), b.to_le(), U::from_be(a), I::from_le(b))
+        );
+        assert_eq!(order_over_the_width::<$width>(a, b), inherent, "{a} and {b}");
+      }
+    })+};
+  }
+
+  agrees!(U0, U7, U65, U129);
+  order_agrees!(U0, U8, U128);
+  if !tier().is_miri() {
+    agrees!(U1, U8, U64, U128, U200, U1024);
+    order_agrees!(U64, U200, U1024);
+  }
 }

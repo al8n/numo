@@ -432,11 +432,12 @@ pub use decimal::{
   SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 pub use integer::{
-  ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,
-  FixedNonZero, FromLimbs, Int, IntegerBits, IntegerMath, IntegerNonZero, IntegerOne,
-  NativeInteger, NonZeroInt, NonZeroLimits, NonZeroOf, NonZeroUint, OverflowingOps, SaturatingOps,
-  SignedBits, SignedFixedInteger, SignedMath, SignedNonZero, StrictOps, TryNewError, Uint,
-  UncheckedOps, UnsignedBits, UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WrappingOps,
+  ArrayInteger, ByteArray, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits,
+  FixedInteger, FixedNonZero, FromByteArray, FromLimbs, Int, IntegerBits, IntegerByteOrder,
+  IntegerBytes, IntegerMath, IntegerNonZero, IntegerOne, NativeInteger, NonZeroInt, NonZeroLimits,
+  NonZeroOf, NonZeroUint, OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger,
+  SignedMath, SignedNonZero, StrictOps, TryNewError, Uint, UncheckedOps, UnsignedBits,
+  UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,
