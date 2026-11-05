@@ -149,7 +149,12 @@
 //! fills its limbs, and `checked_from_limbs`, which checks that the limbs hold a value of `Bits`
 //! bits, and `to_limbs` and `as_limbs` return the limbs. Its `const fn` queries are `is_zero` and
 //! `is_one`, and for `Int` also `is_negative` and `is_positive`. Values compare, hash and format by
-//! their numeric value, alike in every storage.
+//! their numeric value, alike in every storage. Their text is that of the native integers at the
+//! width: `from_str_radix`, a `const fn` for the radixes 2 to 36, and `FromStr` parse it with the
+//! native error, [`core::num::ParseIntError`], `Display` writes decimal, the radix formats `{:b}`,
+//! `{:o}`, `{:x}` and `{:X}` write a negative `Int` in the two's complement of its `Bits` bits, and
+//! the exponent formats `{:e}` and `{:E}` round half to even at a precision (see
+//! [Text](Uint#text)).
 //!
 //! Each type also has the arithmetic of the native integers at its width, as `const fn`s:
 //! addition, subtraction, multiplication, negation, division, remainder and exponentiation in the
@@ -171,9 +176,10 @@
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,
-//! `is_one`, the operators and the functions `zero`, `min_value` and `max_value`, and
-//! [`IntegerOne`], with `one`, requires `Clone` but not `Copy`; its functions return the inherent
-//! constants `ZERO`, `MIN`, `MAX` and `ONE`. The const layer, [`ConstFixedInteger`] and
+//! `is_one`, the operators, the text and the functions `zero`, `min_value`, `max_value` and
+//! `from_str_radix`, and [`IntegerOne`], with `one`, requires `Clone` but not `Copy`; its functions
+//! `zero`, `min_value`, `max_value` and `one` return the inherent constants `ZERO`, `MIN`, `MAX`
+//! and `ONE`. The const layer, [`ConstFixedInteger`] and
 //! [`ConstIntegerOne`], adds `Copy` and these constants, which a generic `const fn` can read.
 //! [`UnsignedFixedInteger`] and [`SignedFixedInteger`] have the methods of each sign, the families
 //! [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`], [`StrictOps`] and
@@ -227,6 +233,11 @@
 //! assert_eq!(SMALL.count_ones(), 3);
 //! assert_eq!(SMALL << 1u32, u7::new(72));
 //! assert_eq!(SMALL.checked_shl(7), None);
+//!
+//! // The text of 7 bits, in which 128 overflows.
+//! assert_eq!(format!("{SMALL:#b} {SMALL:x} {SMALL:e}"), "0b1100100 64 1e2");
+//! assert_eq!(u7::from_str_radix("64", 16), Ok(SMALL));
+//! assert!("128".parse::<u7>().is_err());
 //!
 //! // Generic code over the width alone.
 //! fn zero_values<B: BitWidth>(values: &[Int<B>]) -> usize {

@@ -115,6 +115,16 @@ mod sealed {
 /// assert_eq!(total::<Int<U7>>(&[]), <Int<U7> as FixedInteger>::zero());
 /// assert_eq!(largest(&[Int::<U7>::new(-20), Int::<U7>::new(30)]), Int::<U7>::new(30));
 /// assert_eq!(largest::<Int<U7>>(&[]), Int::<U7>::MIN);
+///
+/// // The text: the digits of a radix, read back in two formats.
+/// fn hex<T: FixedInteger>(text: &str) -> Option<String> {
+///   T::from_str_radix(text, 16).ok().map(|value| format!("{value:#x} {value:e}"))
+/// }
+///
+/// assert_eq!(hex::<Uint<U7>>("7f").as_deref(), Some("0x7f 1.27e2"));
+/// assert_eq!(hex::<Int<U7>>("-40").as_deref(), Some("0x40 -6.4e1"));
+/// assert_eq!(hex::<Uint<U7>>("80"), None);
+/// assert_eq!("-64".parse::<Int<U7>>(), Ok(Int::<U7>::MIN));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.

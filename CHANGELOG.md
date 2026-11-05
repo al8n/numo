@@ -18,7 +18,8 @@ FEATURES
   - Scientific notation through `LowerExp` and `UpperExp`, `{:e}` and `{:E}`: the significant
     digits with the point after the first, and the exponent, as in `6.42505e4`, with zero as `0e0`.
     The flags work as for `Display`, and the precision is the minimum number of mantissa fraction
-    digits, so it never rounds, unlike the precision of the primitive types.
+    digits, so it never rounds, unlike the precision of the primitive types and of `Uint` and
+    `Int`.
   - Unsigned storages from `u8` to `u128`, named explicitly (`u64` holds 19 digits, one more than
     `i64`): values are never negative, parsing reports a negative number as
     `ParseErrorKind::Negative`, and `checked_sub` returns `None` below zero. The product of two
@@ -137,6 +138,21 @@ FEATURES
     storage writes the same 64-bit words, a native integer those of a one-limb array. Decimal
     `Display` and `Debug`, the latter also under the hexadecimal flags, and `Default`, which is
     zero.
+  - The text of the native integers at the width `Bits`. `from_str_radix`, a `const fn` of every
+    storage for the radixes 2 to 36, and `FromStr`, for decimal, read an optional `+`, or `-` for
+    `Int`, then ASCII digits and letters of either case below the radix, with no whitespace, `_`
+    or prefix, and at zero bits every spelling of zero. They return the error of the native
+    integers, `core::num::ParseIntError`, with its kinds in the native order: a byte that is not a
+    digit is `InvalidDigit`, unless the digits before it already pass the range of `Bits`, which is
+    `PosOverflow` or `NegOverflow`, whatever the storage holds. A radix outside 2 to 36 panics in
+    every build, reporting the caller. In a constant, a width above the default storages, or above
+    about 16384 bits in `u8` limbs, may need `#[allow(long_running_const_eval)]`.
+  - The radix formats `Binary`, `Octal`, `LowerHex` and `UpperHex`, which write the digits of a
+    `Uint` and the two's complement of the `Bits` bits of an `Int`, whatever the storage holds
+    above them, and the exponent formats `LowerExp` and `UpperExp`, whose precision rounds the
+    digits after the first half to even, as the native integers do. Every flag works as for the
+    native integers, and no format allocates: a native storage writes as its native integer, and
+    an array writes its radix digits through a buffer of 64 bytes.
   - The arithmetic of the native integers at the width `Bits`, as `const fn`s of every storage:
     `overflowing_*`, `checked_*`, `wrapping_*` and `strict_*` addition, subtraction, multiplication
     and negation, and `saturating_*` addition, subtraction and multiplication; `carrying_add` and
@@ -253,12 +269,16 @@ FEATURES
     `let y: u256 = Uint::MAX;` and `Uint::MAX` passed for a parameter of a concrete type compile,
     while `Uint::<U7, _>::MAX` with no expected type needs a type annotation (E0283). Each storage
     has constructors of its own, so a constructor that leaves the storage to inference is ambiguous
-    (E0034): `Uint::new(5)`, `Uint::from_limbs(..)` and `Uint::checked_from_limbs(..)` with only an
-    expected type. Naming the width for the default storage, as in `Uint::<U7>::new(5)` or
-    `Uint::<U200>::MAX`, the full type, or an alias, as in `u7::new(5)`, resolves it.
+    (E0034): `Uint::new(5)`, `Uint::from_limbs(..)`, `Uint::checked_from_limbs(..)` and
+    `Uint::from_str_radix(..)` with only an expected type. Naming the width for the default
+    storage, as in `Uint::<U7>::new(5)` or `Uint::<U200>::MAX`, the full type, or an alias, as in
+    `u7::new(5)`, resolves it.
   - The sealed traits of an integer type in two layers, each with one implementation for every
     storage of a kind. The general layer requires `Clone` but not `Copy`: `FixedInteger`, with
-    `BITS`, `zero`, `min_value`, `max_value` and `is_zero`, and `IntegerOne`, with `one`. Its
+    `BITS`, `zero`, `min_value`, `max_value`, `is_zero` and `from_str_radix`, and with
+    `FromStr<Err = ParseIntError>`, the radix formats and the exponent formats as supertraits, so
+    that code bounded by `FromStr<Err = ParseIntError>` takes the native integers and these alike,
+    and `IntegerOne`, with `one`. Its
     functions `zero`, `min_value`, `max_value` and `one` return the inherent constants `ZERO`,
     `MIN`, `MAX` and `ONE`. The const layer also requires `Copy` and has these constants, which a
     generic `const fn` can read: `ConstFixedInteger`, with `ZERO`, `MIN` and `MAX`, and

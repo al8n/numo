@@ -50,7 +50,11 @@ impl<B: FitsBits<R>, R: IntRepr> FromStr for Int<B, R> {
 macro_rules! text_formats {
   ($($trait:ident: $shift:literal, $upper:literal, $digits:literal);+ $(;)?) => {$(
     impl<B, R: UintRepr> fmt::$trait for Uint<B, R> {
-      #[doc = concat!("Writes the value in ", $digits, ", honoring `+`, the prefix of `#`, width,")]
+      #[doc = concat!(
+        "Writes the value in ",
+        $digits,
+        ", honoring `+`, the prefix of `#`, width,"
+      )]
       /// fill, alignment and `0` as the native integers do, and ignoring the precision. A native
       /// storage writes as its native integer does, and an array writes its digits from the
       /// limbs, through a buffer of 64 bytes, in time linear in the digits.
@@ -61,7 +65,11 @@ macro_rules! text_formats {
     }
 
     impl<B: FitsBits<R>, R: IntRepr> fmt::$trait for Int<B, R> {
-      #[doc = concat!("Writes the `Bits` bits of the value, its two's complement, in ", $digits, ",")]
+      #[doc = concat!(
+        "Writes the `Bits` bits of the value, its two's complement, in ",
+        $digits,
+        ","
+      )]
       /// as the native integers write the bits of their width: a negative value writes the digits
       /// of `2^Bits` plus the value, whatever the storage holds above the width. The flags are
       /// those of [`Uint`].
@@ -73,7 +81,11 @@ macro_rules! text_formats {
   )+};
   ($(exp $trait:ident: $upper:literal, $marker:literal);+ $(;)?) => {$(
     impl<B, R: UintRepr> fmt::$trait for Uint<B, R> {
-      #[doc = concat!("Writes the value in scientific notation with `", $marker, "`, as the native")]
+      #[doc = concat!(
+        "Writes the value in scientific notation with `",
+        $marker,
+        "`, as the native"
+      )]
       /// integers do: the first digit and, after a point, the other digits without their trailing
       /// zeros, then the exponent; a precision gives exactly that many digits after the point,
       /// zeros added or the digits rounded half to even, which can carry into the exponent. Width,
@@ -87,7 +99,11 @@ macro_rules! text_formats {
     }
 
     impl<B, R: IntRepr> fmt::$trait for Int<B, R> {
-      #[doc = concat!("Writes the value in scientific notation with `", $marker, "`, as for [`Uint`],")]
+      #[doc = concat!(
+        "Writes the value in scientific notation with `",
+        $marker,
+        "`, as for [`Uint`],"
+      )]
       /// with `-` before a negative value.
       #[inline]
       fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

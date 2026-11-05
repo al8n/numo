@@ -113,8 +113,8 @@ mod traits;
 ///
 /// The width cannot be inferred from the limbs, nor the storage from the expected type, so
 /// construction names the alias, the width for the default storage, or the full type, for example
-/// `u7::new(100)`, `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)` or
-/// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+/// `u7::new(100)`, `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)`,
+/// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)` or `u7::from_str_radix("7f", 16)`.
 ///
 /// # Arithmetic
 ///
@@ -212,6 +212,70 @@ mod traits;
 /// assert_eq!(top.trailing_zeros(), 199);
 /// const LOW: u7 = u7::MAX.bitand(u7::new(0b11));
 /// assert_eq!(LOW, u7::new(3));
+/// ```
+///
+/// # Text
+///
+/// [`from_str_radix`](Self::from_str_radix), a `const fn` of each storage, and `FromStr`, which
+/// reads decimal digits, parse the text of the native `from_str_radix` at the width `Bits`: an
+/// optional `+`, then one or more ASCII digits and letters of either case below the radix, from 2
+/// to 36, and nothing else, so no whitespace, `_` or prefix such as `0x`. They return the error of
+/// the native integers, [`core::num::ParseIntError`], whose
+/// [`kind`](core::num::ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a
+/// byte that is not a digit of the radix, a lone sign or `-`, which is no sign of `Uint`, and
+/// `PosOverflow` for digits above `MAX`. They
+/// read from the left, as the native parser does: a byte that is not a digit is `InvalidDigit`,
+/// unless the digits before it already exceed `MAX`, which is `PosOverflow`. The range is that of
+/// `Bits`, not of the storage, so `"200"` overflows [`u7`](crate::u7) although its `u8` holds 200,
+/// and zero bits read every spelling of zero, such as `"0"`, `"+0"` and `"00"`, and nothing else. A
+/// radix outside 2 to 36 panics in every build, reporting the caller. In a constant, a width above
+/// the default storages, or above about 16384 bits in `u8` limbs, may need
+/// `#[allow(long_running_const_eval)]` on the constant.
+///
+/// `Display` and `Debug` write decimal, `Debug` also under `{:x?}` and `{:X?}`, whose flags the
+/// standard library does not expose. The radix formats `Binary`, `Octal`, `LowerHex` and
+/// `UpperHex` write the digits of the value, and the exponent formats `LowerExp` and `UpperExp` its
+/// scientific notation, both with every flag as the native integers have it: in particular, the
+/// precision of `{:e}` rounds the digits after the first half to even, which
+/// [`Decimal`](crate::Decimal) never does. Nothing allocates: a native storage writes as its native
+/// integer does, and an array writes its radix digits through a buffer of 64 bytes and its decimal
+/// digits through the buffer of `Display`.
+///
+/// ```
+/// use core::num::IntErrorKind;
+///
+/// use numo::{
+///   Uint,
+///   typenum::{U12, U200},
+///   u7,
+/// };
+///
+/// assert_eq!(u7::from_str_radix("7f", 16), Ok(u7::MAX));
+/// assert_eq!("+100".parse::<u7>(), Ok(u7::new(100)));
+/// // 200 needs 8 bits, which the digits before the byte that is not a digit decide first.
+/// let kind = |text: &str| *u7::from_str_radix(text, 10).unwrap_err().kind();
+/// assert_eq!(kind("200x"), IntErrorKind::PosOverflow);
+/// assert_eq!(kind("26x"), IntErrorKind::InvalidDigit);
+/// assert_eq!(kind("1_0"), IntErrorKind::InvalidDigit);
+/// assert_eq!(kind(""), IntErrorKind::Empty);
+/// const HEX: u7 = match u7::from_str_radix("64", 16) {
+///   Ok(value) => value,
+///   Err(_) => panic!("100 has 7 bits"),
+/// };
+/// assert_eq!(HEX, u7::new(100));
+///
+/// assert_eq!(format!("{:#x} {:o} {:010b}", HEX, HEX, u7::new(5)), "0x64 144 0000000101");
+/// assert_eq!(format!("{:e} {:.0e}", HEX, u7::new(125)), "1e2 1e2");
+/// // The precision rounds half to even, also in an array of limbs.
+/// assert_eq!(format!("{:.1e}", Uint::<U12>::new(1250)), "1.2e3");
+/// assert_eq!(format!("{:.1e}", Uint::<U12>::new(1350)), "1.4e3");
+/// type U200x4 = Uint<U200, [u64; 4]>;
+/// let max = U200x4::MAX;
+/// assert_eq!(format!("{max:x}"), "ff".repeat(25));
+/// assert_eq!(U200x4::from_str_radix(&format!("{max:x}"), 16), Ok(max));
+/// assert_eq!(format!("{max:.3e}"), "1.607e60");
+/// assert_eq!(format!("{:.1e}", U200x4::from_str_radix("1250", 10)?), "1.2e3");
+/// # Ok::<(), core::num::ParseIntError>(())
 /// ```
 ///
 /// # Overflow
@@ -322,8 +386,8 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 ///
 /// The width cannot be inferred from the limbs, nor the storage from the expected type, so
 /// construction names the alias, the width for the default storage, or the full type, for example
-/// `i7::new(-5)`, `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)` or
-/// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+/// `i7::new(-5)`, `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)`,
+/// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)` or `i7::from_str_radix("-40", 16)`.
 ///
 /// # Arithmetic
 ///
@@ -389,6 +453,34 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// let mut value = i7::ZERO;
 /// value.set_bit(6, true);
 /// assert_eq!(value, i7::MIN);
+/// ```
+///
+/// # Text
+///
+/// The text is that of [`Uint`], with `-` as well as `+` before the digits, and `NegOverflow` for
+/// digits after `-` below `MIN`; `-0` is zero, also at zero bits. The radix formats write the two's
+/// complement of the value in its `Bits` bits, as the native integers write the bits of their
+/// width: -1 of 7 bits writes `1111111` and `7f`, whatever the storage holds above the width, so
+/// `Int<U7, i8>` and `Int<U7, [u64; 1]>` write the same text. That text reads back as the [`Uint`]
+/// of the same width, through [`cast_unsigned`](Self::cast_unsigned); `from_str_radix` of `Int`
+/// reads `-` and the digits of the magnitude. The exponent formats write `-` before a negative
+/// value.
+///
+/// ```
+/// use core::num::IntErrorKind;
+///
+/// use numo::{Int, i7, typenum::U7, u7};
+///
+/// assert_eq!(i7::from_str_radix("-40", 16), Ok(i7::MIN));
+/// assert_eq!("-0".parse::<i7>(), Ok(i7::ZERO));
+/// assert_eq!(*"-65".parse::<i7>().unwrap_err().kind(), IntErrorKind::NegOverflow);
+///
+/// // The two's complement of 7 bits, in every storage.
+/// let minus_one = i7::new(-1);
+/// assert_eq!(format!("{minus_one:b} {minus_one:#x}"), "1111111 0x7f");
+/// assert_eq!(format!("{:x}", Int::<U7, [u64; 1]>::MIN), "40");
+/// assert_eq!(u7::from_str_radix(&format!("{minus_one:x}"), 16), Ok(minus_one.cast_unsigned()));
+/// assert_eq!(format!("{:e} {:.0e}", i7::MIN, i7::new(-35)), "-6.4e1 -4e1");
 /// ```
 ///
 /// # Overflow

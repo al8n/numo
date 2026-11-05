@@ -30,7 +30,7 @@ take their operands by value, as the native casts and the methods of the operato
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, formatting, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, and generic traits |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, and generic traits |
 | `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the methods of the native `NonZero` integers, the division of `Uint` by `NonZeroUint`, which cannot panic, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
@@ -237,11 +237,19 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   assignments work for every storage; a shift amount that is `Bits` or more, or negative, overflows
   as the native shifts do, and `bitand`, `bitor`, `bitxor` and `not` serve constant contexts.
 - Numeric equality, ordering and hashing, where the hash depends only on the value and `Bits`,
-  whatever the storage, decimal formatting, and `Default`, which is zero.
+  whatever the storage, and `Default`, which is zero.
+- The text of the native integers at the width `Bits`: `from_str_radix`, a `const fn` for the
+  radixes 2 to 36, and `FromStr` read an optional sign and digits, with the error of the native
+  integers, `core::num::ParseIntError`, and reject a value outside the range of `Bits`, whatever
+  the storage holds. `Display` and `Debug` write decimal, `{:b}`, `{:o}`, `{:x}` and `{:X}` write
+  the digits of a `Uint` and the two's complement of the `Bits` bits of an `Int`, and `{:e}` and
+  `{:E}` write scientific notation, rounding half to even at a precision, all with the flags of the
+  native integers and without allocation.
 - Traits with one implementation for every storage of a kind, for generic code, in two layers. The
   general layer requires `Clone` but not `Copy`: `FixedInteger`, with `zero()`, `min_value()`,
-  `max_value()`, `is_zero`, `is_one` and the operators, and `IntegerOne`, with `one()`; these
-  functions return the constants `ZERO`, `MIN`, `MAX` and `ONE`. The const layer,
+  `max_value()`, `is_zero`, `is_one`, the operators, `FromStr`, the formats and
+  `from_str_radix()`, and `IntegerOne`, with `one()`; `zero()`, `min_value()`, `max_value()` and
+  `one()` return the constants `ZERO`, `MIN`, `MAX` and `ONE`. The const layer,
   `ConstFixedInteger` and `ConstIntegerOne`, adds `Copy` and the constants themselves, which a
   generic `const fn` can read. `UnsignedFixedInteger` and `SignedFixedInteger` have the methods of
   each sign, `NativeInteger`, `ArrayInteger` and `FromLimbs` the construction of each kind, the
