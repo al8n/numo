@@ -1072,6 +1072,45 @@ macro_rules! limb_layer_tests {
       assert_eq!(checked_ilog10(&NONE), None);
       assert_eq!(checked_ilog(&NONE, &NONE), None);
     }
+
+    limb_layer_tests!(@bits false, cast_signed_bits);
+
+    /// A shift whose whole-limb offset does not fit in 16 bits leaves nothing of a value, as the
+    /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
+    #[test]
+    fn shifts_by_offsets_wider_than_16_bits_clear_the_value() {
+      fn check<const N: usize>() {
+        let width = B * N as u32;
+        for shift in [B << 16, (B << 16) + 1, u32::MAX, width] {
+          assert_eq!(shift_left(&[1; N], shift), [0; N], "<< {shift}");
+          assert_eq!(shift_right(&[Limb::MAX; N], shift), [0; N], ">> {shift}");
+        }
+      }
+      check::<1>();
+      check::<3>();
+    }
+
+    /// Checks the count of ones and the shifts of whole limbs on `p`, a pattern of `B * N` bits,
+    /// against the bit model, at each amount of `shifts`.
+    fn check_whole_limbs<const N: usize>(p: &[bool], shifts: &[u32]) {
+      let limbs = |pattern: &[bool]| bigint::limbs_of_pattern::<Limb, N>(pattern, false);
+      let x = limbs(p);
+      assert_eq!(count_ones(&x), model::count_ones(p), "{}", model::text(p));
+      for &shift in shifts {
+        assert_eq!(
+          shift_left(&x, shift),
+          limbs(&model::shl(p, shift)),
+          "{} << {shift}",
+          model::text(p)
+        );
+        assert_eq!(
+          shift_right(&x, shift),
+          limbs(&model::shr(p, shift, false)),
+          "{} >> {shift}",
+          model::text(p)
+        );
+      }
+    }
   };
   (signed unsigned: $unsigned:ident) => {
     use core::cmp::Ordering;
@@ -1838,6 +1877,246 @@ macro_rules! limb_layer_tests {
       division_by_minus_one::<2>();
       division_by_minus_one::<3>();
       division_by_minus_one::<8>();
+    }
+
+    limb_layer_tests!(@bits true, cast_unsigned_bits);
+
+    /// A shift whose whole-limb offset does not fit in 16 bits leaves the sign alone, as the
+    /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
+    #[test]
+    fn shifts_by_offsets_wider_than_16_bits_leave_the_sign() {
+      fn check<const N: usize>() {
+        let width = B * N as u32;
+        for shift in [B << 16, (B << 16) + 1, u32::MAX, width] {
+          assert_eq!(sar(&[Limb::MAX; N], shift), [Limb::MAX; N], ">> {shift}");
+          assert_eq!(sar(&[1; N], shift), [0; N], ">> {shift}");
+        }
+      }
+      check::<1>();
+      check::<3>();
+    }
+
+    /// Checks the arithmetic shift of whole limbs on `p`, a pattern of `B * N` bits in two's
+    /// complement, against the bit model, at each amount of `shifts`.
+    fn check_whole_limbs<const N: usize>(p: &[bool], shifts: &[u32]) {
+      let x = bigint::limbs_of_pattern::<Limb, N>(p, true);
+      for &shift in shifts {
+        assert_eq!(
+          sar(&x, shift),
+          bigint::limbs_of_pattern::<Limb, N>(&model::shr(p, shift, true), true),
+          "{} >> {shift}",
+          model::text(p)
+        );
+      }
+    }
+  };
+  // The tests of the bit operations, which every instance shares, after the imports of its arm:
+  // `$signed` is whether the layer reads the limbs in two's complement, and `$cast` the function
+  // that reads its values with the other sign.
+  (@bits $signed:literal, $cast:ident) => {
+    use crate::bigint::model;
+
+    /// Checks every function of a width of the layer that the bit operations use on `p`, a pattern
+    /// of its width held in `N` limbs, against the bit model: the queries, the reversal and the
+    /// cast to the other sign, at each amount of `amounts` the rotations, the shifts and the bit
+    /// at that index, read, set and cleared, and the operations on two values with `q`, a pattern
+    /// of the same width.
+    fn check_bits<const N: usize>(p: &[bool], q: &[bool], amounts: &[u32]) {
+      let width = model::width(p);
+      let limbs = |pattern: &[bool]| bigint::limbs_of_pattern::<Limb, N>(pattern, $signed);
+      let (x, y) = (limbs(p), limbs(q));
+      let text = || model::text(p);
+      let pair = || (model::text(p), model::text(q));
+      assert_eq!(and(&x, &y), limbs(&model::and(p, q)), "{:?}", pair());
+      assert_eq!(or(&x, &y), limbs(&model::or(p, q)), "{:?}", pair());
+      assert_eq!(xor(&x, &y), limbs(&model::xor(p, q)), "{:?}", pair());
+      assert_eq!(not_bits(&x, width), limbs(&model::not(p)), "!{}", text());
+      assert_eq!(
+        count_ones_bits(&x, width),
+        model::count_ones(p),
+        "{}",
+        text()
+      );
+      assert_eq!(
+        [
+          leading_zeros_bits(&x, width),
+          trailing_zeros_bits(&x, width),
+          leading_ones_bits(&x, width),
+          trailing_ones_bits(&x, width),
+        ],
+        [
+          model::leading_zeros(p),
+          model::trailing_zeros(p),
+          model::leading_ones(p),
+          model::trailing_ones(p),
+        ],
+        "{}",
+        text()
+      );
+      let (highest, lowest) = (model::highest_one(p), model::lowest_one(p));
+      assert_eq!(
+        (highest_one_bits(&x, width), lowest_one(&x)),
+        (highest, lowest),
+        "{}",
+        text()
+      );
+      assert_eq!(
+        (
+          isolate_highest_one_bits(&x, width),
+          isolate_lowest_one_bits(&x, width)
+        ),
+        (
+          limbs(&model::only(width, highest)),
+          limbs(&model::only(width, lowest))
+        ),
+        "{}",
+        text()
+      );
+      assert_eq!(
+        reverse_bits_bits(&x, width),
+        limbs(&model::reverse(p)),
+        "{}",
+        text()
+      );
+      assert_eq!(
+        $cast(&x, width),
+        bigint::limbs_of_pattern::<Limb, N>(p, !$signed),
+        "{}",
+        text()
+      );
+      for &n in amounts {
+        assert_eq!(
+          (rotate_left_bits(&x, n, width), rotate_right_bits(&x, n, width)),
+          (
+            limbs(&model::rotate_left(p, n)),
+            limbs(&model::rotate_right(p, n))
+          ),
+          "{} rotated by {n}",
+          text()
+        );
+        let (left, left_overflow) = model::overflowing_shl(p, n);
+        let (right, right_overflow) = model::overflowing_shr(p, n, $signed);
+        assert_eq!(
+          (
+            overflowing_shl_bits(&x, n, width),
+            overflowing_shr_bits(&x, n, width)
+          ),
+          (
+            (limbs(&left), left_overflow),
+            (limbs(&right), right_overflow)
+          ),
+          "{} shifted by {n}",
+          text()
+        );
+        assert_eq!(
+          (
+            unbounded_shl_bits(&x, n, width),
+            unbounded_shr_bits(&x, n, width)
+          ),
+          (limbs(&model::shl(p, n)), limbs(&model::shr(p, n, $signed))),
+          "{} shifted by {n}",
+          text()
+        );
+        assert_eq!(
+          (shl_exact_bits(&x, n, width), shr_exact_bits(&x, n, width)),
+          (
+            model::shl_exact(p, n, $signed).map(|shifted| limbs(&shifted)),
+            model::shr_exact(p, n, $signed).map(|shifted| limbs(&shifted))
+          ),
+          "{} shifted exactly by {n}",
+          text()
+        );
+        assert_eq!(bit(&x, n, width), model::bit(p, n), "bit {n} of {}", text());
+        for set in [false, true] {
+          assert_eq!(
+            with_bit(&x, n, set, width),
+            model::with_bit(p, n, set).map(|changed| limbs(&changed)),
+            "bit {n} of {} set to {set}",
+            text()
+          );
+        }
+      }
+    }
+
+    /// Checks the functions of a width of `N` limbs against the bit model at each width of
+    /// `widths`, or under Miri at 0, 1, `B` and `B * N` bits, and each pattern of
+    /// `bigint::bit_patterns_by` cut to the width, or the patterns of `model::few_patterns`, and
+    /// the functions of whole limbs at every shift up to `B * N + 1`, or under Miri at the amounts
+    /// of the width and next to each multiple of `B`.
+    fn bits_against_the_model<const N: usize>() {
+      let tier = bigint::tier();
+      let top = B * N as u32;
+      let mut widths = if tier.is_miri() {
+        vec![0, 1, B, top]
+      } else {
+        widths::<N>()
+      };
+      widths.retain(|&width| width <= top);
+      widths.sort_unstable();
+      widths.dedup();
+      // Every index of up to 256 bits in an optimized build.
+      let reduced = !tier.is_full() || top > 256;
+      let patterns: Vec<[Limb; N]> = if tier.is_miri() {
+        Vec::new()
+      } else {
+        bigint::bit_patterns_by(&widths, reduced)
+      };
+      // The patterns of `width` bits, without the duplicates that cutting makes.
+      let patterns_of = |width: u32| -> Vec<Vec<bool>> {
+        let mut cut: Vec<Vec<bool>> = if tier.is_miri() {
+          model::few_patterns(width, B)
+        } else {
+          patterns
+            .iter()
+            .map(|pattern| bigint::pattern_of_limbs(pattern, width))
+            .collect()
+        };
+        cut.sort_unstable();
+        cut.dedup();
+        cut
+      };
+      for &width in &widths {
+        let amounts = bigint::bit_amounts(B, width);
+        let cut = patterns_of(width);
+        for (k, p) in cut.iter().enumerate() {
+          check_bits::<N>(p, &cut[(k + 1) % cut.len()], &amounts);
+        }
+      }
+      let shifts: Vec<u32> = if tier.is_miri() {
+        let mut shifts = bigint::bit_amounts(B, top);
+        for k in 1..=N as u32 {
+          shifts.extend([B * k - 1, B * k, B * k + 1]);
+        }
+        shifts.sort_unstable();
+        shifts.dedup();
+        shifts
+      } else {
+        (0..=top + 1).collect()
+      };
+      for p in patterns_of(top) {
+        check_whole_limbs::<N>(&p, &shifts);
+      }
+    }
+
+    /// The functions of a width that the bit operations use, and the shifts of whole limbs,
+    /// against the bit model, at no limbs to three, and in an optimized build also four and eight;
+    /// under Miri, which runs many narrow limbs slowly, at no limbs, one and three, or two of 128
+    /// bits.
+    #[test]
+    fn bits_match_the_bit_model() {
+      let tier = bigint::tier();
+      bits_against_the_model::<0>();
+      bits_against_the_model::<1>();
+      if !tier.is_miri() || B == 128 {
+        bits_against_the_model::<2>();
+      }
+      if !tier.is_miri() || B < 128 {
+        bits_against_the_model::<3>();
+      }
+      if tier.is_full() {
+        bits_against_the_model::<4>();
+        bits_against_the_model::<8>();
+      }
     }
   };
 }

@@ -160,9 +160,14 @@
 //! and its forms, `unsigned_abs`, `signum` and `checked_isqrt` for `Int`, and the operators `+`,
 //! `-`, `*`, `/` and `%`, which panic or wrap on overflow as the native integers do (see
 //! [Overflow](Uint#overflow)): `/` and `%` panic on a zero divisor and on overflow in every build.
-//! Addition, subtraction, multiplication and exact division, and negation for `Int`, also have the
-//! `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the `checked_*` method
-//! would return `Some`.
+//! Addition, subtraction, multiplication, exact division and the shifts, and negation for `Int`,
+//! also have the `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the
+//! `checked_*` method would return `Some`. The bit operations of the native integers work at the
+//! width too: the counts of ones and zeros, the highest and the lowest one, the bit reversal, the
+//! rotations, the shifts in every form, the unbounded and the exact shifts, a bit read and written
+//! by its index, and the casts between `Uint` and `Int` of the same width, with the operators `!`,
+//! `&`, `|`, `^`, `<<` and `>>`; a shift amount is bounded by `Bits`, and `bitand`, `bitor`,
+//! `bitxor` and `not` do the bitwise operations as `const fn`s for constant contexts.
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,
@@ -173,10 +178,11 @@
 //! [`UnsignedFixedInteger`] and [`SignedFixedInteger`] have the methods of each sign, the families
 //! [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`], [`StrictOps`] and
 //! [`UncheckedOps`] the arithmetic, [`IntegerMath`], [`UnsignedMath`] and [`SignedMath`] the
-//! functions without an overflow prefix, and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`]
-//! the construction of each kind. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>`
-//! [`FixedInteger`] and [`ConstFixedInteger`], the sign traits, the families and the math traits,
-//! and [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one. The trait methods are
+//! functions without an overflow prefix, [`IntegerBits`], [`UnsignedBits`] and [`SignedBits`] the
+//! bit operations, and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`] the construction of
+//! each kind. The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` [`FixedInteger`] and
+//! [`ConstFixedInteger`], the sign traits, the families, the math traits and the bit traits, and
+//! [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one. The trait methods are
 //! not `const`, so constant contexts call the inherent `const fn`s, which a concrete type reaches
 //! without importing a trait.
 //!
@@ -217,12 +223,17 @@
 //! assert_eq!(SMALL.checked_rem(&u7::ZERO), None);
 //! assert_eq!(SMALL.isqrt(), u7::new(10));
 //!
+//! // The bits of 7 bits: 100 is `0b110_0100`.
+//! assert_eq!(SMALL.count_ones(), 3);
+//! assert_eq!(SMALL << 1u32, u7::new(72));
+//! assert_eq!(SMALL.checked_shl(7), None);
+//!
 //! // Generic code over the width alone.
-//! fn count_zeros<B: BitWidth>(values: &[Int<B>]) -> usize {
+//! fn zero_values<B: BitWidth>(values: &[Int<B>]) -> usize {
 //!   values.iter().filter(|value| value.is_zero()).count()
 //! }
-//! assert_eq!(count_zeros(&[Int::<U7>::ZERO, Int::<U7>::MIN]), 1);
-//! assert_eq!(count_zeros(&[Int::<U200>::ZERO; 3]), 3);
+//! assert_eq!(zero_values(&[Int::<U7>::ZERO, Int::<U7>::MIN]), 1);
+//! assert_eq!(zero_values(&[Int::<U200>::ZERO; 3]), 3);
 //!
 //! fn total<B: BitWidth>(values: &[Uint<B>]) -> Option<Uint<B>> {
 //!   values.iter().try_fold(Uint::<B>::ZERO, |sum, value| sum.checked_add(value))
@@ -379,9 +390,9 @@ pub use decimal::{
 };
 pub use integer::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs, Int,
-  IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedFixedInteger,
-  SignedMath, StrictOps, TryNewError, Uint, UncheckedOps, UnsignedFixedInteger, UnsignedMath,
-  WrappingOps,
+  IntegerBits, IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedBits,
+  SignedFixedInteger, SignedMath, StrictOps, TryNewError, Uint, UncheckedOps, UnsignedBits,
+  UnsignedFixedInteger, UnsignedMath, WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

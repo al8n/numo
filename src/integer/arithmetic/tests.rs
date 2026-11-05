@@ -24,9 +24,11 @@ use typenum::{
 
 use crate::{
   BitWidth, CheckedOps, ConstFixedInteger, ConstIntegerOne, FitsBits, FixedInteger, Int,
-  IntReprMut, IntegerMath, IntegerOne, OverflowingOps, SaturatingOps, SignedFixedInteger,
-  SignedMath, StrictOps, Uint, UintReprMut, UncheckedOps, UnsignedFixedInteger, UnsignedMath,
-  WrappingOps, bigint, i7, i256, u7, u256, u4096,
+  IntReprMut, IntegerBits, IntegerMath, IntegerOne, OverflowingOps, SaturatingOps, SignedBits,
+  SignedFixedInteger, SignedMath, StrictOps, Uint, UintReprMut, UncheckedOps, UnsignedBits,
+  UnsignedFixedInteger, UnsignedMath, WrappingOps,
+  bigint::{self, Tier, model, tier},
+  i7, i256, u7, u256, u4096,
 };
 
 /// The smallest and the largest value of `bits` bits, unsigned or in two's complement.
@@ -1953,31 +1955,6 @@ fn the_math_traits_need_only_the_storage_trait() {
   assert_eq!(signed(&minus_seven, &two), "(-4, 9, None, 49)");
 }
 
-/// How thoroughly the sweeps of the division and of the powers check: every value and pair that is
-/// cheap enough in an optimized build, which runs them fast; fewer in an unoptimized build, which
-/// every feature combination and every sanitizer of the tests runs; and the fewest under Miri.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, derive_more::IsVariant)]
-enum Tier {
-  /// Under Miri.
-  Miri,
-  /// In an unoptimized build, with debug assertions.
-  Debug,
-  /// In an optimized build.
-  Full,
-}
-
-/// The tier of this build. `--cfg all_tests` does not raise it: the sanitizers that set that flag
-/// run unoptimized code.
-fn tier() -> Tier {
-  if cfg!(miri) {
-    Tier::Miri
-  } else if cfg!(debug_assertions) {
-    Tier::Debug
-  } else {
-    Tier::Full
-  }
-}
-
 /// The value of the integer of at most 128 bits in `limbs`, least significant first, read in two's
 /// complement if `signed`.
 fn value_of_limbs<L: bigint::Limb, const N: usize>(limbs: &[L; N], signed: bool) -> i128 {
@@ -2160,5 +2137,158 @@ macro_rules! overflows_here {
   }};
 }
 
+/// The pattern of the low `width` bits of `value`, at most 128, in two's complement for a
+/// negative value: what the bit model computes on.
+fn pattern_of(value: i128, width: u32) -> Vec<bool> {
+  model::of_u128(value as u128, width)
+}
+
+/// The value of `pattern`, of at most 128 bits, read unsigned or in two's complement.
+fn value_of(pattern: &[bool], signed: bool) -> i128 {
+  if signed {
+    model::to_i128(pattern)
+  } else {
+    model::to_u128(pattern) as i128
+  }
+}
+
+/// The values of up to 16 bits at which a sweep of the bit operations checks a storage: those of
+/// [`small_values`] up to 8 bits and of [`large_values`] above, or under Miri, in a storage that
+/// every tier checks, `primary`, the [`ends`] and the patterns of `model::few_patterns`, and none
+/// in another storage.
+fn bit_values(bits: u32, signed: bool, primary: bool) -> Vec<i128> {
+  match tier() {
+    Tier::Miri if !primary => Vec::new(),
+    Tier::Miri => bigint::with_ends(
+      model::few_patterns(bits, 128)
+        .iter()
+        .map(|pattern| value_of(pattern, signed)),
+      ends(bits, signed),
+    ),
+    _ if bits <= 8 => small_values(bits, signed, primary),
+    _ => large_values(bits, signed),
+  }
+}
+
+/// The amounts of the shifts and the rotations, which also serve as bit indexes, at which a sweep
+/// of `bits` bits, at most 16, checks: in an optimized build every amount up to `bits + 2` and five
+/// larger ones, of each residue that the large amounts of the operators reach, and otherwise 0,
+/// 1, `bits - 1`, `bits`, `bits + 1` and `u32::MAX`.
+fn shift_amounts(bits: u32) -> Vec<u32> {
+  let mut amounts: Vec<u32> = if tier().is_full() {
+    (0..=bits + 2)
+      .chain([3 * bits + 1, 257, 1 << 31, u32::MAX - 1, u32::MAX])
+      .collect()
+  } else {
+    vec![0, 1, bits.saturating_sub(1), bits, bits + 1, u32::MAX]
+  };
+  amounts.sort_unstable();
+  amounts.dedup();
+  amounts
+}
+
+/// Reads the bits of the storage of an integer and makes an integer from the bits of its width,
+/// one bit at a time, for the bit model.
+trait Patterned: Copy + Debug + PartialEq {
+  /// Whether the integer is signed.
+  const SIGNED: bool;
+
+  /// The number of bits of the storage, to which the bits of the width extend with zeros, or for
+  /// a signed integer with copies of the sign.
+  const STORAGE: u32;
+
+  /// The bits of the storage, bit 0 first.
+  fn storage_bits(&self) -> Vec<bool>;
+
+  /// The integer whose bits at its width are `pattern`. Requires `pattern` to have the width.
+  fn from_pattern(pattern: &[bool]) -> Self;
+}
+
+/// Implements [`Patterned`] for `Uint` and `Int` over the native integers, written
+/// `Integer<native>: signed`, and over the arrays of each limb type, written `limb`.
+macro_rules! patterned {
+  (native $($integer:ident<$native:ident>: $signed:literal),+ $(,)?) => {$(
+    impl<B: FitsBits<$native>> Patterned for $integer<B, $native> {
+      const SIGNED: bool = $signed;
+      const STORAGE: u32 = $native::BITS;
+
+      fn storage_bits(&self) -> Vec<bool> {
+        model::of_u128(self.value() as u128, Self::STORAGE)
+      }
+
+      fn from_pattern(pattern: &[bool]) -> Self {
+        Self::new(value_of(pattern, $signed) as $native)
+      }
+    }
+  )+};
+  (array $($limb:ident),+ $(,)?) => {$(
+    impl<B: FitsBits<[$limb; N]>, const N: usize> Patterned for Uint<B, [$limb; N]> {
+      const SIGNED: bool = false;
+      const STORAGE: u32 = $limb::BITS * N as u32;
+
+      fn storage_bits(&self) -> Vec<bool> {
+        bigint::pattern_of_limbs(self.as_limbs(), Self::STORAGE)
+      }
+
+      fn from_pattern(pattern: &[bool]) -> Self {
+        Self::checked_from_limbs(bigint::limbs_of_pattern(pattern, false)).expect("in range")
+      }
+    }
+
+    impl<B: FitsBits<[$limb; N]>, const N: usize> Patterned for Int<B, [$limb; N]> {
+      const SIGNED: bool = true;
+      const STORAGE: u32 = $limb::BITS * N as u32;
+
+      fn storage_bits(&self) -> Vec<bool> {
+        bigint::pattern_of_limbs(self.as_limbs(), Self::STORAGE)
+      }
+
+      fn from_pattern(pattern: &[bool]) -> Self {
+        Self::checked_from_limbs(bigint::limbs_of_pattern(pattern, true)).expect("in range")
+      }
+    }
+  )+};
+}
+
+patterned!(
+  native Uint<u8>: false,
+  Uint<u16>: false,
+  Uint<u32>: false,
+  Uint<u64>: false,
+  Uint<u128>: false,
+  Int<i8>: true,
+  Int<i16>: true,
+  Int<i32>: true,
+  Int<i64>: true,
+  Int<i128>: true,
+);
+patterned!(array u8, u16, u32, u64, u128);
+
+/// The patterns of `bits` bits at which the bit operations of a width above 16 bits are checked:
+/// those of `bigint::bit_patterns_by` in `K` words of 64 bits, cut to the width, at every index in
+/// an optimized build up to 256 bits and at the reduced indexes otherwise; or under Miri eight:
+/// those of `model::few_patterns`, one, and every bit but the top one.
+fn wide_patterns<const K: usize>(bits: u32) -> Vec<Vec<bool>> {
+  let mut patterns: Vec<Vec<bool>> = if tier().is_miri() {
+    let mut patterns = model::few_patterns(bits, 64);
+    patterns.extend([
+      model::pattern(bits, |i| i == 0),
+      model::pattern(bits, |i| i + 1 < bits),
+    ]);
+    patterns
+  } else {
+    let reduced = !tier().is_full() || bits > 256;
+    bigint::bit_patterns_by::<u64, K>(&[bits], reduced)
+      .iter()
+      .map(|words| bigint::pattern_of_limbs(words, bits))
+      .collect()
+  };
+  patterns.sort_unstable();
+  patterns.dedup();
+  patterns
+}
+
+mod bits;
 mod division;
 mod powers;
+mod shifts;

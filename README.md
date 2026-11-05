@@ -24,12 +24,13 @@ native integer, or a 192-, 256-, 320-, 384-, 448- or 512-bit integer of this cra
 checked during type checking, so no value can be created for a type that cannot hold its digits.
 The arithmetic methods take the receiver and the operands by reference, as in `a.checked_add(&b)`,
 so that a call does not copy a wide value, while the operators keep the signatures of their
-standard traits.
+standard traits. The casts between `Uint` and `Int` and the bitwise `const fn`s, such as `bitand`,
+take their operands by value, as the native casts and the methods of the operator traits do.
 
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, formatting, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, and generic traits; bit operations and shifts planned |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, formatting, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
 
@@ -215,15 +216,25 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   the Euclidean, rounded and exact division, the next multiple, the square root and the root of
   any degree, the logarithms, the midpoint and the absolute difference, `carrying_add`,
   `borrowing_sub`, `is_multiple_of` and the next power of two for `Uint`, and `abs` and its forms,
-  `unsigned_abs`, `signum` and `checked_isqrt` for `Int`. Addition, subtraction, multiplication and
-  exact division, and negation for `Int`, also have the `unchecked_*` form, as `const unsafe fn`s
-  whose caller guarantees that the `checked_*` method would return `Some`. The operators `+`, `-`
-  and `*`, their compound assignments, `-` for `Int`, `Sum` and `Product` panic or wrap on overflow
-  as `overflow-checks` decides, as for the native integers, and so do `pow`, `next_multiple_of` and
-  `next_power_of_two`; `/` and `%` and their compound assignments, like the division methods, panic
-  on a zero divisor and on overflow in every build. Every panic reports the caller, as the operators
-  of the native integers do, but that of `pow`, which reports a line in `core` as the native `pow`
-  does.
+  `unsigned_abs`, `signum` and `checked_isqrt` for `Int`. Addition, subtraction, multiplication,
+  exact division and the shifts, and negation for `Int`, also have the `unchecked_*` form, as
+  `const unsafe fn`s whose caller guarantees that the `checked_*` method would return `Some`. The
+  operators `+`, `-` and `*`, their compound assignments, `-` for `Int`, `Sum` and `Product` panic
+  or wrap on overflow as `overflow-checks` decides, as for the native integers, and so do `pow`,
+  `next_multiple_of` and `next_power_of_two`; `/` and `%` and their compound assignments, like the
+  division methods, panic on a zero divisor and on overflow in every build. Every panic reports the
+  caller, as the operators of the native integers do, but that of `pow`, which reports a line in
+  `core` as the native `pow` does.
+- The bit operations of the native integers at the width `Bits`, as `const fn`s: the counts of
+  ones and zeros, leading and trailing, the highest and the lowest one and their isolation, the
+  bit reversal, the rotations, the shifts in every overflow form, the unbounded shifts and the exact
+  shifts of the unstable native API, `bit` and `set_bit`, `bit_width` and `is_power_of_two` for
+  `Uint`, and the casts `cast_signed` and `cast_unsigned` between `Uint` and `Int` of the same width
+  and storage size. They count and move the `Bits` bits alone, whatever the storage, so
+  `u7::MAX.leading_ones()` is 7 and `reverse_bits` works at any width. The operators `!`, `&`,
+  `|`, `^`, `<<` and `>>`, with an amount of any primitive integer type, and their compound
+  assignments work for every storage; a shift amount that is `Bits` or more, or negative, overflows
+  as the native shifts do, and `bitand`, `bitor`, `bitxor` and `not` serve constant contexts.
 - Numeric equality, ordering and hashing, where the hash depends only on the value and `Bits`,
   whatever the storage, decimal formatting, and `Default`, which is zero.
 - Traits with one implementation for every storage of a kind, for generic code, in two layers. The
@@ -234,14 +245,13 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   generic `const fn` can read. `UnsignedFixedInteger` and `SignedFixedInteger` have the methods of
   each sign, `NativeInteger`, `ArrayInteger` and `FromLimbs` the construction of each kind, the
   arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`
-  and `UncheckedOps` the arithmetic, and `IntegerMath`, `UnsignedMath` and `SignedMath` the
-  functions without an overflow prefix, such as `pow`, `isqrt` and `ilog10`; with the bound
-  `B: BitWidth`, such code uses `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
+  and `UncheckedOps` the arithmetic, `IntegerMath`, `UnsignedMath` and `SignedMath` the functions
+  without an overflow prefix, such as `pow`, `isqrt` and `ilog10`, and `IntegerBits`,
+  `UnsignedBits` and `SignedBits` the bit operations; with the bound `B: BitWidth`, such code uses
+  `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
   width of more than 65536 bits without an explicit storage.
-
-Bit operations and shifts are planned.
 
 #### License
 

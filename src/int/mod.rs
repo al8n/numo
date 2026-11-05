@@ -10,12 +10,12 @@
 //! Each storage has a module of the same name. For the native storages, the modules for `u8`
 //! through `u128` form the lower layer and the modules for `i8` through `i128` the upper layer.
 //! They also give `Uint` and `Int` over the native integers the limits of a width, `max_of_bits`
-//! and `min_of_bits`, its range check, `fits_bits`, and its arithmetic, such as
-//! `overflowing_add_bits`, named as in the limb layers: the functions that take `bits` serve `Uint`
-//! and `Int`, at the width `bits`. The wide storages `u192` through `u512` and `i192` through
-//! `i512` hold arrays of 64-bit limbs, least significant first. Their modules apply
-//! `unsigned::b64`, the lower layer for `[u64; N]`, and `signed::b64`, the upper layer, which reads
-//! the array as two's complement. `Uint` and `Int` also store arrays of the other limb types,
+//! and `min_of_bits`, its range check, `fits_bits`, and its arithmetic and bit operations, such as
+//! `overflowing_add_bits` and `rotate_left_bits`, named as in the limb layers: the functions that
+//! take `bits` serve `Uint` and `Int`, at the width `bits`. The wide storages `u192` through `u512`
+//! and `i192` through `i512` hold arrays of 64-bit limbs, least significant first. Their modules
+//! apply `unsigned::b64`, the lower layer for `[u64; N]`, and `signed::b64`, the upper layer, which
+//! reads the array as two's complement. `Uint` and `Int` also store arrays of the other limb types,
 //! through `unsigned::b8`, `unsigned::b16`, `unsigned::b32` and `unsigned::b128` and the upper
 //! layers over them, `signed::b8`, `signed::b16`, `signed::b32` and `signed::b128`, which
 //! `limb_layer!` generates from the same code as `unsigned::b64` and `signed::b64`. No native
@@ -51,7 +51,7 @@ pub(crate) mod signed;
 pub(crate) mod unsigned;
 
 macro_rules! native {
-  (unsigned $uint:ident) => {
+  (unsigned $uint:ident => $int:ident) => {
     #[doc = concat!("Lower layer for `", stringify!($uint), "`.")]
     pub(crate) mod $uint {
       use core::cmp::Ordering;
@@ -304,6 +304,208 @@ macro_rules! native {
           // A power of two of `bits` bits or more wraps to zero.
           _ => (0, true),
         }
+      }
+
+      /// `!value` modulo `2^bits`: every bit below index `bits` flipped. Requires `bits <= BITS`
+      /// and `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn not_bits(value: $uint, bits: u32) -> $uint {
+        value ^ max_of_bits(bits)
+      }
+
+      /// The number of ones of `value`, a value of `bits` bits, which has none above them.
+      #[inline]
+      pub(crate) const fn count_ones_bits(value: $uint, _bits: u32) -> u32 {
+        value.count_ones()
+      }
+
+      /// The number of zeros of `value` from bit `bits - 1` down to its highest one, or `bits` for
+      /// zero: those of the native integer, less the `BITS - bits` zeros above the width. Requires
+      /// `bits <= BITS` and `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn leading_zeros_bits(value: $uint, bits: u32) -> u32 {
+        value.leading_zeros() - ($uint::BITS - bits)
+      }
+
+      /// The number of zeros of `value` below its lowest one, or `bits` for zero.
+      #[inline]
+      pub(crate) const fn trailing_zeros_bits(value: $uint, bits: u32) -> u32 {
+        if value == 0 { bits } else { value.trailing_zeros() }
+      }
+
+      /// The number of ones of `value` from bit `bits - 1` down, the leading zeros of its
+      /// complement in `bits` bits. Requires `bits <= BITS` and `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn leading_ones_bits(value: $uint, bits: u32) -> u32 {
+        leading_zeros_bits(not_bits(value, bits), bits)
+      }
+
+      /// The number of ones of `value` from bit 0 up, the trailing zeros of its complement in
+      /// `bits` bits. Requires `bits <= BITS` and `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn trailing_ones_bits(value: $uint, bits: u32) -> u32 {
+        trailing_zeros_bits(not_bits(value, bits), bits)
+      }
+
+      /// The index of the highest one of `value`, or `None` for zero: a value of `bits` bits has
+      /// none above them, so the width does not change it.
+      #[inline]
+      pub(crate) const fn highest_one_bits(value: $uint, _bits: u32) -> Option<u32> {
+        value.checked_ilog2()
+      }
+
+      /// The index of the lowest one of `value`, or `None` for zero.
+      #[inline]
+      pub(crate) const fn lowest_one(value: $uint) -> Option<u32> {
+        if value == 0 {
+          None
+        } else {
+          Some(value.trailing_zeros())
+        }
+      }
+
+      /// `value` with only its highest one, or zero for zero.
+      #[inline]
+      pub(crate) const fn isolate_highest_one_bits(value: $uint, _bits: u32) -> $uint {
+        match value.checked_ilog2() {
+          Some(log) => 1 << log,
+          None => 0,
+        }
+      }
+
+      /// `value` with only its lowest one, `value & -value`, or zero for zero.
+      #[inline]
+      pub(crate) const fn isolate_lowest_one_bits(value: $uint, _bits: u32) -> $uint {
+        value & value.wrapping_neg()
+      }
+
+      /// The bits of `value` below index `bits` in reverse order: the reversal of the native
+      /// integer, shifted down by the `BITS - bits` zeros that it moves from above the width to
+      /// below it. Requires `bits <= BITS` and `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn reverse_bits_bits(value: $uint, bits: u32) -> $uint {
+        // The shift below would be by `BITS` bits at zero bits, which overflows.
+        if bits == 0 {
+          0
+        } else {
+          value.reverse_bits() >> ($uint::BITS - bits)
+        }
+      }
+
+      /// `value` rotated left by `n` places within `bits` bits: the bits shifted out past bit
+      /// `bits - 1` come back at bit 0. Requires `bits <= BITS` and `value < 2^bits`.
+      pub(crate) const fn rotate_left_bits(value: $uint, n: u32, bits: u32) -> $uint {
+        // Zero bits hold only zero, which no rotation changes, and take no remainder by zero.
+        if bits == 0 {
+          return value;
+        }
+        match n % bits {
+          0 => value,
+          // `0 < amount < bits`, so neither shift is by `BITS` bits or more.
+          amount => ((value << amount) | (value >> (bits - amount))) & max_of_bits(bits),
+        }
+      }
+
+      /// `value` rotated right by `n` places within `bits` bits, the left rotation by the rest of
+      /// the width. Requires `bits <= BITS` and `value < 2^bits`.
+      pub(crate) const fn rotate_right_bits(value: $uint, n: u32, bits: u32) -> $uint {
+        if bits == 0 {
+          return value;
+        }
+        match n % bits {
+          0 => value,
+          amount => rotate_left_bits(value, bits - amount, bits),
+        }
+      }
+
+      /// `value << (rhs % bits)` modulo `2^bits`, and whether `rhs >= bits`, as the native
+      /// `overflowing_shl` gives them for its width; zero bits overflow on every amount. Requires
+      /// `bits <= BITS` and `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn overflowing_shl_bits(value: $uint, rhs: u32, bits: u32) -> ($uint, bool) {
+        // Zero bits hold only zero, and take no remainder by zero.
+        if bits == 0 {
+          return (0, true);
+        }
+        let amount = if rhs < bits { rhs } else { rhs % bits };
+        ((value << amount) & max_of_bits(bits), rhs >= bits)
+      }
+
+      /// `value >> (rhs % bits)`, and whether `rhs >= bits`, as [`overflowing_shl_bits`] gives
+      /// them. Requires `bits <= BITS` and `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn overflowing_shr_bits(value: $uint, rhs: u32, bits: u32) -> ($uint, bool) {
+        if bits == 0 {
+          return (0, true);
+        }
+        let amount = if rhs < bits { rhs } else { rhs % bits };
+        (value >> amount, rhs >= bits)
+      }
+
+      /// `value << rhs` modulo `2^bits`, which is zero for `rhs >= bits`. Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn unbounded_shl_bits(value: $uint, rhs: u32, bits: u32) -> $uint {
+        value.unbounded_shl(rhs) & max_of_bits(bits)
+      }
+
+      /// `value >> rhs`, which is zero for `rhs >= bits`: a value of `bits` bits has no one above
+      /// them, so the width does not change it.
+      #[inline]
+      pub(crate) const fn unbounded_shr_bits(value: $uint, rhs: u32, _bits: u32) -> $uint {
+        value.unbounded_shr(rhs)
+      }
+
+      /// `value << rhs` if `rhs < bits` and the shift moves no one out of `bits` bits, so that
+      /// `>> rhs` gives `value` back, or `None` otherwise. Requires `bits <= BITS` and
+      /// `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn shl_exact_bits(value: $uint, rhs: u32, bits: u32) -> Option<$uint> {
+        if rhs < bits && rhs <= leading_zeros_bits(value, bits) {
+          Some(value << rhs)
+        } else {
+          None
+        }
+      }
+
+      /// `value >> rhs` if `rhs < bits` and the shift moves no one out, so that `<< rhs` gives
+      /// `value` back, or `None` otherwise. Requires `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn shr_exact_bits(value: $uint, rhs: u32, bits: u32) -> Option<$uint> {
+        if rhs < bits && rhs <= trailing_zeros_bits(value, bits) {
+          Some(value >> rhs)
+        } else {
+          None
+        }
+      }
+
+      /// `value`, a pattern of `bits` bits, read in two's complement: the signed integer of the
+      /// same size, sign-extended from bit `bits - 1`, or zero for zero bits. Requires
+      /// `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn cast_signed_bits(value: $uint, bits: u32) -> $int {
+        super::$int::sign_extend(value.cast_signed(), bits)
+      }
+
+      /// The bit at `index` of `value`, or `false` for `index >= bits`.
+      #[inline]
+      pub(crate) const fn bit(value: $uint, index: u32, bits: u32) -> bool {
+        index < bits && (value >> index) & 1 == 1
+      }
+
+      /// `value` with the bit at `index` set if `set`, and cleared otherwise, or `None` for
+      /// `index >= bits`. Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn with_bit(
+        value: $uint,
+        index: u32,
+        set: bool,
+        bits: u32,
+      ) -> Option<$uint> {
+        if index >= bits {
+          return None;
+        }
+        let mask: $uint = 1 << index;
+        Some(if set { value | mask } else { value & !mask })
       }
 
       native!(@bits $uint, zero_extend);
@@ -606,6 +808,225 @@ macro_rules! native {
         lhs.abs_diff(rhs)
       }
 
+      /// `!value`: every bit flipped, which keeps the copies of the sign, or zero for zero bits.
+      #[inline]
+      pub(crate) const fn not_bits(value: $int, bits: u32) -> $int {
+        // Zero bits hold only zero, whose complement would be -1.
+        if bits == 0 { 0 } else { !value }
+      }
+
+      /// The number of ones of `value` in `bits` bits, without the copies of the sign above them.
+      /// Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn count_ones_bits(value: $int, bits: u32) -> u32 {
+        super::$uint::zero_extend(value.cast_unsigned(), bits).count_ones()
+      }
+
+      /// The number of zeros of `value` from bit `bits - 1` down to its highest one: none for a
+      /// negative value, and for a value at least zero those of the native integer less the
+      /// `BITS - bits` zeros above the width. Requires `bits <= BITS` and `value` within the range
+      /// of `bits` bits.
+      #[inline]
+      pub(crate) const fn leading_zeros_bits(value: $int, bits: u32) -> u32 {
+        if value < 0 {
+          0
+        } else {
+          value.leading_zeros() - ($int::BITS - bits)
+        }
+      }
+
+      /// The number of zeros of `value` below its lowest one, or `bits` for zero: a value other
+      /// than zero has a one below the copies of its sign.
+      #[inline]
+      pub(crate) const fn trailing_zeros_bits(value: $int, bits: u32) -> u32 {
+        if value == 0 { bits } else { value.trailing_zeros() }
+      }
+
+      /// The number of ones of `value` from bit `bits - 1` down: for a negative value those of the
+      /// native integer less the `BITS - bits` copies of the sign above the width, and none for a
+      /// value at least zero. Requires `bits <= BITS` and `value` within the range of `bits` bits.
+      #[inline]
+      pub(crate) const fn leading_ones_bits(value: $int, bits: u32) -> u32 {
+        if value < 0 {
+          value.leading_ones() - ($int::BITS - bits)
+        } else {
+          0
+        }
+      }
+
+      /// The number of ones of `value` from bit 0 up: `bits` for -1, and otherwise those of the
+      /// native integer, since a value other than -1 has a zero below the copies of its sign.
+      #[inline]
+      pub(crate) const fn trailing_ones_bits(value: $int, bits: u32) -> u32 {
+        if value == -1 { bits } else { value.trailing_ones() }
+      }
+
+      /// The index of the highest one of `value` in `bits` bits: the sign bit, `bits - 1`, for a
+      /// negative value, or `None` for zero.
+      #[inline]
+      pub(crate) const fn highest_one_bits(value: $int, bits: u32) -> Option<u32> {
+        if value < 0 {
+          Some(bits - 1)
+        } else {
+          value.checked_ilog2()
+        }
+      }
+
+      /// The index of the lowest one of `value`, or `None` for zero.
+      #[inline]
+      pub(crate) const fn lowest_one(value: $int) -> Option<u32> {
+        if value == 0 {
+          None
+        } else {
+          Some(value.trailing_zeros())
+        }
+      }
+
+      /// `value` with only its highest one in `bits` bits: `MIN` for a negative value, whose
+      /// highest one is the sign bit, or zero for zero. Requires `bits <= BITS` and `value` within
+      /// the range of `bits` bits.
+      #[inline]
+      pub(crate) const fn isolate_highest_one_bits(value: $int, bits: u32) -> $int {
+        // The logarithm is `None` for a value that is not positive.
+        match value.checked_ilog2() {
+          Some(log) => 1 << log,
+          None if value < 0 => min_of_bits(bits),
+          None => 0,
+        }
+      }
+
+      /// `value` with only its lowest one, sign-extended from `bits` bits: `MIN` for `MIN`, whose
+      /// lowest one is the sign bit, or zero for zero. Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn isolate_lowest_one_bits(value: $int, bits: u32) -> $int {
+        // The lowest one of `MIN` of a partial width is positive in the native integer.
+        sign_extend(value & value.wrapping_neg(), bits)
+      }
+
+      /// The `bits` bits of `value` in reverse order, read in two's complement: old bit 0 is the
+      /// new sign bit. Requires `bits <= BITS` and `value` within the range of `bits` bits.
+      #[inline]
+      pub(crate) const fn reverse_bits_bits(value: $int, bits: u32) -> $int {
+        // The arithmetic shift copies the new sign bit, the old bit 0, into the bits above the
+        // width. At zero bits it would be by `BITS` bits, which overflows.
+        if bits == 0 {
+          0
+        } else {
+          value.reverse_bits() >> ($int::BITS - bits)
+        }
+      }
+
+      /// The `bits` bits of `value` rotated left by `n` places, read in two's complement, so that
+      /// the rotation can change the sign. Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn rotate_left_bits(value: $int, n: u32, bits: u32) -> $int {
+        let pattern = super::$uint::zero_extend(value.cast_unsigned(), bits);
+        sign_extend(
+          super::$uint::rotate_left_bits(pattern, n, bits).cast_signed(),
+          bits,
+        )
+      }
+
+      /// The `bits` bits of `value` rotated right by `n` places, read in two's complement, as
+      /// [`rotate_left_bits`] reads them.
+      #[inline]
+      pub(crate) const fn rotate_right_bits(value: $int, n: u32, bits: u32) -> $int {
+        let pattern = super::$uint::zero_extend(value.cast_unsigned(), bits);
+        sign_extend(
+          super::$uint::rotate_right_bits(pattern, n, bits).cast_signed(),
+          bits,
+        )
+      }
+
+      /// `value << (rhs % bits)` wrapped to `bits` bits, whose bit `bits - 1` is the new sign, and
+      /// whether `rhs >= bits`; zero bits overflow on every amount. Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn overflowing_shl_bits(value: $int, rhs: u32, bits: u32) -> ($int, bool) {
+        // Zero bits hold only zero, and take no remainder by zero.
+        if bits == 0 {
+          return (0, true);
+        }
+        let amount = if rhs < bits { rhs } else { rhs % bits };
+        (sign_extend(value << amount, bits), rhs >= bits)
+      }
+
+      /// `value >> (rhs % bits)`, an arithmetic shift, and whether `rhs >= bits`, as
+      /// [`overflowing_shl_bits`] gives them. Requires `value` within the range of `bits` bits.
+      #[inline]
+      pub(crate) const fn overflowing_shr_bits(value: $int, rhs: u32, bits: u32) -> ($int, bool) {
+        if bits == 0 {
+          return (0, true);
+        }
+        let amount = if rhs < bits { rhs } else { rhs % bits };
+        (value >> amount, rhs >= bits)
+      }
+
+      /// `value << rhs` wrapped to `bits` bits, which is zero for `rhs >= bits`. Requires
+      /// `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn unbounded_shl_bits(value: $int, rhs: u32, bits: u32) -> $int {
+        sign_extend(value.unbounded_shl(rhs), bits)
+      }
+
+      /// `value >> rhs`, an arithmetic shift, which is 0 or -1 for `rhs >= bits`: the bits of
+      /// `value` from bit `bits - 1` up already copy the sign, so the width does not change it.
+      #[inline]
+      pub(crate) const fn unbounded_shr_bits(value: $int, rhs: u32, _bits: u32) -> $int {
+        value.unbounded_shr(rhs)
+      }
+
+      /// `value << rhs` if every bit that the shift moves out of `bits` bits, and the new bit
+      /// `bits - 1`, equal the sign, so that `>> rhs` gives `value` back, or `None` otherwise.
+      /// Requires `bits <= BITS` and `value` within the range of `bits` bits.
+      #[inline]
+      pub(crate) const fn shl_exact_bits(value: $int, rhs: u32, bits: u32) -> Option<$int> {
+        // `rhs` below the leading zeros or ones keeps the sign and every bit above it, and is
+        // below `bits`.
+        if rhs < leading_zeros_bits(value, bits) || rhs < leading_ones_bits(value, bits) {
+          Some(value << rhs)
+        } else {
+          None
+        }
+      }
+
+      /// `value >> rhs`, an arithmetic shift, if `rhs < bits` and the shift moves no one out, so
+      /// that `<< rhs` gives `value` back, or `None` otherwise.
+      #[inline]
+      pub(crate) const fn shr_exact_bits(value: $int, rhs: u32, bits: u32) -> Option<$int> {
+        if rhs < bits && rhs <= trailing_zeros_bits(value, bits) {
+          Some(value >> rhs)
+        } else {
+          None
+        }
+      }
+
+      /// The `bits` bits of `value`, its two's complement, as the unsigned integer of the same
+      /// size. Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn cast_unsigned_bits(value: $int, bits: u32) -> $uint {
+        super::$uint::zero_extend(value.cast_unsigned(), bits)
+      }
+
+      /// The bit at `index` of `value`, or `false` for `index >= bits`, which reads no copy of
+      /// the sign.
+      #[inline]
+      pub(crate) const fn bit(value: $int, index: u32, bits: u32) -> bool {
+        index < bits && (value >> index) & 1 == 1
+      }
+
+      /// `value` with the bit at `index` set if `set`, and cleared otherwise, sign-extended from
+      /// `bits` bits, so that a change of the sign bit changes its copies, or `None` for
+      /// `index >= bits`. Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn with_bit(value: $int, index: u32, set: bool, bits: u32) -> Option<$int> {
+        if index >= bits {
+          return None;
+        }
+        let mask: $int = 1 << index;
+        let changed = if set { value | mask } else { value & !mask };
+        Some(sign_extend(changed, bits))
+      }
+
       native!(@bits $int, sign_extend);
     }
   };
@@ -727,6 +1148,24 @@ macro_rules! native {
     pub(crate) const fn checked_ilog10(value: $int) -> Option<u32> {
       value.checked_ilog10()
     }
+
+    /// `lhs & rhs`.
+    #[inline]
+    pub(crate) const fn and(lhs: $int, rhs: $int) -> $int {
+      lhs & rhs
+    }
+
+    /// `lhs | rhs`.
+    #[inline]
+    pub(crate) const fn or(lhs: $int, rhs: $int) -> $int {
+      lhs | rhs
+    }
+
+    /// `lhs ^ rhs`.
+    #[inline]
+    pub(crate) const fn xor(lhs: $int, rhs: $int) -> $int {
+      lhs ^ rhs
+    }
   };
   (@u128 $limbs:ident) => {
     $limbs[0] as u128 | ($limbs[1] as u128) << 64
@@ -795,11 +1234,11 @@ macro_rules! native {
   };
 }
 
-native!(unsigned u8);
-native!(unsigned u16);
-native!(unsigned u32);
-native!(unsigned u64);
-native!(unsigned u128);
+native!(unsigned u8 => i8);
+native!(unsigned u16 => i16);
+native!(unsigned u32 => i32);
+native!(unsigned u64 => i64);
+native!(unsigned u128 => i128);
 
 native!(signed i8 => u8);
 native!(signed i16 => u16);

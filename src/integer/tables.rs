@@ -9,20 +9,26 @@
 //! method of its sealed trait, and the operands, the receiver first, are passed by reference to an
 //! array and by value to a native integer:
 //!
-//! - `= prim name(self);` returns what `name` returns for the value, as a query does, and
-//!   `= prim name(self, rhs);` what it returns for several operands;
+//! - `= prim name(self);` returns what `name` returns for the value, as a query does,
+//!   `= prim name(self, rhs);` what it returns for several operands, and
+//!   `= prim name(self; arguments);` what it returns with the scalar arguments after the `;`, such
+//!   as an index or `Self::BITS`, which are passed as written;
 //! - `= prim pair name(self, rhs);` and `= prim pair name(self);` also pass the width,
 //!   `Self::BITS`, and return the value that `name` computes, with its overflow flag; the scalar
 //!   arguments after a `;`, as in `= prim pair name(self; exp);`, come before the width;
-//! - `= prim value name(self);` returns the value that `name` computes, also with several operands;
+//! - `= prim value name(self);` returns the value that `name` computes, also with several operands
+//!   or with scalar arguments;
 //! - `= prim unsigned name(self);` returns the unsigned integer of the same width that `name`
-//!   computes, also with several operands, whose type the inherent callback takes from its
-//!   arguments;
+//!   computes, also with several operands or with scalar arguments, and
+//!   `= prim signed name(self; arguments);` the signed integer of the same width, with scalar
+//!   arguments; the inherent callback takes the type from its arguments;
 //! - `= prim name(operands; arguments) as result { body }` binds what `name` returns for the
 //!   operands and the scalar arguments, such as `Self::BITS`, to `result`, and returns `body`. It
 //!   is the one form whose body sees the raw storages, which it wraps with `Self::wrap`, for the
 //!   results that a derived body, generic over the storage, cannot compute: it can neither test a
-//!   divisor for zero nor read the constant one.
+//!   divisor for zero nor read the constant one. Without a return type, as in
+//!   `fn set_bit(&mut self, ..) = prim name(self; ..) as result { body }`, the method returns
+//!   nothing, and its body may store a new storage in `self.repr`.
 //!
 //! A derived body calls the inherent `const fn`s of the storage in an inherent block, and the trait
 //! methods, which must be in scope, in a generic implementation.
@@ -63,8 +69,11 @@ macro_rules! signed_query_table {
 
 /// Emits the rows of a method table as inherent `const fn`s of one storage. `$args` is `[layer]`
 /// for a native integer, which its layer in `int` takes by value, or `[group, layer, &]` for an
-/// array, which its layer in `int::group` takes by reference, followed for `Int` by the unsigned
-/// integer of the same width, as in `[i8, Uint<B, u8>]`, which the `unsigned` rows return.
+/// array, which its layer in `int::group` takes by reference, followed, for a table that has rows
+/// of the other sign, by the integer of the same width that they return: the unsigned one, as in
+/// `[i8, Uint<B, u8>]`, for the `unsigned` rows, and the signed one, as in `[u8, Int<B, i8>]`, for
+/// the `signed` rows. The last element thus names the unsigned type in some tables and the signed
+/// type in others, and no table has both `unsigned` and `signed` rows.
 // The parameters and the operands both come from the table: macro hygiene would keep a `self`
 // written in this macro apart from the `self` parameter of a signature written in the table.
 macro_rules! inherent_items {
@@ -85,6 +94,13 @@ macro_rules! inherent_items {
   };
   (@unsigned [$layer:ident, $unsigned:ty]) => {
     $unsigned
+  };
+  // The signed integer of the same width.
+  (@signed [$group:ident, $layer:ident, &, $signed:ty]) => {
+    $signed
+  };
+  (@signed [$layer:ident, $signed:ty]) => {
+    $signed
   };
   ($args:tt) => {};
   (
@@ -218,6 +234,70 @@ macro_rules! inherent_items {
     $args:tt
     $(#[$meta:meta])*
     fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim $prim:ident($receiver:ident $(, $operand:ident)*; $($arg:expr),+);
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[must_use]
+    #[inline]
+    pub const fn $name($($param)*) -> $ret {
+      inherent_items!(@call $args $prim($receiver $(, $operand)*), $($arg),+)
+    }
+
+    inherent_items!($args $($rest)*);
+  };
+  (
+    $args:tt
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim value $prim:ident($receiver:ident $(, $operand:ident)*; $($arg:expr),+);
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[must_use]
+    #[inline]
+    pub const fn $name($($param)*) -> $ret {
+      Self::wrap(inherent_items!(@call $args $prim($receiver $(, $operand)*), $($arg),+))
+    }
+
+    inherent_items!($args $($rest)*);
+  };
+  (
+    $args:tt
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim unsigned $prim:ident($receiver:ident; $($arg:expr),+);
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[must_use]
+    #[inline]
+    pub const fn $name($($param)*) -> inherent_items!(@unsigned $args) {
+      Uint::wrap(inherent_items!(@call $args $prim($receiver), $($arg),+))
+    }
+
+    inherent_items!($args $($rest)*);
+  };
+  (
+    $args:tt
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim signed $prim:ident($receiver:ident; $($arg:expr),+);
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[must_use]
+    #[inline]
+    pub const fn $name($($param)*) -> inherent_items!(@signed $args) {
+      Int::wrap(inherent_items!(@call $args $prim($receiver), $($arg),+))
+    }
+
+    inherent_items!($args $($rest)*);
+  };
+  (
+    $args:tt
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
       = prim $prim:ident($($operand:ident),+ $(; $($arg:expr),+)?) as $result:ident $body:block
     $($rest:tt)*
   ) => {
@@ -225,6 +305,23 @@ macro_rules! inherent_items {
     #[must_use]
     #[inline]
     pub const fn $name($($param)*) -> $ret {
+      let $result = inherent_items!(@call $args $prim($($operand),+) $(, $($arg),+)?);
+      $body
+    }
+
+    inherent_items!($args $($rest)*);
+  };
+  // A method that returns nothing, such as one that changes the value through `&mut self`.
+  (
+    $args:tt
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*)
+      = prim $prim:ident($($operand:ident),+ $(; $($arg:expr),+)?) as $result:ident $body:block
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[inline]
+    pub const fn $name($($param)*) {
       let $result = inherent_items!(@call $args $prim($($operand),+) $(, $($arg),+)?);
       $body
     }
@@ -284,6 +381,18 @@ macro_rules! trait_items {
     $(#[$meta])*
     #[must_use]
     fn $name($($param)*) -> $ret;
+
+    trait_items!([] $($rest)*);
+  };
+  (
+    []
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*)
+      = prim $prim:ident($($operand:ident),+ $(; $($arg:expr),+)?) as $result:ident $body:block
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    fn $name($($param)*);
 
     trait_items!([] $($rest)*);
   };
@@ -454,6 +563,66 @@ macro_rules! generic_items {
     []
     $(#[$meta:meta])*
     fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim $prim:ident($receiver:ident $(, $operand:ident)*; $($arg:expr),+);
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[inline]
+    fn $name($($param)*) -> $ret {
+      $receiver.repr.$prim($(&$operand.repr,)* $($arg,)+ Token::new())
+    }
+
+    generic_items!([] $($rest)*);
+  };
+  (
+    []
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim value $prim:ident($receiver:ident $(, $operand:ident)*; $($arg:expr),+);
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[inline]
+    fn $name($($param)*) -> $ret {
+      Self::wrap($receiver.repr.$prim($(&$operand.repr,)* $($arg,)+ Token::new()))
+    }
+
+    generic_items!([] $($rest)*);
+  };
+  (
+    []
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim unsigned $prim:ident($receiver:ident; $($arg:expr),+);
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[inline]
+    fn $name($($param)*) -> $ret {
+      Uint::wrap($receiver.repr.$prim($($arg,)+ Token::new()))
+    }
+
+    generic_items!([] $($rest)*);
+  };
+  (
+    []
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim signed $prim:ident($receiver:ident; $($arg:expr),+);
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[inline]
+    fn $name($($param)*) -> $ret {
+      Int::wrap($receiver.repr.$prim($($arg,)+ Token::new()))
+    }
+
+    generic_items!([] $($rest)*);
+  };
+  (
+    []
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
       = prim $prim:ident($receiver:ident $(, $operand:ident)* $(; $($arg:expr),+)?)
       as $result:ident $body:block
     $($rest:tt)*
@@ -461,6 +630,24 @@ macro_rules! generic_items {
     $(#[$meta])*
     #[inline]
     fn $name($($param)*) -> $ret {
+      let $result = $receiver.repr.$prim($(&$operand.repr,)* $($($arg,)+)? Token::new());
+      $body
+    }
+
+    generic_items!([] $($rest)*);
+  };
+  // A method that returns nothing, such as one that changes the value through `&mut self`.
+  (
+    []
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*)
+      = prim $prim:ident($receiver:ident $(, $operand:ident)* $(; $($arg:expr),+)?)
+      as $result:ident $body:block
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[inline]
+    fn $name($($param)*) {
       let $result = $receiver.repr.$prim($(&$operand.repr,)* $($($arg,)+)? Token::new());
       $body
     }

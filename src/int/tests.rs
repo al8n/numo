@@ -1244,3 +1244,293 @@ mod arithmetic_bits {
     }
   }
 }
+
+/// The bit operations of a width in the native layers against the bit model, with the pattern of
+/// each width held in a `u128` and read unsigned and in two's complement: every pattern of every
+/// width of `u8` and `i8` and of the narrow widths of `u16` and `i16`, the patterns of 9 to 16
+/// bits of `u16` and `i16` at a stride, and the structured patterns of a few widths of the wider
+/// types, at the amounts of `bigint::bit_amounts`, and in an optimized build at every amount up to
+/// the width and two beyond. Under Miri, four widths of each type, at the patterns of the ends.
+mod bits {
+  use std::{vec, vec::Vec};
+
+  use crate::{
+    bigint::{self, model},
+    int,
+  };
+
+  /// The amounts of the shifts and the rotations, and the bit indexes, at which the bit operations
+  /// of `width` bits in a native integer of `native_bits` bits are checked: those of
+  /// `bigint::bit_amounts`, and in an optimized build every amount up to `width + 2`.
+  fn amounts(native_bits: u32, width: u32) -> Vec<u32> {
+    let mut amounts = bigint::bit_amounts(native_bits, width);
+    if bigint::tier().is_full() {
+      amounts.extend(0..=width + 2);
+      amounts.sort_unstable();
+      amounts.dedup();
+    }
+    amounts
+  }
+
+  /// The patterns of `width` bits, at most 128, that every tier checks: zero, every bit, one, the
+  /// top bit, the top two bits, alternating bits, and the limits of the two's complement range
+  /// with the patterns next to them.
+  fn ends(width: u32) -> Vec<u128> {
+    let mut ends: Vec<u128> = model::few_patterns(width, 128)
+      .iter()
+      .map(|pattern| model::to_u128(pattern))
+      .collect();
+    if width > 0 {
+      let (max, min) = (u128::MAX >> (128 - width), 1u128 << (width - 1));
+      ends.extend(
+        [1, max - 1, min - 1, min + 1]
+          .into_iter()
+          .filter(|&pattern| pattern <= max),
+      );
+    }
+    ends.sort_unstable();
+    ends.dedup();
+    ends
+  }
+
+  /// The patterns of `width` bits in `u8` or `u16`: every pattern of up to 8 bits, or of up to 12
+  /// in an optimized build, and above that every 127th, or every 61st in an optimized build, with
+  /// the [`ends`]. Under Miri, the ends alone.
+  fn narrow_patterns(width: u32) -> Vec<u128> {
+    let tier = bigint::tier();
+    if tier.is_miri() {
+      return ends(width);
+    }
+    let (every, stride) = if tier.is_full() { (12, 61) } else { (8, 127) };
+    let step = if width <= every { 1 } else { stride };
+    bigint::with_ends((0..1u128 << width).step_by(step), ends(width))
+  }
+
+  /// The patterns of `width` bits in a wider type: the structured patterns of the width with the
+  /// [`ends`], or under Miri the ends alone.
+  fn wide_patterns(width: u32) -> Vec<u128> {
+    if bigint::tier().is_miri() {
+      ends(width)
+    } else {
+      bigint::with_ends(bigint::structured_patterns(width), ends(width))
+    }
+  }
+
+  /// The widths at which a wider type of `bits` bits is checked: 0, 1, `bits / 2`, `bits - 1` and
+  /// `bits`, or under Miri 0, 1, `bits - 1` and `bits`.
+  fn wide_widths(bits: u32) -> Vec<u32> {
+    if bigint::tier().is_miri() {
+      vec![0, 1, bits - 1, bits]
+    } else {
+      vec![0, 1, bits / 2, bits - 1, bits]
+    }
+  }
+
+  /// Checks every function of a width of the native layer `$layer` against the bit model on `$p`,
+  /// a pattern of the width, which `$read` reads as an integer of the layer, in two's complement
+  /// if `$signed`: the queries, the reversal and `$cast`, the cast to the other sign, whose result
+  /// `$other` reads; at each amount of `$amounts` the rotations, the shifts and the bit at that
+  /// index, read, set and cleared; and the operations on two values with `$q`, a pattern of the
+  /// same width.
+  macro_rules! check_layer {
+    (
+      $layer:ident, $signed:literal, $read:expr, $cast:ident, $other:expr;
+      $p:expr, $q:expr, $amounts:expr
+    ) => {{
+      let (p, q, amounts): (&[bool], &[bool], &[u32]) = ($p, $q, $amounts);
+      let (read, other) = ($read, $other);
+      let width = model::width(p);
+      let (x, y) = (read(p), read(q));
+      let text = || model::text(p);
+      let pair = || (model::text(p), model::text(q));
+      assert_eq!(
+        int::$layer::and(x, y),
+        read(&model::and(p, q)),
+        "{:?}",
+        pair()
+      );
+      assert_eq!(
+        int::$layer::or(x, y),
+        read(&model::or(p, q)),
+        "{:?}",
+        pair()
+      );
+      assert_eq!(
+        int::$layer::xor(x, y),
+        read(&model::xor(p, q)),
+        "{:?}",
+        pair()
+      );
+      assert_eq!(
+        int::$layer::not_bits(x, width),
+        read(&model::not(p)),
+        "!{}",
+        text()
+      );
+      assert_eq!(
+        int::$layer::count_ones_bits(x, width),
+        model::count_ones(p),
+        "{}",
+        text()
+      );
+      assert_eq!(
+        [
+          int::$layer::leading_zeros_bits(x, width),
+          int::$layer::trailing_zeros_bits(x, width),
+          int::$layer::leading_ones_bits(x, width),
+          int::$layer::trailing_ones_bits(x, width),
+        ],
+        [
+          model::leading_zeros(p),
+          model::trailing_zeros(p),
+          model::leading_ones(p),
+          model::trailing_ones(p),
+        ],
+        "{}",
+        text()
+      );
+      let (highest, lowest) = (model::highest_one(p), model::lowest_one(p));
+      assert_eq!(
+        (
+          int::$layer::highest_one_bits(x, width),
+          int::$layer::lowest_one(x)
+        ),
+        (highest, lowest),
+        "{}",
+        text()
+      );
+      assert_eq!(
+        (
+          int::$layer::isolate_highest_one_bits(x, width),
+          int::$layer::isolate_lowest_one_bits(x, width)
+        ),
+        (
+          read(&model::only(width, highest)),
+          read(&model::only(width, lowest))
+        ),
+        "{}",
+        text()
+      );
+      assert_eq!(
+        int::$layer::reverse_bits_bits(x, width),
+        read(&model::reverse(p)),
+        "{}",
+        text()
+      );
+      assert_eq!(int::$layer::$cast(x, width), other(p), "{}", text());
+      for &n in amounts {
+        assert_eq!(
+          (
+            int::$layer::rotate_left_bits(x, n, width),
+            int::$layer::rotate_right_bits(x, n, width)
+          ),
+          (
+            read(&model::rotate_left(p, n)),
+            read(&model::rotate_right(p, n))
+          ),
+          "{} rotated by {n}",
+          text()
+        );
+        let (left, left_overflow) = model::overflowing_shl(p, n);
+        let (right, right_overflow) = model::overflowing_shr(p, n, $signed);
+        assert_eq!(
+          (
+            int::$layer::overflowing_shl_bits(x, n, width),
+            int::$layer::overflowing_shr_bits(x, n, width)
+          ),
+          ((read(&left), left_overflow), (read(&right), right_overflow)),
+          "{} shifted by {n}",
+          text()
+        );
+        assert_eq!(
+          (
+            int::$layer::unbounded_shl_bits(x, n, width),
+            int::$layer::unbounded_shr_bits(x, n, width)
+          ),
+          (read(&model::shl(p, n)), read(&model::shr(p, n, $signed))),
+          "{} shifted by {n}",
+          text()
+        );
+        assert_eq!(
+          (
+            int::$layer::shl_exact_bits(x, n, width),
+            int::$layer::shr_exact_bits(x, n, width)
+          ),
+          (
+            model::shl_exact(p, n, $signed).map(|shifted| read(&shifted)),
+            model::shr_exact(p, n, $signed).map(|shifted| read(&shifted))
+          ),
+          "{} shifted exactly by {n}",
+          text()
+        );
+        assert_eq!(
+          int::$layer::bit(x, n, width),
+          model::bit(p, n),
+          "bit {n} of {}",
+          text()
+        );
+        for set in [false, true] {
+          assert_eq!(
+            int::$layer::with_bit(x, n, set, width),
+            model::with_bit(p, n, set).map(|changed| read(&changed)),
+            "bit {n} of {} set to {set}",
+            text()
+          );
+        }
+      }
+    }};
+  }
+
+  /// Checks the native layers `$uint` and `$int` against the bit model at each width of `$widths`
+  /// and each pattern that `$patterns` gives for it, read unsigned and in two's complement, with
+  /// the next pattern as the second operand.
+  macro_rules! check_native {
+    ($uint:ident, $int:ident, $widths:expr, $patterns:expr) => {{
+      for width in $widths {
+        let patterns: Vec<u128> = $patterns(width);
+        let amounts = amounts($uint::BITS, width);
+        for (k, &a) in patterns.iter().enumerate() {
+          let b = patterns[(k + 1) % patterns.len()];
+          let (p, q) = (model::of_u128(a, width), model::of_u128(b, width));
+          check_layer!(
+            $uint, false, |p: &[bool]| model::to_u128(p) as $uint, cast_signed_bits,
+            |p: &[bool]| model::to_i128(p) as $int;
+            &p, &q, &amounts
+          );
+          check_layer!(
+            $int, true, |p: &[bool]| model::to_i128(p) as $int, cast_unsigned_bits,
+            |p: &[bool]| model::to_u128(p) as $uint;
+            &p, &q, &amounts
+          );
+        }
+      }
+    }};
+  }
+
+  #[test]
+  fn u8_and_i8_match_the_bit_model() {
+    let widths: Vec<u32> = if bigint::tier().is_miri() {
+      vec![0, 1, 7, 8]
+    } else {
+      (0..=8).collect()
+    };
+    check_native!(u8, i8, widths, narrow_patterns);
+  }
+
+  #[test]
+  fn u16_and_i16_match_the_bit_model() {
+    let widths: Vec<u32> = if bigint::tier().is_miri() {
+      vec![0, 1, 15, 16]
+    } else {
+      [0, 1, 7, 8].into_iter().chain(9..=16).collect()
+    };
+    check_native!(u16, i16, widths, narrow_patterns);
+  }
+
+  #[test]
+  fn u32_to_i128_match_the_bit_model() {
+    check_native!(u32, i32, wide_widths(32), wide_patterns);
+    check_native!(u64, i64, wide_widths(64), wide_patterns);
+    check_native!(u128, i128, wide_widths(128), wide_patterns);
+  }
+}

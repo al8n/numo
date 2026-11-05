@@ -14,7 +14,10 @@ use core::{
   fmt::{Debug, Display},
   hash::Hash,
   iter::{Product, Sum},
-  ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
+  ops::{
+    Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign,
+    Mul, MulAssign, Neg, Not, Rem, RemAssign, Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign,
+  },
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -50,9 +53,12 @@ mod sealed {
 /// this trait, which the bound `B: BitWidth` provides on `Uint<B>` and `Int<B>`; a method call
 /// needs the trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`. The
 /// supertraits give generic code the operators `+`, `-` and `*`, their compound assignments and
-/// `Sum`, which on overflow panic or wrap as `overflow-checks` decides, and `/` and `%` and their
+/// `Sum`, which on overflow panic or wrap as `overflow-checks` decides, `/` and `%` and their
 /// compound assignments, which panic on a zero divisor and on overflow in every build, as for the
-/// native integers.
+/// native integers, the bitwise operators `!`, `&`, `|` and `^` and their compound assignments, and
+/// the shifts `<<` and `>>` and their compound assignments by a `u32`, so that a literal amount, as
+/// in `x << 3`, is a `u32` in code bounded by this trait alone; a concrete type takes every
+/// primitive integer as the amount.
 /// The functions `zero`, `min_value` and `max_value`, and [`one`](IntegerOne::one), have the names
 /// of those of `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by traits of
 /// both crates names the trait in the path, as in `FixedInteger::zero()`.
@@ -109,6 +115,17 @@ pub trait FixedInteger:
   + MulAssign
   + DivAssign
   + RemAssign
+  + Not<Output = Self>
+  + BitAnd<Output = Self>
+  + BitOr<Output = Self>
+  + BitXor<Output = Self>
+  + BitAndAssign
+  + BitOrAssign
+  + BitXorAssign
+  + Shl<u32, Output = Self>
+  + Shr<u32, Output = Self>
+  + ShlAssign<u32>
+  + ShrAssign<u32>
   + Sum
 {
   /// The number of bits, `Bits`.
@@ -431,10 +448,11 @@ pub trait FromLimbs: ArrayInteger {
   fn from_limbs(limbs: Self::Array) -> Self;
 }
 
-/// Overflowing addition, subtraction, multiplication, negation, division, remainder and
-/// exponentiation: the result wrapped to the range of the type, and whether the exact result is
-/// outside that range. The division and the remainder, rounded toward zero and Euclidean, panic on
-/// a zero divisor.
+/// Overflowing addition, subtraction, multiplication, negation, division, remainder,
+/// exponentiation and shifts: the result wrapped to the range of the type, and whether the exact
+/// result is outside that range, or for a shift, whose amount wraps modulo `Bits`, whether the
+/// amount is `Bits` or more. The division and the remainder, rounded toward zero and Euclidean,
+/// panic on a zero divisor.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -457,9 +475,10 @@ pub trait OverflowingOps: Sealed + Sized {
   overflowing_table!(trait_items![]);
 }
 
-/// Checked addition, subtraction, multiplication, negation, division, remainder and exponentiation,
-/// the next multiple and the exact division, which return `None` when the exact result is outside
-/// the range of the type, or for a zero divisor, or when an exact division leaves a remainder.
+/// Checked addition, subtraction, multiplication, negation, division, remainder, exponentiation and
+/// shifts, the next multiple and the exact division, which return `None` when the exact result is
+/// outside the range of the type, or for a zero divisor, or when an exact division leaves a
+/// remainder, or when a shift amount is `Bits` or more.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -483,7 +502,8 @@ pub trait CheckedOps: Sealed + Sized {
 }
 
 /// Wrapping addition, subtraction, multiplication, negation, division, remainder and
-/// exponentiation, modulo `2^Bits`. The division and the remainder panic on a zero divisor.
+/// exponentiation, modulo `2^Bits`, and the wrapping shifts, which take the amount modulo `Bits`.
+/// The division and the remainder panic on a zero divisor.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -532,9 +552,9 @@ pub trait SaturatingOps: Sealed + Sized {
   saturating_table!(Uint, trait_items![]);
 }
 
-/// Strict addition, subtraction, multiplication, negation, division, remainder and exponentiation,
-/// which panic when the exact result is outside the range of the type, and on a zero divisor,
-/// whatever the `overflow-checks` setting.
+/// Strict addition, subtraction, multiplication, negation, division, remainder, exponentiation and
+/// shifts, which panic when the exact result is outside the range of the type, on a zero divisor,
+/// and on a shift amount of `Bits` or more, whatever the `overflow-checks` setting.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -558,8 +578,8 @@ pub trait StrictOps: Sealed + Sized {
 }
 
 /// Unchecked addition, subtraction and multiplication, which assume that the exact result is in
-/// the range of the type, and unchecked exact division, which also assumes that the divisor
-/// divides the value.
+/// the range of the type, unchecked exact division, which also assumes that the divisor divides the
+/// value, and unchecked shifts, which assume that the amount is below `Bits`.
 ///
 /// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
 /// `const unsafe fn`s of the same names, which a concrete type reaches without this trait, also in
@@ -633,8 +653,8 @@ pub trait IntegerMath: Sealed + Sized {
   integer_math_table!(trait_items![]);
 }
 
-/// The functions of [`Uint`] alone that have no overflow prefix: `is_multiple_of` and the next
-/// power of two in its forms.
+/// The functions of [`Uint`] alone that have no overflow prefix: `is_multiple_of`,
+/// `is_power_of_two` and the next power of two in its forms.
 ///
 /// [`Uint`] implements it for every storage, with the results of the inherent `const fn`s of the
 /// same names, which a concrete type reaches without this trait, also in constant contexts.
@@ -651,6 +671,7 @@ pub trait IntegerMath: Sealed + Sized {
 /// assert_eq!(capacity(u7::new(65)), None);
 /// assert_eq!(u7::new(65).wrapping_next_power_of_two(), u7::ZERO);
 /// assert!(u7::new(42).is_multiple_of(&u7::new(7)));
+/// assert!(u7::new(64).is_power_of_two() && !u7::new(65).is_power_of_two());
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
@@ -677,6 +698,95 @@ pub trait UnsignedMath: Sealed + Sized {
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait SignedMath: Sealed + Sized {
   int_math_table!(trait_items![]);
+}
+
+/// The bit counts, the highest and the lowest one and their isolation, the bit reversal, the
+/// rotations, the unbounded and exact shifts, and the bit at an index, at the width `Bits`.
+///
+/// [`Uint`] and [`Int`] implement it for every storage, with the results of the inherent
+/// `const fn`s of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. Generic code, such as code over `B: BitWidth`, calls the methods with this
+/// trait in scope. The other shifts, such as [`checked_shl`](CheckedOps::checked_shl), are in the
+/// families, beside the other operations of their forms.
+///
+/// ```
+/// use numo::{BitWidth, IntegerBits, Uint, i7, u7};
+///
+/// // The number of ones of the values.
+/// fn ones<B: BitWidth>(values: &[Uint<B>]) -> u32 {
+///   values.iter().map(|value| value.count_ones()).sum()
+/// }
+///
+/// assert_eq!(ones(&[u7::MAX, u7::new(5)]), 9);
+/// assert_eq!(u7::new(1).leading_zeros(), 6);
+/// // The ones of -1 are its 7 bits, without the copy of the sign that the `i8` holds above them.
+/// assert_eq!(i7::new(-1).count_ones(), 7);
+/// assert_eq!(u7::new(0b100_0001).rotate_left(1), u7::new(0b000_0011));
+/// assert_eq!(i7::MIN.unbounded_shr(10), i7::new(-1));
+/// assert_eq!(u7::new(0b11).shl_exact(5), Some(u7::new(0b110_0000)));
+/// assert_eq!(u7::new(0b11).shl_exact(6), None);
+///
+/// let mut value = i7::ZERO;
+/// value.set_bit(6, true);
+/// assert_eq!(value, i7::MIN);
+/// assert!(value.bit(6) && !value.bit(7));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait IntegerBits: Sealed + Sized {
+  integer_bits_table!(trait_items![]);
+}
+
+/// The bit methods of [`Uint`] alone: the bit width, and the cast of the bits to [`Int`].
+///
+/// [`Uint`] implements it for every storage, with the results of the inherent `const fn`s of the
+/// same names, which a concrete type reaches without this trait, also in constant contexts.
+///
+/// ```
+/// use numo::{BitWidth, Int, Uint, UnsignedBits, i7, u7};
+///
+/// // The bits of an unsigned value read in two's complement.
+/// fn signed<B: BitWidth>(value: Uint<B>) -> Int<B> {
+///   value.cast_signed()
+/// }
+///
+/// assert_eq!(signed(u7::MAX), i7::new(-1));
+/// assert_eq!(signed(u7::new(63)), i7::MAX);
+/// assert_eq!(u7::new(5).bit_width(), 3);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait UnsignedBits: Sealed + Sized {
+  /// The `Int` of the same width in a storage of the same size: `Int<B, i8>` for `Uint<B, u8>`,
+  /// and so on, and `Int<B, [L; N]>` for `Uint<B, [L; N]>`.
+  type Signed;
+
+  uint_bits_table!(trait_items![]);
+}
+
+/// The bit methods of [`Int`] alone: the cast of the bits to [`Uint`].
+///
+/// [`Int`] implements it for every storage, with the results of the inherent `const fn`s of the
+/// same names, which a concrete type reaches without this trait, also in constant contexts. The
+/// cast returns the [`Magnitude`](IntegerMath::Magnitude) of [`IntegerMath`], the `Uint` of the
+/// same width in a storage of the same size.
+///
+/// ```
+/// use numo::{BitWidth, Int, SignedBits, Uint, i7, u7};
+///
+/// // The bits of a signed value, its two's complement, read unsigned.
+/// fn unsigned<B: BitWidth>(value: Int<B>) -> Uint<B> {
+///   value.cast_unsigned()
+/// }
+///
+/// assert_eq!(unsigned(i7::new(-1)), u7::MAX);
+/// assert_eq!(unsigned(i7::MIN), u7::new(64));
+/// assert_eq!(u7::new(64).cast_signed(), i7::MIN);
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait SignedBits: Sealed + Sized + IntegerMath {
+  int_bits_table!(trait_items![]);
 }
 
 // The constants and methods are the inherent ones, which `Self::` names first, and the functions
@@ -917,6 +1027,27 @@ impl<B: FitsBits<R>, R: UintRepr> UnsignedMath for Uint<B, R> {
 
 impl<B: FitsBits<R>, R: IntRepr> SignedMath for Int<B, R> {
   int_math_table!(generic_items![]);
+}
+
+// The bit methods read no constant either, so they need only the storage trait.
+impl<B: FitsBits<R>, R: UintRepr> IntegerBits for Uint<B, R> {
+  integer_bits_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> IntegerBits for Int<B, R> {
+  integer_bits_table!(generic_items![]);
+}
+
+// The signed storage of the size of `R` names the result, and needs no bound of its own: the
+// sealed `UintCore` returns it from `cast_signed_bits`.
+impl<B: FitsBits<R>, R: UintRepr> UnsignedBits for Uint<B, R> {
+  type Signed = Int<B, <R as UintRepr>::Signed>;
+
+  uint_bits_table!(generic_items![]);
+}
+
+impl<B: FitsBits<R>, R: IntRepr> SignedBits for Int<B, R> {
+  int_bits_table!(generic_items![]);
 }
 
 #[cfg(test)]
