@@ -135,10 +135,13 @@
 //! `u1024` and `i0` to `i1024`, but for the native widths 8, 16, 32, 64 and 128, in the default
 //! storage: `[u64; 0]` for zero bits, so that [`u0`] and [`i0`] take no space, the smallest native
 //! integer that holds 1 to 127 bits, such as [`u7`] for `Uint<U7, u8>`, and `[u64; ceil(N / 64)]`
-//! for 129 to 1024 bits, such as [`u144`] for `Uint<U144, [u64; 3]>`. It
-//! also names `u2048`, `u4096`, `i2048` and `i4096`, which fill their limbs. Any other width or
-//! storage is written out, such as `Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that
-//! `typenum` has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
+//! for 129 to 1024 bits, such as [`u144`] for `Uint<U144, [u64; 3]>`. It also names `u2048`,
+//! `u4096`, `i2048` and `i4096`, which fill their limbs. The non-zero integers have the aliases
+//! `NonZeroUN` and `NonZeroIN` for the same widths, such as [`NonZeroU7`] for
+//! `NonZeroUint<U7, NonZero<u8>>`, except zero bits, which hold no value that is not zero, and the
+//! native widths, whose names `core::num` has. Any other width or storage is written out, such as
+//! `Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that `typenum` has no constant for is
+//! computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
 //! [`FitsBits`] relates a width to the storages that hold it, [`FillsRepr`] to the storages that it
 //! fills, and [`Limbs<Bits, L>`](Limbs) names the array of limbs of type `L` that holds it.
 //!

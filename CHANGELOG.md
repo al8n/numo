@@ -335,6 +335,11 @@ FEATURES
     `max_value` from one bit, which need only the storage traits, and `ConstNonZeroLimits`, with
     `MIN` and `MAX`, for a storage whose integer holds the value inline. `IntegerNonZero` and the
     alias `NonZeroOf<T>` name the non-zero integer of an integer, as in `NonZeroOf<u7>`.
+  - The module `aliases` names the non-zero integer of each integer alias but `u0` and `i0`, which
+    hold no value that is not zero, in the same storage: `NonZeroU1` to `NonZeroU1024` and
+    `NonZeroI1` to `NonZeroI1024`, but for the native widths 8, 16, 32, 64 and 128, whose names
+    `core::num` has, and `NonZeroU2048`, `NonZeroU4096`, `NonZeroI2048` and `NonZeroI4096`, so that
+    `NonZeroU7` is `NonZeroOf<u7>`.
 - The arithmetic methods of `Decimal`, `Uint` and `Int`, inherent and in the traits, take the
   receiver and the operands by reference, as in `a.checked_add(&b)`, so that a call does not copy a
   wide value, while the operators keep the signatures of their standard traits. The casts between
