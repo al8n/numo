@@ -31,7 +31,7 @@ take their operands by value, as the native casts and the methods of the operato
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
 | `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, and generic traits |
-| `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the methods of the native `NonZero` integers, the division of `Uint` by `NonZeroUint`, which cannot panic, and generic traits |
+| `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the division of `Uint` by `NonZeroUint`, which cannot panic, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
 
@@ -201,9 +201,12 @@ several times slower), so choose it for layout, not for speed. The aliases name 
 `i0` to `i1024`, except the native widths 8, 16, 32, 64 and 128, in the default storage: `[u64; 0]`
 for zero bits, so that `u0` and `i0` take no space, the smallest native integer for 1 to 127 bits,
 such as `u7` for `Uint<U7, u8>`, and `[u64; ceil(N / 64)]` for 129 to 1024 bits, such as `u144` for
-`Uint<U144, [u64; 3]>`. They also name `u2048`, `u4096`, `i2048` and `i4096`. Any other width or
-storage is written out, such as `Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that `typenum`
-has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
+`Uint<U144, [u64; 3]>`. They also name `u2048`, `u4096`, `i2048` and `i4096`. The non-zero integers
+have the aliases `NonZeroUN` and `NonZeroIN` for the same widths, such as `NonZeroU7` for
+`NonZeroUint<U7, NonZero<u8>>`, except zero bits, which hold no value that is not zero, and the
+native widths, whose names `core::num` has. Any other width or storage is written out, such as
+`Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that `typenum` has no constant for is computed,
+as in `Uint<Sum<U1024, U476>>` for 1500 bits.
 
 - `const` items and methods: `BITS`, `ZERO`, `MIN` and `MAX`, and `ONE` from one bit for `Uint`
   and from two bits for `Int`; for a native integer, `new`, which panics if the value does not fit,

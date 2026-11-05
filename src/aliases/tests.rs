@@ -3,15 +3,55 @@ use core::any::TypeId;
 use typenum::U;
 
 use super::*;
-use crate::TryNewError;
+use crate::{NonZeroOf, TryNewError};
+
+/// Checks what every non-zero alias has in common: it is `NonZeroOf` the integer alias, the
+/// non-zero integer of the default storage and the one of `$storage`, it has the width of the
+/// integer alias, and it takes its space.
+macro_rules! check_nonzero {
+  ($kind:ident, $name:ident, $nonzero:ident, $bits:tt, $storage:ty) => {
+    assert_eq!(TypeId::of::<$nonzero>(), TypeId::of::<NonZeroOf<$name>>());
+    assert_eq!(TypeId::of::<$nonzero>(), TypeId::of::<$kind<U<$bits>>>());
+    assert_eq!(
+      TypeId::of::<$nonzero>(),
+      TypeId::of::<$kind<U<$bits>, $storage>>()
+    );
+    assert_eq!(<$nonzero>::BITS, $bits);
+    assert_eq!(size_of::<$nonzero>(), size_of::<$name>());
+  };
+}
+
+/// Checks an unsigned non-zero alias: its limits are one and the largest value of the integer
+/// alias.
+macro_rules! check_nonzero_unsigned {
+  ($name:ident, $nonzero:ident, $bits:tt, $storage:ty) => {
+    check_nonzero!(NonZeroUint, $name, $nonzero, $bits, $storage);
+    assert_eq!(<$nonzero>::MIN.get(), <$name>::ONE);
+    assert_eq!(<$nonzero>::MAX.get(), <$name>::MAX);
+  };
+}
+
+/// Checks a signed non-zero alias of two bits or more: its limits are those of the integer alias.
+macro_rules! check_nonzero_signed {
+  ($name:ident, $nonzero:ident, $bits:tt, $storage:ty) => {
+    check_nonzero!(NonZeroInt, $name, $nonzero, $bits, $storage);
+    assert_eq!(<$nonzero>::MIN.get(), <$name>::MIN);
+    assert_eq!(<$nonzero>::MAX.get(), <$name>::MAX);
+  };
+}
 
 /// Checks the aliases of one native integer: each is `Uint<U<bits>>` or `Int<U<bits>>`, the default
-/// storage of its width, stored in the native integer, with the limits of its width.
+/// storage of its width, stored in the native integer, with the limits of its width, and its
+/// non-zero alias is stored in the `NonZero` of that native integer, whose niche `Option` takes.
 macro_rules! test_aliases {
-  ($($sign:ident $repr:ident: $($name:ident = $bits:tt),+;)+) => {$(
+  ($($sign:ident $repr:ident: $($name:ident $nonzero:ident = $bits:tt),+;)+) => {$(
     #[test]
     fn $repr() {
-      $(test_aliases!(@alias $sign $repr $name $bits);)+
+      $(
+        test_aliases!(@alias $sign $repr $name $bits);
+        test_aliases!(@nonzero $sign $repr $name $nonzero $bits);
+        assert_eq!(size_of::<Option<$nonzero>>(), size_of::<$name>());
+      )+
     }
   )+};
   (@alias unsigned $repr:ident $name:ident $bits:tt) => {
@@ -29,6 +69,18 @@ macro_rules! test_aliases {
     assert_eq!(size_of::<$name>(), size_of::<$repr>());
     assert_eq!(<$name>::MIN.value() as i128, -(1 << ($bits - 1)));
     assert_eq!(<$name>::MAX.value() as i128, (1 << ($bits - 1)) - 1);
+  };
+  (@nonzero unsigned $repr:ident $name:ident $nonzero:ident $bits:tt) => {
+    check_nonzero_unsigned!($name, $nonzero, $bits, core::num::NonZero<$repr>);
+  };
+  // One signed bit holds -1 and 0, so its only non-zero value is both limits.
+  (@nonzero signed $repr:ident $name:ident $nonzero:ident 1) => {
+    check_nonzero!(NonZeroInt, $name, $nonzero, 1, core::num::NonZero<$repr>);
+    assert_eq!(<$nonzero>::MIN.get().value(), -1);
+    assert_eq!(<$nonzero>::MAX.get().value(), -1);
+  };
+  (@nonzero signed $repr:ident $name:ident $nonzero:ident $bits:tt) => {
+    check_nonzero_signed!($name, $nonzero, $bits, core::num::NonZero<$repr>);
   };
 }
 
@@ -141,9 +193,13 @@ fn check_signed_limits(min: &[u64], max: &[u64], bits: usize) {
 }
 
 /// Checks the aliases from 129 to 1024 bits: each is `Uint<U<bits>>` or `Int<U<bits>>`, the default
-/// storage of its width, stored in `ceil(bits / 64)` limbs of 64 bits, with the limits of its width.
+/// storage of its width, stored in `ceil(bits / 64)` limbs of 64 bits, with the limits of its
+/// width, and its non-zero alias is the non-zero integer of that storage.
 macro_rules! test_wide_aliases {
-  ($($unsigned:ident $signed:ident: $constant:ident, $bits:tt, $limbs:tt;)+) => {
+  ($(
+    $unsigned:ident $signed:ident $nonzero_unsigned:ident $nonzero_signed:ident:
+      $constant:ident, $bits:tt, $limbs:tt;
+  )+) => {
     #[test]
     fn wide_unsigned_aliases() {$(
       assert_eq!(TypeId::of::<$unsigned>(), TypeId::of::<Uint<U<$bits>>>());
@@ -151,6 +207,7 @@ macro_rules! test_wide_aliases {
       assert_eq!(<$unsigned>::BITS, $bits);
       assert_eq!(size_of::<$unsigned>(), 8 * $limbs);
       check_unsigned_limits(&<$unsigned>::MIN.to_limbs(), &<$unsigned>::MAX.to_limbs(), $bits);
+      check_nonzero_unsigned!($unsigned, $nonzero_unsigned, $bits, [u64; $limbs]);
     )+}
 
     #[test]
@@ -160,6 +217,7 @@ macro_rules! test_wide_aliases {
       assert_eq!(<$signed>::BITS, $bits);
       assert_eq!(size_of::<$signed>(), 8 * $limbs);
       check_signed_limits(&<$signed>::MIN.to_limbs(), &<$signed>::MAX.to_limbs(), $bits);
+      check_nonzero_signed!($signed, $nonzero_signed, $bits, [u64; $limbs]);
     )+}
   };
 }
@@ -185,4 +243,13 @@ fn wide_aliases_are_const_and_limb_sized() {
   assert_eq!(size_of::<u129>(), 24);
   assert_eq!(size_of::<i1023>(), 128);
   assert_eq!(align_of::<u144>(), align_of::<u64>());
+}
+
+/// The non-zero aliases of 2048 and 4096 bits, which are written out beside `u2048` and `u4096`.
+#[test]
+fn huge_nonzero_aliases() {
+  check_nonzero_unsigned!(u2048, NonZeroU2048, 2048, [u64; 32]);
+  check_nonzero_unsigned!(u4096, NonZeroU4096, 4096, [u64; 64]);
+  check_nonzero_signed!(i2048, NonZeroI2048, 2048, [u64; 32]);
+  check_nonzero_signed!(i4096, NonZeroI4096, 4096, [u64; 64]);
 }
