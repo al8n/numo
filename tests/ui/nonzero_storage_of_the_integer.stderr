@@ -1,0 +1,30 @@
+error[E0599]: no associated function or constant named `new` found for struct `NonZeroUint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` in the current scope
+ --> tests/ui/nonzero_storage_of_the_integer.rs:6:38
+  |
+6 |   let _five = NonZeroUint::<U7, u8>::new(u7::new(5));
+  |                                      ^^^ associated function or constant not found in `NonZeroUint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>`
+  |
+  = note: the associated function or constant was found for
+          - `NonZeroUint<B, [u128; N]>`
+          - `NonZeroUint<B, [u16; N]>`
+          - `NonZeroUint<B, [u32; N]>`
+          - `NonZeroUint<B, [u64; N]>`
+          and 6 more types
+help: there is a method `ne` with a similar name
+  |
+6 -   let _five = NonZeroUint::<U7, u8>::new(u7::new(5));
+6 +   let _five = NonZeroUint::<U7, u8>::ne(u7::new(5));
+  |
+
+error[E0599]: no method named `get` found for struct `NonZeroUint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` in the current scope
+  --> tests/ui/nonzero_storage_of_the_integer.rs:10:11
+   |
+10 |   nonzero.get()
+   |           ^^^ method not found in `NonZeroUint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>`
+   |
+   = note: the method was found for
+           - `NonZeroUint<B, [u128; N]>`
+           - `NonZeroUint<B, [u16; N]>`
+           - `NonZeroUint<B, [u32; N]>`
+           - `NonZeroUint<B, [u64; N]>`
+           and 6 more types

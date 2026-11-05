@@ -9,10 +9,11 @@ use core::{
 
 pub use error::TryNewError;
 pub use traits::{
-  ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs,
-  IntegerBits, IntegerMath, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, SignedBits,
-  SignedFixedInteger, SignedMath, StrictOps, UncheckedOps, UnsignedBits, UnsignedFixedInteger,
-  UnsignedMath, WrappingOps,
+  ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,
+  FixedNonZero, FromLimbs, IntegerBits, IntegerMath, IntegerNonZero, IntegerOne, NativeInteger,
+  NonZeroLimits, NonZeroOf, OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger,
+  SignedMath, SignedNonZero, StrictOps, UncheckedOps, UnsignedBits, UnsignedFixedInteger,
+  UnsignedMath, UnsignedNonZero, WrappingOps,
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -33,6 +34,8 @@ mod tables;
 mod arithmetic;
 #[macro_use]
 mod bits;
+#[macro_use]
+mod nonzero;
 mod traits;
 
 /// An unsigned integer of `Bits` bits, stored in `Repr`.
@@ -423,6 +426,189 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // which is stated through `checked_*`, so they do not rely on it either.
   repr: Repr,
   bits: PhantomData<Bits>,
+}
+
+/// A non-zero unsigned integer of `Bits` bits, stored in `Repr`.
+///
+/// The value runs from one to `2^Bits - 1`. `Repr` is the storage of a value that is not zero:
+/// `core::num::NonZero<u8>`, `NonZero<u16>`, `NonZero<u32>`, `NonZero<u64>` or `NonZero<u128>`,
+/// whose integer holds at least `Bits` bits, or an array of limbs, least significant first,
+/// `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, as for [`Uint`]. Each is the
+/// [`NonZero`](crate::UintRepr::NonZero) of a storage of [`Uint`], and without `Repr` the storage
+/// is that of the default storage of [`Uint`], which [`BitWidth`] names: `NonZeroUint<U7>` is
+/// `NonZeroUint<U7, NonZero<u8>>` and `NonZeroUint<U200>` is `NonZeroUint<U200, [u64; 4]>`.
+/// [`NonZeroOf`](crate::NonZeroOf) names the non-zero integer of an integer, such as
+/// `NonZeroOf<u7>` for `NonZeroUint<U7>`.
+///
+/// The type has the size, alignment and ABI of `Repr`. In a native storage, `Option` of the type has
+/// the size, alignment and call ABI of the native integer, and `None` is the bit pattern of zero,
+/// as for the native `NonZero`: `Option<NonZeroUint<U7>>` takes one byte. An array has no value
+/// that it cannot hold, so `Option` of an array storage adds a tag. Each storage gives a distinct
+/// type, as for [`Uint`].
+///
+/// In each storage, [`new`](Self::new) creates a value from the [`Uint`] of the same width and
+/// storage, returning `None` for zero, and [`get`](Self::get) returns it, as `From` does.
+/// [`new_unchecked`](Self::new_unchecked), a `const unsafe fn`, creates a value without the check:
+/// the caller guarantees that it is not zero. The constants are `BITS`, and from one bit `MIN`,
+/// which is one, and `MAX`, which is `2^Bits - 1`. Zero bits hold no value but zero, so `new`
+/// returns `None` there and the type has no `MIN` or `MAX`; one bit holds only one. Values compare,
+/// hash and format as the integers of the same values: `Ord` is numeric, the hash is that of the
+/// [`Uint`], and `Display` and `Debug` write decimal. There is no `Default`, as no value would be a
+/// natural one.
+///
+/// ```
+/// use core::num::NonZero;
+///
+/// use numo::{
+///   NonZeroUint, Uint,
+///   typenum::{U7, U200},
+///   u7,
+/// };
+///
+/// let five = NonZeroUint::<U7>::new(u7::new(5)).unwrap();
+/// assert_eq!(five.get(), u7::new(5));
+/// assert_eq!(NonZeroUint::<U7>::new(u7::ZERO), None);
+/// // SAFETY: 5 is not zero.
+/// assert_eq!(unsafe { NonZeroUint::<U7>::new_unchecked(u7::new(5)) }, five);
+/// assert_eq!(NonZeroUint::<U7>::MAX.get(), u7::MAX);
+/// assert!(NonZeroUint::<U7>::MIN < five);
+///
+/// // The storage is the native `NonZero` of the storage of `u7`, a `u8`, and `None` takes its niche.
+/// let _: NonZeroUint<U7, NonZero<u8>> = five;
+/// assert_eq!(size_of::<Option<NonZeroUint<U7>>>(), 1);
+///
+/// // 200 bits in four limbs.
+/// let wide = NonZeroUint::<U200>::new(Uint::<U200>::MAX).unwrap();
+/// assert_eq!(wide.count_ones().get(), 200);
+/// assert_eq!(Uint::from(wide), Uint::<U200>::MAX);
+/// ```
+///
+/// # Arithmetic
+///
+/// Each storage has the methods of the native non-zero integers at the width `Bits`, as
+/// `const fn`s: [`leading_zeros`](Self::leading_zeros), [`trailing_zeros`](Self::trailing_zeros)
+/// and [`count_ones`](Self::count_ones), which returns a `core::num::NonZero<u32>`,
+/// [`highest_one`](Self::highest_one) and [`lowest_one`](Self::lowest_one) and their isolation,
+/// [`bit_width`](Self::bit_width), [`is_power_of_two`](Self::is_power_of_two),
+/// [`reverse_bits`](Self::reverse_bits), [`rotate_left`](Self::rotate_left) and
+/// [`rotate_right`](Self::rotate_right), which follow the native methods, still unstable
+/// ([#128281](https://github.com/rust-lang/rust/issues/128281)), the checked and saturating
+/// multiplication and exponentiation, the checked and saturating addition of a [`Uint`], which may
+/// be zero, [`checked_next_power_of_two`](Self::checked_next_power_of_two), the logarithms
+/// [`ilog2`](Self::ilog2) and [`ilog10`](Self::ilog10), [`midpoint`](Self::midpoint),
+/// [`isqrt`](Self::isqrt), [`div_ceil`](Self::div_ceil), and [`cast_signed`](Self::cast_signed),
+/// which reads the bits as the [`NonZeroInt`] of the same width in a storage of the same size. A
+/// saturating method returns `MAX` where the result passes it. Every count and index stays within
+/// the `Bits` bits, whatever the storage holds, and no method panics: a value that is not zero has
+/// a logarithm, and [`div_ceil`](Self::div_ceil) divides by a value that is not zero.
+///
+/// The division `Uint / NonZeroUint` and the remainder `Uint % NonZeroUint`, with `/=` and `%=`,
+/// divide by a value that is not zero, so they cannot panic, as for the native integers. `|`
+/// combines two non-zero integers, or one and its [`Uint`] either way, into a non-zero integer, and
+/// `|=` assigns it. The operators work on references for every storage, and on values for a
+/// storage whose integer holds the value inline. The traits
+/// [`FixedNonZero`](crate::FixedNonZero), [`UnsignedNonZero`](crate::UnsignedNonZero),
+/// [`NonZeroLimits`](crate::NonZeroLimits) and [`ConstNonZeroLimits`](crate::ConstNonZeroLimits)
+/// give generic code the methods and the limits. As for [`Uint`], a path to a method names the
+/// storage, as in `NonZeroUint::<U7>::new(..)`.
+///
+/// ```
+/// use numo::{NonZeroInt, NonZeroUint, i7, typenum::U7, u7};
+///
+/// let ten = NonZeroUint::<U7>::new(u7::new(10)).unwrap();
+/// let twenty = ten.checked_add(&u7::new(10)).unwrap();
+/// assert_eq!(ten.checked_add(&u7::ZERO), Some(ten));
+/// assert_eq!(ten.checked_mul(&twenty), None);
+/// assert_eq!(ten.saturating_mul(&twenty), NonZeroUint::<U7>::MAX);
+/// assert_eq!((ten.ilog2(), ten.ilog10(), ten.isqrt().get()), (3, 1, u7::new(3)));
+/// assert_eq!(ten.rotate_right(1).get(), u7::new(5));
+/// assert_eq!(NonZeroUint::<U7>::MAX.cast_signed(), NonZeroInt::<U7>::new(i7::new(-1)).unwrap());
+///
+/// // The division by a value that is not zero cannot panic.
+/// assert_eq!(u7::new(100) / ten, u7::new(10));
+/// assert_eq!(u7::new(105) % ten, u7::new(5));
+/// assert_eq!((ten | u7::new(1)).get(), u7::new(11));
+/// ```
+#[repr(transparent)]
+pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
+  // `Repr` is the storage of the value itself: `core::num::NonZero<u8>` to `NonZero<u128>` for a
+  // native storage, whose niche `Option` uses, and the array for an array storage, which the
+  // methods lend as a `Uint`. The value has `Bits` bits, as that of `Uint` does, and is not zero.
+  // In a native storage the validity of `core::num::NonZero` excludes zero; in an array both are
+  // logical invariants, as the width of `Uint` is, which no `unsafe` code may rely on. A `Uint`
+  // over a storage that is not one of `Uint`, such as `NonZero<u8>`, has no methods: only `Clone`,
+  // `Copy`, `PartialEq`, `Eq` and the seal of the integer traits.
+  value: Uint<Bits, Repr>,
+}
+
+/// A non-zero signed integer of `Bits` bits in two's complement, stored in `Repr`.
+///
+/// The value runs from `-2^(Bits - 1)` to `2^(Bits - 1) - 1`, without zero. `Repr` is the storage
+/// of a value that is not zero: `core::num::NonZero<i8>`, `NonZero<i16>`, `NonZero<i32>`,
+/// `NonZero<i64>` or `NonZero<i128>`, whose integer holds at least `Bits` bits, or an array of
+/// limbs, least significant first, in two's complement, as for [`Int`]. Each is the
+/// [`NonZero`](crate::IntRepr::NonZero) of a storage of [`Int`], and without `Repr` the storage is
+/// that of the default storage of [`Int`], which [`BitWidth`] names: `NonZeroInt<U7>` is
+/// `NonZeroInt<U7, NonZero<i8>>` and `NonZeroInt<U200>` is `NonZeroInt<U200, [u64; 4]>`.
+///
+/// As for [`NonZeroUint`], the type has the size, alignment and ABI of `Repr`, and `Option` of a
+/// native storage takes the niche of zero. [`new`](Self::new) creates a value from the [`Int`] of
+/// the same width and storage, returning `None` for zero, [`new_unchecked`](Self::new_unchecked)
+/// creates it without the check, and [`get`](Self::get) returns it. The constants are `BITS`, and
+/// from one bit `MIN` and `MAX`. One bit holds -1 and 0, of which only -1 is not zero, so `MIN` and
+/// `MAX` of one bit are both -1; zero bits hold no value but zero. Values compare, hash and format
+/// as the integers of the same values.
+///
+/// # Arithmetic
+///
+/// The methods are those of [`NonZeroUint`] that the native signed non-zero integers have: the
+/// bit counts, the highest and the lowest one and their isolation, the rotations and the bit
+/// reversal, which move the sign bit like any other, and the checked and saturating multiplication
+/// and exponentiation. To them come [`is_negative`](Self::is_negative) and
+/// [`is_positive`](Self::is_positive), the negation and the absolute value in the `checked_*`,
+/// `overflowing_*`, `wrapping_*` and `saturating_*` forms, [`abs`](Self::abs),
+/// [`unsigned_abs`](Self::unsigned_abs), which returns the [`NonZeroUint`] of the same width and
+/// also holds the absolute value of `MIN`, and [`cast_unsigned`](Self::cast_unsigned). A
+/// saturating method returns the bound of the range that the result passes, and `MAX` for the
+/// negation and the absolute value of `MIN`. At one bit, whose `MAX` is -1, a product of -1 and -1
+/// and an even power of -1 overflow, and their saturating forms return -1. `|` and `|=` work as for
+/// [`NonZeroUint`], and the negation `-` on a value and on a reference. `Int` has no division by a
+/// `NonZeroInt`: `MIN / -1` overflows, so a divisor that is not zero does not make the division
+/// safe. The traits
+/// [`FixedNonZero`](crate::FixedNonZero), [`SignedNonZero`](crate::SignedNonZero),
+/// [`NonZeroLimits`](crate::NonZeroLimits) and [`ConstNonZeroLimits`](crate::ConstNonZeroLimits)
+/// give generic code the methods and the limits.
+///
+/// ```
+/// use numo::{NonZeroInt, i7, typenum::U7, u7};
+///
+/// let min = NonZeroInt::<U7>::MIN;
+/// assert!(min.is_negative());
+/// assert_eq!(min.checked_neg(), None);
+/// assert_eq!(min.saturating_abs(), NonZeroInt::<U7>::MAX);
+/// assert_eq!(min.unsigned_abs().get(), u7::new(64));
+/// let three = NonZeroInt::<U7>::new(i7::new(3)).unwrap();
+/// assert_eq!((-three).get(), i7::new(-3));
+/// assert_eq!(min.saturating_mul(&three), min);
+///
+/// // One bit holds only -1.
+/// type I1 = NonZeroInt<numo::typenum::U1>;
+/// assert_eq!(I1::MIN, I1::MAX);
+/// assert_eq!(I1::MIN.checked_mul(&I1::MIN), None);
+/// assert_eq!(I1::MIN.saturating_neg(), I1::MIN);
+/// ```
+///
+/// # Overflow
+///
+/// The methods with an overflow prefix behave the same in every build. [`abs`](Self::abs) and the
+/// negation `-` of `MIN` overflow, as for [`Int`]: they repeat a native negation, which panics or
+/// returns `MIN` as `overflow-checks` decides (see [Overflow](Int#overflow)), and a panic reports
+/// the caller. No other method or operator panics.
+#[repr(transparent)]
+pub struct NonZeroInt<Bits, Repr = <Bits as BitWidth>::NonZeroSigned> {
+  // As for `NonZeroUint`: `Repr` is the storage of the value itself, and the value has `Bits` bits
+  // in two's complement, as that of `Int` does, and is not zero.
+  value: Int<Bits, Repr>,
 }
 
 impl<B, R> Uint<B, R> {

@@ -1,0 +1,27 @@
+error[E0599]: the associated function or constant `MAX` exists for struct `NonZeroUint<UTerm, [u64; 0]>`, but its trait bounds were not satisfied
+ --> tests/ui/nonzero_u0_has_no_limits.rs:5:33
+  |
+5 |   let _max = NonZeroUint::<U0>::MAX;
+  |                                 ^^^ associated function or constant cannot be called on `NonZeroUint<UTerm, [u64; 0]>` due to unsatisfied trait bounds
+  |
+ ::: $CARGO/typenum-$VERSION/src/uint.rs
+  |
+  | pub struct UTerm;
+  | ---------------- doesn't satisfy `UTerm: numo::typenum::NonZero`
+  |
+  = note: the following trait bounds were not satisfied:
+          `UTerm: numo::typenum::NonZero`
+
+error[E0599]: the associated function or constant `MIN` exists for struct `NonZeroInt<UTerm, [u64; 0]>`, but its trait bounds were not satisfied
+ --> tests/ui/nonzero_u0_has_no_limits.rs:6:32
+  |
+6 |   let _min = NonZeroInt::<U0>::MIN;
+  |                                ^^^ associated function or constant cannot be called on `NonZeroInt<UTerm, [u64; 0]>` due to unsatisfied trait bounds
+  |
+ ::: $CARGO/typenum-$VERSION/src/uint.rs
+  |
+  | pub struct UTerm;
+  | ---------------- doesn't satisfy `UTerm: numo::typenum::NonZero`
+  |
+  = note: the following trait bounds were not satisfied:
+          `UTerm: numo::typenum::NonZero`

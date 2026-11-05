@@ -1,4 +1,7 @@
-use std::string::ToString;
+use std::{
+  format,
+  string::{String, ToString},
+};
 
 use typenum::{
   IsGreater, NonZero, True, U1, U2, U7, U8, U9, U12, U24, U64, U65, U100, U127, U128, U129, U200,
@@ -6,10 +9,14 @@ use typenum::{
 };
 
 use super::{
-  ArrayInteger, ConstFixedInteger, ConstIntegerOne, FixedInteger, FromLimbs, IntegerOne,
-  NativeInteger, SignedFixedInteger, UnsignedFixedInteger,
+  ArrayInteger, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger, FixedNonZero,
+  FromLimbs, IntegerOne, NativeInteger, NonZeroLimits, SignedFixedInteger, SignedNonZero,
+  UnsignedFixedInteger, UnsignedNonZero,
 };
-use crate::{BitWidth, Int, Uint, bigint, i256, u7, u256};
+use crate::{
+  BitWidth, FitsBits, Int, NonZeroInt, NonZeroIntRepr, NonZeroUint, NonZeroUintRepr, Uint,
+  UintRepr, bigint, i7, i256, u7, u256,
+};
 
 /// Asserts that the constants, the functions and the queries of [`FixedInteger`] and
 /// [`ConstFixedInteger`] are the inherent ones for each type, at zero and the limits.
@@ -376,4 +383,101 @@ fn the_general_layer_needs_no_copy() {
   assert_eq!(successor(bytes(255, 0)), bytes(0, 1));
   assert_eq!(successor(Signed::new(-1)), Signed::ZERO);
   assert_eq!(successor(minus(1)), i256::ZERO);
+}
+
+/// The non-zero traits need only the non-zero storage trait, `NonZeroUintRepr` or
+/// `NonZeroIntRepr`, with the width relation of its integer's storage, and code bounded by the
+/// storage trait of the integer reaches them through `NonZeroUint<B, R::NonZero>`: in a native
+/// integer and in an array, they give the inherent results. The limits need a width of one bit or
+/// more, `Copy` follows the storage, and `ConstNonZeroLimits` needs a storage whose integer holds
+/// the value inline.
+#[test]
+fn the_nonzero_traits_need_only_the_storage_trait() {
+  fn unsigned<B: FitsBits<R::Integer>, R: NonZeroUintRepr>(x: &NonZeroUint<B, R>) -> String {
+    format!(
+      "{:?}",
+      (
+        x.leading_zeros(),
+        x.checked_mul(x),
+        x.ilog10(),
+        x.clone().get()
+      )
+    )
+  }
+
+  fn signed<B: FitsBits<R::Integer>, R: NonZeroIntRepr>(x: &NonZeroInt<B, R>) -> String {
+    format!(
+      "{:?}",
+      (
+        x.is_negative(),
+        x.saturating_abs(),
+        x.count_ones(),
+        x.clone().cast_unsigned()
+      )
+    )
+  }
+
+  fn by_integer<B: FitsBits<R>, R: UintRepr>(x: &NonZeroUint<B, R::NonZero>) -> u32 {
+    x.trailing_zeros()
+  }
+
+  fn limits<B: FitsBits<R::Integer> + NonZero, R: NonZeroIntRepr>() -> [NonZeroInt<B, R>; 2] {
+    [NonZeroLimits::min_value(), NonZeroLimits::max_value()]
+  }
+
+  fn copies<B, R: Copy>(x: NonZeroUint<B, R>) -> [NonZeroUint<B, R>; 2] {
+    [x, x]
+  }
+
+  fn constants<T: ConstNonZeroLimits>() -> [T; 2] {
+    [T::MIN, T::MAX]
+  }
+
+  let five = NonZeroUint::<U7>::new(u7::new(5)).expect("not zero");
+  assert_eq!(unsigned(&five), "(4, Some(25), 0, 5)");
+  let wide = NonZeroUint::<U256>::MAX;
+  assert_eq!(
+    unsigned(&wide),
+    format!(
+      "{:?}",
+      (
+        wide.leading_zeros(),
+        wide.checked_mul(&wide),
+        wide.ilog10(),
+        wide.get()
+      )
+    )
+  );
+  let minus_eight = NonZeroInt::<U7>::new(i7::new(-8)).expect("not zero");
+  assert_eq!(signed(&minus_eight), "(true, 8, 4, 120)");
+  let min = NonZeroInt::<U200, [u32; 7]>::MIN;
+  assert_eq!(
+    signed(&min),
+    format!(
+      "{:?}",
+      (
+        min.is_negative(),
+        min.saturating_abs(),
+        min.count_ones(),
+        min.cast_unsigned()
+      )
+    )
+  );
+  assert_eq!(by_integer::<U7, u8>(&five), 0);
+  let top = NonZeroUint::<U200>::MAX.isolate_highest_one();
+  assert_eq!(by_integer::<U200, [u64; 4]>(&top), 199);
+  assert_eq!(
+    limits::<U7, core::num::NonZero<i8>>(),
+    [NonZeroInt::<U7>::MIN, NonZeroInt::<U7>::MAX]
+  );
+  assert_eq!(limits::<U1, [u8; 1]>(), [NonZeroInt::<U1, [u8; 1]>::MIN; 2]);
+  assert_eq!(copies(five), [five; 2]);
+  assert_eq!(
+    constants::<NonZeroUint<U200>>(),
+    [NonZeroUint::<U200>::MIN, NonZeroUint::<U200>::MAX]
+  );
+  assert_eq!(constants::<NonZeroInt<U1>>(), [NonZeroInt::<U1>::MIN; 2]);
+  assert_eq!(<NonZeroUint<U7> as FixedNonZero>::BITS, 7);
+  assert_eq!(UnsignedNonZero::cast_signed(five).get(), i7::new(5));
+  assert_eq!(SignedNonZero::unsigned_abs(&minus_eight).get(), u7::new(8));
 }
