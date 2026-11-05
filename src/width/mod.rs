@@ -5,6 +5,7 @@ use core::{
   cmp::Ordering,
   fmt,
   hash::Hasher,
+  num::ParseIntError,
   ops::{Add, Shl, Shr},
 };
 
@@ -33,7 +34,7 @@ use crate::{
 mod array_size;
 
 mod sealed {
-  use core::{cmp::Ordering, fmt, hash::Hasher, marker::PhantomData};
+  use core::{cmp::Ordering, fmt, hash::Hasher, marker::PhantomData, num::ParseIntError};
 
   use typenum::{B1, UInt, UTerm};
 
@@ -284,6 +285,31 @@ mod sealed {
     /// Writes the value in decimal, honoring the flags of `f` as integers do.
     fn fmt_decimal(&self, f: &mut fmt::Formatter<'_>, token: Token) -> fmt::Result;
 
+    /// Writes the value in the radix `2^shift`, binary for 1, octal for 3 and hexadecimal for 4,
+    /// in uppercase if `upper`, honoring the flags of `f` as the radix formats of integers do.
+    fn fmt_pow2(
+      &self,
+      shift: u32,
+      upper: bool,
+      f: &mut fmt::Formatter<'_>,
+      token: Token,
+    ) -> fmt::Result;
+
+    /// Writes the value in scientific notation, with `E` if `upper` and `e` otherwise, honoring
+    /// the flags of `f` as integers do: a precision below the digits after the first rounds them
+    /// half to even.
+    fn fmt_exp(&self, upper: bool, f: &mut fmt::Formatter<'_>, token: Token) -> fmt::Result;
+
+    /// The value of `src`, an optional `+` and the digits of `radix`, as an integer of `bits` bits,
+    /// or the error of the native `from_str_radix`. Requires `2 <= radix <= 36` and `bits` to be at
+    /// most the bits of the storage.
+    fn from_str_radix_bits(
+      src: &[u8],
+      radix: u32,
+      bits: u32,
+      token: Token,
+    ) -> Result<Self, ParseIntError>;
+
     /// Returns `true` if the value is zero.
     fn is_zero(&self, token: Token) -> bool;
 
@@ -518,6 +544,33 @@ mod sealed {
 
     /// Writes the value in decimal, honoring the flags of `f` as integers do.
     fn fmt_decimal(&self, f: &mut fmt::Formatter<'_>, token: Token) -> fmt::Result;
+
+    /// Writes the `bits` bits of the value, its two's complement, in the radix `2^shift`, binary
+    /// for 1, octal for 3 and hexadecimal for 4, in uppercase if `upper`, honoring the flags of `f`
+    /// as the radix formats of integers do. Requires `bits` to be at most the bits of the storage.
+    fn fmt_pow2(
+      &self,
+      bits: u32,
+      shift: u32,
+      upper: bool,
+      f: &mut fmt::Formatter<'_>,
+      token: Token,
+    ) -> fmt::Result;
+
+    /// Writes the value in scientific notation, with `E` if `upper` and `e` otherwise, honoring
+    /// the flags of `f` as integers do: a precision below the digits after the first rounds them
+    /// half to even.
+    fn fmt_exp(&self, upper: bool, f: &mut fmt::Formatter<'_>, token: Token) -> fmt::Result;
+
+    /// The value of `src`, an optional `+` or `-` and the digits of `radix`, as an integer of
+    /// `bits` bits in two's complement, or the error of the native `from_str_radix`. Requires
+    /// `2 <= radix <= 36` and `bits` to be at most the bits of the storage.
+    fn from_str_radix_bits(
+      src: &[u8],
+      radix: u32,
+      bits: u32,
+      token: Token,
+    ) -> Result<Self, ParseIntError>;
 
     /// Returns `true` if the value is zero.
     fn is_zero(&self, token: Token) -> bool;
@@ -1049,6 +1102,38 @@ macro_rules! array_storage {
       }
 
       #[inline]
+      fn fmt_pow2(
+        &self,
+        shift: u32,
+        upper: bool,
+        f: &mut fmt::Formatter<'_>,
+        _: Token,
+      ) -> fmt::Result {
+        format::write_pow2(self, shift, upper, f)
+      }
+
+      #[inline]
+      fn fmt_exp(&self, upper: bool, f: &mut fmt::Formatter<'_>, _: Token) -> fmt::Result {
+        fmt_magnitude_exp::<_, N, { unsigned::$lower::DIGITS_PER_LIMB }>(
+          self,
+          unsigned::$lower::write_digits_into,
+          true,
+          upper,
+          f,
+        )
+      }
+
+      #[inline]
+      fn from_str_radix_bits(
+        src: &[u8],
+        radix: u32,
+        bits: u32,
+        _: Token,
+      ) -> Result<Self, ParseIntError> {
+        unsigned::$lower::from_str_radix_bits(src, radix, bits)
+      }
+
+      #[inline]
       fn is_zero(&self, _: Token) -> bool {
         unsigned::$lower::is_zero(self)
       }
@@ -1350,6 +1435,39 @@ macro_rules! array_storage {
           !signed::$upper::is_negative(self),
           f,
         )
+      }
+
+      #[inline]
+      fn fmt_pow2(
+        &self,
+        bits: u32,
+        shift: u32,
+        upper: bool,
+        f: &mut fmt::Formatter<'_>,
+        _: Token,
+      ) -> fmt::Result {
+        format::write_pow2(&signed::$upper::cast_unsigned_bits(self, bits), shift, upper, f)
+      }
+
+      #[inline]
+      fn fmt_exp(&self, upper: bool, f: &mut fmt::Formatter<'_>, _: Token) -> fmt::Result {
+        fmt_magnitude_exp::<_, N, { unsigned::$lower::DIGITS_PER_LIMB }>(
+          &signed::$upper::unsigned_abs(self),
+          unsigned::$lower::write_digits_into,
+          !signed::$upper::is_negative(self),
+          upper,
+          f,
+        )
+      }
+
+      #[inline]
+      fn from_str_radix_bits(
+        src: &[u8],
+        radix: u32,
+        bits: u32,
+        _: Token,
+      ) -> Result<Self, ParseIntError> {
+        signed::$upper::from_str_radix_bits(src, radix, bits)
       }
 
       #[inline]
@@ -1734,6 +1852,36 @@ macro_rules! native_storage {
       }
 
       #[inline]
+      fn fmt_pow2(
+        &self,
+        shift: u32,
+        upper: bool,
+        f: &mut fmt::Formatter<'_>,
+        _: Token,
+      ) -> fmt::Result {
+        fmt_native_pow2(self, shift, upper, f)
+      }
+
+      #[inline]
+      fn fmt_exp(&self, upper: bool, f: &mut fmt::Formatter<'_>, _: Token) -> fmt::Result {
+        if upper {
+          fmt::UpperExp::fmt(self, f)
+        } else {
+          fmt::LowerExp::fmt(self, f)
+        }
+      }
+
+      #[inline]
+      fn from_str_radix_bits(
+        src: &[u8],
+        radix: u32,
+        bits: u32,
+        _: Token,
+      ) -> Result<Self, ParseIntError> {
+        int::$uint::from_str_radix_bits(src, radix, bits)
+      }
+
+      #[inline]
       fn is_zero(&self, _: Token) -> bool {
         int::$uint::is_zero(*self)
       }
@@ -2029,6 +2177,37 @@ macro_rules! native_storage {
       #[inline]
       fn fmt_decimal(&self, f: &mut fmt::Formatter<'_>, _: Token) -> fmt::Result {
         fmt::Display::fmt(self, f)
+      }
+
+      #[inline]
+      fn fmt_pow2(
+        &self,
+        bits: u32,
+        shift: u32,
+        upper: bool,
+        f: &mut fmt::Formatter<'_>,
+        _: Token,
+      ) -> fmt::Result {
+        fmt_native_pow2(&int::$int::cast_unsigned_bits(*self, bits), shift, upper, f)
+      }
+
+      #[inline]
+      fn fmt_exp(&self, upper: bool, f: &mut fmt::Formatter<'_>, _: Token) -> fmt::Result {
+        if upper {
+          fmt::UpperExp::fmt(self, f)
+        } else {
+          fmt::LowerExp::fmt(self, f)
+        }
+      }
+
+      #[inline]
+      fn from_str_radix_bits(
+        src: &[u8],
+        radix: u32,
+        bits: u32,
+        _: Token,
+      ) -> Result<Self, ParseIntError> {
+        int::$int::from_str_radix_bits(src, radix, bits)
       }
 
       #[inline]
@@ -2761,6 +2940,24 @@ fn hash_words<L: Copy + Into<u128>, H: Hasher>(limbs: &[L], bits: u32, fill: L, 
   }
 }
 
+/// The result of `write` on the decimal digits of `magnitude`, without leading zeros (zero is a
+/// single `0`), which `write_digits_into` writes to a buffer on the stack of `DIGITS` bytes for
+/// each limb. Requires each limb to add at most `DIGITS` digits.
+fn with_digits<L, const N: usize, const DIGITS: usize, T>(
+  magnitude: &[L; N],
+  write_digits_into: impl FnOnce(&[L; N], &mut [u8]) -> usize,
+  write: impl FnOnce(&[u8]) -> T,
+) -> T {
+  // No limbs hold only zero, and leave no room in the buffer for its digit.
+  if N == 0 {
+    return write(b"0");
+  }
+  let mut buf = [[0; DIGITS]; N];
+  let buf = buf.as_flattened_mut();
+  let start = write_digits_into(magnitude, buf);
+  write(&buf[start..])
+}
+
 /// Writes `magnitude` in decimal with `write_digits_into`, negative unless `is_nonnegative`,
 /// honoring the flags of `f` as integers do. Requires each limb to add at most `DIGITS` digits.
 fn fmt_magnitude<L, const N: usize, const DIGITS: usize>(
@@ -2769,14 +2966,39 @@ fn fmt_magnitude<L, const N: usize, const DIGITS: usize>(
   is_nonnegative: bool,
   f: &mut fmt::Formatter<'_>,
 ) -> fmt::Result {
-  // No limbs hold only zero, and leave no room in the buffer for its digit.
-  if N == 0 {
-    return f.pad_integral(is_nonnegative, "", "0");
+  with_digits::<L, N, DIGITS, _>(magnitude, write_digits_into, |digits| {
+    f.pad_integral(is_nonnegative, "", format::ascii(digits)?)
+  })
+}
+
+/// Writes `magnitude`, whose decimal digits `write_digits_into` writes, negative unless
+/// `is_nonnegative`, in scientific notation with `E` if `upper` and `e` otherwise, honoring the
+/// flags of `f` as integers do. Requires each limb to add at most `DIGITS` digits.
+fn fmt_magnitude_exp<L, const N: usize, const DIGITS: usize>(
+  magnitude: &[L; N],
+  write_digits_into: impl FnOnce(&[L; N], &mut [u8]) -> usize,
+  is_nonnegative: bool,
+  upper: bool,
+  f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+  let marker = if upper { b'E' } else { b'e' };
+  with_digits::<L, N, DIGITS, _>(magnitude, write_digits_into, |digits| {
+    format::write_integer_exp(f, !is_nonnegative, digits, marker)
+  })
+}
+
+/// Writes the native unsigned integer `value` in the radix `2^shift` with its own radix format,
+/// binary for 1, octal for 3 and hexadecimal for 4, in uppercase if `upper`.
+fn fmt_native_pow2<T>(value: &T, shift: u32, upper: bool, f: &mut fmt::Formatter<'_>) -> fmt::Result
+where
+  T: fmt::Binary + fmt::Octal + fmt::LowerHex + fmt::UpperHex,
+{
+  match (shift, upper) {
+    (1, _) => fmt::Binary::fmt(value, f),
+    (3, _) => fmt::Octal::fmt(value, f),
+    (_, false) => fmt::LowerHex::fmt(value, f),
+    (_, true) => fmt::UpperHex::fmt(value, f),
   }
-  let mut buf = [[0; DIGITS]; N];
-  let buf = buf.as_flattened_mut();
-  let start = write_digits_into(magnitude, buf);
-  f.pad_integral(is_nonnegative, "", format::ascii(&buf[start..])?)
 }
 
 #[cfg(test)]

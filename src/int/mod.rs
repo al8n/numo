@@ -47,10 +47,6 @@ pub(crate) type DigitBuf = [core::primitive::u8; DIGIT_BUF_LEN];
 mod half_limbs;
 mod limb_layer;
 
-#[cfg_attr(
-  not(test),
-  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-)]
 pub(crate) mod parse_errors;
 pub(crate) mod signed;
 pub(crate) mod unsigned;
@@ -500,10 +496,6 @@ macro_rules! native {
       /// The value of the digit `byte` in `radix`, an ASCII digit or letter of either case below
       /// `radix`, as `char::to_digit` reads it, or `None` for every other byte. Requires
       /// `2 <= radix <= 36`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       #[inline]
       pub(crate) const fn digit_value(byte: u8, radix: u32) -> Option<u32> {
         (byte as char).to_digit(radix)
@@ -515,10 +507,6 @@ macro_rules! native {
       /// product by `radix` first, then `InvalidDigit` for a byte that is not a digit, then
       /// `PosOverflow` once the product or the sum is above `2^bits - 1`. A `-` is a byte that is
       /// not a digit. Requires `2 <= radix <= 36` and `bits <= BITS`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       pub(crate) const fn from_str_radix_bits(
         src: &[u8],
         radix: u32,
@@ -1084,10 +1072,6 @@ macro_rules! native {
       /// after `-`, which subtracts the digits, `NegOverflow` once the product or the difference is
       /// below `-2^(bits - 1)`. Zero bits hold only zero. Requires `2 <= radix <= 36` and
       /// `bits <= BITS`.
-      #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
-      )]
       pub(crate) const fn from_str_radix_bits(
         src: &[u8],
         radix: u32,

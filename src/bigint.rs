@@ -784,9 +784,10 @@ fn text_range(bits: u32, signed: bool) -> (i128, i128) {
 
 /// What the native `from_str_radix` of an integer of `bits` bits, at most 127, unsigned or in two's
 /// complement, returns for `src`: the value, or the kind of the error. Written as the native parser
-/// reads, one digit at a time: an empty text is `Empty`, a lone sign `InvalidDigit`, `-` a sign only
-/// for a signed integer, and at each digit the product by `radix`, then the digit, whose absence is
-/// `InvalidDigit`, then the overflow of the product or the sum out of the range of `bits` bits.
+/// reads, one digit at a time: an empty text is `Empty`, a lone sign `InvalidDigit`, `-` a sign
+/// only for a signed integer, and at each digit the product by `radix`, then the digit, whose
+/// absence is `InvalidDigit`, then the overflow of the product or the sum out of the range of
+/// `bits` bits.
 pub(crate) fn parse(src: &[u8], radix: u32, bits: u32, signed: bool) -> Result<i128, IntErrorKind> {
   let (min, max) = text_range(bits, signed);
   let (negative, digits) = match src {
