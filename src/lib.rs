@@ -436,6 +436,7 @@ pub mod aliases;
 #[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
 mod arbitrary;
 mod decimal;
+mod format;
 mod int;
 mod integer;
 mod layout;

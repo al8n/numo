@@ -1,7 +1,6 @@
-use core::fmt::{self, Alignment, Formatter, Write};
+use core::fmt::{self, Formatter, Write};
 
-/// Zeros written in chunks, so padding and precision need no buffer of their size.
-const ZEROS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+use crate::format::{ascii, pad, write_zeros};
 
 /// Bytes of the longest exponent text, `e-154`: the marker, a sign and three digits. A coefficient
 /// has between 1 and 154 digits and a decimal at most 154 fraction digits, so the exponent of any
@@ -32,22 +31,17 @@ impl Parts<'_> {
       .saturating_add(self.trailing_zeros)
   }
 
-  fn len(&self) -> usize {
+  /// The length of the text after the sign.
+  fn digits_len(&self) -> usize {
     let point = match self.fraction_len() {
       0 => 0,
       len => len.saturating_add(1),
     };
-    usize::from(self.sign.is_some())
-      .saturating_add(self.integral.len())
+    self
+      .integral
+      .len()
       .saturating_add(point)
       .saturating_add(self.exponent.map_or(0, str::len))
-  }
-
-  fn write_sign(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    match self.sign {
-      Some(sign) => f.write_char(sign),
-      None => Ok(()),
-    }
   }
 
   fn write_digits(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -118,33 +112,11 @@ pub(super) fn write(
   write_parts(f, &parts)
 }
 
-/// Writes `parts` with the width, fill, alignment and `0` flag of `f`.
+/// Writes `parts` with the width, fill, alignment and `0` flag of `f`, as an integer is padded.
 fn write_parts(f: &mut Formatter<'_>, parts: &Parts<'_>) -> fmt::Result {
-  let padding = match f.width() {
-    Some(width) => width.saturating_sub(parts.len()),
-    None => 0,
-  };
-  if padding == 0 {
-    parts.write_sign(f)?;
-    return parts.write_digits(f);
-  }
-
-  if f.sign_aware_zero_pad() {
-    parts.write_sign(f)?;
-    write_zeros(f, padding)?;
-    return parts.write_digits(f);
-  }
-
-  let (before, after) = match f.align() {
-    Some(Alignment::Left) => (0, padding),
-    Some(Alignment::Center) => (padding / 2, padding - padding / 2),
-    Some(Alignment::Right) | None => (padding, 0),
-  };
-  let fill = f.fill();
-  write_fill(f, fill, before)?;
-  parts.write_sign(f)?;
-  parts.write_digits(f)?;
-  write_fill(f, fill, after)
+  pad(f, parts.sign, "", parts.digits_len(), |f| {
+    parts.write_digits(f)
+  })
 }
 
 /// Writes a decimal whose magnitude has the ASCII digits `digits`, as for `write`, in scientific
@@ -222,26 +194,4 @@ fn exponent_text(
   start -= 1;
   buf[start] = marker;
   ascii(&buf[start..])
-}
-
-/// Views bytes that are always ASCII, such as the digits produced by the integer core, as a
-/// string.
-fn ascii(digits: &[u8]) -> Result<&str, fmt::Error> {
-  core::str::from_utf8(digits).map_err(|_| fmt::Error)
-}
-
-fn write_zeros(f: &mut Formatter<'_>, mut count: usize) -> fmt::Result {
-  while count > 0 {
-    let chunk = count.min(ZEROS.len());
-    f.write_str(&ZEROS[..chunk])?;
-    count -= chunk;
-  }
-  Ok(())
-}
-
-fn write_fill(f: &mut Formatter<'_>, fill: char, count: usize) -> fmt::Result {
-  for _ in 0..count {
-    f.write_char(fill)?;
-  }
-  Ok(())
 }

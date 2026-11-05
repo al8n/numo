@@ -25,6 +25,7 @@ use sealed::{
 };
 
 use crate::{
+  format,
   int::{self, signed, unsigned},
   layout::Token,
 };
@@ -2775,15 +2776,7 @@ fn fmt_magnitude<L, const N: usize, const DIGITS: usize>(
   let mut buf = [[0; DIGITS]; N];
   let buf = buf.as_flattened_mut();
   let start = write_digits_into(magnitude, buf);
-  f.pad_integral(is_nonnegative, "", ascii(&buf[start..])?)
-}
-
-/// Views digits produced by the integer core, which are always ASCII, as a string.
-const fn ascii(digits: &[u8]) -> Result<&str, fmt::Error> {
-  match core::str::from_utf8(digits) {
-    Ok(text) => Ok(text),
-    Err(_) => Err(fmt::Error),
-  }
+  f.pad_integral(is_nonnegative, "", format::ascii(&buf[start..])?)
 }
 
 #[cfg(test)]
