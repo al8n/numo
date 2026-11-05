@@ -49,6 +49,11 @@ mod limb_layer;
 
 pub(crate) mod parse_errors;
 pub(crate) mod signed;
+#[cfg_attr(
+  not(test),
+  expect(dead_code, reason = "only the -Dwarnings test build lints it fully")
+)]
+pub(crate) mod slice;
 pub(crate) mod unsigned;
 
 macro_rules! native {
