@@ -149,7 +149,12 @@
 //! fills its limbs, and `checked_from_limbs`, which checks that the limbs hold a value of `Bits`
 //! bits, and `to_limbs` and `as_limbs` return the limbs. Its `const fn` queries are `is_zero` and
 //! `is_one`, and for `Int` also `is_negative` and `is_positive`. Values compare, hash and format by
-//! their numeric value, alike in every storage.
+//! their numeric value, alike in every storage. Their text is that of the native integers at the
+//! width: `from_str_radix`, a `const fn` for the radixes 2 to 36, and `FromStr` parse it with the
+//! native error, [`core::num::ParseIntError`], `Display` writes decimal, the radix formats `{:b}`,
+//! `{:o}`, `{:x}` and `{:X}` write a negative `Int` in the two's complement of its `Bits` bits, and
+//! the exponent formats `{:e}` and `{:E}` round half to even at a precision (see
+//! [Text](Uint#text)).
 //!
 //! Each type also has the arithmetic of the native integers at its width, as `const fn`s:
 //! addition, subtraction, multiplication, negation, division, remainder and exponentiation in the
@@ -171,9 +176,10 @@
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,
-//! `is_one`, the operators and the functions `zero`, `min_value` and `max_value`, and
-//! [`IntegerOne`], with `one`, requires `Clone` but not `Copy`; its functions return the inherent
-//! constants `ZERO`, `MIN`, `MAX` and `ONE`. The const layer, [`ConstFixedInteger`] and
+//! `is_one`, the operators, the text and the functions `zero`, `min_value`, `max_value` and
+//! `from_str_radix`, and [`IntegerOne`], with `one`, requires `Clone` but not `Copy`; its functions
+//! `zero`, `min_value`, `max_value` and `one` return the inherent constants `ZERO`, `MIN`, `MAX`
+//! and `ONE`. The const layer, [`ConstFixedInteger`] and
 //! [`ConstIntegerOne`], adds `Copy` and these constants, which a generic `const fn` can read.
 //! [`UnsignedFixedInteger`] and [`SignedFixedInteger`] have the methods of each sign, the families
 //! [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`], [`StrictOps`] and
@@ -228,6 +234,11 @@
 //! assert_eq!(SMALL << 1u32, u7::new(72));
 //! assert_eq!(SMALL.checked_shl(7), None);
 //!
+//! // The text of 7 bits, in which 128 overflows.
+//! assert_eq!(format!("{SMALL:#b} {SMALL:x} {SMALL:e}"), "0b1100100 64 1e2");
+//! assert_eq!(u7::from_str_radix("64", 16), Ok(SMALL));
+//! assert!("128".parse::<u7>().is_err());
+//!
 //! // Generic code over the width alone.
 //! fn zero_values<B: BitWidth>(values: &[Int<B>]) -> usize {
 //!   values.iter().filter(|value| value.is_zero()).count()
@@ -251,13 +262,15 @@
 //! `NonZero<u8>`, and [`NonZeroOf<T>`](NonZeroOf) names the non-zero integer of the integer `T`, as
 //! in `NonZeroOf<u7>`. In each storage, `new` makes a value of the integer of the same width and
 //! storage, returning `None` for zero, `new_unchecked`, a `const unsafe fn`, leaves that check to
-//! the caller, and `get` returns it. The non-zero integers have the methods of the native `NonZero`
-//! integers at the width as `const fn`s, such as `checked_mul`, `ilog2` and `cast_signed`, the
-//! division and the remainder of a [`Uint`] by a [`NonZeroUint`], which cannot panic, `|`, and the
-//! negation of a [`NonZeroInt`]. Generic code reaches them through traits in two layers, as for the
-//! integers: [`FixedNonZero`], [`UnsignedNonZero`], [`SignedNonZero`] and [`NonZeroLimits`], which
-//! every storage implements, and [`ConstNonZeroLimits`], with the constants `MIN` and `MAX`;
-//! [`IntegerNonZero`] relates an integer to its non-zero integer.
+//! the caller, and `get` returns it; `from_str_radix` and `FromStr` parse a value as the integer
+//! does, with the error of the kind `Zero` for zero, as the native `NonZero` integers do, and the
+//! formats write what the integer writes. The non-zero integers have the methods of the native
+//! `NonZero` integers at the width as `const fn`s, such as `checked_mul`, `ilog2` and
+//! `cast_signed`, the division and the remainder of a [`Uint`] by a [`NonZeroUint`], which cannot
+//! panic, `|`, and the negation of a [`NonZeroInt`]. Generic code reaches them through traits in
+//! two layers, as for the integers: [`FixedNonZero`], [`UnsignedNonZero`], [`SignedNonZero`] and
+//! [`NonZeroLimits`], which every storage implements, and [`ConstNonZeroLimits`], with the
+//! constants `MIN` and `MAX`; [`IntegerNonZero`] relates an integer to its non-zero integer.
 //!
 //! ```
 //! use numo::{NonZeroOf, NonZeroUint, typenum::U7, u7};
@@ -436,6 +449,7 @@ pub mod aliases;
 #[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
 mod arbitrary;
 mod decimal;
+mod format;
 mod int;
 mod integer;
 mod layout;

@@ -1,4 +1,8 @@
-use core::{fmt, num::NonZero};
+use core::{
+  fmt,
+  num::{NonZero, ParseIntError},
+  str::FromStr,
+};
 
 use numo::FixedNonZero;
 
@@ -6,9 +10,23 @@ use numo::FixedNonZero;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 struct Local;
 
-impl fmt::Display for Local {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("1")
+macro_rules! formats {
+  ($($format:ident),+) => {$(
+    impl fmt::$format for Local {
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("1")
+      }
+    }
+  )+};
+}
+
+formats!(Display, Binary, Octal, LowerHex, UpperHex, LowerExp, UpperExp);
+
+impl FromStr for Local {
+  type Err = ParseIntError;
+
+  fn from_str(_: &str) -> Result<Self, ParseIntError> {
+    Ok(Self)
   }
 }
 
@@ -27,6 +45,10 @@ impl FixedNonZero for Local {
 
   unsafe fn new_unchecked(_: u8) -> Self {
     Self
+  }
+
+  fn from_str_radix(_: &str, _: u32) -> Result<Self, ParseIntError> {
+    Ok(Self)
   }
 
   fn leading_zeros(&self) -> u32 {

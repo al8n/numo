@@ -5,6 +5,7 @@ use core::{
   fmt,
   hash::{Hash, Hasher},
   marker::PhantomData,
+  num::ParseIntError,
 };
 
 pub use error::TryNewError;
@@ -36,6 +37,7 @@ mod arithmetic;
 mod bits;
 #[macro_use]
 mod nonzero;
+mod text;
 mod traits;
 
 /// An unsigned integer of `Bits` bits, stored in `Repr`.
@@ -111,8 +113,8 @@ mod traits;
 ///
 /// The width cannot be inferred from the limbs, nor the storage from the expected type, so
 /// construction names the alias, the width for the default storage, or the full type, for example
-/// `u7::new(100)`, `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)` or
-/// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+/// `u7::new(100)`, `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)`,
+/// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)` or `u7::from_str_radix("7f", 16)`.
 ///
 /// # Arithmetic
 ///
@@ -210,6 +212,69 @@ mod traits;
 /// assert_eq!(top.trailing_zeros(), 199);
 /// const LOW: u7 = u7::MAX.bitand(u7::new(0b11));
 /// assert_eq!(LOW, u7::new(3));
+/// ```
+///
+/// # Text
+///
+/// [`from_str_radix`](Self::from_str_radix), a `const fn` of each storage, and `FromStr`, which
+/// reads decimal digits, parse the text of the native `from_str_radix` at the width `Bits`: an
+/// optional `+`, then one or more ASCII digits and letters of either case below the radix, from 2
+/// to 36, and nothing else, so no whitespace, `_` or prefix such as `0x`. They return the error of
+/// the native integers, [`core::num::ParseIntError`], whose
+/// [`kind`](core::num::ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a
+/// byte that is not a digit of the radix, a lone sign or `-`, which is no sign of `Uint`, and
+/// `PosOverflow` for digits above `MAX`. They read from the left, as the native parser does: a byte
+/// that is not a digit is `InvalidDigit`, unless the digits before it already exceed `MAX`, which
+/// is `PosOverflow`. The range is that of `Bits`, not of the storage, so `"200"` overflows
+/// [`u7`](crate::u7) although its `u8` holds 200, and zero bits read every spelling of zero, such
+/// as `"0"`, `"+0"` and `"00"`, and nothing else. A radix outside 2 to 36 panics in every build,
+/// reporting the caller. In a constant, a width above the default storages, or above about 16384
+/// bits in `u8` limbs, may need `#[allow(long_running_const_eval)]` on the constant.
+///
+/// `Display` and `Debug` write decimal, `Debug` also under `{:x?}` and `{:X?}`, whose flags the
+/// standard library does not expose. The radix formats `Binary`, `Octal`, `LowerHex` and
+/// `UpperHex` write the digits of the value, and the exponent formats `LowerExp` and `UpperExp` its
+/// scientific notation, both with every flag as the native integers have it: in particular, the
+/// precision of `{:e}` rounds the digits after the first half to even, which
+/// [`Decimal`](crate::Decimal) never does. Nothing allocates: a native storage writes as its native
+/// integer does, and an array writes its radix digits through a buffer of 64 bytes and its decimal
+/// digits through the buffer of `Display`.
+///
+/// ```
+/// use core::num::IntErrorKind;
+///
+/// use numo::{
+///   Uint,
+///   typenum::{U12, U200},
+///   u7,
+/// };
+///
+/// assert_eq!(u7::from_str_radix("7f", 16), Ok(u7::MAX));
+/// assert_eq!("+100".parse::<u7>(), Ok(u7::new(100)));
+/// // 200 needs 8 bits, which the digits before the byte that is not a digit decide first.
+/// let kind = |text: &str| *u7::from_str_radix(text, 10).unwrap_err().kind();
+/// assert_eq!(kind("200x"), IntErrorKind::PosOverflow);
+/// assert_eq!(kind("26x"), IntErrorKind::InvalidDigit);
+/// assert_eq!(kind("1_0"), IntErrorKind::InvalidDigit);
+/// assert_eq!(kind(""), IntErrorKind::Empty);
+/// const HEX: u7 = match u7::from_str_radix("64", 16) {
+///   Ok(value) => value,
+///   Err(_) => panic!("100 has 7 bits"),
+/// };
+/// assert_eq!(HEX, u7::new(100));
+///
+/// assert_eq!(format!("{:#x} {:o} {:010b}", HEX, HEX, u7::new(5)), "0x64 144 0000000101");
+/// assert_eq!(format!("{:e} {:.0e}", HEX, u7::new(125)), "1e2 1e2");
+/// // The precision rounds half to even, also in an array of limbs.
+/// assert_eq!(format!("{:.1e}", Uint::<U12>::new(1250)), "1.2e3");
+/// assert_eq!(format!("{:.1e}", Uint::<U12>::new(1350)), "1.4e3");
+/// type U200x4 = Uint<U200, [u64; 4]>;
+/// let max = U200x4::MAX;
+/// assert_eq!(format!("{max:x}"), "ff".repeat(25));
+/// assert_eq!(U200x4::from_str_radix(&format!("{max:x}"), 16), Ok(max));
+/// assert_eq!(format!("{max:.3e}"), "1.607e60");
+/// assert_eq!(format!("{:.1e}", U200x4::from_str_radix("1250", 10)?), "1.2e3");
+/// # Ok::<(), core::num::ParseIntError>(())
 /// ```
 ///
 /// # Overflow
@@ -320,8 +385,8 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 ///
 /// The width cannot be inferred from the limbs, nor the storage from the expected type, so
 /// construction names the alias, the width for the default storage, or the full type, for example
-/// `i7::new(-5)`, `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)` or
-/// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)`.
+/// `i7::new(-5)`, `i256::from_limbs(limbs)`, `Int::<U7>::new(-5)`,
+/// `Int::<U200, [u64; 4]>::checked_from_limbs(limbs)` or `i7::from_str_radix("-40", 16)`.
 ///
 /// # Arithmetic
 ///
@@ -389,6 +454,34 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// assert_eq!(value, i7::MIN);
 /// ```
 ///
+/// # Text
+///
+/// The text is that of [`Uint`], with `-` as well as `+` before the digits, and `NegOverflow` for
+/// digits after `-` below `MIN`; `-0` is zero, also at zero bits. The radix formats write the two's
+/// complement of the value in its `Bits` bits, as the native integers write the bits of their
+/// width: -1 of 7 bits writes `1111111` and `7f`, whatever the storage holds above the width, so
+/// `Int<U7, i8>` and `Int<U7, [u64; 1]>` write the same text. That text reads back as the [`Uint`]
+/// of the same width, through [`cast_unsigned`](Self::cast_unsigned); `from_str_radix` of `Int`
+/// reads `-` and the digits of the magnitude. The exponent formats write `-` before a negative
+/// value.
+///
+/// ```
+/// use core::num::IntErrorKind;
+///
+/// use numo::{Int, i7, typenum::U7, u7};
+///
+/// assert_eq!(i7::from_str_radix("-40", 16), Ok(i7::MIN));
+/// assert_eq!("-0".parse::<i7>(), Ok(i7::ZERO));
+/// assert_eq!(*"-65".parse::<i7>().unwrap_err().kind(), IntErrorKind::NegOverflow);
+///
+/// // The two's complement of 7 bits, in every storage.
+/// let minus_one = i7::new(-1);
+/// assert_eq!(format!("{minus_one:b} {minus_one:#x}"), "1111111 0x7f");
+/// assert_eq!(format!("{:x}", Int::<U7, [u64; 1]>::MIN), "40");
+/// assert_eq!(u7::from_str_radix(&format!("{minus_one:x}"), 16), Ok(minus_one.cast_unsigned()));
+/// assert_eq!(format!("{:e} {:.0e}", i7::MIN, i7::new(-35)), "-6.4e1 -4e1");
+/// ```
+///
 /// # Overflow
 ///
 /// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
@@ -453,8 +546,13 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// which is one, and `MAX`, which is `2^Bits - 1`. Zero bits hold no value but zero, so `new`
 /// returns `None` there and the type has no `MIN` or `MAX`; one bit holds only one. Values compare,
 /// hash and format as the integers of the same values: `Ord` is numeric, the hash is that of the
-/// [`Uint`], and `Display` and `Debug` write decimal. There is no `Default`, as no value would be a
-/// natural one.
+/// [`Uint`], `Display` and `Debug` write decimal, and the radix and exponent formats write what the
+/// integer writes. There is no `Default`, as no value would be a natural one.
+///
+/// [`from_str_radix`](Self::from_str_radix), a `const fn` of each storage, and `FromStr` parse a
+/// value as the native `NonZero` integers do: as the [`Uint`] of the same width and storage parses
+/// it (see [Text](Uint#text)), then the error of the kind `Zero` for zero, after every error of the
+/// integer, so that at zero bits every text is an error.
 ///
 /// ```
 /// use core::num::NonZero;
@@ -481,6 +579,13 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// let wide = NonZeroUint::<U200>::new(Uint::<U200>::MAX).unwrap();
 /// assert_eq!(wide.count_ones().get(), 200);
 /// assert_eq!(Uint::from(wide), Uint::<U200>::MAX);
+///
+/// // The text, in which zero is an error.
+/// assert_eq!(NonZeroUint::<U7>::from_str_radix("5", 10), Ok(five));
+/// assert_eq!(format!("{five:#b} {five:e}"), "0b101 5e0");
+/// let zero = "00".parse::<NonZeroUint<U7>>().unwrap_err();
+/// assert_eq!(*zero.kind(), core::num::IntErrorKind::Zero);
+/// assert_eq!(zero, "0".parse::<NonZero<u8>>().unwrap_err());
 /// ```
 ///
 /// # Arithmetic
@@ -557,7 +662,8 @@ pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
 /// creates it without the check, and [`get`](Self::get) returns it. The constants are `BITS`, and
 /// from one bit `MIN` and `MAX`. One bit holds -1 and 0, of which only -1 is not zero, so `MIN` and
 /// `MAX` of one bit are both -1; zero bits hold no value but zero. Values compare, hash and format
-/// as the integers of the same values.
+/// as the integers of the same values, and [`from_str_radix`](Self::from_str_radix) and `FromStr`
+/// parse as for [`NonZeroUint`], with `-` as well as `+`: `-0` is the error of the kind `Zero`.
 ///
 /// # Arithmetic
 ///
@@ -732,6 +838,31 @@ macro_rules! array_integers {
           Some(Self::wrap(limbs))
         } else {
           None
+        }
+      }
+
+      /// Parses an integer from the digits of `radix` after an optional `+`, as the native
+      /// `from_str_radix` does at the width `Bits`: the ASCII digits and letters of either case
+      /// below `radix`, with no whitespace, `_` or prefix.
+      ///
+      /// # Errors
+      ///
+      /// Returns the [`ParseIntError`] of the native integers, whose
+      /// [`kind`](ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a byte
+      /// that is not a digit of `radix`, a lone sign or `-`, and `PosOverflow` for digits above
+      /// `MAX`; an overflow of the digits before a byte that is not a digit comes first.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `radix` is not from 2 to 36, reporting the caller, so in a constant such a
+      /// radix fails to compile.
+      #[inline]
+      #[track_caller]
+      pub const fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+        text::check_radix(radix);
+        match int::unsigned::$lower::from_str_radix_bits(src.as_bytes(), radix, Self::BITS) {
+          Ok(limbs) => Ok(Self::wrap(limbs)),
+          Err(error) => Err(error),
         }
       }
 
@@ -936,6 +1067,32 @@ macro_rules! array_integers {
           Some(Self::wrap(limbs))
         } else {
           None
+        }
+      }
+
+      /// Parses an integer from the digits of `radix` after an optional `+` or `-`, as the native
+      /// `from_str_radix` does at the width `Bits`: the ASCII digits and letters of either case
+      /// below `radix`, with no whitespace, `_` or prefix.
+      ///
+      /// # Errors
+      ///
+      /// Returns the [`ParseIntError`] of the native integers, whose
+      /// [`kind`](ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a byte
+      /// that is not a digit of `radix` or a lone sign, `PosOverflow` for digits above `MAX` and
+      /// `NegOverflow` for digits after `-` below `MIN`; an overflow of the digits before a byte
+      /// that is not a digit comes first.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `radix` is not from 2 to 36, reporting the caller, so in a constant such a
+      /// radix fails to compile.
+      #[inline]
+      #[track_caller]
+      pub const fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+        text::check_radix(radix);
+        match int::signed::$upper::from_str_radix_bits(src.as_bytes(), radix, Self::BITS) {
+          Ok(limbs) => Ok(Self::wrap(limbs)),
+          Err(error) => Err(error),
         }
       }
 
@@ -1313,6 +1470,31 @@ macro_rules! native_integers {
         }
       }
 
+      /// Parses an integer from the digits of `radix` after an optional `+`, as the native
+      /// `from_str_radix` does at the width `Bits`: the ASCII digits and letters of either case
+      /// below `radix`, with no whitespace, `_` or prefix.
+      ///
+      /// # Errors
+      ///
+      /// Returns the [`ParseIntError`] of the native integers, whose
+      /// [`kind`](ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a byte
+      /// that is not a digit of `radix`, a lone sign or `-`, and `PosOverflow` for digits above
+      /// `MAX`; an overflow of the digits before a byte that is not a digit comes first.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `radix` is not from 2 to 36, reporting the caller, so in a constant such a
+      /// radix fails to compile.
+      #[inline]
+      #[track_caller]
+      pub const fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+        text::check_radix(radix);
+        match int::$uint::from_str_radix_bits(src.as_bytes(), radix, Self::BITS) {
+          Ok(value) => Ok(Self::wrap(value)),
+          Err(error) => Err(error),
+        }
+      }
+
       overflowing_table!(inherent_items![$uint]);
       checked_table!(inherent_items![$uint]);
       wrapping_table!(inherent_items![$uint]);
@@ -1517,6 +1699,32 @@ macro_rules! native_integers {
           Ok(Self::wrap(value))
         } else {
           Err(TryNewError::new(Self::BITS))
+        }
+      }
+
+      /// Parses an integer from the digits of `radix` after an optional `+` or `-`, as the native
+      /// `from_str_radix` does at the width `Bits`: the ASCII digits and letters of either case
+      /// below `radix`, with no whitespace, `_` or prefix.
+      ///
+      /// # Errors
+      ///
+      /// Returns the [`ParseIntError`] of the native integers, whose
+      /// [`kind`](ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a byte
+      /// that is not a digit of `radix` or a lone sign, `PosOverflow` for digits above `MAX` and
+      /// `NegOverflow` for digits after `-` below `MIN`; an overflow of the digits before a byte
+      /// that is not a digit comes first.
+      ///
+      /// # Panics
+      ///
+      /// Panics if `radix` is not from 2 to 36, reporting the caller, so in a constant such a
+      /// radix fails to compile.
+      #[inline]
+      #[track_caller]
+      pub const fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+        text::check_radix(radix);
+        match int::$int::from_str_radix_bits(src.as_bytes(), radix, Self::BITS) {
+          Ok(value) => Ok(Self::wrap(value)),
+          Err(error) => Err(error),
         }
       }
 

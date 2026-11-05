@@ -245,7 +245,9 @@ mod tests;
 /// <div class="warning">
 ///
 /// Precision never rounds or truncates. Unlike floating-point formatting, `{:.1}` writes `1.25`
-/// as `1.25`, not `1.2` or `1.3`, and `{:.1e}` writes it as `1.25e0`, not `1.2e0` or `1.3e0`.
+/// as `1.25`, not `1.2` or `1.3`, and `{:.1e}` writes it as `1.25e0`, not `1.2e0` or `1.3e0`. The
+/// integers [`Uint`](crate::Uint) and [`Int`](crate::Int) follow the native integers instead,
+/// whose precision in `{:e}` rounds half to even: `{:.1e}` writes 1250 as `1.2e3`.
 ///
 /// </div>
 ///
@@ -847,9 +849,9 @@ where
   (I, F): Layout<R>,
 {
   /// Writes scientific notation with `e`, honoring width, fill, alignment, `+`, `0` and precision
-  /// as described on [`Decimal`]. Precision never rounds or truncates: unlike the primitive types,
-  /// `{:.1e}` writes `1.25` as `1.25e0`, not `1.2e0`. Use [`round_to`](Self::round_to) or
-  /// [`quantize`](Self::quantize) to round.
+  /// as described on [`Decimal`]. Precision never rounds or truncates: unlike the primitive types
+  /// and the integers of this crate, `{:.1e}` writes `1.25` as `1.25e0`, not `1.2e0`. Use
+  /// [`round_to`](Self::round_to) or [`quantize`](Self::quantize) to round.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut buf = [0; int::DIGIT_BUF_LEN];
     let start = self.repr.write_digits(&mut buf, Token::new());
@@ -869,9 +871,9 @@ where
   (I, F): Layout<R>,
 {
   /// Writes scientific notation with `E`, honoring width, fill, alignment, `+`, `0` and precision
-  /// as described on [`Decimal`]. Precision never rounds or truncates: unlike the primitive types,
-  /// `{:.1E}` writes `1.25` as `1.25E0`, not `1.2E0`. Use [`round_to`](Self::round_to) or
-  /// [`quantize`](Self::quantize) to round.
+  /// as described on [`Decimal`]. Precision never rounds or truncates: unlike the primitive types
+  /// and the integers of this crate, `{:.1E}` writes `1.25` as `1.25E0`, not `1.2E0`. Use
+  /// [`round_to`](Self::round_to) or [`quantize`](Self::quantize) to round.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut buf = [0; int::DIGIT_BUF_LEN];
     let start = self.repr.write_digits(&mut buf, Token::new());

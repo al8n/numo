@@ -1075,6 +1075,33 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@bits false, cast_signed_bits);
 
+    /// The decimal digits of `value`, as the integer core writes them.
+    fn decimal_text<const N: usize>(value: &[Limb; N]) -> Vec<u8> {
+      let mut buf = vec![0; DIGITS_PER_LIMB * N.max(1)];
+      let start = write_digits_into(value, &mut buf);
+      buf[start..].to_vec()
+    }
+
+    /// The decimal texts at the limit of `bits` bits, from 1 to `B * N`, with what they parse to:
+    /// the largest value, and past it ten times that value and, below `B * N` bits, one more than
+    /// that value, which overflow.
+    fn boundary_texts<const N: usize>(
+      bits: u32,
+    ) -> Vec<(Vec<u8>, Result<[Limb; N], IntErrorKind>)> {
+      let max = max_of_bits::<N>(bits);
+      let text = decimal_text(&max);
+      let mut texts = vec![
+        (text.clone(), Ok(max)),
+        ([&text[..], b"0"].concat(), Err(IntErrorKind::PosOverflow)),
+      ];
+      if bits < B * N as u32 {
+        texts.push((decimal_text(&pow2::<N>(bits)), Err(IntErrorKind::PosOverflow)));
+      }
+      texts
+    }
+
+    limb_layer_tests!(@text false);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves nothing of a value, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -1881,6 +1908,49 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@bits true, cast_unsigned_bits);
 
+    /// The decimal digits of the unsigned integer in `value`, as the integer core writes them.
+    fn unsigned_decimal<const N: usize>(value: &[Limb; N]) -> Vec<u8> {
+      let mut buf = vec![0; super::$unsigned::DIGITS_PER_LIMB * N.max(1)];
+      let start = super::$unsigned::write_digits_into(value, &mut buf);
+      buf[start..].to_vec()
+    }
+
+    /// The decimal text of `value`: `-` before the digits of its magnitude for a negative value.
+    fn decimal_text<const N: usize>(value: &[Limb; N]) -> Vec<u8> {
+      let digits = unsigned_decimal(&unsigned_abs(value));
+      if is_negative(value) {
+        [&b"-"[..], &digits[..]].concat()
+      } else {
+        digits
+      }
+    }
+
+    /// The decimal texts at the limits of `bits` bits, from 2 to `B * N`, with what they parse to:
+    /// the limits, and past them ten times each limit, `2^(bits - 1)` and `-(2^(bits - 1) + 1)`,
+    /// which overflow.
+    fn boundary_texts<const N: usize>(
+      bits: u32,
+    ) -> Vec<(Vec<u8>, Result<[Limb; N], IntErrorKind>)> {
+      let (min, max) = (min_of_bits::<N>(bits), max_of_bits::<N>(bits));
+      let (min_text, max_text) = (decimal_text(&min), decimal_text(&max));
+      // `2^(bits - 1)`, the magnitude of `MIN`, and one more, as unsigned integers.
+      let power = super::$unsigned::pow2::<N>(bits - 1);
+      let above = super::$unsigned::overflowing_add(&power, &super::$unsigned::one()).0;
+      vec![
+        (min_text.clone(), Ok(min)),
+        (max_text.clone(), Ok(max)),
+        ([&min_text[..], b"0"].concat(), Err(IntErrorKind::NegOverflow)),
+        ([&max_text[..], b"0"].concat(), Err(IntErrorKind::PosOverflow)),
+        (unsigned_decimal(&power), Err(IntErrorKind::PosOverflow)),
+        (
+          [&b"-"[..], &unsigned_decimal(&above)[..]].concat(),
+          Err(IntErrorKind::NegOverflow),
+        ),
+      ]
+    }
+
+    limb_layer_tests!(@text true);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves the sign alone, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -2119,6 +2189,132 @@ macro_rules! limb_layer_tests {
       }
     }
   };
+  // The tests of the parser, which every instance shares, after the helpers of its arm,
+  // `decimal_text` and `boundary_texts`: `$signed` is whether the layer reads the limbs in two's
+  // complement.
+  (@text $signed:literal) => {
+    use core::num::IntErrorKind;
+    use std::string::String;
+
+    /// `value`, which fits `N` limbs, in two's complement, written without an allocation.
+    fn limbs_of_value<const N: usize>(value: i128) -> [Limb; N] {
+      core::array::from_fn(|i| {
+        let shift = B as usize * i;
+        if shift < 128 {
+          (value >> shift) as Limb
+        } else if value < 0 {
+          Limb::MAX
+        } else {
+          0
+        }
+      })
+    }
+
+    /// Checks `from_str_radix_bits` of `N` limbs at `bits` bits, at most 127, against
+    /// `bigint::parse`, the model of the native parser, at each text of `texts` and at the texts
+    /// of `bigint::limit_texts`, in each radix of `bigint::parse_radixes`.
+    fn parse_against_the_model<const N: usize>(bits: u32, texts: &[Vec<u8>]) {
+      for &radix in bigint::parse_radixes() {
+        let limits = bigint::limit_texts(bits, $signed, radix);
+        for text in texts.iter().chain(&limits) {
+          assert_eq!(
+            from_str_radix_bits::<N>(text, radix, bits).map_err(|error| *error.kind()),
+            bigint::parse(text, radix, bits, $signed).map(limbs_of_value::<N>),
+            "{} in radix {radix} at {bits} bits",
+            String::from_utf8_lossy(text)
+          );
+        }
+      }
+    }
+
+    /// Checks `from_str_radix_bits` of `N` limbs at `bits` bits, above 127, at the decimal text of
+    /// each pattern of the width, of `bigint::bit_patterns_by` cut to the width at the indexes that
+    /// the tier takes or under Miri of `model::few_patterns`, read unsigned or in two's
+    /// complement: the text parses back, also after two leading zeros and, for a value that is not
+    /// negative, after `+`, and followed by `x` it is `InvalidDigit`. The texts of
+    /// `boundary_texts` reach the limits and pass them.
+    fn parse_round_trips<const N: usize>(bits: u32) {
+      let tier = bigint::tier();
+      let mut patterns: Vec<Vec<bool>> = if tier.is_miri() {
+        bigint::model::few_patterns(bits, B)
+      } else {
+        bigint::bit_patterns_by::<Limb, N>(&[bits], !tier.is_full())
+          .iter()
+          .map(|limbs| bigint::pattern_of_limbs(limbs, bits))
+          .collect()
+      };
+      patterns.sort_unstable();
+      patterns.dedup();
+      for p in &patterns {
+        let value = bigint::limbs_of_pattern::<Limb, N>(p, $signed);
+        let text = decimal_text(&value);
+        let (sign, digits) = match text.split_first() {
+          Some((b'-', digits)) => (&b"-"[..], digits),
+          _ => (&b""[..], &text[..]),
+        };
+        let mut forms = vec![text.clone(), [sign, b"00", digits].concat()];
+        if sign.is_empty() {
+          forms.push([&b"+"[..], digits].concat());
+        }
+        for form in &forms {
+          assert_eq!(
+            from_str_radix_bits::<N>(form, 10, bits),
+            Ok(value),
+            "{} at {bits} bits",
+            String::from_utf8_lossy(form)
+          );
+        }
+        let junk = [&text[..], b"x"].concat();
+        assert_eq!(
+          from_str_radix_bits::<N>(&junk, 10, bits).map_err(|error| *error.kind()),
+          Err(IntErrorKind::InvalidDigit),
+          "{} at {bits} bits",
+          String::from_utf8_lossy(&junk)
+        );
+      }
+      for (text, expected) in boundary_texts::<N>(bits) {
+        assert_eq!(
+          from_str_radix_bits::<N>(&text, 10, bits).map_err(|error| *error.kind()),
+          expected,
+          "{} at {bits} bits",
+          String::from_utf8_lossy(&text)
+        );
+      }
+    }
+
+    /// Checks `from_str_radix_bits` of `N` limbs at each width of `widths`: against the model up
+    /// to 127 bits, at each text of `texts`, and by round trips above.
+    fn parse_at_widths<const N: usize>(widths: &[u32], texts: &[Vec<u8>]) {
+      for &bits in widths {
+        if bits <= 127 {
+          parse_against_the_model::<N>(bits, texts);
+        } else {
+          parse_round_trips::<N>(bits);
+        }
+      }
+    }
+
+    /// `from_str_radix_bits` gives what the native parser gives at the width, against its model up
+    /// to 127 bits, at the texts of `bigint::parse_texts` and next to the limits, in no limbs and
+    /// at the widths of one and two limbs, and in an optimized build also three, and above 127
+    /// bits by round trips of decimal texts and at the limits. Under Miri, in no limbs and at 0, 1
+    /// and `B` bits in one limb.
+    #[test]
+    fn parsing_matches_the_native_parser() {
+      let tier = bigint::tier();
+      let texts = bigint::parse_texts();
+      parse_against_the_model::<0>(0, &texts);
+      if tier.is_miri() {
+        parse_at_widths::<1>(&[0, 1, B], &texts);
+        return;
+      }
+      parse_at_widths::<1>(&widths::<1>(), &texts);
+      parse_at_widths::<2>(&widths::<2>(), &texts);
+      if tier.is_full() {
+        parse_at_widths::<3>(&widths::<3>(), &texts);
+      }
+    }
+  };
 }
 
 pub(crate) use limb_layer_tests;
@@ -2276,6 +2472,16 @@ macro_rules! other_limb_tests {
         let wide_start = b64::write_digits_into(&wide_a, &mut wide_buf);
         assert_eq!(&buf[start..], &wide_buf[wide_start..]);
         assert_eq!(push_digits(&[0; M], &buf, start, buf.len()), a);
+        // Both parsers read the digits back at the width of the limbs, and agree one bit below it,
+        // where the top bit of `a` decides whether they overflow.
+        let top = B * M as u32;
+        assert_eq!(from_str_radix_bits::<M>(&buf[start..], 10, top), Ok(a));
+        assert_eq!(
+          from_str_radix_bits::<M>(&buf[start..], 10, top - 1).map(|value| to_u64_limbs(&value)),
+          b64::from_str_radix_bits::<N>(&wide_buf[wide_start..], 10, top - 1),
+          "{a:x?} at {} bits",
+          top - 1
+        );
       }
     }
   };

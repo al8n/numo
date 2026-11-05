@@ -17,13 +17,15 @@
 //! [`IntegerNonZero`] names the non-zero integer of an integer, which [`NonZeroOf`] abbreviates.
 
 use core::{
-  fmt::{Debug, Display},
+  fmt::{Binary, Debug, Display, LowerExp, LowerHex, Octal, UpperExp, UpperHex},
   hash::Hash,
   iter::{Product, Sum},
+  num::ParseIntError,
   ops::{
     Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign,
     Mul, MulAssign, Neg, Not, Rem, RemAssign, Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign,
   },
+  str::FromStr,
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -32,7 +34,8 @@ use sealed::Sealed;
 
 use super::{
   Int, NonZeroInt, NonZeroUint, TryNewError, Uint,
-  nonzero::{Parts, Saturated, zero, zero_value},
+  nonzero::{Parts, Saturated, parse_signed, parse_unsigned, zero, zero_value},
+  text::check_radix,
 };
 use crate::{
   layout::Token,
@@ -73,10 +76,14 @@ mod sealed {
 /// native integers, the bitwise operators `!`, `&`, `|` and `^` and their compound assignments, and
 /// the shifts `<<` and `>>` and their compound assignments by a `u32`, so that a literal amount, as
 /// in `x << 3`, is a `u32` in code bounded by this trait alone; a concrete type takes every
-/// primitive integer as the amount.
-/// The functions `zero`, `min_value` and `max_value`, and [`one`](IntegerOne::one), have the names
-/// of those of `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by traits of
-/// both crates names the trait in the path, as in `FixedInteger::zero()`.
+/// primitive integer as the amount. They also give it the text: `FromStr`, whose error is
+/// `core::num::ParseIntError`, as for the native integers, so that code bounded by
+/// `FromStr<Err = ParseIntError>` takes them alike, the radix formats `Binary`, `Octal`,
+/// `LowerHex` and `UpperHex`, and the exponent formats `LowerExp` and `UpperExp`.
+/// The functions `zero`, `min_value`, `max_value` and `from_str_radix`, and
+/// [`one`](IntegerOne::one), have the names of those of `Zero`, `Bounded`, `Num` and `One` in the
+/// `num-traits` crate, so code bounded by traits of both crates names the trait in the path, as in
+/// `FixedInteger::zero()`.
 ///
 /// ```
 /// use numo::{
@@ -108,6 +115,16 @@ mod sealed {
 /// assert_eq!(total::<Int<U7>>(&[]), <Int<U7> as FixedInteger>::zero());
 /// assert_eq!(largest(&[Int::<U7>::new(-20), Int::<U7>::new(30)]), Int::<U7>::new(30));
 /// assert_eq!(largest::<Int<U7>>(&[]), Int::<U7>::MIN);
+///
+/// // The text: the digits of a radix, read back in two formats.
+/// fn hex<T: FixedInteger>(text: &str) -> Option<String> {
+///   T::from_str_radix(text, 16).ok().map(|value| format!("{value:#x} {value:e}"))
+/// }
+///
+/// assert_eq!(hex::<Uint<U7>>("7f").as_deref(), Some("0x7f 1.27e2"));
+/// assert_eq!(hex::<Int<U7>>("-40").as_deref(), Some("0x40 -6.4e1"));
+/// assert_eq!(hex::<Uint<U7>>("80"), None);
+/// assert_eq!("-64".parse::<Int<U7>>(), Ok(Int::<U7>::MIN));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
@@ -142,6 +159,13 @@ pub trait FixedInteger:
   + ShlAssign<u32>
   + ShrAssign<u32>
   + Sum
+  + FromStr<Err = ParseIntError>
+  + Binary
+  + Octal
+  + LowerHex
+  + UpperHex
+  + LowerExp
+  + UpperExp
 {
   /// The number of bits, `Bits`.
   const BITS: u32;
@@ -157,6 +181,19 @@ pub trait FixedInteger:
   /// Returns the largest value.
   #[must_use]
   fn max_value() -> Self;
+
+  /// Parses an integer from the digits of `radix` after an optional sign, `+`, or for a signed
+  /// integer also `-`, as the native `from_str_radix` does at the width `Bits`.
+  ///
+  /// # Errors
+  ///
+  /// Returns the `ParseIntError` of the native integers, as the inherent `from_str_radix` does.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 36, reporting the caller.
+  #[track_caller]
+  fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError>;
 
   integer_query_table!(trait_items![]);
 }
@@ -817,7 +854,11 @@ pub trait SignedBits: Sealed + Sized + IntegerMath {
 /// add the limits from one bit. Generic code reaches the items through this trait, which the bound
 /// `B: BitWidth` provides on `NonZeroUint<B>` and `NonZeroInt<B>`; a method call needs the trait in
 /// scope. The operators that a non-zero integer has, which need a storage that holds the value
-/// inline in their forms on values, are not supertraits: generic code that uses one bounds it.
+/// inline in their forms on values, are not supertraits: generic code that uses one bounds it. The
+/// text is: `FromStr`, whose error is `core::num::ParseIntError`, as for the native `NonZero`
+/// integers, and [`from_str_radix`](Self::from_str_radix), which parse as the integer does and
+/// give the error of the kind `Zero` for zero, and the radix and exponent formats, which write what
+/// the integer of the same value writes.
 ///
 /// ```
 /// use numo::{
@@ -840,10 +881,37 @@ pub trait SignedBits: Sealed + Sized + IntegerMath {
 /// assert_eq!(squared(&five).map(|square| square.get()), Some(u7::new(25)));
 /// assert_eq!(squared(&NonZeroUint::<U200>::MAX), None);
 /// assert_eq!(<NonZeroUint<U7> as FixedNonZero>::new(u7::ZERO), None);
+///
+/// // The text: zero is the error of the kind `Zero`, after the errors of the integer.
+/// fn hex<T: FixedNonZero>(text: &str) -> Result<String, core::num::IntErrorKind> {
+///   match T::from_str_radix(text, 16) {
+///     Ok(value) => Ok(format!("{value:#x} {value:e}")),
+///     Err(error) => Err(*error.kind()),
+///   }
+/// }
+///
+/// assert_eq!(hex::<NonZeroUint<U7>>("7f").as_deref(), Ok("0x7f 1.27e2"));
+/// assert_eq!(hex::<NonZeroUint<U7>>("0"), Err(core::num::IntErrorKind::Zero));
+/// assert_eq!(hex::<NonZeroUint<U7>>("80"), Err(core::num::IntErrorKind::PosOverflow));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait FixedNonZero: Sealed + Clone + Eq + Ord + Hash + Debug + Display {
+pub trait FixedNonZero:
+  Sealed
+  + Clone
+  + Eq
+  + Ord
+  + Hash
+  + Debug
+  + Display
+  + FromStr<Err = ParseIntError>
+  + Binary
+  + Octal
+  + LowerHex
+  + UpperHex
+  + LowerExp
+  + UpperExp
+{
   /// The integer of the same width and storage that may be zero: `Uint<B, u8>` for
   /// `NonZeroUint<B, core::num::NonZero<u8>>`, and so on, and `Uint<B, [L; N]>` for
   /// `NonZeroUint<B, [L; N]>`, and the `Int` of the same storage for `NonZeroInt`.
@@ -872,6 +940,20 @@ pub trait FixedNonZero: Sealed + Clone + Eq + Ord + Hash + Debug + Display {
   #[must_use]
   #[track_caller]
   unsafe fn new_unchecked(value: Self::Integer) -> Self;
+
+  /// Parses a non-zero integer from the digits of `radix` after an optional sign, `+`, or for a
+  /// signed integer also `-`, as the native `NonZero::from_str_radix` does at the width `Bits`.
+  ///
+  /// # Errors
+  ///
+  /// Returns the `ParseIntError` of the native integers, as the inherent `from_str_radix` does:
+  /// that of the integer, and for zero the error of the kind `Zero`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 36, reporting the caller.
+  #[track_caller]
+  fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError>;
 
   nonzero_table!(Uint, trait_items![]);
 }
@@ -1072,6 +1154,14 @@ impl<B: FitsBits<R>, R: InlineUintRepr> FixedInteger for Uint<B, R> {
     Self::MAX
   }
 
+  // The radix is checked here, before the storage parses, so that the panic reports the caller.
+  #[inline]
+  #[track_caller]
+  fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+    check_radix(radix);
+    R::from_str_radix_bits(src.as_bytes(), radix, B::U32, Token::new()).map(Self::wrap)
+  }
+
   integer_query_table!(generic_items![]);
 }
 
@@ -1091,6 +1181,14 @@ impl<B: FitsBits<R>, R: InlineIntRepr> FixedInteger for Int<B, R> {
   #[inline]
   fn max_value() -> Self {
     Self::MAX
+  }
+
+  // The radix is checked here, before the storage parses, so that the panic reports the caller.
+  #[inline]
+  #[track_caller]
+  fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+    check_radix(radix);
+    R::from_str_radix_bits(src.as_bytes(), radix, B::U32, Token::new()).map(Self::wrap)
   }
 
   integer_query_table!(generic_items![]);
@@ -1347,6 +1445,14 @@ impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> FixedNonZero for NonZeroUint<B
     }
   }
 
+  // The radix is checked here, before the storage parses, so that the panic reports the caller.
+  #[inline]
+  #[track_caller]
+  fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+    check_radix(radix);
+    parse_unsigned(src, radix)
+  }
+
   nonzero_table!(Uint, generic_items![]);
 }
 
@@ -1379,6 +1485,14 @@ impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> FixedNonZero for NonZeroInt<B, 
       Some(nonzero) => nonzero,
       None => zero_value(),
     }
+  }
+
+  // The radix is checked here, before the storage parses, so that the panic reports the caller.
+  #[inline]
+  #[track_caller]
+  fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
+    check_radix(radix);
+    parse_signed(src, radix)
   }
 
   nonzero_table!(Int, generic_items![]);
