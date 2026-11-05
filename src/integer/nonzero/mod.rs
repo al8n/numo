@@ -1,8 +1,10 @@
 //! The non-zero integers [`NonZeroUint`](crate::NonZeroUint) and [`NonZeroInt`](crate::NonZeroInt):
 //! their constants, the constructors, the value and the method tables of each storage, the helpers
 //! of the generic implementations of their traits, the standard traits, which compare, hash and
-//! format a non-zero integer as the integer of the same value, and the operators: the division and
-//! the remainder of a `Uint` by a `NonZeroUint`, `|` and `|=`, and the negation of a `NonZeroInt`.
+//! format a non-zero integer as the integer of the same value, the text, which a non-zero integer
+//! parses as its integer does, with the error of the kind `Zero` for zero, and writes as the
+//! integer of the same value, and the operators: the division and the remainder of a `Uint` by a
+//! `NonZeroUint`, `|` and `|=`, and the negation of a `NonZeroInt`.
 //!
 //! A non-zero integer holds a [`Uint`] or an [`Int`] over its storage, the `NonZero` of a native
 //! integer or an array of limbs, and lends the value to the integer: an array as itself, and a
@@ -24,14 +26,16 @@ use core::{
   cmp::Ordering,
   fmt,
   hash::{Hash, Hasher},
+  num::ParseIntError,
   ops::{BitOr, BitOrAssign, Div, DivAssign, Neg, Rem, RemAssign},
+  str::FromStr,
 };
 
 use typenum::NonZero;
 
 use super::{Int, NonZeroInt, NonZeroUint, SignedNonZero, Uint, arithmetic::overflow};
 use crate::{
-  int,
+  int::{self, parse_errors},
   layout::Token,
   width::{
     FitsBits, InlineIntConsts, InlineIntRepr, InlineUintConsts, InlineUintRepr, IntCore, IntRepr,
@@ -478,6 +482,39 @@ where
   };
 }
 
+/// Emits the inherent `from_str_radix` of a non-zero integer in an inherent block of one storage,
+/// whose integer of the same width and storage is `$integer`.
+macro_rules! nonzero_from_str_radix {
+  ($integer:ty) => {
+    /// Parses a non-zero integer from the digits of `radix` after an optional sign, `+`, or for
+    /// `NonZeroInt` also `-`, as the native `NonZero::from_str_radix` does at the width `Bits`: as
+    /// the integer of the same width and storage parses them, then the error of the kind `Zero` for
+    /// zero, after the errors of the integer.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`ParseIntError`](core::num::ParseIntError) that `from_str_radix` of the integer
+    /// returns, and for a value of zero, which every text that the integer of zero bits reads is,
+    /// the error of the kind `Zero`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `radix` is not from 2 to 36, reporting the caller, so in a constant such a radix
+    /// fails to compile.
+    #[inline]
+    #[track_caller]
+    pub const fn from_str_radix(src: &str, radix: u32) -> Result<Self, core::num::ParseIntError> {
+      match <$integer>::from_str_radix(src, radix) {
+        Ok(value) => match Self::new(value) {
+          Some(nonzero) => Ok(nonzero),
+          None => Err($crate::int::parse_errors::ZERO),
+        },
+        Err(error) => Err(error),
+      }
+    }
+  };
+}
+
 /// Generates the constructor, the value and the rows of [`NonZeroUint`] and [`NonZeroInt`] over the
 /// arrays of each limb type, written `limb, lower, upper;`, where `lower` and `upper` are the
 /// modules of its limb layers. The array is the integer's storage, which the rows lend.
@@ -547,6 +584,8 @@ macro_rules! array_nonzero {
       const fn saturated(_: bool) -> Self {
         Self::known(Uint::<B, [$limb; N]>::MAX)
       }
+
+      nonzero_from_str_radix!(Uint<B, [$limb; N]>);
 
       nonzero_table!(Uint, inherent_items![Uint<B, [$limb; N]>, NonZeroInt<B, [$limb; N]>]);
       nonzero_uint_table!(inherent_items![Uint<B, [$limb; N]>, NonZeroInt<B, [$limb; N]>]);
@@ -628,6 +667,8 @@ macro_rules! array_nonzero {
         }
       }
 
+      nonzero_from_str_radix!(Int<B, [$limb; N]>);
+
       nonzero_table!(Int, inherent_items![Int<B, [$limb; N]>, NonZeroUint<B, [$limb; N]>]);
       nonzero_int_table!(inherent_items![Int<B, [$limb; N]>, NonZeroUint<B, [$limb; N]>]);
     }
@@ -704,6 +745,8 @@ macro_rules! native_nonzero {
         Self::known(Uint::<B, $uint>::MAX)
       }
 
+      nonzero_from_str_radix!(Uint<B, $uint>);
+
       nonzero_table!(Uint, inherent_items![Uint<B, $uint>, NonZeroInt<B, core::num::NonZero<$int>>]);
       nonzero_uint_table!(inherent_items![Uint<B, $uint>, NonZeroInt<B, core::num::NonZero<$int>>]);
     }
@@ -775,6 +818,8 @@ macro_rules! native_nonzero {
           Self::known(Int::<B, $int>::MIN)
         }
       }
+
+      nonzero_from_str_radix!(Int<B, $int>);
 
       nonzero_table!(Int, inherent_items![Int<B, $int>, NonZeroUint<B, core::num::NonZero<$uint>>]);
       nonzero_int_table!(inherent_items![Int<B, $int>, NonZeroUint<B, core::num::NonZero<$uint>>]);
@@ -916,6 +961,132 @@ macro_rules! nonzero_traits {
 
 nonzero_traits!(NonZeroUint, Uint, NonZeroUintRepr, UintCore);
 nonzero_traits!(NonZeroInt, Int, NonZeroIntRepr, IntCore);
+
+/// The non-zero integer of the digits of `radix` in `src`, as the integer of the same width and
+/// storage parses them, or the error of the kind `Zero` for zero, as the native
+/// `NonZero::from_str_radix` gives it after the errors of its integer. Requires
+/// `2 <= radix <= 36`.
+pub(crate) fn parse_unsigned<B: FitsBits<R::Integer>, R: NonZeroUintRepr>(
+  src: &str,
+  radix: u32,
+) -> Result<NonZeroUint<B, R>, ParseIntError> {
+  let integer =
+    <R::Integer as UintCore>::from_str_radix_bits(src.as_bytes(), radix, B::U32, Token::new())?;
+  match integer.to_nonzero(Token::new()) {
+    Some(repr) => Ok(NonZeroUint {
+      value: Uint::wrap(repr),
+    }),
+    None => Err(parse_errors::ZERO),
+  }
+}
+
+/// The non-zero integer of the digits of `radix` in `src`, as [`parse_unsigned`] reads them for
+/// `NonZeroUint`. Requires `2 <= radix <= 36`.
+pub(crate) fn parse_signed<B: FitsBits<R::Integer>, R: NonZeroIntRepr>(
+  src: &str,
+  radix: u32,
+) -> Result<NonZeroInt<B, R>, ParseIntError> {
+  let integer =
+    <R::Integer as IntCore>::from_str_radix_bits(src.as_bytes(), radix, B::U32, Token::new())?;
+  match integer.to_nonzero(Token::new()) {
+    Some(repr) => Ok(NonZeroInt {
+      value: Int::wrap(repr),
+    }),
+    None => Err(parse_errors::ZERO),
+  }
+}
+
+impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> FromStr for NonZeroUint<B, R> {
+  type Err = ParseIntError;
+
+  /// Parses a non-zero integer from decimal digits after an optional `+`, as `from_str_radix` with
+  /// the radix 10 does.
+  #[inline]
+  fn from_str(src: &str) -> Result<Self, ParseIntError> {
+    parse_unsigned(src, 10)
+  }
+}
+
+impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> FromStr for NonZeroInt<B, R> {
+  type Err = ParseIntError;
+
+  /// Parses a non-zero integer from decimal digits after an optional `+` or `-`, as
+  /// `from_str_radix` with the radix 10 does.
+  #[inline]
+  fn from_str(src: &str) -> Result<Self, ParseIntError> {
+    parse_signed(src, 10)
+  }
+}
+
+/// Implements the radix formats `$trait` of the non-zero integers, written `trait: shift, upper;`,
+/// and the exponent formats, written `exp trait: upper;`, which write what the integer of the same
+/// value writes, lent by the storage, as `Display` does.
+// Trait methods cannot be `const`.
+macro_rules! nonzero_formats {
+  ($($trait:ident: $shift:literal, $upper:literal);+ $(;)?) => {$(
+    impl<B, R: NonZeroUintRepr> fmt::$trait for NonZeroUint<B, R> {
+      /// Writes what the integer of the same value writes.
+      #[inline]
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <R::Integer as UintCore>::with_nonzero(
+          &self.value.repr,
+          |integer| integer.fmt_pow2($shift, $upper, f, Token::new()),
+          Token::new(),
+        )
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> fmt::$trait for NonZeroInt<B, R> {
+      /// Writes what the integer of the same value writes: the two's complement of its `Bits`
+      /// bits.
+      #[inline]
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <R::Integer as IntCore>::with_nonzero(
+          &self.value.repr,
+          |integer| integer.fmt_pow2(B::U32, $shift, $upper, f, Token::new()),
+          Token::new(),
+        )
+      }
+    }
+  )+};
+  ($(exp $trait:ident: $upper:literal);+ $(;)?) => {$(
+    impl<B, R: NonZeroUintRepr> fmt::$trait for NonZeroUint<B, R> {
+      /// Writes what the integer of the same value writes.
+      #[inline]
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <R::Integer as UintCore>::with_nonzero(
+          &self.value.repr,
+          |integer| integer.fmt_exp($upper, f, Token::new()),
+          Token::new(),
+        )
+      }
+    }
+
+    impl<B, R: NonZeroIntRepr> fmt::$trait for NonZeroInt<B, R> {
+      /// Writes what the integer of the same value writes.
+      #[inline]
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <R::Integer as IntCore>::with_nonzero(
+          &self.value.repr,
+          |integer| integer.fmt_exp($upper, f, Token::new()),
+          Token::new(),
+        )
+      }
+    }
+  )+};
+}
+
+nonzero_formats!(
+  Binary: 1, false;
+  Octal: 3, false;
+  LowerHex: 4, false;
+  UpperHex: 4, true;
+);
+
+nonzero_formats!(
+  exp LowerExp: false;
+  exp UpperExp: true;
+);
 
 /// Implements the division `$op` of [`Uint`], `/` or `%`, by the [`NonZeroUint`] of the same width
 /// over the non-zero storage of its storage, in the four forms of values and references, and its

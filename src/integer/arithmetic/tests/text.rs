@@ -2,11 +2,12 @@
 //! parser and by round trips, the radix formats against the bit model and the exponent formats
 //! against the native integers, with their flags, at every width up to 16 bits and at wider widths;
 //! the errors and the panic of the radix; constant contexts; zero bits and one signed bit; code
-//! generic over the width; and the text that `FixedInteger` requires.
+//! generic over the width; the text that `FixedInteger` requires; and the text of the non-zero
+//! integers against the native ones.
 
 use core::{
   fmt::{Binary, LowerExp, LowerHex, Octal, UpperExp, UpperHex},
-  num::{IntErrorKind, ParseIntError},
+  num::{IntErrorKind, NonZero, ParseIntError},
   str::FromStr,
 };
 
@@ -14,7 +15,7 @@ use num_bigint::{BigUint, Sign};
 use typenum::{U3, U4, U5, U6, U10, U11, U12, U13, U14, U15};
 
 use super::*;
-use crate::{i0, i1, int::parse_errors, u0};
+use crate::{FixedNonZero, NonZeroInt, NonZeroUint, i0, i1, int::parse_errors, u0};
 
 /// The result of a parser with the kind of its error, as the model of the native parser gives it.
 fn kind<T>(result: Result<T, ParseIntError>) -> Result<T, IntErrorKind> {
@@ -997,4 +998,161 @@ fn text_trait_surface() {
     i0: i0::ZERO,
     i1: i1::MIN,
   );
+}
+
+/// Checks the parsers of the non-zero integer `$ty`, of the width of the native integer `$native`,
+/// whose value `$read` reads as a `$native`, at the texts of `bigint::parse_texts` and next to the
+/// limits, in the radixes of `bigint::parse_radixes`: `from_str_radix`, through the inherent
+/// `const fn` and `FixedNonZero`, and in decimal `FromStr`, give what the native `NonZero` integer
+/// gives, the errors of the integer first and then `Zero`.
+macro_rules! nonzero_parsing_matches {
+  ($ty:ty, $native:ident, $signed:expr, $read:expr) => {{
+    let read: fn(&$ty) -> $native = $read;
+    let bits = $native::BITS;
+    let texts = bigint::parse_texts();
+    for &radix in bigint::parse_radixes() {
+      for text in texts
+        .iter()
+        .chain(&bigint::limit_texts(bits, $signed, radix))
+      {
+        let src = core::str::from_utf8(text).expect("ASCII");
+        let expected = NonZero::<$native>::from_str_radix(src, radix).map(NonZero::get);
+        let inherent = <$ty>::from_str_radix(src, radix);
+        let generic = <$ty as FixedNonZero>::from_str_radix(src, radix);
+        assert_eq!(
+          inherent, generic,
+          "{src} in radix {radix} through the trait"
+        );
+        assert_eq!(
+          inherent.map(|value| read(&value)),
+          expected,
+          "{src} in radix {radix}"
+        );
+        if radix == 10 {
+          assert_eq!(
+            src.parse::<$ty>().map(|value| read(&value)),
+            expected,
+            "{src}"
+          );
+        }
+      }
+    }
+  }};
+}
+
+/// Checks that the radix and exponent formats of the non-zero integer `$ty` write, at each value
+/// of `$values` of its integer, what the integer writes.
+macro_rules! nonzero_formats_match {
+  ($ty:ty; $($value:expr),+ $(,)?) => {{
+    for value in [$($value),+] {
+      let x = <$ty>::new(value).expect("not zero");
+      assert_eq!(radix_texts(&x), radix_texts(&value), "{value}");
+      assert_eq!(exp_texts(&x), exp_texts(&value), "{value}");
+    }
+  }};
+}
+
+/// The text of the non-zero integers: at 8 and 16 bits, in native and array storages of both
+/// signs, the parsers give what the native `NonZero` integers give, so `"0"`, `"+0"` and `"00"`,
+/// and `"-0"` for a signed integer, are `Zero`, after every error of the integer; the radix and
+/// exponent formats write what the integer of the same value writes, also at 200 bits. Under Miri,
+/// in `NonZero<u8>`, `NonZero<i8>` and an array.
+#[test]
+fn nonzero_text_is_that_of_the_native_nonzero_integers() {
+  type U8x8 = NonZeroUint<U8, NonZero<u8>>;
+  type I8x8 = NonZeroInt<U8, NonZero<i8>>;
+  type I8x16 = NonZeroInt<U8, [u16; 1]>;
+  nonzero_parsing_matches!(U8x8, u8, false, |x| x.get().value());
+  nonzero_parsing_matches!(I8x8, i8, true, |x| x.get().value());
+  nonzero_parsing_matches!(I8x16, i8, true, |x| x.get().to_limbs()[0] as i8);
+  if !tier().is_miri() {
+    type U8x1 = NonZeroUint<U8, [u8; 1]>;
+    type U16x16 = NonZeroUint<U16, NonZero<u16>>;
+    type I16x16 = NonZeroInt<U16, NonZero<i16>>;
+    type U16x1 = NonZeroUint<U16, [u16; 1]>;
+    type I16x2 = NonZeroInt<U16, [u8; 2]>;
+    nonzero_parsing_matches!(U8x1, u8, false, |x| x.get().to_limbs()[0]);
+    nonzero_parsing_matches!(U16x16, u16, false, |x| x.get().value());
+    nonzero_parsing_matches!(I16x16, i16, true, |x| x.get().value());
+    nonzero_parsing_matches!(U16x1, u16, false, |x| x.get().to_limbs()[0]);
+    nonzero_parsing_matches!(I16x2, i16, true, |x| i16::from_le_bytes(x.get().to_limbs()));
+  }
+
+  nonzero_formats_match!(NonZeroUint<U7>; u7::ONE, u7::new(100), u7::MAX);
+  nonzero_formats_match!(NonZeroInt<U7>; i7::MIN, i7::new(-1), i7::MAX);
+  type I7x64 = Int<U7, [u64; 1]>;
+  nonzero_formats_match!(NonZeroInt<U7, [u64; 1]>; I7x64::MIN, -I7x64::ONE, I7x64::MAX);
+  nonzero_formats_match!(NonZeroUint<U200>; Uint::<U200>::ONE, Uint::<U200>::MAX);
+  nonzero_formats_match!(NonZeroInt<U200, [u8; 25]>; Int::<U200, [u8; 25]>::MIN);
+  let max = NonZeroUint::<U200>::MAX;
+  assert_eq!(
+    NonZeroUint::<U200>::from_str_radix(&format!("{max:x}"), 16),
+    Ok(max)
+  );
+}
+
+/// Zero bits hold no value that is not zero, so every text is an error of the non-zero integers:
+/// `Zero` for the spellings of zero, which the integer reads, and the error of the integer for any
+/// other text, as an overflow comes before zero; in native and array storages, through the
+/// inherent `const fn`, `FixedNonZero` and `FromStr`.
+#[test]
+fn nonzero_text_of_zero_bits() {
+  macro_rules! zero_bits {
+    ($($ty:ty: $signed:literal),+ $(,)?) => {$({
+      type T = $ty;
+      let minus_zero = if $signed { IntErrorKind::Zero } else { IntErrorKind::InvalidDigit };
+      let minus_one = if $signed { IntErrorKind::NegOverflow } else { IntErrorKind::InvalidDigit };
+      for (text, expected) in [
+        ("0", IntErrorKind::Zero),
+        ("+0", IntErrorKind::Zero),
+        ("00", IntErrorKind::Zero),
+        ("-0", minus_zero),
+        ("1", IntErrorKind::PosOverflow),
+        ("-1", minus_one),
+        ("", IntErrorKind::Empty),
+        ("x", IntErrorKind::InvalidDigit),
+      ] {
+        assert_eq!(kind(T::from_str_radix(text, 10)), Err(expected), "{text}");
+        assert_eq!(kind(<T as FixedNonZero>::from_str_radix(text, 10)), Err(expected), "{text}");
+        assert_eq!(kind(text.parse::<T>()), Err(expected), "{text}");
+      }
+    })+};
+  }
+  zero_bits!(
+    NonZeroUint<U0>: false,
+    NonZeroUint<U0, NonZero<u8>>: false,
+    NonZeroInt<U0>: true,
+    NonZeroInt<U0, NonZero<i8>>: true,
+    NonZeroInt<U0, [u8; 1]>: true,
+  );
+}
+
+/// The error of zero is that of the native `NonZero` integers, with its kind and its message; the
+/// parsers of the non-zero integers give it in constant contexts too, and a radix outside 2 to 36
+/// panics, through the inherent `const fn` and `FixedNonZero`, reporting the caller.
+#[test]
+fn nonzero_errors_constants_and_panics() {
+  let zero = parse_errors::ZERO;
+  assert_eq!(*zero.kind(), IntErrorKind::Zero);
+  assert_eq!(zero.to_string(), "number would be zero for non-zero type");
+  assert_eq!(zero, "0".parse::<NonZero<u8>>().unwrap_err());
+
+  type Wide = NonZeroInt<U200>;
+  const SMALL: Result<NonZeroUint<U7>, ParseIntError> = NonZeroUint::<U7>::from_str_radix("7f", 16);
+  const SIGNED: Result<NonZeroInt<U7>, ParseIntError> = NonZeroInt::<U7>::from_str_radix("-40", 16);
+  const WIDE: Result<Wide, ParseIntError> = Wide::from_str_radix("-1", 10);
+  const ZERO: Result<Wide, ParseIntError> = Wide::from_str_radix("-0", 10);
+  assert_eq!(SMALL, Ok(NonZeroUint::<U7>::MAX));
+  assert_eq!(SIGNED, Ok(NonZeroInt::<U7>::MIN));
+  assert_eq!(WIDE.map(Wide::get), Ok(-Int::<U200>::ONE));
+  assert_eq!(kind(ZERO), Err(IntErrorKind::Zero));
+
+  let message = "from_str_radix: radix must lie in the range `[2, 36]`".to_string();
+  type Small = NonZeroUint<U7>;
+  for radix in [0, 1, 37] {
+    panics_here!(Small::from_str_radix("1", radix), message);
+    panics_here!(Wide::from_str_radix("", radix), message);
+    panics_here!(<Small as FixedNonZero>::from_str_radix("1", radix), message);
+    panics_here!(<Wide as FixedNonZero>::from_str_radix("0", radix), message);
+  }
 }

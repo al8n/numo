@@ -319,13 +319,19 @@ FEATURES
     `MIN` repeats a native negation, as the operator `-` does.
   - `Clone`, `Copy`, `PartialEq`, `Eq`, `PartialOrd`, `Ord`, `Hash`, `Display` and `Debug` as for
     the integer of the same value, and no `Default`.
+  - The text of the native `NonZero` integers: `from_str_radix`, a `const fn` of every storage,
+    and `FromStr` parse as the integer of the same width and storage does, then return the error
+    of the kind `Zero` for zero, after every error of the integer, so that at zero bits every text
+    is an error; the radix and exponent formats write what the integer of the same value writes.
   - `Uint / NonZeroUint` and `Uint % NonZeroUint`, with `/=` and `%=`, which cannot panic; `|` of
     two non-zero integers and of a non-zero integer and its integer either way, with `|=`; and the
     negation `-` of `NonZeroInt`, which overflows at `MIN` as the native one does. The operators
     work on references for every storage, and on values for a storage whose integer holds the value
     inline. `Int` has no division by a `NonZeroInt`, as `MIN / -1` overflows.
   - The sealed traits `FixedNonZero`, with `Integer`, `BITS`, `new`, `get`, `new_unchecked`, which
-    checks the value in every build, and the methods of both signs, `UnsignedNonZero` and
+    checks the value in every build, `from_str_radix` and the methods of both signs, and with
+    `FromStr<Err = ParseIntError>`, the radix formats and the exponent formats as supertraits,
+    `UnsignedNonZero` and
     `SignedNonZero`, with the methods of each sign, and `NonZeroLimits`, with `min_value` and
     `max_value` from one bit, which need only the storage traits, and `ConstNonZeroLimits`, with
     `MIN` and `MAX`, for a storage whose integer holds the value inline. `IntegerNonZero` and the

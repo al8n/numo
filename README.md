@@ -266,7 +266,9 @@ has no constant for is computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   niche gives `Option` the size of the integer, or in an array of limbs; without `Repr`, the
   storage is that of the default storage, and `NonZeroOf<T>` names the non-zero integer of an
   integer `T`, as in `NonZeroOf<u7>`. `new` and `get` convert from and to the integer,
-  `new_unchecked` converts without the check of zero, and the methods of the native `NonZero`
+  `new_unchecked` converts without the check of zero, `from_str_radix` and `FromStr` parse as the
+  integer does, with the error of the native `NonZero` integers for zero, the formats write what
+  the integer writes, and the methods of the native `NonZero`
   integers at the width are `const fn`s: the bit counts, the highest and the lowest one, the
   rotations, the checked and saturating multiplication, powers and addition, the logarithms, the
   square root, the midpoint, the division rounded up, the casts, and the negation and the absolute

@@ -547,8 +547,13 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// which is one, and `MAX`, which is `2^Bits - 1`. Zero bits hold no value but zero, so `new`
 /// returns `None` there and the type has no `MIN` or `MAX`; one bit holds only one. Values compare,
 /// hash and format as the integers of the same values: `Ord` is numeric, the hash is that of the
-/// [`Uint`], and `Display` and `Debug` write decimal. There is no `Default`, as no value would be a
-/// natural one.
+/// [`Uint`], `Display` and `Debug` write decimal, and the radix and exponent formats write what the
+/// integer writes. There is no `Default`, as no value would be a natural one.
+///
+/// [`from_str_radix`](Self::from_str_radix), a `const fn` of each storage, and `FromStr` parse a
+/// value as the native `NonZero` integers do: as the [`Uint`] of the same width and storage parses
+/// it (see [Text](Uint#text)), then the error of the kind `Zero` for zero, after every error of the
+/// integer, so that at zero bits every text is an error.
 ///
 /// ```
 /// use core::num::NonZero;
@@ -575,6 +580,13 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// let wide = NonZeroUint::<U200>::new(Uint::<U200>::MAX).unwrap();
 /// assert_eq!(wide.count_ones().get(), 200);
 /// assert_eq!(Uint::from(wide), Uint::<U200>::MAX);
+///
+/// // The text, in which zero is an error.
+/// assert_eq!(NonZeroUint::<U7>::from_str_radix("5", 10), Ok(five));
+/// assert_eq!(format!("{five:#b} {five:e}"), "0b101 5e0");
+/// let zero = "00".parse::<NonZeroUint<U7>>().unwrap_err();
+/// assert_eq!(*zero.kind(), core::num::IntErrorKind::Zero);
+/// assert_eq!(zero, "0".parse::<NonZero<u8>>().unwrap_err());
 /// ```
 ///
 /// # Arithmetic
@@ -651,7 +663,8 @@ pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
 /// creates it without the check, and [`get`](Self::get) returns it. The constants are `BITS`, and
 /// from one bit `MIN` and `MAX`. One bit holds -1 and 0, of which only -1 is not zero, so `MIN` and
 /// `MAX` of one bit are both -1; zero bits hold no value but zero. Values compare, hash and format
-/// as the integers of the same values.
+/// as the integers of the same values, and [`from_str_radix`](Self::from_str_radix) and `FromStr`
+/// parse as for [`NonZeroUint`], with `-` as well as `+`: `-0` is the error of the kind `Zero`.
 ///
 /// # Arithmetic
 ///
