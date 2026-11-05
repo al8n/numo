@@ -1275,7 +1275,7 @@ mod bits {
   /// The patterns of `width` bits, at most 128, that every tier checks: zero, every bit, one, the
   /// top bit, the top two bits, alternating bits, and the limits of the two's complement range
   /// with the patterns next to them.
-  fn ends(width: u32) -> Vec<u128> {
+  pub(super) fn ends(width: u32) -> Vec<u128> {
     let mut ends: Vec<u128> = model::few_patterns(width, 128)
       .iter()
       .map(|pattern| model::to_u128(pattern))
@@ -1296,7 +1296,7 @@ mod bits {
   /// The patterns of `width` bits in `u8` or `u16`: every pattern of up to 8 bits, or of up to 12
   /// in an optimized build, and above that every 127th, or every 61st in an optimized build, with
   /// the [`ends`]. Under Miri, the ends alone.
-  fn narrow_patterns(width: u32) -> Vec<u128> {
+  pub(super) fn narrow_patterns(width: u32) -> Vec<u128> {
     let tier = bigint::tier();
     if tier.is_miri() {
       return ends(width);
@@ -1619,5 +1619,220 @@ mod text {
     check_native!(u32, i32, &narrow_widths(&[], &[]));
     check_native!(u64, i64, &narrow_widths(&[33, 63], &[]));
     check_native!(u128, i128, &narrow_widths(&[65, 127], &[]));
+  }
+}
+
+/// The byte functions of the native layers: at the full width of each native integer against its
+/// own byte methods, and at narrower widths, of whole bytes and others, and at the full width
+/// against the bit model, at the slices of `bigint::byte_slices`.
+mod bytes {
+  use std::{vec, vec::Vec};
+
+  use super::bits::{ends, narrow_patterns};
+  use crate::{
+    bigint::{self, Tier, model},
+    int,
+  };
+
+  /// The patterns of the full width of a native integer of `bits` bits at which its layers are
+  /// compared with its byte methods: every pattern of 8 bits, every 7th pattern of 16 bits in an
+  /// optimized build and every 61st in an unoptimized one, and the structured patterns of a wider
+  /// width, each with the patterns of [`ends`]; under Miri, the ends alone.
+  fn full_patterns(bits: u32) -> Vec<u128> {
+    let tier = bigint::tier();
+    match bits {
+      _ if tier.is_miri() => ends(bits),
+      8 => (0..1 << 8).collect(),
+      16 => {
+        let step = if tier.is_full() { 7 } else { 61 };
+        bigint::with_ends((0..1 << 16).step_by(step), ends(bits))
+      }
+      _ => bigint::with_ends(bigint::structured_patterns(bits), ends(bits)),
+    }
+  }
+
+  /// The patterns of `width` bits at which a native layer is checked against the bit model: those
+  /// of [`narrow_patterns`] up to 8 bits, and above them the structured patterns with the
+  /// [`ends`] in an optimized build, and the ends alone otherwise.
+  fn model_patterns(width: u32) -> Vec<u128> {
+    match bigint::tier() {
+      _ if width <= 8 => narrow_patterns(width),
+      Tier::Full => bigint::with_ends(bigint::structured_patterns(width), ends(width)),
+      _ => ends(width),
+    }
+  }
+
+  /// Checks the byte functions of the native layer `$layer` on `$p`, a pattern of a width, which
+  /// `$read` reads as an integer of the layer, in two's complement if `$signed`, against the bit
+  /// model: the writer at no bytes, one, the bytes of the width and those of the native integer,
+  /// in both orders, the byte at each index, the readers at each slice of `bigint::byte_slices`,
+  /// least significant byte first and reversed, and at a width of whole bytes the reversal of the
+  /// bytes. Wherever the checked reader returns a value, the wrapping reader returns it too.
+  macro_rules! check_layer {
+    ($layer:ident, $signed:literal, $read:expr; $p:expr) => {{
+      let p: &[bool] = $p;
+      let read = $read;
+      let width = model::width(p);
+      let text = || model::text(p);
+      let x = read(p);
+      let size = size_of::<$layer>();
+      let storage = model::le_bytes(p, size, $signed);
+      let mut lengths = vec![0, 1, (width as usize).div_ceil(8), size];
+      lengths.sort_unstable();
+      lengths.dedup();
+      for len in lengths {
+        let (mut little, mut big) = (vec![0; len], vec![0; len]);
+        int::$layer::write_bytes(x, &mut little, false);
+        int::$layer::write_bytes(x, &mut big, true);
+        let low = storage[..len].to_vec();
+        let reversed: Vec<u8> = low.iter().rev().copied().collect();
+        assert_eq!((little, big), (low, reversed), "{} in {len} bytes", text());
+      }
+      for (index, &byte) in storage.iter().enumerate() {
+        assert_eq!(
+          int::$layer::byte_at(x, index),
+          byte,
+          "byte {index} of {}",
+          text()
+        );
+      }
+      for slice in bigint::byte_slices(p, $signed) {
+        let q = model::of_le_bytes(&slice);
+        let checked = model::fit(&q, width, $signed).map(|r| read(&r));
+        let wrapped = read(&model::wrap(&q, width, $signed));
+        let reversed: Vec<u8> = slice.iter().rev().copied().collect();
+        let reads = [
+          (
+            int::$layer::checked_read_bytes(&slice, false, width),
+            int::$layer::wrapping_read_bytes(&slice, false, width),
+          ),
+          (
+            int::$layer::checked_read_bytes(&reversed, true, width),
+            int::$layer::wrapping_read_bytes(&reversed, true, width),
+          ),
+        ];
+        assert_eq!(reads, [(checked, wrapped); 2], "{slice:x?} at {width} bits");
+        for (checked, wrapped) in reads {
+          if let Some(value) = checked {
+            assert_eq!(wrapped, value, "{slice:x?} at {width} bits");
+          }
+        }
+      }
+      if width % 8 == 0 {
+        assert_eq!(
+          int::$layer::swap_bytes_bits(x, width),
+          read(&model::swap_bytes(p)),
+          "{}",
+          text()
+        );
+      }
+    }};
+  }
+
+  /// Checks the native layers `$uint` and `$int` at each width of `$widths`, at each pattern of
+  /// [`model_patterns`], read unsigned and in two's complement, against the bit model.
+  macro_rules! check_widths {
+    ($uint:ident, $int:ident, $widths:expr) => {{
+      let widths: Vec<u32> = $widths;
+      for width in widths {
+        for a in model_patterns(width) {
+          let p = model::of_u128(a, width);
+          check_layer!($uint, false, |p: &[bool]| model::to_u128(p) as $uint; &p);
+          check_layer!($int, true, |p: &[bool]| model::to_i128(p) as $int; &p);
+        }
+      }
+    }};
+  }
+
+  /// Checks the native layers `$uint` and `$int` at their full width, at each pattern of
+  /// [`full_patterns`], against the byte methods of the native integers: the writer gives
+  /// `to_le_bytes` and `to_be_bytes`, the byte at an index is that of `to_le_bytes`, the readers
+  /// give the value of those arrays, and the reversal of the bytes is `swap_bytes`.
+  macro_rules! check_full_width {
+    ($uint:ident, $int:ident) => {{
+      let bits = $uint::BITS;
+      for pattern in full_patterns(bits) {
+        let x = pattern as $uint;
+        let y = x.cast_signed();
+        let (le, be) = (x.to_le_bytes(), x.to_be_bytes());
+        let (mut little, mut big) = ([0; size_of::<$uint>()], [0; size_of::<$uint>()]);
+        int::$uint::write_bytes(x, &mut little, false);
+        int::$uint::write_bytes(x, &mut big, true);
+        assert_eq!((little, big), (le, be), "{x}");
+        int::$int::write_bytes(y, &mut little, false);
+        int::$int::write_bytes(y, &mut big, true);
+        assert_eq!((little, big), (y.to_le_bytes(), y.to_be_bytes()), "{y}");
+        for (index, byte) in le.into_iter().enumerate() {
+          assert_eq!(
+            (int::$uint::byte_at(x, index), int::$int::byte_at(y, index)),
+            (byte, byte),
+            "byte {index} of {x}"
+          );
+        }
+        assert_eq!(
+          (
+            int::$uint::checked_read_bytes(&le, false, bits),
+            int::$uint::checked_read_bytes(&be, true, bits),
+            int::$uint::wrapping_read_bytes(&le, false, bits),
+            int::$uint::wrapping_read_bytes(&be, true, bits),
+          ),
+          (Some(x), Some(x), x, x),
+          "{x}"
+        );
+        assert_eq!(
+          (
+            int::$int::checked_read_bytes(&le, false, bits),
+            int::$int::checked_read_bytes(&be, true, bits),
+            int::$int::wrapping_read_bytes(&le, false, bits),
+            int::$int::wrapping_read_bytes(&be, true, bits),
+          ),
+          (Some(y), Some(y), y, y),
+          "{y}"
+        );
+        assert_eq!(
+          (
+            int::$uint::swap_bytes_bits(x, bits),
+            int::$int::swap_bytes_bits(y, bits)
+          ),
+          (x.swap_bytes(), y.swap_bytes()),
+          "{x}"
+        );
+      }
+    }};
+  }
+
+  #[test]
+  fn u8_and_i8_match_the_native_byte_methods() {
+    check_full_width!(u8, i8);
+    let widths = if bigint::tier().is_miri() {
+      vec![1, 8]
+    } else {
+      vec![0, 1, 7, 8]
+    };
+    check_widths!(u8, i8, widths);
+  }
+
+  #[test]
+  fn u16_to_i128_match_the_native_byte_methods() {
+    check_full_width!(u16, i16);
+    check_full_width!(u32, i32);
+    check_full_width!(u64, i64);
+    check_full_width!(u128, i128);
+    // The whole bytes below the full width, and widths of a partial byte.
+    if bigint::tier().is_miri() {
+      check_widths!(u16, i16, vec![12, 16]);
+      check_widths!(u32, i32, vec![24]);
+      check_widths!(u64, i64, vec![56]);
+      check_widths!(u128, i128, vec![120]);
+    } else {
+      check_widths!(u16, i16, vec![9, 12, 15, 16]);
+      check_widths!(u32, i32, vec![24, 31, 32]);
+      check_widths!(u64, i64, vec![40, 48, 56, 63, 64]);
+      check_widths!(
+        u128,
+        i128,
+        (9..=15).map(|k| 8 * k).chain([127, 128]).collect()
+      );
+    }
   }
 }
