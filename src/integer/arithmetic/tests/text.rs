@@ -1,12 +1,13 @@
 //! The text of `Uint` and `Int`: `from_str_radix` and `FromStr` against the model of the native
 //! parser and by round trips, the radix formats against the bit model and the exponent formats
 //! against the native integers, with their flags, at every width up to 16 bits and at wider widths;
-//! the errors and the panic of the radix; constant contexts; zero bits and one signed bit; and code
-//! generic over the width.
+//! the errors and the panic of the radix; constant contexts; zero bits and one signed bit; code
+//! generic over the width; and the text that `FixedInteger` requires.
 
 use core::{
   fmt::{Binary, LowerExp, LowerHex, Octal, UpperExp, UpperHex},
   num::{IntErrorKind, ParseIntError},
+  str::FromStr,
 };
 
 use num_bigint::{BigUint, Sign};
@@ -83,6 +84,21 @@ fn text_values(bits: u32, signed: bool, primary: bool) -> Vec<i128> {
   }
 }
 
+/// The result of `from_str_radix` of `$ty` for `$text` in `$radix` through the inherent `const fn`
+/// of the storage and through `FixedInteger`, which must agree.
+macro_rules! parse_both {
+  ($ty:ty, $text:expr, $radix:expr) => {{
+    let (text, radix): (&str, u32) = ($text, $radix);
+    let inherent = <$ty>::from_str_radix(text, radix);
+    let generic = <$ty as FixedInteger>::from_str_radix(text, radix);
+    assert_eq!(
+      inherent, generic,
+      "{text:?} in radix {radix} through the trait"
+    );
+    inherent
+  }};
+}
+
 /// Checks that the texts of `$x`, the value `$a` of `$ty`, parse back through `from_str_radix` and
 /// `FromStr`: for `Uint` `$texts`, the plain radix texts of [`radix_texts`], and its decimal text,
 /// and for `Int` its decimal text and the texts of its magnitude after `-` for a negative value.
@@ -91,13 +107,13 @@ macro_rules! parses_back {
     let (x, texts): ($ty, &[String]) = ($x, $texts);
     for (radix, text) in [2, 8, 16, 16].into_iter().zip(texts) {
       assert_eq!(
-        <$ty>::from_str_radix(text, radix),
+        parse_both!($ty, text, radix),
         Ok(x),
         "{text} in radix {radix}"
       );
     }
     let decimal = x.to_string();
-    assert_eq!(<$ty>::from_str_radix(&decimal, 10), Ok(x), "{decimal}");
+    assert_eq!(parse_both!($ty, &decimal, 10), Ok(x), "{decimal}");
     assert_eq!(decimal.parse::<$ty>(), Ok(x), "{decimal}");
   }};
   (signed; $ty:ty, $x:expr, $a:expr, $texts:expr) => {{
@@ -109,13 +125,13 @@ macro_rules! parses_back {
       (16, format!("{sign}{magnitude:X}")),
     ] {
       assert_eq!(
-        <$ty>::from_str_radix(&text, radix),
+        parse_both!($ty, &text, radix),
         Ok(x),
         "{text} in radix {radix}"
       );
     }
     let decimal = x.to_string();
-    assert_eq!(<$ty>::from_str_radix(&decimal, 10), Ok(x), "{decimal}");
+    assert_eq!(parse_both!($ty, &decimal, 10), Ok(x), "{decimal}");
     assert_eq!(decimal.parse::<$ty>(), Ok(x), "{decimal}");
   }};
 }
@@ -123,8 +139,9 @@ macro_rules! parses_back {
 /// Checks the text of `$ty`, of the sign `$sign` and of `$bits` bits, whose values `$from` creates
 /// from an `i128`, at each value of `$values`: the radix formats give the texts of the native
 /// `u128` of the pattern of the value, the exponent formats those of the native `i128` of the
-/// value, and the texts parse back; and at the texts of [`error_texts`], `from_str_radix` and
-/// `FromStr` give what the model of the native parser gives.
+/// value, and the texts parse back; and at the texts of [`error_texts`], `from_str_radix`, through
+/// the inherent `const fn` and `FixedInteger`, and `FromStr` give what the model of the native
+/// parser gives.
 macro_rules! sweep_text {
   ($sign:ident; $ty:ty, $bits:expr, $values:expr, $from:expr, $value:expr, $magnitude:expr) => {{
     let (bits, signed) = ($bits, is_signed!($sign));
@@ -140,7 +157,7 @@ macro_rules! sweep_text {
     for text in error_texts(bits, signed) {
       let expected = bigint::parse(text.as_bytes(), 10, bits, signed).map(from);
       assert_eq!(
-        kind(<$ty>::from_str_radix(&text, 10)),
+        kind(parse_both!($ty, &text, 10)),
         expected,
         "{text:?} at {bits} bits"
       );
@@ -733,18 +750,24 @@ fn errors_are_those_of_the_native_integers() {
 }
 
 /// A radix outside 2 to 36 panics in every build, with the message of the native parser in the
-/// name of the method, and reports the caller, also with an empty text, since the radix is checked
-/// first, as the native parser checks it.
+/// name of the method, and reports the caller, through the inherent `const fn` and through
+/// `FixedInteger`, also with an empty text or a lone sign, since the radix is checked first, as
+/// the native parser checks it.
 #[test]
 fn a_radix_outside_2_to_36_panics() {
   let message = "from_str_radix: radix must lie in the range `[2, 36]`".to_string();
   type Bytes = Int<U24, [u8; 3]>;
+  type Wide = Uint<U200>;
   for radix in [0, 1, 37, u32::MAX] {
     panics_here!(u7::from_str_radix("1", radix), message);
     panics_here!(i7::from_str_radix("", radix), message);
-    panics_here!(Uint::<U200>::from_str_radix("1", radix), message);
+    panics_here!(Wide::from_str_radix("1", radix), message);
     panics_here!(Bytes::from_str_radix("-1", radix), message);
     panics_here!(u0::from_str_radix("0", radix), message);
+    panics_here!(<u7 as FixedInteger>::from_str_radix("1", radix), message);
+    panics_here!(<i7 as FixedInteger>::from_str_radix("", radix), message);
+    panics_here!(<Wide as FixedInteger>::from_str_radix("1", radix), message);
+    panics_here!(<Bytes as FixedInteger>::from_str_radix("-", radix), message);
   }
 }
 
@@ -850,24 +873,28 @@ fn zero_bits_and_one_signed_bit() {
   one_signed_bit!(i1, Int<U1, [u16; 1]>, Int<U1, [u64; 1]>);
 }
 
-/// The texts of `a` and `b` through the traits, in code over `B: BitWidth`, and what `FromStr`
-/// reads back from their decimal texts.
+/// The texts of `a` and `b` through the traits, in code over `B: BitWidth`, and what `FromStr` and
+/// `from_str_radix` of `FixedInteger` read back from their decimal and hexadecimal texts.
 fn text_over_the_width<B: BitWidth>(a: Uint<B>, b: Int<B>) -> Vec<String> {
   let decimal = (
     a.to_string().parse::<Uint<B>>(),
     b.to_string().parse::<Int<B>>(),
   );
+  let radix = (
+    <Uint<B> as FixedInteger>::from_str_radix(&format!("{a:x}"), 16),
+    <Int<B> as FixedInteger>::from_str_radix(&b.to_string(), 10),
+  );
   vec![
     format!("{a:b} {a:#o} {a:x} {a:X} {a:e} {a:.2E}"),
     format!("{b:b} {b:#o} {b:x} {b:X} {b:e} {b:.2E}"),
-    format!("{decimal:?}"),
+    format!("{decimal:?} {radix:?}"),
   ]
 }
 
 /// Code over `B: BitWidth` reaches the text of `Uint<B>` and `Int<B>`, which is that of the default
-/// storages, and parses their decimal texts back: at widths of each kind of default storage, at
-/// zero, the limits and values that wrap from them, whose texts the inherent `from_str_radix`
-/// also reads back. Under Miri, at 0, 7, 65 and 129 bits.
+/// storages, and parses their texts back through `FromStr` and `FixedInteger`, as the inherent
+/// `from_str_radix` does: at widths of each kind of default storage, at zero, the limits and values
+/// that wrap from them. Under Miri, at 0, 7, 65 and 129 bits.
 #[test]
 fn text_over_the_width_matches_the_default_storages() {
   macro_rules! agrees {
@@ -881,14 +908,17 @@ fn text_over_the_width_matches_the_default_storages() {
         (U::MAX.wrapping_add(&U::MAX), I::MIN.wrapping_sub(&I::MAX)),
       ] {
         let decimal = (Ok::<U, ParseIntError>(a), Ok::<I, ParseIntError>(b));
+        let radix = (
+          U::from_str_radix(&format!("{a:x}"), 16),
+          I::from_str_radix(&b.to_string(), 10),
+        );
+        assert_eq!(radix, decimal, "{a} and {b}");
         let inherent = vec![
           format!("{a:b} {a:#o} {a:x} {a:X} {a:e} {a:.2E}"),
           format!("{b:b} {b:#o} {b:x} {b:X} {b:e} {b:.2E}"),
-          format!("{decimal:?}"),
+          format!("{decimal:?} {radix:?}"),
         ];
         assert_eq!(text_over_the_width::<$width>(a, b), inherent, "{a} and {b}");
-        assert_eq!(U::from_str_radix(&format!("{a:x}"), 16), Ok(a), "{a}");
-        assert_eq!(I::from_str_radix(&b.to_string(), 10), Ok(b), "{b}");
       }
     })+};
   }
@@ -897,4 +927,74 @@ fn text_over_the_width_matches_the_default_storages() {
   if !tier().is_miri() {
     agrees!(U1, U8, U64, U128, U200, U1024);
   }
+}
+
+/// A value read from its decimal text through `FromStr` alone, with the error of the native
+/// integers, which the native integers and the integers of this crate share.
+fn parse_any<T: FromStr<Err = ParseIntError>>(text: &str) -> Result<T, IntErrorKind> {
+  kind(text.parse::<T>())
+}
+
+/// The text of `x` through `FixedInteger` alone: its radix and exponent formats, and what `FromStr`
+/// and `from_str_radix` read back from its decimal text.
+fn fixed_text<T: FixedInteger>(
+  x: &T,
+) -> (String, Result<T, ParseIntError>, Result<T, ParseIntError>) {
+  let decimal = x.to_string();
+  (
+    format!("{x:b} {x:o} {x:x} {x:X} {x:e} {x:E}"),
+    decimal.parse(),
+    T::from_str_radix(&decimal, 10),
+  )
+}
+
+/// `FixedInteger` requires the text of the integers on every storage, native or array, of both
+/// signs, at zero bits and at one signed bit: `FromStr` with the error of the native integers, so
+/// that one function bounded by `FromStr<Err = ParseIntError>` takes `u8` and `u7` alike, the
+/// radix and exponent formats, and `from_str_radix`, which gives the results of the inherent items.
+#[test]
+fn text_trait_surface() {
+  assert_eq!(parse_any::<u8>("200"), Ok(200));
+  assert_eq!(parse_any::<u7>("100"), Ok(u7::new(100)));
+  assert_eq!(parse_any::<u8>("256"), Err(IntErrorKind::PosOverflow));
+  assert_eq!(parse_any::<u7>("128"), Err(IntErrorKind::PosOverflow));
+  assert_eq!(parse_any::<i8>("-129"), Err(IntErrorKind::NegOverflow));
+  assert_eq!(parse_any::<i256>("-1"), Ok(-i256::ONE));
+
+  macro_rules! surface {
+    ($($ty:ty: $value:expr),+ $(,)?) => {$({
+      type T = $ty;
+      let x: T = $value;
+      let decimal = x.to_string();
+      let inherent = (
+        format!("{x:b} {x:o} {x:x} {x:X} {x:e} {x:E}"),
+        Ok(x),
+        T::from_str_radix(&decimal, 10),
+      );
+      assert_eq!(fixed_text(&x), inherent, "{x}");
+      for (text, radix) in [("+11", 2), ("-z", 36), ("", 10)] {
+        assert_eq!(
+          <T as FixedInteger>::from_str_radix(text, radix),
+          T::from_str_radix(text, radix),
+          "{text} in radix {radix}"
+        );
+      }
+    })+};
+  }
+  surface!(
+    u7: u7::MAX,
+    i7: i7::MIN,
+    Uint<U8, u8>: Uint::<U8, u8>::MAX,
+    Int<U64, i64>: Int::<U64, i64>::MIN,
+    Uint<U24, [u8; 3]>: Uint::<U24, [u8; 3]>::MAX,
+    Int<U24, [u8; 3]>: Int::<U24, [u8; 3]>::MIN,
+    Uint<U65, [u16; 5]>: Uint::<U65, [u16; 5]>::MAX,
+    Int<U129, [u32; 5]>: Int::<U129, [u32; 5]>::MIN,
+    Uint<U200, [u128; 2]>: Uint::<U200, [u128; 2]>::MAX,
+    u256: u256::MAX,
+    i256: i256::MIN,
+    u0: u0::ZERO,
+    i0: i0::ZERO,
+    i1: i1::MIN,
+  );
 }
