@@ -12,8 +12,8 @@ use typenum::{
 
 use super::*;
 use crate::{
-  ByteArray, FromByteArray, IntRepr, IntegerByteOrder, IntegerBytes, LimbArray, UintRepr,
-  WholeBytes, i0, i1, u0,
+  ByteArray, FromByteArray, IntRepr, IntegerByteOrder, IntegerBytes, LimbArray, NonZeroInt,
+  NonZeroOf, NonZeroUint, UintRepr, WholeBytes, i0, i1, u0,
 };
 
 /// Checks the arrays of bytes of `$x`, a value of `$ty` whose pattern is `$p`, of the width of
@@ -451,16 +451,42 @@ macro_rules! sweep_bytes {
   }};
 }
 
+/// Asserts that the byte order of `$x`, a value of the non-zero integer `$nonzero` of the integer
+/// `$integer`, through the inherent `const fn`s gives what the byte order of the integer gives on
+/// its value, and through `IntegerByteOrder` what the inherent `const fn`s give.
+macro_rules! nonzero_order_agrees {
+  ($integer:ty, $nonzero:ty, $x:expr) => {{
+    let x: $nonzero = $x;
+    let value = x.get();
+    let inherent = [
+      x.swap_bytes(),
+      x.to_be(),
+      x.to_le(),
+      <$nonzero>::from_be(x),
+      <$nonzero>::from_le(x),
+    ];
+    assert_eq!(
+      inherent.map(|y| y.get()),
+      order_results!($integer, value),
+      "{value:?}"
+    );
+    assert_eq!(order_through_traits(&x), inherent, "{value:?}");
+  }};
+}
+
 /// Checks the conversions from arrays of whole bytes and the byte order of `$ty`, of the sign
 /// `$sign` and of `$bits` bits, a whole number of bytes, whose values `$from` creates from an
-/// `i128`, at each value of `$values`, through the inherent `const fn`s against the bit model,
-/// and at the ends of the width through the traits against the inherent `const fn`s.
+/// `i128`, at each value of `$values`, through the inherent `const fn`s against the bit model, at
+/// the ends of the width through the traits against the inherent `const fn`s, and the byte order
+/// of the non-zero integer of each value that is not zero, or under Miri of the first one, against
+/// that of the integer.
 macro_rules! sweep_whole_bytes {
   ($sign:ident; $ty:ty, $bits:expr, $values:expr, $from:expr, $value:expr, $magnitude:expr) => {{
     let (bits, signed) = ($bits, is_signed!($sign));
     let from: fn(i128) -> $ty = $from;
     let read = |q: &[bool]| from(value_of(q, signed));
     let ends = ends(bits, signed);
+    let mut nonzero_left = if tier().is_miri() { 1 } else { usize::MAX };
     for a in $values {
       let x = from(a);
       check_whole_arrays!($ty, x, read);
@@ -471,6 +497,12 @@ macro_rules! sweep_whole_bytes {
           whole_through_traits(&x),
           "{a} in {bits} bits"
         );
+      }
+      if nonzero_left > 0
+        && let Some(nonzero) = <NonZeroOf<$ty>>::new(x)
+      {
+        nonzero_order_agrees!($ty, NonZeroOf<$ty>, nonzero);
+        nonzero_left -= 1;
       }
     }
   }};
@@ -1231,4 +1263,92 @@ fn bytes_over_the_width_match_the_default_storages() {
     agrees!(U1, U8, U64, U128, U200, U1024);
     order_agrees!(U64, U200, U1024);
   }
+}
+
+/// The byte order of the non-zero integers of the native widths, in their native `NonZero`
+/// storages, gives what the byte order of the native integers gives, since the byte methods of the
+/// native `NonZero` integers are unstable: at the structured patterns of each width that are not
+/// zero, through the inherent `const fn`s and `IntegerByteOrder`, or under Miri at one value of
+/// each storage.
+#[test]
+fn nonzero_byte_order_matches_the_native_integers() {
+  macro_rules! native {
+    ($($width:ident: $uint:ident, $int:ident);+ $(;)?) => {$({
+      type U = NonZeroUint<$width, core::num::NonZero<$uint>>;
+      type I = NonZeroInt<$width, core::num::NonZero<$int>>;
+      let patterns = if tier().is_miri() {
+        vec![0x0f0e_0d0c_0b0a_0908_0706_0504_0302_0180]
+      } else {
+        bigint::structured_patterns($uint::BITS)
+      };
+      for pattern in patterns {
+        let a = pattern as $uint;
+        let b = a.cast_signed();
+        let (Some(x), Some(y)) = (
+          U::new(Uint::<$width, $uint>::new(a)),
+          I::new(Int::<$width, $int>::new(b)),
+        ) else {
+          continue;
+        };
+        let unsigned = [x.swap_bytes(), x.to_be(), x.to_le(), U::from_be(x), U::from_le(x)];
+        let signed = [y.swap_bytes(), y.to_be(), y.to_le(), I::from_be(y), I::from_le(y)];
+        assert_eq!(
+          unsigned.map(|z| z.get().value()),
+          [a.swap_bytes(), a.to_be(), a.to_le(), $uint::from_be(a), $uint::from_le(a)],
+          "{a:#x}"
+        );
+        assert_eq!(
+          signed.map(|z| z.get().value()),
+          [b.swap_bytes(), b.to_be(), b.to_le(), $int::from_be(b), $int::from_le(b)],
+          "{b:#x}"
+        );
+        assert_eq!(
+          (order_through_traits(&x), order_through_traits(&y)),
+          (unsigned, signed),
+          "{a:#x}"
+        );
+      }
+    })+};
+  }
+
+  native!(
+    U8: u8, i8;
+    U16: u16, i16;
+    U32: u32, i32;
+    U64: u64, i64;
+    U128: u128, i128;
+  );
+}
+
+/// The byte order of the non-zero integers in constant contexts, in a native storage and in an
+/// array.
+#[test]
+fn nonzero_byte_order_in_constant_contexts() {
+  type Native = NonZeroUint<U16>;
+  type Bytes = NonZeroInt<U24, [u8; 3]>;
+  const NATIVE: (Native, Native) = {
+    let x = Native::new(Uint::<U16>::new(0x0102)).expect("not zero");
+    (x.swap_bytes(), Native::from_le(x))
+  };
+  const BYTES: (Bytes, Bytes) = {
+    let x = Bytes::new(Int::<U24, [u8; 3]>::from_limbs([0x80, 0, 0x01])).expect("not zero");
+    (x.swap_bytes(), x.to_be())
+  };
+
+  let nonzero = |value| Native::new(Uint::<U16>::new(value)).expect("not zero");
+  let (value, swapped) = (nonzero(0x0102), nonzero(0x0201));
+  let in_little = if cfg!(target_endian = "big") {
+    swapped
+  } else {
+    value
+  };
+  assert_eq!(NATIVE, (swapped, in_little));
+  let nonzero = |limbs| Bytes::new(Int::<U24, [u8; 3]>::from_limbs(limbs)).expect("not zero");
+  let (value, swapped) = (nonzero([0x80, 0, 0x01]), nonzero([0x01, 0, 0x80]));
+  let in_big = if cfg!(target_endian = "big") {
+    value
+  } else {
+    swapped
+  };
+  assert_eq!(BYTES, (swapped, in_big));
 }

@@ -10,10 +10,10 @@
 //! storage, [`ByteArray`] for the widths that have an array, [`FromByteArray`] for those of whole
 //! bytes, and [`IntegerByteOrder`] for every width of whole bytes.
 
-use super::{Int, Uint, traits::Sealed};
+use super::{Int, NonZeroInt, NonZeroUint, Uint, nonzero::Parts, traits::Sealed};
 use crate::{
   layout::Token,
-  width::{FitsBits, IntRepr, LimbArray, UintRepr, WholeBytes},
+  width::{FitsBits, IntRepr, LimbArray, NonZeroIntRepr, NonZeroUintRepr, UintRepr, WholeBytes},
 };
 
 /// Panics on a byte index of `BYTES` or more, which no byte of the value has, as indexing the
@@ -603,10 +603,12 @@ pub trait FromByteArray: ByteArray {
 }
 
 /// The byte order of an integer of whole bytes: [`Uint`] and [`Int`] whose `Bits` is
-/// [`WholeBytes`], over every storage.
+/// [`WholeBytes`], over every storage, and the non-zero integers [`NonZeroUint`] and
+/// [`NonZeroInt`] of such a width.
 ///
 /// The methods are the inherent items of the same names: the reversal of the bytes, and the
 /// conversions of the native integers to and from an order, which convert the value, not a layout.
+/// A non-zero integer computes them on its integer, whose bytes in any order are not all zeros.
 /// The trait needs neither `Copy` nor a constant of a value; generic code adds the bound
 /// `B: WholeBytes` to `B: BitWidth`. Its implementations need a storage that is `Clone`, as every
 /// storage is, to return the value itself where the order is that of the target.
@@ -834,3 +836,43 @@ macro_rules! byte_traits {
 }
 
 byte_traits!(Uint: UintRepr, Int: IntRepr);
+
+/// Implements [`IntegerByteOrder`] for the non-zero integers, written `NonZero: Repr`, through the
+/// helpers of [`Parts`], over every storage whose integer storage is `Clone`, as the implementation
+/// of the integer needs: each method computes the method of the integer on the value and wraps the
+/// result, which is not zero.
+macro_rules! nonzero_byte_traits {
+  ($($nonzero:ident: $repr:ident),+ $(,)?) => {$(
+    impl<B: FitsBits<R::Integer> + WholeBytes, R: $repr> IntegerByteOrder for $nonzero<B, R>
+    where
+      R::Integer: Clone,
+    {
+      #[inline]
+      fn swap_bytes(&self) -> Self {
+        Self::known(IntegerByteOrder::swap_bytes(&self.integer()))
+      }
+
+      #[inline]
+      fn to_be(&self) -> Self {
+        Self::known(IntegerByteOrder::to_be(&self.integer()))
+      }
+
+      #[inline]
+      fn to_le(&self) -> Self {
+        Self::known(IntegerByteOrder::to_le(&self.integer()))
+      }
+
+      #[inline]
+      fn from_be(x: Self) -> Self {
+        Self::known(IntegerByteOrder::from_be(x.integer()))
+      }
+
+      #[inline]
+      fn from_le(x: Self) -> Self {
+        Self::known(IntegerByteOrder::from_le(x.integer()))
+      }
+    }
+  )+};
+}
+
+nonzero_byte_traits!(NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
