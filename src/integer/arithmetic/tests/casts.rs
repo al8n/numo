@@ -1,8 +1,11 @@
 //! The casts between integers through `CheckedCastFrom`, `BoundedCastFrom`, `WidenFrom` and
 //! `TruncateFrom`: between the native integers against the native conversions, and between `Uint`
 //! and `Int` and the native integers, both ways, and between `Uint` and `Int` of other widths,
-//! storages and signs against the bit model. Each pair checks in an instantiation of a generic
-//! function of its own, whose frame holds the values of that pair alone.
+//! storages and signs against the bit model. Each pair, and each width of the casts between the
+//! signs, checks in an instantiation of a generic function of its own, whose frame holds its values
+//! alone: the function is `#[inline(never)]`, since an optimized build would inline a function that
+//! has one call site, which would put every pair in the frame of the test, beyond the stack of a
+//! test thread.
 
 use core::{any::type_name, num::TryFromIntError};
 
@@ -197,6 +200,7 @@ pub(super) fn samples<T: Model>() -> Vec<T> {
 /// Checks the casts into `T` of each value of `samples` through `CheckedCastFrom` and
 /// `BoundedCastFrom` against the bit model: the checked, strict, wrapping and saturating casts, and
 /// the unchecked cast of each value that `T` holds.
+#[inline(never)]
 pub(super) fn check_cast<S: Model, T: Model + BoundedCastFrom<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T>(value);
@@ -226,6 +230,7 @@ pub(super) fn check_cast<S: Model, T: Model + BoundedCastFrom<S>>(samples: &[S])
 
 /// Checks `widen` from `S` into `T`, which holds every value of `S`, at each value of `samples`
 /// against the bit model.
+#[inline(never)]
 pub(super) fn check_widen<S: Model, T: Model + WidenFrom<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T>(value);
@@ -237,6 +242,7 @@ pub(super) fn check_widen<S: Model, T: Model + WidenFrom<S>>(samples: &[S]) {
 
 /// Checks `truncate` and its checked and saturating forms from `S` into `T` at each value of
 /// `samples` against the bit model.
+#[inline(never)]
 pub(super) fn check_truncate<S: Model, T: Model + TruncateFrom<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T>(value);
@@ -261,6 +267,7 @@ pub(super) fn check_truncate<S: Model, T: Model + TruncateFrom<S>>(samples: &[S]
 /// `samples` against the native conversions: the checked, the strict and the unchecked cast against
 /// `TryFrom`, the wrapping one against `as`, and the saturating one against `TryFrom`, or the bound
 /// of the range of `T` that a value outside it passes.
+#[inline(never)]
 fn check_native_pair<S: Native, T: Native + BoundedCastFrom<S> + TryFrom<S>>(samples: &[S]) {
   for &value in samples {
     let checked = T::try_from(value).ok();
@@ -291,6 +298,7 @@ fn check_native_pair<S: Native, T: Native + BoundedCastFrom<S> + TryFrom<S>>(sam
 
 /// Checks `widen` from the native integer `S` into the native integer `T` at each value of
 /// `samples`: the value, which `TryFrom` gives too.
+#[inline(never)]
 fn check_native_widen<S: Native, T: Native + WidenFrom<S> + TryFrom<S>>(samples: &[S]) {
   for &value in samples {
     assert_eq!(
@@ -305,6 +313,7 @@ fn check_native_widen<S: Native, T: Native + WidenFrom<S> + TryFrom<S>>(samples:
 /// Checks `truncate` and its checked and saturating forms from the native integer `S` into the
 /// native integer `T` at each value of `samples` against `as`, `TryFrom` and the bound that a
 /// value outside the range of `T` passes.
+#[inline(never)]
 fn check_native_truncate<S: Native, T: Native + TruncateFrom<S> + TryFrom<S>>(samples: &[S]) {
   for &value in samples {
     let checked = T::try_from(value).ok();
@@ -632,6 +641,7 @@ fn saturating_from_i128<B: BitWidth>(n: i128) -> Int<B> {
 
 /// Checks the saturating casts of `Uint<B>` and `Int<B>`, of `bits` bits, with `u64` and `i128`, in
 /// code generic over the width alone, at the limits of both and at zero.
+#[inline(never)]
 fn check_casts_over_the_width<B: BitWidth>(bits: u32) {
   // The largest value of `Uint<B>` that a `u64` holds, and the limits of `Int<B>` that an `i128`
   // holds.
@@ -758,6 +768,7 @@ macro_rules! sweep_sign_casts {
 /// Checks the casts between the signs at the width `B`, `bits` bits, at most 8, in `u8` and `i8`,
 /// `[u8; 1]`, `[u8; 2]` and `[u16; 1]`, at the values of [`bit_values`] for a storage that every
 /// tier checks.
+#[inline(never)]
 fn sign_casts_of_small_widths<B>(bits: u32)
 where
   B: FitsBits<u8> + FitsBits<i8> + FitsBits<[u8; 1]> + FitsBits<[u8; 2]> + FitsBits<[u16; 1]>,
@@ -771,6 +782,7 @@ where
 
 /// Checks the casts between the signs at the width `B`, `bits` bits, from 9 to 16, in `u16` and
 /// `i16`, `[u8; 2]` and `[u16; 1]`, at the values of [`bit_values`].
+#[inline(never)]
 fn sign_casts_of_large_widths<B>(bits: u32)
 where
   B: FitsBits<u16> + FitsBits<i16> + FitsBits<[u8; 2]> + FitsBits<[u16; 1]>,
@@ -804,7 +816,9 @@ fn sign_casts_of_up_to_16_bits() {
 /// Checks the casts between the signs of `Uint` and `Int` of `$bits` bits, the width `$width`, in
 /// each storage of `$storages`, written `unsigned, signed;`, at the patterns of [`wide_patterns`]
 /// in `$words` words of 64 bits, through the inherent `const fn`s and the traits, each storage in a
-/// frame of its own.
+/// function of its own, whose frame holds the values of that storage alone: the function is
+/// `#[inline(never)]`, since an optimized build would inline a function that has one call site,
+/// which would put every storage in the frame of the test.
 macro_rules! wide_sign_casts {
   ($width:ty, $bits:literal, $words:literal; $($uint:ty, $int:ty);+ $(;)?) => {{
     let patterns = wide_patterns::<$words>($bits);
@@ -917,6 +931,7 @@ pub(super) fn errors() -> (TryFromIntError, TryFromIntError) {
 
 /// Checks `From` from the native integer `S` into `T`, whose width holds every value of `S`, at
 /// each value of `samples` against the bit model.
+#[inline(never)]
 fn check_from<S: Model, T: Model + From<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T>(value);
@@ -929,6 +944,7 @@ fn check_from<S: Model, T: Model + From<S>>(samples: &[S]) {
 /// Checks `TryFrom` from `S` into `T` at each value of `samples` against the bit model: the value,
 /// or the error that the native conversions return for a value above the range of `T` or below
 /// it.
+#[inline(never)]
 fn check_try_from<S: Model, T: Model + TryFrom<S, Error = TryFromIntError>>(samples: &[S]) {
   let (above, below) = errors();
   for &value in samples {

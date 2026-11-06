@@ -7,7 +7,9 @@
 //! `NonZero` integers as sources, into every kind of integer, and as targets, from every kind of
 //! source, zero included, `widen` and `truncate` and the inherent methods, against the bit model,
 //! with the panics of the strict cast. Each type or pair checks in an instantiation of a generic
-//! function of its own, whose frame holds its values alone.
+//! function of its own, whose frame holds its values alone: the function is `#[inline(never)]`,
+//! since an optimized build would inline a function that has one call site, which would put every
+//! pair in the frame of the test, beyond the stack of a test thread.
 
 use core::{
   any::type_name,
@@ -131,6 +133,7 @@ macro_rules! pairs {
 /// Checks `TryFrom` into the non-zero integer `T` of 8 bits of every value of its integer `I`, as
 /// the tier takes them, against the native `TryFrom` into `NonZero<u8>`, or into `NonZero<i8>` for
 /// a signed `T`: the same value, or the same error, of the kind `Zero`, for zero.
+#[inline(never)]
 fn check_try_from_against_native<T, I>()
 where
   T: TryFrom<I, Error = TryFromIntError>,
@@ -155,6 +158,7 @@ where
 /// Checks `TryFrom` into the non-zero integer `T` of each value of `samples` of its integer `I`,
 /// against the bit model: the value, unless it is zero, and the error of the native conversions of
 /// the kind `Zero` for zero.
+#[inline(never)]
 fn check_try_from<T, I>(samples: &[I])
 where
   T: TryFrom<I, Error = TryFromIntError>,
@@ -232,6 +236,7 @@ fn try_from_the_integer_in_every_kind_of_storage() {
 
 /// Checks `From` of each value of `samples` of the non-zero integer `S` into the non-zero integer
 /// `T`, whose width holds every value of `S`, against the bit model: the value.
+#[inline(never)]
 fn check_from_nonzero<S: NonZeroModel, T: NonZeroModel + From<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T::Integer>(value);
@@ -249,6 +254,7 @@ fn check_from_nonzero<S: NonZeroModel, T: NonZeroModel + From<S>>(samples: &[S])
 /// Checks `TryFrom` of each value of `samples` of the non-zero integer `S` into the non-zero
 /// integer `T` against the bit model: the value, or the error that the native conversions return
 /// for a value above the range of `T` or below it.
+#[inline(never)]
 fn check_try_from_nonzero<S, T>(samples: &[S])
 where
   S: NonZeroModel,
@@ -354,6 +360,7 @@ impl NativeError for Infallible {
 /// the non-zero integer `T` of the same width and sign into the native `NonZero` integer `Target`,
 /// against the native conversion of `N` into `Target`: `From` into `T` and then `TryFrom` into
 /// `Target` give what the native `TryFrom` gives, or the native `From` where it exists.
+#[inline(never)]
 fn check_against_native<N, T, Target>(samples: &[N])
 where
   N: Copy + Debug,
@@ -408,6 +415,7 @@ fn nonzero_integers_convert_as_the_native_nonzero_at_8_and_16_bits() {
 /// Checks `TryFrom` of each value of `samples` of the native `NonZero` integer `N` into the
 /// non-zero integer `T` against `TryFrom` into the native `NonZero` integer `Native` of the same
 /// width and sign: the same value, or the same error.
+#[inline(never)]
 fn check_as_native<N, T, Native>(samples: &[N])
 where
   N: Copy + Debug,
@@ -477,6 +485,7 @@ fn nonzero_integers_cast_into_integers() {
 /// value of `samples` against the bit model: the value, if `T` holds it and it is not zero, and
 /// otherwise `None`, where the strict cast panics, which
 /// [`strict_casts_into_nonzero_integers_panic`] checks, and the unchecked one is not called.
+#[inline(never)]
 fn check_nonzero_target<S: Model, T: NonZeroModel + CheckedCastFrom<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T::Integer>(value);
@@ -542,6 +551,7 @@ fn casts_into_nonzero_integers() {
 
 /// Checks `widen` of each value of `samples` of the non-zero integer `S` into the non-zero integer
 /// `T`, which holds every value of `S`, against the bit model: the value.
+#[inline(never)]
 fn check_nonzero_widen<S: NonZeroModel, T: NonZeroModel + WidenFrom<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T::Integer>(value);
@@ -607,7 +617,8 @@ fn inherent_nonzero_casts_agree_with_the_traits() {
   // The casts of `$x`, a value of `$ty`, inherent and through the traits: into each integer of
   // `$integers`, and the checked and the strict cast into each non-zero integer of `$nonzeros`,
   // where the checked one returns a value; the unchecked cast into both where the checked one
-  // returns a value; each value in a frame of its own.
+  // returns a value; each value in an `#[inline(never)]` function of its own, for the reason that
+  // the module gives.
   macro_rules! agree {
     ($ty:ty = $x:expr => [$($integer:ty),+], [$($nonzero:ty),+]) => {{
       #[inline(never)]
