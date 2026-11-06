@@ -318,6 +318,30 @@ FEATURES
     compile and `u256::from(5u64)` does, while `i256::from(5)` compiles. Between numo integers the
     casts are the conversions: `From` and `TryFrom` there would overlap the standard
     implementations from a type to itself.
+  - The conversions with the floats, as `const fn`s of every storage: `to_f64` and `to_f32`, which
+    take `&self` and round to the nearest float, ties to even, as `as` converts the native integers,
+    with an infinity of the sign of the value for a magnitude that rounds beyond the largest float
+    and `+0.0` for zero; `checked_from_f64`, `saturating_from_f64` and `strict_from_f64`, which
+    truncate a float toward zero and follow the native `to_int_checked`, `to_int_saturating`, which
+    `as` is, and `to_int_strict`, still unstable (#159913): `None` for NaN, an infinity or a
+    truncated value outside the range of `Bits` bits, zero for NaN and the bound of the range
+    otherwise, and a panic in every build with the message of the native method, reporting the
+    caller; `round_from_f64`, which rounds the value of the float to an integer with a
+    `RoundingMode`, at every magnitude, so that `HalfEven` rounds to the nearest integer and `0.5`
+    to zero, and a negative value that rounds to zero converts; and `exact_from_f64`, which converts
+    a float only if it is an integer of the range, `-0.0` included. Each has an `f32` form, which
+    converts as the `f64` of the same value does. The new error `FromFloatError`, a
+    `#[non_exhaustive]` enum with a predicate for each kind, reports NaN, the infinities, a value
+    above `MAX` and one below `MIN` apart, the rounded value for `round_from_f64`, so that `-0.4`
+    converts to zero with `HalfEven`, and a fraction, `Inexact`, which only `exact_from_f64`
+    reports, after the range, which it judges on the value itself: `255.5` is above 8 unsigned bits
+    and `-0.5` below them. The sealed trait `IntegerFloat` gives the conversions to generic code,
+    for every storage, and `B: BitWidth` gives it on `Uint<B>` and `Int<B>`. `From` converts a
+    `Uint` of at most 53 bits and an `Int` of at most 54 into `f64`, and one of at most 24 and 25
+    bits into `f32`, which hold every value of such a width, with a diagnostic for a wider one, and
+    with the `TryFrom` that the standard library derives from it, whose error is `Infallible`; no
+    other `TryFrom` converts between the integers and the floats. The conversions compute with the
+    bits of the floats, so they evaluate in constant contexts.
   - The sealed traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`,
     `UncheckedOps` and `IntegerOne`, each with one implementation for every storage; `is_one`, the
     operators, their compound assignments and `Sum` on `FixedInteger`, the methods of each sign on

@@ -199,7 +199,11 @@
 //! `bool` converts both ways. `PartialEq` and `PartialOrd` compare the integers with each native
 //! integer, both ways, as integers, whatever the widths and the signs; a comparison of a native
 //! integer with an expression whose type is inferred from it, such as `n == m.into()`, then needs
-//! the type named.
+//! the type named. The integers convert to `f64` and `f32` as `as` converts the native integers,
+//! to the nearest float, and by `From` where the float holds every value of the width. From a
+//! float, `const fn`s truncate toward zero, checked, saturating or strict, as the unstable native
+//! conversions do, round with a [`RoundingMode`], or take only an integer, with the error
+//! [`FromFloatError`] (see [Floats](Uint#floats)).
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,
@@ -215,16 +219,17 @@
 //! bit operations, [`IntegerBytes`], [`ByteArray`], [`FromByteArray`] and [`IntegerByteOrder`] the
 //! bytes, [`CheckedCastFrom`], [`BoundedCastFrom`], [`WidenFrom`] and [`TruncateFrom`], which the
 //! target implements, the casts, also those with the native integers and the non-zero integers,
-//! and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`] the construction of each kind. The
-//! bound `B: BitWidth` gives `Uint<B>` and `Int<B>` [`FixedInteger`] and [`ConstFixedInteger`], the
-//! sign traits, the families, the math traits, the bit traits, [`IntegerBytes`] and the casts;
+//! [`IntegerFloat`] the conversions with the floats, and [`NativeInteger`], [`ArrayInteger`] and
+//! [`FromLimbs`] the construction of each kind. The bound `B: BitWidth` gives `Uint<B>` and
+//! `Int<B>` [`FixedInteger`] and [`ConstFixedInteger`], the sign traits, the families, the math
+//! traits, the bit traits, [`IntegerBytes`], the casts and [`IntegerFloat`];
 //! [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one; and [`IntegerByteOrder`]
 //! with `B: WholeBytes`. The trait methods are not `const`, so constant contexts call the inherent
 //! `const fn`s, which a concrete type reaches without importing a trait.
 //!
 //! ```
 //! use numo::{
-//!   BitWidth, CheckedCastFrom, CheckedOps, FixedInteger, Int, Uint, i256,
+//!   BitWidth, CheckedCastFrom, CheckedOps, FixedInteger, Int, RoundingMode, Uint, i256,
 //!   typenum::{U7, U24, U200},
 //!   u7,
 //! };
@@ -280,6 +285,11 @@
 //! assert_eq!(u7::checked_cast_from(200u64), None);
 //! assert_eq!(u64::try_from(SMALL), Ok(100));
 //! assert!(SMALL < 128u8 && 300u16 > SMALL && SMALL == 100);
+//!
+//! // The conversions of 7 bits with the floats.
+//! assert_eq!(SMALL.to_f64(), 100.0);
+//! assert_eq!(u7::round_from_f64(99.5, RoundingMode::HalfEven), Ok(SMALL));
+//! assert_eq!(u7::checked_from_f32(128.5), None);
 //!
 //! // Generic code over the width alone.
 //! fn zero_values<B: BitWidth>(values: &[Int<B>]) -> usize {
