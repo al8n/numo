@@ -258,9 +258,9 @@ fn check_truncate<S: Model, T: Model + TruncateFrom<S>>(samples: &[S]) {
 }
 
 /// Checks the casts from the native integer `S` into the native integer `T` at each value of
-/// `samples` against the native conversions: the checked and the strict cast against `TryFrom`,
-/// the wrapping one against `as`, and the saturating one against `TryFrom`, or the bound of the
-/// range of `T` that a value outside it passes.
+/// `samples` against the native conversions: the checked, the strict and the unchecked cast against
+/// `TryFrom`, the wrapping one against `as`, and the saturating one against `TryFrom`, or the bound
+/// of the range of `T` that a value outside it passes.
 fn check_native_pair<S: Native, T: Native + BoundedCastFrom<S> + TryFrom<S>>(samples: &[S]) {
   for &value in samples {
     let checked = T::try_from(value).ok();
@@ -281,6 +281,10 @@ fn check_native_pair<S: Native, T: Native + BoundedCastFrom<S> + TryFrom<S>>(sam
     );
     if let Some(checked) = checked {
       assert_eq!(T::strict_cast_from(value), checked, "{}", name());
+      // SAFETY: `checked_cast_from` returns `Some`, as asserted above, which is the precondition of
+      // `unchecked_cast_from`.
+      let unchecked = unsafe { T::unchecked_cast_from(value) };
+      assert_eq!(unchecked, checked, "{}", name());
     }
   }
 }
