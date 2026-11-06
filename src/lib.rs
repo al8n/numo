@@ -149,22 +149,24 @@
 //! and from two bits for `Int`. In a native integer, its `const fn` constructors are `new`, which
 //! panics if the value does not fit in `Bits` bits, and `try_new`, which returns [`TryNewError`]
 //! instead, and `value` returns the value. In an array, they are `from_limbs`, for a width that
-//! fills its limbs, and `checked_from_limbs`, which checks that the limbs hold a value of `Bits`
-//! bits, and `to_limbs` and `as_limbs` return the limbs. Its `const fn` queries are `is_zero` and
-//! `is_one`, and for `Int` also `is_negative` and `is_positive`. Values compare, hash and format by
-//! their numeric value, alike in every storage. Their text is that of the native integers at the
-//! width: `from_str_radix`, a `const fn` for the radixes 2 to 36, and `FromStr` parse it with the
-//! native error, [`core::num::ParseIntError`], `Display` writes decimal, the radix formats `{:b}`,
-//! `{:o}`, `{:x}` and `{:X}` write a negative `Int` in the two's complement of its `Bits` bits, and
-//! the exponent formats `{:e}` and `{:E}` round half to even at a precision (see
-//! [Text](Uint#text)). Their bytes are the low `BYTES` bytes of the storage, in two's complement
-//! for `Int`: `to_le_bytes`, `to_be_bytes` and `to_ne_bytes` return an array whose length is part
-//! of its type, up to 8192 bits, which `checked_from_le_bytes` and the other orders read back, and
-//! at a width of whole bytes, a [`WholeBytes`], `from_le_bytes` and the others; slices of any
-//! length convert back checked and wrapping, `copy_le_bytes_to` and `copy_be_bytes_to` write the
-//! bytes to a buffer at any width, and at a width of whole bytes `swap_bytes`, `to_be`, `to_le`,
-//! `from_be` and `from_le` convert the byte order as the native integers do, by value rather than
-//! by layout (see [Bytes](Uint#bytes)).
+//! fills its limbs, `checked_from_limbs`, which checks that the limbs hold a value of `Bits` bits,
+//! and `checked_from_limbs_slice` with its wrapping, overflowing, saturating and strict forms,
+//! which read a slice of limbs of any length, and `to_limbs` and `as_limbs` return the limbs. Its
+//! `const fn` queries are `is_zero` and `is_one`, and for `Int` also `is_negative` and
+//! `is_positive`. Values compare, hash and format by their numeric value, alike in every storage.
+//! Their text is that of the native integers at the width: `from_str_radix`, a `const fn` for the
+//! radixes 2 to 36, and `FromStr` parse it with the native error, [`core::num::ParseIntError`],
+//! `Display` writes decimal, the radix formats `{:b}`, `{:o}`, `{:x}` and `{:X}` write a negative
+//! `Int` in the two's complement of its `Bits` bits, and the exponent formats `{:e}` and `{:E}`
+//! round half to even at a precision (see [Text](Uint#text)). Their bytes are the low `BYTES` bytes
+//! of the storage, in two's complement for `Int`: `to_le_bytes`, `to_be_bytes` and `to_ne_bytes`
+//! return an array whose length is part of its type, up to 8192 bits, which `checked_from_le_bytes`
+//! and the other orders read back, and at a width of whole bytes, a [`WholeBytes`], `from_le_bytes`
+//! and the others; slices of any length convert back in the checked, wrapping, overflowing,
+//! saturating and strict forms, `copy_le_bytes_to` and `copy_be_bytes_to` write the bytes to a
+//! buffer at any width, and at a width of whole bytes `swap_bytes`, `to_be`, `to_le`, `from_be` and
+//! `from_le` convert the byte order as the native integers do, by value rather than by layout (see
+//! [Bytes](Uint#bytes)).
 //!
 //! Each type also has the arithmetic of the native integers at its width, as `const fn`s:
 //! addition, subtraction, multiplication, negation, division, remainder and exponentiation in the
@@ -193,7 +195,10 @@
 //! [Conversions](Uint#conversions)). With the native integers, `From` converts into a numo integer
 //! whose width holds every value of the native integer, and `TryFrom` converts a `usize` or an
 //! `isize` into any width and a numo integer into each native integer, with the error of the
-//! native conversions, [`core::num::TryFromIntError`]; `bool` converts both ways.
+//! native conversions, [`core::num::TryFromIntError`]; `bool` converts both ways. `PartialEq` and
+//! `PartialOrd` compare the integers with each native integer, both ways, as integers, whatever the
+//! widths and the signs; a comparison of a native integer with an expression whose type is inferred
+//! from it, such as `n == m.into()`, then needs the type named.
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,
@@ -227,10 +232,11 @@
 //! let minus_one = i256::from_limbs([u64::MAX; 4]);
 //! assert!(minus_one.is_negative() && i256::MIN < minus_one);
 //!
-//! // Another width checks the limbs.
+//! // Another width checks the limbs, which a slice of any length also holds.
 //! type U200x4 = Uint<U200, [u64; 4]>;
 //! assert_eq!(U200x4::MAX.to_limbs(), [u64::MAX, u64::MAX, u64::MAX, 0xff]);
 //! assert_eq!(U200x4::checked_from_limbs([0, 0, 0, 0x100]), None);
+//! assert_eq!(U200x4::saturating_from_limbs_slice(&[u64::MAX; 5]), U200x4::MAX);
 //! assert_eq!(Int::<U7, [u64; 1]>::MIN.to_string(), "-64");
 //!
 //! // Three bytes, least significant first, hold the same value as one 64-bit limb.
@@ -267,11 +273,12 @@
 //! assert_eq!(SMALL.to_le_bytes(), [100]);
 //! assert_eq!(Uint::<U24>::new(0x01_0203).swap_bytes(), Uint::<U24>::new(0x03_0201));
 //!
-//! // The casts of 7 bits, and the conversions with the native integers.
+//! // The casts of 7 bits, the conversions with the native integers and the comparisons with them.
 //! assert_eq!(SMALL.widen::<u64>(), 100);
 //! assert_eq!(SMALL.checked_cast::<Int<U7>>(), None);
 //! assert_eq!(u7::checked_cast_from(200u64), None);
 //! assert_eq!(u64::try_from(SMALL), Ok(100));
+//! assert!(SMALL < 128u8 && 300u16 > SMALL && SMALL == 100);
 //!
 //! // Generic code over the width alone.
 //! fn zero_values<B: BitWidth>(values: &[Int<B>]) -> usize {
