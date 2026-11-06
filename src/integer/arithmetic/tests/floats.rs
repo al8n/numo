@@ -116,12 +116,28 @@ fn float_samples<F: TestFloat>(bits: u32) -> Vec<F> {
   })
 }
 
+/// The values of `T` at which its conversions to the floats are checked: those of [`samples`] up
+/// to 1024 bits, the most that its widest patterns, in 16 words of 64 bits, hold, and above them
+/// those of [`wide_patterns`] in 17 words, which hold up to 1088 bits; under Miri those of
+/// [`samples`] at every width.
+fn values<T: Model>() -> Vec<T> {
+  let bits = T::WIDTH;
+  if bits <= 1024 || tier().is_miri() {
+    return samples();
+  }
+  assert!(bits <= 17 * 64, "{bits} bits exceed 17 words");
+  wide_patterns::<17>(bits)
+    .iter()
+    .map(|pattern| T::of_pattern(pattern))
+    .collect()
+}
+
 /// Checks the conversions of each type of `$ty` with the floats, each in a function of its own:
 /// from the floats of [`float_samples`] of its width, of both formats, through the inherent
 /// `const fn`s and `IntegerFloat`, against [`rounded`] in every mode, against the truncated value
 /// of `to_int_checked` and the strict conversion where it converts, against [`saturated`] and
 /// against [`exact`], the conversions of an `f32` against the models of the `f64` of the same
-/// value; and to the floats of both formats, at the values of [`samples`], against
+/// value; and to the floats of both formats, at the values of [`values`], against
 /// `floats::float_of_pattern`.
 macro_rules! check_floats {
   ($($ty:ty),+ $(,)?) => {$({
@@ -171,7 +187,7 @@ macro_rules! check_floats {
         );
         assert_eq!(both_from!(T::exact_from_f32(y)), exact::<T>(x), "{y:?} into {name}");
       }
-      for x in samples::<T>() {
+      for x in values::<T>() {
         let p = x.pattern();
         assert_eq!(
           (
