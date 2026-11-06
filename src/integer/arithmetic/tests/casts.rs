@@ -9,7 +9,7 @@ use core::any::type_name;
 use typenum::{U3, U5, U12, U33, U150, U193};
 
 use super::*;
-use crate::{BoundedCastFrom, CheckedCastFrom, IntRepr, TruncateFrom, UintRepr, WidenFrom};
+use crate::{BoundedCastFrom, CheckedCastFrom, IntRepr, TruncateFrom, UintRepr, WidenFrom, i0, u0};
 
 /// A participant of the casts, as the tests read it: its sign, its width, and its value as the
 /// pattern of the width.
@@ -667,4 +667,226 @@ fn casts_in_code_generic_over_the_width() {
   check_casts_over_the_width::<U129>(129);
   check_casts_over_the_width::<U200>(200);
   check_casts_over_the_width::<U1024>(1024);
+}
+
+/// Checks the casts between the signs of `$x`, a value of `$ty` of the sign `$sign` whose pattern
+/// is `$p`, through the inherent `const fn`s and the traits, against the bit model: the cast to the
+/// other sign, if the top bit of the pattern is clear, and otherwise `None`, the bound of the
+/// other sign, `MAX` of `Int` or zero, and no strict cast.
+macro_rules! sign_casts {
+  (unsigned; $ty:ty, $x:expr, $p:expr) => {{
+    let (x, p): ($ty, &[bool]) = ($x, $p);
+    let cast = x.cast_signed();
+    let fits = !model::sign(p);
+    let max = <<$ty as UnsignedBits>::Signed>::MAX;
+    assert_eq!(
+      both!(UnsignedBits::checked_cast_signed(x)),
+      fits.then_some(cast),
+      "{}",
+      model::text(p)
+    );
+    assert_eq!(
+      both!(UnsignedBits::saturating_cast_signed(x)),
+      if fits { cast } else { max },
+      "{}",
+      model::text(p)
+    );
+    if fits {
+      assert_eq!(
+        both!(UnsignedBits::strict_cast_signed(x)),
+        cast,
+        "{}",
+        model::text(p)
+      );
+    }
+  }};
+  (signed; $ty:ty, $x:expr, $p:expr) => {{
+    let (x, p): ($ty, &[bool]) = ($x, $p);
+    let cast = x.cast_unsigned();
+    let fits = !model::sign(p);
+    let zero = <<$ty as IntegerMath>::Magnitude>::ZERO;
+    assert_eq!(
+      both!(SignedBits::checked_cast_unsigned(x)),
+      fits.then_some(cast),
+      "{}",
+      model::text(p)
+    );
+    assert_eq!(
+      both!(SignedBits::saturating_cast_unsigned(x)),
+      if fits { cast } else { zero },
+      "{}",
+      model::text(p)
+    );
+    if fits {
+      assert_eq!(
+        both!(SignedBits::strict_cast_unsigned(x)),
+        cast,
+        "{}",
+        model::text(p)
+      );
+    }
+  }};
+}
+
+/// Checks the casts between the signs of `$ty`, of the sign `$sign` and of `$bits` bits, whose
+/// values `$from` creates from an `i128`, at each value of `$values`.
+macro_rules! sweep_sign_casts {
+  ($sign:ident; $ty:ty, $bits:expr, $values:expr, $from:expr, $value:expr, $magnitude:expr) => {{
+    let bits = $bits;
+    let from: fn(i128) -> $ty = $from;
+    for a in $values {
+      sign_casts!($sign; $ty, from(a), &pattern_of(a, bits));
+    }
+  }};
+}
+
+/// Checks the casts between the signs at the width `B`, `bits` bits, at most 8, in `u8` and `i8`,
+/// `[u8; 1]`, `[u8; 2]` and `[u16; 1]`, at the values of [`bit_values`] for a storage that every
+/// tier checks.
+fn sign_casts_of_small_widths<B>(bits: u32)
+where
+  B: FitsBits<u8> + FitsBits<i8> + FitsBits<[u8; 1]> + FitsBits<[u8; 2]> + FitsBits<[u16; 1]>,
+{
+  let values = |bits, signed| bit_values(bits, signed, true);
+  sweep_storage!(sweep_sign_casts, values, native B, bits, u8, i8);
+  sweep_storage!(sweep_sign_casts, values, array B, bits, [u8; 1]);
+  sweep_storage!(sweep_sign_casts, values, array B, bits, [u8; 2]);
+  sweep_storage!(sweep_sign_casts, values, array B, bits, [u16; 1]);
+}
+
+/// Checks the casts between the signs at the width `B`, `bits` bits, from 9 to 16, in `u16` and
+/// `i16`, `[u8; 2]` and `[u16; 1]`, at the values of [`bit_values`].
+fn sign_casts_of_large_widths<B>(bits: u32)
+where
+  B: FitsBits<u16> + FitsBits<i16> + FitsBits<[u8; 2]> + FitsBits<[u16; 1]>,
+{
+  let values = |bits, signed| bit_values(bits, signed, true);
+  sweep_storage!(sweep_sign_casts, values, native B, bits, u16, i16);
+  sweep_storage!(sweep_sign_casts, values, array B, bits, [u8; 2]);
+  sweep_storage!(sweep_sign_casts, values, array B, bits, [u16; 1]);
+}
+
+/// The casts between the signs of every value of each width up to 16 bits, as the tier takes
+/// them, in native integers and arrays, through the inherent `const fn`s and the traits, against
+/// the bit model: zero bits, one bit, and partial and full widths. Miri checks 0, 1, 7, 8, 9 and 16
+/// bits.
+#[test]
+fn sign_casts_of_up_to_16_bits() {
+  sign_casts_of_small_widths::<U0>(0);
+  sign_casts_of_small_widths::<U1>(1);
+  sign_casts_of_small_widths::<U7>(7);
+  sign_casts_of_small_widths::<U8>(8);
+  sign_casts_of_large_widths::<U9>(9);
+  sign_casts_of_large_widths::<U16>(16);
+  if !tier().is_miri() {
+    sign_casts_of_small_widths::<U2>(2);
+    sign_casts_of_small_widths::<U3>(3);
+    sign_casts_of_small_widths::<U5>(5);
+    sign_casts_of_large_widths::<U12>(12);
+  }
+}
+
+/// Checks the casts between the signs of `Uint` and `Int` of `$bits` bits, the width `$width`, in
+/// each storage of `$storages`, written `unsigned, signed;`, at the patterns of [`wide_patterns`]
+/// in `$words` words of 64 bits, through the inherent `const fn`s and the traits, each storage in a
+/// frame of its own.
+macro_rules! wide_sign_casts {
+  ($width:ty, $bits:literal, $words:literal; $($uint:ty, $int:ty);+ $(;)?) => {{
+    let patterns = wide_patterns::<$words>($bits);
+    $({
+      #[inline(never)]
+      fn storage(patterns: &[Vec<bool>]) {
+        type U = Uint<$width, $uint>;
+        type I = Int<$width, $int>;
+        for p in patterns {
+          sign_casts!(unsigned; U, U::from_pattern(p), p);
+          sign_casts!(signed; I, I::from_pattern(p), p);
+        }
+      }
+      storage(&patterns);
+    })+
+  }};
+}
+
+/// The casts between the signs at the bit patterns of 24 to 1024 bits, in storages of each kind,
+/// through the inherent `const fn`s and the traits, against the bit model. An optimized build adds
+/// 1024 bits; Miri checks 65 and 129 bits, in two storages each.
+#[test]
+fn sign_casts_of_wide_widths() {
+  wide_sign_casts!(U65, 65, 2; u128, i128; [u64; 2], [u64; 2]);
+  wide_sign_casts!(U129, 129, 3; [u8; 17], [u8; 17]; [u128; 2], [u128; 2]);
+  if !tier().is_miri() {
+    wide_sign_casts!(U24, 24, 1; u32, i32; [u16; 2], [u16; 2]);
+    wide_sign_casts!(U64, 64, 1; u64, i64; [u32; 2], [u32; 2]);
+    wide_sign_casts!(U200, 200, 4; [u64; 4], [u64; 4]; [u8; 25], [u8; 25]);
+  }
+  if tier().is_full() {
+    wide_sign_casts!(U1024, 1024, 16; [u64; 16], [u64; 16]; [u128; 8], [u128; 8]);
+  }
+}
+
+/// `strict_cast_signed` and `strict_cast_unsigned`, inherent and through the traits, panic in
+/// every build on a value that the other sign does not hold, with the message of the native
+/// methods, and report the caller, in native integers and arrays and at one bit.
+#[test]
+fn strict_sign_casts_panic_outside_the_range() {
+  let message = "attempt to cast integer with overflow".to_string();
+  type Bytes = Uint<U24, [u8; 3]>;
+  panics_here!(u7::MAX.strict_cast_signed(), message);
+  panics_here!(UnsignedBits::strict_cast_signed(u7::new(64)), message);
+  panics_here!(Bytes::MAX.strict_cast_signed(), message);
+  panics_here!(u256::MAX.strict_cast_signed(), message);
+  panics_here!(Uint::<U1, u8>::ONE.strict_cast_signed(), message);
+  panics_here!(i7::MIN.strict_cast_unsigned(), message);
+  panics_here!(SignedBits::strict_cast_unsigned(i7::new(-1)), message);
+  panics_here!(i256::MIN.strict_cast_unsigned(), message);
+  panics_here!(Int::<U1, i8>::MIN.strict_cast_unsigned(), message);
+}
+
+/// The casts between the signs in constant contexts, in a native integer and in an array, at zero
+/// bits and at one bit, where one has no signed value and -1 no unsigned one.
+#[test]
+fn sign_casts_in_constant_contexts() {
+  type Bytes = Uint<U24, [u8; 3]>;
+  type SignedBytes = Int<U24, [u8; 3]>;
+  type U1x8 = Uint<U1, u8>;
+  type I1x8 = Int<U1, i8>;
+  const UNSIGNED: (Option<i7>, i7, i7, Option<SignedBytes>, SignedBytes) = (
+    u7::MAX.checked_cast_signed(),
+    u7::MAX.saturating_cast_signed(),
+    u7::new(5).strict_cast_signed(),
+    Bytes::from_limbs([1, 2, 3]).checked_cast_signed(),
+    Bytes::MAX.saturating_cast_signed(),
+  );
+  const SIGNED: (Option<u7>, u7, u7, Option<Bytes>, Bytes) = (
+    i7::MIN.checked_cast_unsigned(),
+    i7::MIN.saturating_cast_unsigned(),
+    i7::MAX.strict_cast_unsigned(),
+    SignedBytes::from_limbs([0, 0, 0x80]).checked_cast_unsigned(),
+    SignedBytes::from_limbs([0, 0, 0x80]).saturating_cast_unsigned(),
+  );
+  const ZERO_BITS: (Option<i0>, Option<u0>) = (
+    u0::ZERO.checked_cast_signed(),
+    i0::ZERO.checked_cast_unsigned(),
+  );
+  const ONE_BIT: (Option<I1x8>, I1x8, Option<U1x8>, U1x8) = (
+    U1x8::ONE.checked_cast_signed(),
+    U1x8::ONE.saturating_cast_signed(),
+    I1x8::MIN.checked_cast_unsigned(),
+    I1x8::MIN.saturating_cast_unsigned(),
+  );
+
+  assert_eq!(
+    UNSIGNED,
+    (
+      None,
+      i7::MAX,
+      i7::new(5),
+      Some(SignedBytes::from_limbs([1, 2, 3])),
+      SignedBytes::MAX
+    )
+  );
+  assert_eq!(SIGNED, (None, u7::ZERO, u7::new(63), None, Bytes::ZERO));
+  assert_eq!(ZERO_BITS, (Some(i0::ZERO), Some(u0::ZERO)));
+  assert_eq!(ONE_BIT, (None, I1x8::ZERO, None, U1x8::ZERO));
 }
