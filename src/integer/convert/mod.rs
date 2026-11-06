@@ -2,7 +2,9 @@
 //! direction: `From` from `u8` to `u128` and `i8` to `i128` where the width holds every value of the
 //! native integer, which the sealed marker `HoldsEvery` checks, and `TryFrom` from `usize` and
 //! `isize` at every width; `TryFrom` into each native integer at every width; and `From` from
-//! `bool` where the width holds one, and `TryFrom` into `bool`.
+//! `bool` where the width holds one, and `TryFrom` into `bool`. `TryFrom` converts an integer into
+//! the non-zero integer of the same width and storage, [`NonZeroUint`] or [`NonZeroInt`], with the
+//! error of the kind `Zero` for zero, as the native `NonZero` integers convert from their integers.
 //!
 //! Each conversion goes through the casts, and the errors are the values of
 //! `core::num::TryFromIntError` that the native conversions return: the type has no public
@@ -17,8 +19,11 @@ use typenum::{Gr, GrEq, IsGreater, IsGreaterOrEqual, NonZero, True, U1, U8, U16,
 
 use sealed::HoldsEvery;
 
-use super::{BoundedCastFrom, Int, Uint, cast};
-use crate::width::{FitsBits, IntRepr, UintRepr};
+use super::{BoundedCastFrom, Int, NonZeroInt, NonZeroUint, Uint, cast};
+use crate::{
+  layout::Token,
+  width::{FitsBits, IntCore, IntRepr, NonZeroIntRepr, NonZeroUintRepr, UintCore, UintRepr},
+};
 
 mod sealed {
   /// Implemented only for `B1`, the result of the comparison of `Bits` with the width of the native
@@ -51,6 +56,16 @@ pub(crate) fn neg_overflow() -> TryFromIntError {
   match u8::try_from(-1i8) {
     Err(error) => error,
     Ok(_) => unreachable!("-1 fits in a `u8`"),
+  }
+}
+
+/// The error of zero for a non-zero target, of the kind `Zero`, as the native conversions return
+/// it.
+#[cold]
+pub(crate) fn zero() -> TryFromIntError {
+  match core::num::NonZero::<u8>::try_from(0u8) {
+    Err(error) => error,
+    Ok(_) => unreachable!("0 converts to a `NonZero<u8>`"),
   }
 }
 
@@ -195,3 +210,33 @@ macro_rules! bool_try_from {
 }
 
 bool_try_from!(Uint: UintRepr, Int: IntRepr);
+
+/// Implements `TryFrom` of the integer `$integer`, whose storages implement `$core`, into the
+/// non-zero integer `$name` of the same width over every storage of `$repr`, written
+/// `$name: $repr, $integer, $core;`, as the native `NonZero` integers convert from their integers.
+/// The storage of the value becomes that of the non-zero integer once its zero test passes, so no
+/// width is read, as for `From` back to the integer.
+macro_rules! nonzero_try_from_integer {
+  ($($name:ident: $repr:ident, $integer:ident, $core:ident);+ $(;)?) => {$(
+    impl<B, R: $repr> TryFrom<$integer<B, R::Integer>> for $name<B, R> {
+      type Error = TryFromIntError;
+
+      /// Converts `value`, or returns the error of the native conversions, of the kind `Zero`, if
+      /// it is zero.
+      #[inline]
+      fn try_from(value: $integer<B, R::Integer>) -> Result<Self, TryFromIntError> {
+        match <R::Integer as $core>::to_nonzero(value.repr, Token::new()) {
+          Some(repr) => Ok(Self {
+            value: $integer::wrap(repr),
+          }),
+          None => Err(zero()),
+        }
+      }
+    }
+  )+};
+}
+
+nonzero_try_from_integer!(
+  NonZeroUint: NonZeroUintRepr, Uint, UintCore;
+  NonZeroInt: NonZeroIntRepr, Int, IntCore;
+);
