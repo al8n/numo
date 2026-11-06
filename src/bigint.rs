@@ -947,6 +947,57 @@ pub(crate) fn byte_slices(p: &[bool], signed: bool) -> Vec<Vec<u8>> {
   slices
 }
 
+/// The slices of limbs of type `L`, least significant first, at which the readers of limbs into
+/// `n` limbs are checked for `p`, the pattern of a value read in two's complement if `signed`: at
+/// each length of no limbs, one, and from one less than `n` to two more, the limbs of `p` extended
+/// or cut to the length, and those limbs with the most significant one replaced by zero, every
+/// bit, one or the top bit alone, which keep or break the width and set or clear the sign of the
+/// slice. Under Miri, the lengths of no limbs, `n` and one more, and the top bit alone.
+pub(crate) fn limb_slices<L>(p: &[bool], signed: bool, n: usize) -> Vec<Vec<L>>
+where
+  L: Limb + Ord + Shl<u32, Output = L>,
+{
+  let top = L::ONE << (L::BITS - 1);
+  let (mut lengths, highs) = if tier().is_miri() {
+    (vec![0, n, n + 1], vec![top])
+  } else {
+    (
+      vec![0, 1, n.saturating_sub(1), n, n + 1, n + 2],
+      vec![L::ZERO, L::MAX, L::ONE, top],
+    )
+  };
+  lengths.sort_unstable();
+  lengths.dedup();
+  let size = (L::BITS / 8) as usize;
+  let mut slices = Vec::new();
+  for len in lengths {
+    let natural: Vec<L> = model::le_bytes(p, size * len, signed)
+      .chunks_exact(size)
+      .map(L::from_le_slice)
+      .collect();
+    if len > 0 {
+      for &high in &highs {
+        let mut slice = natural.clone();
+        slice[len - 1] = high;
+        slices.push(slice);
+      }
+    }
+    slices.push(natural);
+  }
+  slices.sort_unstable();
+  slices.dedup();
+  slices
+}
+
+/// The bytes of `limbs`, least significant first, which hold the integer of the limbs.
+pub(crate) fn bytes_of_limbs<L: Limb>(limbs: &[L]) -> Vec<u8> {
+  let mut bytes = Vec::new();
+  for &limb in limbs {
+    limb.push_le_bytes(&mut bytes);
+  }
+  bytes
+}
+
 /// The bit operations on patterns of bits, bit 0 first, as wide as the integers that hold them:
 /// the model that the tests of the bit operations compare with. Each operation is written from its
 /// definition, one bit at a time, and reads a pattern as unsigned, or in two's complement where it

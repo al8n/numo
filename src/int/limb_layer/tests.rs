@@ -1106,6 +1106,8 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@words false, UintCore);
 
+    limb_layer_tests!(@limbs false);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves nothing of a value, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -1962,6 +1964,8 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@words true, IntCore);
 
+    limb_layer_tests!(@limbs true);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves the sign alone, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -2541,6 +2545,114 @@ macro_rules! limb_layer_tests {
       words_against_the_model::<2>();
       if !bigint::tier().is_miri() {
         words_against_the_model::<3>();
+      }
+    }
+  };
+  // The tests of the readers of slices of limbs, which every instance shares, after the helpers of
+  // its arm and of `@bits`, with `checked_read_bytes` and `wrapping_read_bytes` of the layer in
+  // scope: `$signed` is whether the layer reads the limbs in two's complement.
+  (@limbs $signed:literal) => {
+    /// The pattern of the bound of the range of `bits` bits that an integer outside it passes, read
+    /// in two's complement if `$signed`: the smallest value if `negative`, and the largest
+    /// otherwise.
+    fn bound(bits: u32, negative: bool) -> Vec<bool> {
+      model::pattern(bits, |i| match ($signed, negative) {
+        (false, _) => true,
+        // The sign bit alone, or every bit below it.
+        (true, negative) => (i + 1 == bits) == negative,
+      })
+    }
+
+    /// Checks the readers of slices of limbs into `N` limbs on `p`, a pattern of a width, read in
+    /// two's complement if `$signed`, against the bit model, at each slice of
+    /// `bigint::limb_slices`: the checked reader, the wrapping one, which returns the value of the
+    /// checked one wherever that returns one, and the saturating one, which returns the bound of
+    /// the range that the integer passes; and the checked and the wrapping readers against the
+    /// readers of bytes at the bytes of the slice, least significant first.
+    fn check_limbs<const N: usize>(p: &[bool]) {
+      let width = model::width(p);
+      let limbs = |pattern: &[bool]| bigint::limbs_of_pattern::<Limb, N>(pattern, $signed);
+      for slice in bigint::limb_slices::<Limb>(p, $signed, N) {
+        let q = bigint::pattern_of_limbs(&slice, B * slice.len() as u32);
+        let checked = model::fit(&q, width, $signed).map(|r| limbs(&r));
+        let wrapped = limbs(&model::wrap(&q, width, $signed));
+        let negative = $signed && model::sign(&q);
+        let saturated = checked.unwrap_or_else(|| limbs(&bound(width, negative)));
+        let reads = (
+          checked_read_limbs::<N>(&slice, width),
+          wrapping_read_limbs::<N>(&slice, width),
+          saturating_read_limbs::<N>(&slice, width),
+        );
+        assert_eq!(
+          reads,
+          (checked, wrapped, saturated),
+          "{slice:x?} at {width} bits"
+        );
+        if let Some(value) = reads.0 {
+          assert_eq!(reads.1, value, "{slice:x?} at {width} bits");
+        }
+        let bytes = bigint::bytes_of_limbs(&slice);
+        assert_eq!(
+          (reads.0, reads.1),
+          (
+            checked_read_bytes::<N>(&bytes, false, width),
+            wrapping_read_bytes::<N>(&bytes, false, width),
+          ),
+          "{slice:x?} at {width} bits"
+        );
+      }
+    }
+
+    /// Checks the readers of slices of limbs into `N` limbs against the bit model at each width of
+    /// `widths::<N>()`, at each pattern of `bigint::bit_patterns_by` cut to the width, at every
+    /// index up to 32 bits in an optimized build and at the reduced indexes otherwise; or under
+    /// Miri at 0, 1 and `B * N` bits and the patterns of `model::few_patterns`.
+    fn limbs_against_the_model<const N: usize>() {
+      let tier = bigint::tier();
+      let top = B * N as u32;
+      let mut widths = if tier.is_miri() {
+        vec![0, 1, top]
+      } else {
+        widths::<N>()
+      };
+      widths.retain(|&width| width <= top);
+      widths.sort_unstable();
+      widths.dedup();
+      let reduced = !tier.is_full() || top > 32;
+      let patterns: Vec<[Limb; N]> = if tier.is_miri() {
+        Vec::new()
+      } else {
+        bigint::bit_patterns_by(&widths, reduced)
+      };
+      for &width in &widths {
+        let mut cut: Vec<Vec<bool>> = if tier.is_miri() {
+          model::few_patterns(width, B)
+        } else {
+          patterns
+            .iter()
+            .map(|pattern| bigint::pattern_of_limbs(pattern, width))
+            .collect()
+        };
+        cut.sort_unstable();
+        cut.dedup();
+        for p in &cut {
+          check_limbs::<N>(p);
+        }
+      }
+    }
+
+    /// The readers of slices of limbs against the bit model into no limbs to two, and in an
+    /// optimized build also three; under Miri into no limbs and one.
+    #[test]
+    fn limb_slices_match_the_bit_model() {
+      let tier = bigint::tier();
+      limbs_against_the_model::<0>();
+      limbs_against_the_model::<1>();
+      if !tier.is_miri() {
+        limbs_against_the_model::<2>();
+      }
+      if tier.is_full() {
+        limbs_against_the_model::<3>();
       }
     }
   };
