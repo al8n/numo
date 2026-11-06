@@ -550,11 +550,11 @@ macro_rules! byte_methods {
 ///
 /// [`BYTES`](Self::BYTES) and the methods are the inherent items of the same names, which a
 /// concrete type reaches without this trait, also in constant contexts: the byte at an index, the
-/// copies of the bytes to a buffer, and the conversions from a slice of any length, checked and
-/// wrapping, which read it unsigned for `Uint` and in two's complement for `Int`. The trait needs
-/// neither `Copy` nor a constant of a value, and every storage implements it, so the bound
-/// `B: BitWidth` provides it on `Uint<B>` and `Int<B>`; generic code calls the methods with the
-/// trait in scope.
+/// copies of the bytes to a buffer, and the conversions from a slice of any length, checked,
+/// wrapping, overflowing, saturating and strict, which read it unsigned for `Uint` and in two's
+/// complement for `Int`. The trait needs neither `Copy` nor a constant of a value, and every
+/// storage implements it, so the bound `B: BitWidth` provides it on `Uint<B>` and `Int<B>`; generic
+/// code calls the methods with the trait in scope.
 ///
 /// ```
 /// use numo::{Int, IntegerBytes, Uint, i7, typenum::U200};
@@ -575,6 +575,7 @@ macro_rules! byte_methods {
 /// assert_eq!(<U12 as IntegerBytes>::checked_from_le_slice(&[0xff, 0x0f, 0]), Some(U12::MAX));
 /// assert_eq!(<I12 as IntegerBytes>::checked_from_le_slice(&[0xff, 0x0f]), None);
 /// assert_eq!(<I12 as IntegerBytes>::wrapping_from_le_slice(&[0x80]), I12::new(-128));
+/// assert_eq!(<I12 as IntegerBytes>::saturating_from_le_slice(&[0xff, 0x0f]), I12::MAX);
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.

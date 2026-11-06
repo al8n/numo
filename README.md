@@ -31,7 +31,7 @@ traits do.
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, and generic traits |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, and generic traits |
 | `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
@@ -213,8 +213,10 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   and from two bits for `Int`; for a native integer, `new`, which panics if the value does not fit,
   `try_new`, which returns an error instead, and `value`; for an array, `from_limbs` for a width
   that fills its limbs, `checked_from_limbs` for any width, which returns `None` unless the limbs
-  hold a value of `Bits` bits, and `to_limbs` and `as_limbs`; `is_zero` and `is_one`, plus
-  `is_negative` and `is_positive` for `Int`.
+  hold a value of `Bits` bits, `checked_from_limbs_slice`, `wrapping_from_limbs_slice`,
+  `overflowing_from_limbs_slice`, `saturating_from_limbs_slice` and `strict_from_limbs_slice`,
+  which read a slice of limbs of any length as the slices of bytes are read, and `to_limbs` and
+  `as_limbs`; `is_zero` and `is_one`, plus `is_negative` and `is_positive` for `Int`.
 - The arithmetic of the native integers at the width `Bits`, as `const fn`s: addition, subtraction,
   multiplication, negation, division, remainder and exponentiation in the `checked_*`,
   `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` forms that the native integers have,
@@ -241,7 +243,12 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   assignments work for every storage; a shift amount that is `Bits` or more, or negative, overflows
   as the native shifts do, and `bitand`, `bitor`, `bitxor` and `not` serve constant contexts.
 - Numeric equality, ordering and hashing, where the hash depends only on the value and `Bits`,
-  whatever the storage, and `Default`, which is zero.
+  whatever the storage, and `Default`, which is zero. `PartialEq` and `PartialOrd` with each native
+  integer, both ways, compare the values as integers, whatever the widths and the signs, as in
+  `Int::<U7>::new(-1) < 0u8` and `u256::MAX > u128::MAX`. With them in a build, a comparison of a
+  native integer with an expression whose type is inferred from it, such as `n == m.into()`,
+  `n == s.parse().unwrap()` or `n == v.iter().sum()`, needs the type named, as in
+  `n == u64::from(m)`.
 - The text of the native integers at the width `Bits`: `from_str_radix`, a `const fn` for the
   radixes 2 to 36, and `FromStr` read an optional sign and digits, with the error of the native
   integers, `core::num::ParseIntError`, and reject a value outside the range of `Bits`, whatever
@@ -253,8 +260,9 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   two's complement for `Int`: `to_le_bytes`, `to_be_bytes` and `to_ne_bytes` return an array whose
   length is part of its type, up to 8192 bits, and `checked_from_le_bytes` and the other orders read
   one back, checking the bits of the last byte above the width, while at a width of whole bytes
-  `from_le_bytes` and the others read every array. `checked_from_le_slice` and
-  `wrapping_from_le_slice` read a slice of any length, `copy_le_bytes_to` writes the bytes to a
+  `from_le_bytes` and the others read every array. `checked_from_le_slice`,
+  `wrapping_from_le_slice`, `overflowing_from_le_slice`, `saturating_from_le_slice` and
+  `strict_from_le_slice` read a slice of any length, `copy_le_bytes_to` writes the bytes to a
   buffer at any width, and `byte` reads one byte. At a width of whole bytes, `swap_bytes`,
   `to_be`, `to_le`, `from_be` and `from_le` convert the byte order as the native integers do, by
   value rather than by layout.
@@ -276,14 +284,14 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   `one()` return the constants `ZERO`, `MIN`, `MAX` and `ONE`. The const layer,
   `ConstFixedInteger` and `ConstIntegerOne`, adds `Copy` and the constants themselves, which a
   generic `const fn` can read. `UnsignedFixedInteger` and `SignedFixedInteger` have the methods of
-  each sign, `NativeInteger`, `ArrayInteger` and `FromLimbs` the construction of each kind, the
-  arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`
-  and `UncheckedOps` the arithmetic, `IntegerMath`, `UnsignedMath` and `SignedMath` the functions
-  without an overflow prefix, such as `pow`, `isqrt` and `ilog10`, `IntegerBits`, `UnsignedBits`
-  and `SignedBits` the bit operations, `IntegerBytes`, `ByteArray`, `FromByteArray` and
-  `IntegerByteOrder` the bytes, and `CheckedCastFrom`, `BoundedCastFrom`, `WidenFrom` and
-  `TruncateFrom`, which the target implements, the casts; with the bound `B: BitWidth`, such code
-  uses `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
+  each sign, `NativeInteger`, `ArrayInteger`, with the slices of limbs, and `FromLimbs` the
+  construction of each kind, the arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`,
+  `SaturatingOps`, `StrictOps` and `UncheckedOps` the arithmetic, `IntegerMath`, `UnsignedMath`
+  and `SignedMath` the functions without an overflow prefix, such as `pow`, `isqrt` and `ilog10`,
+  `IntegerBits`, `UnsignedBits` and `SignedBits` the bit operations, `IntegerBytes`, `ByteArray`,
+  `FromByteArray` and `IntegerByteOrder` the bytes, and `CheckedCastFrom`, `BoundedCastFrom`,
+  `WidenFrom` and `TruncateFrom`, which the target implements, the casts; with the bound
+  `B: BitWidth`, such code uses `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
   width of more than 65536 bits without an explicit storage.

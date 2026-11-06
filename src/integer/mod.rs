@@ -72,10 +72,13 @@ mod traits;
 /// In a native integer, [`new`](Self::new) creates a value, panicking if it does not fit in `Bits`
 /// bits, [`try_new`](Self::try_new) returns an error instead, and [`value`](Self::value) returns
 /// the value. In an array, [`from_limbs`](Self::from_limbs) creates a value from any bit pattern of
-/// a width that fills its limbs, and [`checked_from_limbs`](Self::checked_from_limbs) from the
-/// limbs of any width, checking that they hold a value of `Bits` bits. Values compare, hash and
-/// format by their numeric value: `Ord` is numeric, `Hash` depends only on the value and `Bits`,
-/// whatever the storage, and `Display` and `Debug` write decimal.
+/// a width that fills its limbs, [`checked_from_limbs`](Self::checked_from_limbs) from the limbs of
+/// any width, checking that they hold a value of `Bits` bits, and
+/// [`checked_from_limbs_slice`](Self::checked_from_limbs_slice) and its other forms from a slice of
+/// limbs of any length (see [Bytes](Uint#bytes)). Values compare, hash and format by their numeric
+/// value: `Ord` is numeric, and so are the comparisons with the native integers (see
+/// [Conversions](Uint#conversions)), `Hash` depends only on the value and `Bits`, whatever the
+/// storage, and `Display` and `Debug` write decimal.
 ///
 /// The aliases from 192 to 512 bits are the wide storages of [`Decimal`](crate::Decimal):
 ///
@@ -299,7 +302,19 @@ mod traits;
 /// [`checked_from_be_slice`](Self::checked_from_be_slice) read the value of a slice of any length,
 /// zero for an empty one, and return `None` if it is above `MAX`, whatever the length;
 /// [`wrapping_from_le_slice`](Self::wrapping_from_le_slice) and
-/// [`wrapping_from_be_slice`](Self::wrapping_from_be_slice) read it modulo `2^Bits`.
+/// [`wrapping_from_be_slice`](Self::wrapping_from_be_slice) read it modulo `2^Bits`,
+/// [`overflowing_from_le_slice`](Self::overflowing_from_le_slice) and
+/// [`overflowing_from_be_slice`](Self::overflowing_from_be_slice) also return whether it is above
+/// `MAX`, [`saturating_from_le_slice`](Self::saturating_from_le_slice) and
+/// [`saturating_from_be_slice`](Self::saturating_from_be_slice) return `MAX` there, and
+/// [`strict_from_le_slice`](Self::strict_from_le_slice) and
+/// [`strict_from_be_slice`](Self::strict_from_be_slice) panic there in every build, reporting the
+/// caller. In an array, [`checked_from_limbs_slice`](Self::checked_from_limbs_slice),
+/// [`wrapping_from_limbs_slice`](Self::wrapping_from_limbs_slice),
+/// [`overflowing_from_limbs_slice`](Self::overflowing_from_limbs_slice),
+/// [`saturating_from_limbs_slice`](Self::saturating_from_limbs_slice) and
+/// [`strict_from_limbs_slice`](Self::strict_from_limbs_slice) read a slice of limbs of any length,
+/// least significant first, in the same way: its value is that of the bytes of its limbs.
 /// [`copy_le_bytes_to`](Self::copy_le_bytes_to) and [`copy_be_bytes_to`](Self::copy_be_bytes_to)
 /// write the bytes to the start of a buffer at any width, also one above 8192 bits, and panic if it
 /// is shorter, where their `checked_*` forms return `None`, and [`byte`](Self::byte) reads the
@@ -339,6 +354,12 @@ mod traits;
 /// // A slice of any length, whose value decides, and its value modulo 2^12.
 /// assert_eq!(U12x2::checked_from_le_slice(&[0xff, 0x0f, 0, 0]), Some(U12x2::MAX));
 /// assert_eq!(U12x2::wrapping_from_le_slice(&[0xff, 0xff]), U12x2::MAX);
+/// // 4097 passes `MAX`: modulo 2^12 with the overflow, or `MAX`.
+/// assert_eq!(U12x2::overflowing_from_be_slice(&[0x10, 0x01]), (U12x2::ONE, true));
+/// assert_eq!(U12x2::saturating_from_be_slice(&[0x10, 0x01]), U12x2::MAX);
+/// // The same of a slice of the limbs of the array, least significant first.
+/// assert_eq!(U12x2::checked_from_limbs_slice(&[0xff, 0x0f, 0]), Some(U12x2::MAX));
+/// assert_eq!(U12x2::saturating_from_limbs_slice(&[0x01, 0x10]), U12x2::MAX);
 ///
 /// // A copy to a buffer, which leaves the rest of it.
 /// let mut buf = [0; 4];
@@ -387,6 +408,18 @@ mod traits;
 /// into `bool` converts zero and one back. Between numo integers, the casts are the conversions:
 /// `From` and `TryFrom` there would overlap the standard implementations from a type to itself.
 ///
+/// The values compare with the native integers, both ways: `PartialEq` and `PartialOrd` with each
+/// of the twelve native integers compare them as integers, whatever the widths and the signs, so
+/// that `u7::new(5) == 5i8`, `u256::MAX > u128::MAX` and `300u16 > u7::MAX`, and a literal without
+/// a suffix on either side, as in `x == 5` and `5 == x`, compares as an `i32`. With them in a
+/// build, the compiler no longer infers the type of an expression compared with a native integer
+/// from that integer, as in `n == m.into()`, `n == x.try_into().unwrap()`,
+/// `n == s.parse().unwrap()`, `n == v.iter().sum()`, `n == Default::default()` or a generic call in
+/// that place: such a comparison names the type, as in `n == u64::from(m)` or
+/// `n == s.parse::<u64>().unwrap()`, and so does one with a numo integer. Integers of two numo
+/// types do not compare: a cast converts one to the type of the other, as in
+/// `a.widen::<T>() == b`.
+///
 /// ```
 /// use numo::{
 ///   CheckedCastFrom, Uint, i7,
@@ -414,6 +447,10 @@ mod traits;
 /// assert_eq!(error.to_string(), "number too large to fit in target type");
 /// assert!(Uint::<U16>::try_from(70_000usize).is_err());
 /// assert_eq!(u7::from(true), u7::ONE);
+///
+/// // The comparisons with the native integers, both ways.
+/// assert!(x < 128u8 && 300u16 > x && x == 100);
+/// assert!(u256::MAX > u128::MAX);
 /// # Ok::<(), core::num::TryFromIntError>(())
 /// ```
 ///
@@ -633,9 +670,15 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// an integer in two's complement of `8 * len` bits, whose sign is the top bit of its most
 /// significant byte, and returns `None` if that integer is outside the range of `Bits` bits;
 /// [`wrapping_from_le_slice`](Self::wrapping_from_le_slice) reduces it modulo `2^Bits` into the
-/// range, so that it returns the value of `checked_from_le_slice` wherever that returns one. The
-/// byte order is that of [`Uint`], and [`swap_bytes`](Self::swap_bytes) reads the reversed bytes
-/// again in two's complement.
+/// range, so that it returns the value of `checked_from_le_slice` wherever that returns one,
+/// [`overflowing_from_le_slice`](Self::overflowing_from_le_slice) also returns whether the integer
+/// is outside the range, [`saturating_from_le_slice`](Self::saturating_from_le_slice) returns
+/// [`MIN`](Self::MIN) below it, for a negative slice, and [`MAX`](Self::MAX) above it, and
+/// [`strict_from_le_slice`](Self::strict_from_le_slice) panics outside it. The slices of limbs of
+/// an array, such as [`checked_from_limbs_slice`](Self::checked_from_limbs_slice), read the limbs
+/// in two's complement in the same way, the sign being the top bit of the last limb. The byte order
+/// is that of [`Uint`], and [`swap_bytes`](Self::swap_bytes) reads the reversed bytes again in
+/// two's complement.
 ///
 /// ```
 /// use numo::{
@@ -656,6 +699,12 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// assert_eq!(I12::wrapping_from_le_slice(&[0x80]), I12::new(-128));
 /// assert_eq!(I12::checked_from_le_slice(&[0xff, 0x0f]), None);
 /// assert_eq!(I12::wrapping_from_le_slice(&[0xff, 0x0f]), I12::new(-1));
+/// // 4095 passes `MAX`, and -32768, negative by the top bit of its last byte, passes `MIN`.
+/// assert_eq!(I12::overflowing_from_le_slice(&[0xff, 0x0f]), (I12::new(-1), true));
+/// assert_eq!(I12::saturating_from_le_slice(&[0x00, 0x80]), I12::MIN);
+/// // The limbs of an array, in two's complement.
+/// type I12x2 = Int<U12, [u8; 2]>;
+/// assert_eq!(I12x2::checked_from_limbs_slice(&[0x80]), I12x2::checked_from_limbs([0x80, 0xff]));
 /// ```
 ///
 /// # Conversions
@@ -674,7 +723,9 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// sign, so that a literal without a suffix, an `i32`, converts: `i256::from(5)` compiles, where
 /// `u256::from(5)` does not. `TryFrom` converts a `usize` or an `isize` at every width, and an `Int`
 /// of any width into each native integer, as for [`Uint`], and `From<bool>` converts from two bits,
-/// as `ONE` exists.
+/// as `ONE` exists. The comparisons with the native integers are those of [`Uint`], with the same
+/// cost to inference: a negative value is below every unsigned integer, as in
+/// `Int::<U7>::new(-1) < 0u8`.
 ///
 /// ```
 /// use numo::{Int, i7, i256, typenum::U12, u7};
@@ -691,6 +742,9 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// assert_eq!(i256::from(5), i256::from(5i8));
 /// let error = i8::try_from(i256::MIN).unwrap_err();
 /// assert_eq!(error.to_string(), "number too small to fit in target type");
+///
+/// // The comparisons with the native integers, both ways.
+/// assert!(x < 0u8 && -5i64 == x && i256::MIN < i128::MIN);
 /// ```
 ///
 /// # Overflow

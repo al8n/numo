@@ -139,6 +139,19 @@ FEATURES
     storage writes the same 64-bit words, a native integer those of a one-limb array. Decimal
     `Display` and `Debug`, the latter also under the hexadecimal flags, and `Default`, which is
     zero.
+  - `PartialEq` and `PartialOrd` with each of the twelve native integers, both ways, for every
+    storage: `x == n`, `n == x`, `x < n` and `n < x` compare the values as integers, whatever the
+    widths and the signs, so that `Int::<U7>::new(-1) < 0u8`, `u7::new(5) == 5i8` and
+    `u256::MAX > u128::MAX`, and a literal without a suffix on either side compares as an `i32`.
+    They cost inference: in every crate whose build loads numo, one that uses it and one that
+    depends on a crate that uses it, a comparison `n == e`, `n < e` or `assert_eq!(n, e)` of a
+    native integer `n` with an expression `e` whose type is inferred from `n`, such as
+    `n == m.into()`, `n == x.try_into().unwrap()`, `n == s.parse().unwrap()`,
+    `n == v.iter().sum()`, `n == Default::default()` or a generic call in that place, no longer
+    infers (E0283) and needs the type named, as in `n == u64::from(m)` or
+    `n == s.parse::<u64>().unwrap()`, and so does such a comparison of a numo integer. Literals,
+    `as`, `From` and the other forms compare as before. Integers of two numo types do not compare:
+    a cast converts one to the type of the other.
   - The text of the native integers at the width `Bits`. `from_str_radix`, a `const fn` of every
     storage for the radixes 2 to 36, and `FromStr`, for decimal, read an optional `+`, or `-` for
     `Int`, then ASCII digits and letters of either case below the radix, with no whitespace, `_`
@@ -165,11 +178,25 @@ FEATURES
     which read a slice of any length as an unsigned integer for `Uint` and in two's complement for
     `Int`, whose sign is the top bit of its most significant byte, and return `None` if that integer
     is outside the range of `Bits` bits, and `wrapping_from_le_slice` and `wrapping_from_be_slice`,
-    which reduce it modulo `2^Bits` into the range; `copy_le_bytes_to` and `copy_be_bytes_to`, which
-    write the bytes to the start of a buffer at any width and panic if it is shorter, reporting the
-    caller, and their `checked_*` forms, which return `None` and leave it unchanged; and `byte`,
-    which reads the byte at an index and panics from `BYTES` up, reporting the caller. The methods
-    that read a value borrow it, and nothing allocates.
+    which reduce it modulo `2^Bits` into the range; `overflowing_from_le_slice` and
+    `overflowing_from_be_slice`, which also return whether the integer is outside the range,
+    `saturating_from_le_slice` and `saturating_from_be_slice`, which return `MIN` below the range,
+    for a negative slice of `Int`, and `MAX` above it, and `strict_from_le_slice` and
+    `strict_from_be_slice`, which panic outside the range in every build, reporting the caller;
+    `copy_le_bytes_to` and `copy_be_bytes_to`, which write the bytes to the start of a buffer at any
+    width and panic if it is shorter, reporting the caller, and their `checked_*` forms, which
+    return `None` and leave it unchanged; and `byte`, which reads the byte at an index and panics
+    from `BYTES` up, reporting the caller. The methods that read a value borrow it, and nothing
+    allocates.
+  - The conversions from slices of limbs, as `const fn`s of every array storage, which read a slice
+    of limbs of any length, least significant first, as the slices of bytes read the bytes of its
+    limbs: `checked_from_limbs_slice`, unsigned for `Uint` and in two's complement for `Int`,
+    whose sign is the top bit of the last limb, which returns `None` if the integer is outside the
+    range of `Bits` bits, whatever the length; `wrapping_from_limbs_slice`, which reduces it modulo
+    `2^Bits` into the range; `overflowing_from_limbs_slice`, which also returns whether it is
+    outside the range; `saturating_from_limbs_slice`, which returns `MIN` below the range and `MAX`
+    above it; and `strict_from_limbs_slice`, which panics outside the range in every build,
+    reporting the caller.
   - The byte order of the native integers at a width of whole bytes, as `const fn`s of every
     storage: `swap_bytes`, which reverses the bytes, and `to_be`, `to_le`, `from_be` and
     `from_le`, which convert the value to and from an order as the native integers do. For an
@@ -346,10 +373,11 @@ FEATURES
     `MIN` and `MAX`, and `ConstIntegerOne`, with `ONE`. The other traits are `UnsignedFixedInteger`
     and `SignedFixedInteger`, with `is_negative`, `is_positive` and the unsigned integer of the same
     width, `NativeInteger`, which requires `ConstFixedInteger` and has `new`, `try_new` and `value`,
-    `ArrayInteger`, with `checked_from_limbs`, `to_limbs` by reference and `as_limbs`, and
-    `FromLimbs`, with `from_limbs`. Each mirrors the inherent items for generic code; the bound
-    `B: BitWidth` gives `Uint<B>` and `Int<B>` `FixedInteger`, `ConstFixedInteger` and the sign
-    traits. The trait methods are not `const`; constant contexts use the inherent `const fn`s.
+    `ArrayInteger`, with `checked_from_limbs`, `to_limbs` by reference, `as_limbs`, the type of a
+    limb as `Limb` and the conversions from slices of limbs, and `FromLimbs`, with `from_limbs`.
+    Each mirrors the inherent items for generic code; the bound `B: BitWidth` gives `Uint<B>` and
+    `Int<B>` `FixedInteger`, `ConstFixedInteger` and the sign traits. The trait methods are not
+    `const`; constant contexts use the inherent `const fn`s.
 - `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: the integers of `Bits` bits that are not
   zero, as the native `NonZero` integers are at the native widths.
   - The storage is the native `NonZero` of a native storage, `core::num::NonZero<u8>` to

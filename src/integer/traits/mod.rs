@@ -447,6 +447,13 @@ pub trait NativeInteger: ConstFixedInteger {
 /// An integer stored in an array of limbs, least significant first: [`Uint`] and [`Int`] over
 /// `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`.
 ///
+/// [`Array`](Self::Array) is the array and [`Limb`](Self::Limb) the type of its limbs. The methods
+/// are the inherent items of the same names, which a concrete type reaches without this trait,
+/// also in constant contexts: the limbs, the checked conversion from them, and the conversions from
+/// a slice of limbs of any length, least significant first, checked, wrapping, overflowing,
+/// saturating and strict, which read it unsigned for `Uint` and in two's complement for `Int`, as
+/// the slices of bytes of [`IntegerBytes`](crate::IntegerBytes) do.
+///
 /// ```
 /// use numo::{
 ///   ArrayInteger, Int, i256,
@@ -461,6 +468,14 @@ pub trait NativeInteger: ConstFixedInteger {
 /// assert_eq!(low_limb(&Int::<U200>::MIN), 0);
 /// // 2^104 needs 106 bits.
 /// assert_eq!(<Int<U100, [u64; 2]> as ArrayInteger>::checked_from_limbs([0, 1 << 40]), None);
+///
+/// // The value of any number of 64-bit words, saturated to the range of the width.
+/// fn of_words<T: ArrayInteger<Limb = u64>>(words: &[u64]) -> T {
+///   T::saturating_from_limbs_slice(words)
+/// }
+///
+/// assert_eq!(of_words::<i256>(&[7]), i256::from_limbs([7, 0, 0, 0]));
+/// assert_eq!(of_words::<Int<U100, [u64; 2]>>(&[0, 0, 1]), Int::<U100, [u64; 2]>::MAX);
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
