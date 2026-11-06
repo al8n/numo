@@ -1,0 +1,47 @@
+error[E0277]: `truncate` needs a target at most as wide as the source
+ --> tests/ui/truncate_to_wider.rs:5:30
+  |
+5 |   let _ = u7::MAX.truncate::<u8>();
+  |                   --------   ^^ the trait `numo::integer::cast::sealed::TruncateBits` is not implemented for `B0`
+  |                   |
+  |                   required by a bound introduced by this call
+  |
+help: the trait `numo::integer::cast::sealed::TruncateBits` is implemented for `B1`
+ --> src/integer/cast/mod.rs
+  |
+  |   impl TruncateBits for B1 {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `u8` to implement `TruncateFrom<Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>>`
+note: required by a bound in `numo::integer::cast::<impl Uint<B, R>>::truncate`
+ --> src/integer/cast/mod.rs
+  |
+  |       pub fn truncate<T: TruncateFrom<Self>>(self) -> T {
+  |                          ^^^^^^^^^^^^^^^^^^ required by this bound in `numo::integer::cast::<impl Uint<B, R>>::truncate`
+...
+  | cast_methods!(Uint: UintRepr, Int: IntRepr);
+  | ------------------------------------------- in this macro invocation
+  = note: this error originates in the macro `cast_methods` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `truncate` needs a target at most as wide as the source
+ --> tests/ui/truncate_to_wider.rs:6:46
+  |
+6 |   let _ = u7::truncate_from(5u64).truncate::<u64>();
+  |                                   --------   ^^^ the trait `numo::integer::cast::sealed::TruncateBits` is not implemented for `B0`
+  |                                   |
+  |                                   required by a bound introduced by this call
+  |
+help: the trait `numo::integer::cast::sealed::TruncateBits` is implemented for `B1`
+ --> src/integer/cast/mod.rs
+  |
+  |   impl TruncateBits for B1 {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `u64` to implement `TruncateFrom<Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>>`
+note: required by a bound in `numo::integer::cast::<impl Uint<B, R>>::truncate`
+ --> src/integer/cast/mod.rs
+  |
+  |       pub fn truncate<T: TruncateFrom<Self>>(self) -> T {
+  |                          ^^^^^^^^^^^^^^^^^^ required by this bound in `numo::integer::cast::<impl Uint<B, R>>::truncate`
+...
+  | cast_methods!(Uint: UintRepr, Int: IntRepr);
+  | ------------------------------------------- in this macro invocation
+  = note: this error originates in the macro `cast_methods` (in Nightly builds, run with -Z macro-backtrace for more info)
