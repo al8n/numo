@@ -271,8 +271,8 @@ FEATURES
     `saturating_cast_unsigned` and `strict_cast_unsigned` of `Int`, into the integer of the same
     width and the other sign. The strict casts panic in every build with the message of the native
     ones, reporting the caller. The caller of `unchecked_cast` guarantees that `checked_cast` would
-    return `Some`, and the behavior is undefined otherwise. The casts but those between the signs
-    are not `const`: they are generic over the target, whose trait functions a constant context
+    return `Some`, and the behavior is undefined otherwise. Only the casts between the signs are
+    `const`: the others are generic over the target, whose trait functions a constant context
     cannot call.
   - The sealed traits `CheckedCastFrom`, `BoundedCastFrom`, `WidenFrom` and `TruncateFrom`, which
     the target implements, with the functions of the casts, such as `checked_cast_from`, for every

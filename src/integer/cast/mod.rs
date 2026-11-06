@@ -66,9 +66,10 @@ mod sealed {
     /// which is within the range of `Self`. Every value of an integer that may be zero is `Some`.
     fn from_words(word: impl Fn(usize) -> u64) -> Option<Self>;
 
-    /// The value of [`from_words`](Self::from_words), whose `Some` the caller of
-    /// `unchecked_cast_from` guarantees: for an integer that may be zero, the value of
-    /// `wrap_words`, which is that value when the guarantee holds.
+    /// The value that [`from_words`](Self::from_words) returns, which the caller of
+    /// `unchecked_cast_from` guarantees to be `Some`: `wrap_words` for an integer that may be zero.
+    /// The function is safe, so it cannot rely on the guarantee: a type whose `from_words` can
+    /// return `None` checks in every build and panics there.
     fn assume_from_words(word: impl Fn(usize) -> u64) -> Self;
   }
 
