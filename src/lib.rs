@@ -213,13 +213,13 @@
 //! functions without an overflow prefix, [`IntegerBits`], [`UnsignedBits`] and [`SignedBits`] the
 //! bit operations, [`IntegerBytes`], [`ByteArray`], [`FromByteArray`] and [`IntegerByteOrder`] the
 //! bytes, [`CheckedCastFrom`], [`BoundedCastFrom`], [`WidenFrom`] and [`TruncateFrom`], which the
-//! target implements, the casts, also those with the native integers, and [`NativeInteger`],
-//! [`ArrayInteger`] and [`FromLimbs`] the construction of each kind. The bound `B: BitWidth` gives
-//! `Uint<B>` and `Int<B>` [`FixedInteger`] and [`ConstFixedInteger`], the sign traits, the
-//! families, the math traits, the bit traits, [`IntegerBytes`] and the casts; [`IntegerOne`] and
-//! [`ConstIntegerOne`] with a width that holds one; and [`IntegerByteOrder`] with `B: WholeBytes`.
-//! The trait methods are not `const`, so constant contexts call the inherent `const fn`s, which a
-//! concrete type reaches without importing a trait.
+//! target implements, the casts, also those with the native integers and the non-zero integers,
+//! and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`] the construction of each kind. The
+//! bound `B: BitWidth` gives `Uint<B>` and `Int<B>` [`FixedInteger`] and [`ConstFixedInteger`], the
+//! sign traits, the families, the math traits, the bit traits, [`IntegerBytes`] and the casts;
+//! [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one; and [`IntegerByteOrder`]
+//! with `B: WholeBytes`. The trait methods are not `const`, so constant contexts call the inherent
+//! `const fn`s, which a concrete type reaches without importing a trait.
 //!
 //! ```
 //! use numo::{
@@ -309,11 +309,16 @@
 //! the integer. The non-zero integers have the methods of the native `NonZero` integers at the
 //! width as `const fn`s, such as `checked_mul`, `ilog2` and `cast_signed`, the division and the
 //! remainder of a [`Uint`] by a [`NonZeroUint`], which cannot panic, `|`, and the negation of a
-//! [`NonZeroInt`]. Generic code reaches them through traits in two layers, as for the integers:
-//! [`FixedNonZero`], [`UnsignedNonZero`], [`SignedNonZero`] and [`NonZeroLimits`], which every
-//! storage implements, and [`ConstNonZeroLimits`], with the constants `MIN` and `MAX`;
-//! [`IntegerNonZero`] relates an integer to its non-zero integer, and [`IntegerByteOrder`] gives
-//! them the byte order, as it gives the integers.
+//! [`NonZeroInt`]. They convert as the native `NonZero` integers do: `TryFrom` converts the integer
+//! of the same width and storage into a non-zero integer, with the error of the kind `Zero` for
+//! zero, and the conversions with the native `NonZero` integers go by the directions of the
+//! integers with the native integers. The casts take them as sources, into any integer, and as
+//! targets of the casts that check, which return `None` for zero, and of `widen` from a non-zero
+//! integer (see [Conversions](NonZeroUint#conversions)). Generic code reaches them through traits
+//! in two layers, as for the integers: [`FixedNonZero`], [`UnsignedNonZero`], [`SignedNonZero`]
+//! and [`NonZeroLimits`], which every storage implements, and [`ConstNonZeroLimits`], with the
+//! constants `MIN` and `MAX`; [`IntegerNonZero`] relates an integer to its non-zero integer, and
+//! [`IntegerByteOrder`] gives them the byte order, as it gives the integers.
 //!
 //! ```
 //! use numo::{NonZeroOf, NonZeroUint, typenum::U7, u7};
@@ -323,6 +328,11 @@
 //! assert_eq!(parts.checked_mul(&parts).map(|square| square.get()), Some(u7::new(16)));
 //! assert_eq!(NonZeroOf::<u7>::new(u7::ZERO), None);
 //! assert_eq!(size_of::<Option<NonZeroOf<u7>>>(), 1);
+//!
+//! // The conversions and the casts, into and from a non-zero integer.
+//! assert_eq!(NonZeroOf::<u7>::try_from(u7::new(4)), Ok(parts));
+//! assert_eq!(u7::ZERO.checked_cast::<NonZeroOf<u7>>(), None);
+//! assert_eq!(parts.widen::<u64>(), 4);
 //! ```
 //!
 //! # `typenum`

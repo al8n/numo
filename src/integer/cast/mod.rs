@@ -166,17 +166,24 @@ mod sealed {
 ///
 /// | Target | Source | Checked at compile time |
 /// |---|---|---|
-/// | [`Uint`] and [`Int`] of every width and storage, and the native integers, `u8` to `u128`, `i8` to `i128`, `usize` and `isize` | the same | nothing |
+/// | [`Uint`] and [`Int`] of every width and storage, and the native integers, `u8` to `u128`, `i8` to `i128`, `usize` and `isize` | the same, [`NonZeroUint`] and [`NonZeroInt`] of every width and storage, and the native `NonZero` integers | nothing |
+/// | [`NonZeroUint`] and [`NonZeroInt`] of every width and storage, and the native `NonZero` integers | the same as above | nothing |
 ///
 /// A value converts if it is in the range of `Self`: from zero to `2^Bits - 1` for [`Uint`], from
 /// `-2^(Bits - 1)` to `2^(Bits - 1) - 1` for [`Int`], with zero bits holding only zero and one
-/// signed bit -1 and 0, and the range of a native integer. A path through a native integer, such as
+/// signed bit -1 and 0, and the range of a native integer. A non-zero integer has the range of its
+/// integer but takes no zero, for which the strict cast panics with the text of the error of the
+/// kind `Zero` of the native conversions. A path through a native integer, such as
 /// `u8::checked_cast_from(x)`, finds this trait while the trait of the native casts, still
 /// unstable, is not in scope; once it is stable and both are in scope, the path names this trait,
 /// as in `<u8 as CheckedCastFrom<_>>::checked_cast_from(x)`.
 ///
 /// ```
-/// use numo::{CheckedCastFrom, Int, i7, typenum::U200, u7};
+/// use numo::{
+///   CheckedCastFrom, Int, NonZeroUint, i7,
+///   typenum::{U7, U200},
+///   u7,
+/// };
 ///
 /// // A native integer converts to a numo integer and back.
 /// assert_eq!(u7::checked_cast_from(100u64), Some(u7::new(100)));
@@ -192,6 +199,10 @@ mod sealed {
 /// assert_eq!(wide.to_string(), "127");
 /// assert_eq!(u7::checked_cast_from(wide), Some(u7::MAX));
 /// assert_eq!(u7::checked_cast_from(-wide), None);
+///
+/// // A non-zero integer takes no zero.
+/// assert_eq!(NonZeroUint::<U7>::checked_cast_from(0u8), None);
+/// assert_eq!(u8::checked_cast_from(NonZeroUint::<U7>::MAX), Some(127));
 ///
 /// // Generic code bounds the target.
 /// fn narrow<T: CheckedCastFrom<u64>>(values: &[u64]) -> Option<Vec<T>> {
@@ -241,19 +252,23 @@ pub trait CheckedCastFrom<S>: CastPair<S> + Sized {
 ///
 /// | Target | Source | Checked at compile time |
 /// |---|---|---|
-/// | [`Uint`] and [`Int`] of every width and storage, and the native integers, `u8` to `u128`, `i8` to `i128`, `usize` and `isize` | the same | nothing |
+/// | [`Uint`] and [`Int`] of every width and storage, and the native integers, `u8` to `u128`, `i8` to `i128`, `usize` and `isize` | the same, [`NonZeroUint`] and [`NonZeroInt`] of every width and storage, and the native `NonZero` integers | nothing |
 ///
 /// The wrapping cast takes the value modulo `2^Bits` of `Self` and reads it in two's complement for
 /// a signed `Self`, at every width: -1 of 7 bits wraps to 255 in a `u8`, and 300 to 44 in 7 bits.
-/// The saturating cast takes the value, or the bound of the range of `Self` that it passes.
+/// The saturating cast takes the value, or the bound of the range of `Self` that it passes. Either
+/// may give zero, so a non-zero integer is not a target.
 ///
 /// ```
+/// use core::num::NonZero;
+///
 /// use numo::{BoundedCastFrom, Int, i7, typenum::U12, u7};
 ///
-/// // A wrapping cast keeps the low bits of the value.
+/// // A wrapping cast keeps the low bits of the value, which may all be zero.
 /// assert_eq!(u7::wrapping_cast_from(300u16), u7::new(44));
 /// assert_eq!(u8::wrapping_cast_from(i7::new(-1)), 255);
 /// assert_eq!(i7::wrapping_cast_from(64u8), i7::MIN);
+/// assert_eq!(u8::wrapping_cast_from(NonZero::<u16>::new(256).unwrap()), 0);
 ///
 /// // A saturating cast takes the bound of the range that the value passes.
 /// assert_eq!(u7::saturating_cast_from(-5i32), u7::ZERO);
@@ -282,20 +297,28 @@ pub trait BoundedCastFrom<S>: CheckedCastFrom<S> {
 /// as wide as, which the compiler checks: the widening of the native integers, still unstable
 /// ([#154330](https://github.com/rust-lang/rust/issues/154330)).
 ///
-/// The target implements this trait for the pairs whose widths and signs the bounds accept:
+/// The target implements this trait for the pairs whose widths, signs and kinds the bounds accept:
 ///
 /// | Target | Source | Checked at compile time |
 /// |---|---|---|
-/// | [`Uint`], `u8` to `u128` | [`Uint`], `u8` to `u128` | the target is at least as wide as the source |
-/// | [`Int`], `i8` to `i128` | [`Int`], `i8` to `i128` | the target is at least as wide as the source |
-/// | `usize` | [`Uint`] and `u8` to `u128` of at most 16 bits, and `usize` | the source has at most 16 bits |
-/// | `isize` | [`Int`] and `i8` to `i128` of at most 16 bits, and `isize` | the source has at most 16 bits |
+/// | [`Uint`], `u8` to `u128` | [`Uint`], [`NonZeroUint`], `u8` to `u128` and their `NonZero` | the target is at least as wide as the source |
+/// | [`Int`], `i8` to `i128` | [`Int`], [`NonZeroInt`], `i8` to `i128` and their `NonZero` | the target is at least as wide as the source |
+/// | [`NonZeroUint`], `NonZero<u8>` to `NonZero<u128>` | [`NonZeroUint`], `NonZero<u8>` to `NonZero<u128>` | the target is at least as wide as the source |
+/// | [`NonZeroInt`], `NonZero<i8>` to `NonZero<i128>` | [`NonZeroInt`], `NonZero<i8>` to `NonZero<i128>` | the target is at least as wide as the source |
+/// | `usize` | [`Uint`], [`NonZeroUint`], and `u8` to `u128` and their `NonZero`, of at most 16 bits, `usize` and `NonZero<usize>` | the source has at most 16 bits |
+/// | `isize` | [`Int`], [`NonZeroInt`], and `i8` to `i128` and their `NonZero`, of at most 16 bits, `isize` and `NonZero<isize>` | the source has at most 16 bits |
+/// | `NonZero<usize>` | [`NonZeroUint`] and `NonZero<u8>` to `NonZero<u128>` of at most 16 bits, and `NonZero<usize>` | the source has at most 16 bits |
+/// | `NonZero<isize>` | [`NonZeroInt`] and `NonZero<i8>` to `NonZero<i128>` of at most 16 bits, and `NonZero<isize>` | the source has at most 16 bits |
 ///
 /// `usize` and `isize` have at least 16 bits, and no fixed upper bound: as targets they count as
-/// 16 bits, and as sources they widen only into themselves, as for the native `widen`. A pair of
-/// another width or sign fails to compile; the casts of [`CheckedCastFrom`] convert it.
+/// 16 bits, and as sources they widen only into themselves, as for the native `widen`; their
+/// `NonZero` do the same, and also widen into `usize` and `isize`. A non-zero integer takes only a
+/// non-zero source, as the native `From` converts between the `NonZero` integers. A pair of another
+/// width, sign or kind fails to compile; the casts of [`CheckedCastFrom`] convert it.
 ///
 /// ```
+/// use core::num::NonZero;
+///
 /// use numo::{
 ///   Int, Uint, WidenFrom, i7,
 ///   typenum::{U16, U200},
@@ -307,6 +330,11 @@ pub trait BoundedCastFrom<S>: CheckedCastFrom<S> {
 /// assert_eq!(Int::<U200>::widen_from(-5i64).to_string(), "-5");
 /// // `usize` holds at least 16 bits.
 /// assert_eq!(usize::widen_from(Uint::<U16>::MAX), 65535);
+/// // A non-zero integer widens into a non-zero integer, as the native `From` converts it, and
+/// // into an integer.
+/// let max = NonZero::<u8>::MAX;
+/// assert_eq!(NonZero::<u16>::widen_from(max), NonZero::<u16>::from(max));
+/// assert_eq!(u16::widen_from(max), 255);
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
@@ -324,16 +352,19 @@ pub trait WidenFrom<S>: CastPair<S> + Sized {
 ///
 /// | Target | Source | Checked at compile time |
 /// |---|---|---|
-/// | [`Uint`], `u8` to `u128` | [`Uint`], `u8` to `u128` and `usize` | the target is at most as wide as the source, `usize` counting as 16 bits |
-/// | [`Int`], `i8` to `i128` | [`Int`], `i8` to `i128` and `isize` | the target is at most as wide as the source, `isize` counting as 16 bits |
-/// | `usize` | `usize` | nothing |
-/// | `isize` | `isize` | nothing |
+/// | [`Uint`], `u8` to `u128` | [`Uint`], [`NonZeroUint`], `u8` to `u128` and `usize`, and their `NonZero` | the target is at most as wide as the source, `usize` counting as 16 bits |
+/// | [`Int`], `i8` to `i128` | [`Int`], [`NonZeroInt`], `i8` to `i128` and `isize`, and their `NonZero` | the target is at most as wide as the source, `isize` counting as 16 bits |
+/// | `usize` | `usize` and `NonZero<usize>` | nothing |
+/// | `isize` | `isize` and `NonZero<isize>` | nothing |
 ///
 /// `usize` and `isize` have at least 16 bits, and no fixed upper bound: as sources they count as 16
-/// bits, and as targets they take only themselves, as for the native `truncate`. The methods are
-/// those of [`BoundedCastFrom`] and [`CheckedCastFrom`] restricted to these pairs.
+/// bits, and as targets they take only themselves, as for the native `truncate`, and their
+/// `NonZero`. A non-zero integer is a source and not a target, as a truncated value may be zero.
+/// The methods are those of [`BoundedCastFrom`] and [`CheckedCastFrom`] restricted to these pairs.
 ///
 /// ```
+/// use core::num::NonZero;
+///
 /// use numo::{Int, TruncateFrom, typenum::U12, u7};
 ///
 /// assert_eq!(u7::truncate_from(300u16), u7::new(44));
@@ -341,6 +372,7 @@ pub trait WidenFrom<S>: CastPair<S> + Sized {
 /// assert_eq!(u7::saturating_truncate_from(300u16), u7::MAX);
 /// assert_eq!(i8::truncate_from(Int::<U12>::new(-2000)), 48);
 /// assert_eq!(u8::truncate_from(300usize), 44);
+/// assert_eq!(u8::checked_truncate_from(NonZero::<u16>::MAX), None);
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
