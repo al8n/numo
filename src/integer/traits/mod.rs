@@ -34,6 +34,7 @@ pub(super) use sealed::Sealed;
 
 use super::{
   Int, NonZeroInt, NonZeroUint, TryNewError, Uint,
+  bytes::strict_limbs_slice,
   nonzero::{Parts, Saturated, parse_signed, parse_unsigned, zero, zero_value},
   text::check_radix,
 };
@@ -467,6 +468,9 @@ pub trait ArrayInteger: Sealed + Sized {
   /// The array of limbs, `Repr`.
   type Array;
 
+  /// The type of a limb, `L` of the array `[L; N]`.
+  type Limb;
+
   /// Creates an integer from its limbs, least significant first, or returns `None` if they do not
   /// hold a value of `Bits` bits.
   fn checked_from_limbs(limbs: Self::Array) -> Option<Self>;
@@ -476,6 +480,39 @@ pub trait ArrayInteger: Sealed + Sized {
 
   /// Borrows the limbs of the value, least significant first.
   fn as_limbs(&self) -> &Self::Array;
+
+  /// Creates an integer from the integer in `limbs`, least significant limb first, of any length,
+  /// unsigned for `Uint` and in two's complement for `Int`, whose sign is the top bit of the last
+  /// limb, or returns `None` if it is outside the range of `Bits` bits.
+  #[must_use]
+  fn checked_from_limbs_slice(limbs: &[Self::Limb]) -> Option<Self>;
+
+  /// Creates an integer from the integer in `limbs`, least significant limb first, read as
+  /// [`checked_from_limbs_slice`](Self::checked_from_limbs_slice) reads it, modulo `2^Bits`.
+  #[must_use]
+  fn wrapping_from_limbs_slice(limbs: &[Self::Limb]) -> Self;
+
+  /// Creates an integer from the integer in `limbs`, least significant limb first, read as
+  /// [`checked_from_limbs_slice`](Self::checked_from_limbs_slice) reads it, modulo `2^Bits`, and
+  /// returns whether that integer is outside the range of `Bits` bits.
+  #[must_use]
+  fn overflowing_from_limbs_slice(limbs: &[Self::Limb]) -> (Self, bool);
+
+  /// Creates an integer from the integer in `limbs`, least significant limb first, read as
+  /// [`checked_from_limbs_slice`](Self::checked_from_limbs_slice) reads it, or the bound of the
+  /// range of `Bits` bits that it passes: `MAX` above the range, and `MIN` below it.
+  #[must_use]
+  fn saturating_from_limbs_slice(limbs: &[Self::Limb]) -> Self;
+
+  /// Creates an integer from the integer in `limbs`, least significant limb first, read as
+  /// [`checked_from_limbs_slice`](Self::checked_from_limbs_slice) reads it.
+  ///
+  /// # Panics
+  ///
+  /// Panics if that integer is outside the range of `Bits` bits, reporting the caller.
+  #[must_use]
+  #[track_caller]
+  fn strict_from_limbs_slice(limbs: &[Self::Limb]) -> Self;
 }
 
 /// An integer stored in an array of limbs that its width fills, so that every bit pattern is a
@@ -1242,12 +1279,16 @@ impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: InlineIntRepr> ConstInteg
   const ONE: Self = Self::ONE;
 }
 
+// The conversions from slices call the readers of limbs of the sealed storage traits, whose slices
+// hold `L` for every array, also in this code generic over `L`.
 impl<B, L, const N: usize> ArrayInteger for Uint<B, [L; N]>
 where
   B: FitsBits<[L; N]>,
   [L; N]: InlineUintRepr,
 {
   type Array = [L; N];
+
+  type Limb = L;
 
   #[inline]
   fn checked_from_limbs(limbs: [L; N]) -> Option<Self> {
@@ -1267,6 +1308,49 @@ where
   fn as_limbs(&self) -> &[L; N] {
     &self.repr
   }
+
+  #[inline]
+  fn checked_from_limbs_slice(limbs: &[L]) -> Option<Self> {
+    <[L; N] as UintCore>::checked_read_limbs(limbs, B::U32, Token::new()).map(Self::wrap)
+  }
+
+  #[inline]
+  fn wrapping_from_limbs_slice(limbs: &[L]) -> Self {
+    Self::wrap(<[L; N] as UintCore>::wrapping_read_limbs(
+      limbs,
+      B::U32,
+      Token::new(),
+    ))
+  }
+
+  #[inline]
+  fn overflowing_from_limbs_slice(limbs: &[L]) -> (Self, bool) {
+    match <Self as ArrayInteger>::checked_from_limbs_slice(limbs) {
+      Some(value) => (value, false),
+      None => (
+        <Self as ArrayInteger>::wrapping_from_limbs_slice(limbs),
+        true,
+      ),
+    }
+  }
+
+  #[inline]
+  fn saturating_from_limbs_slice(limbs: &[L]) -> Self {
+    Self::wrap(<[L; N] as UintCore>::saturating_read_limbs(
+      limbs,
+      B::U32,
+      Token::new(),
+    ))
+  }
+
+  #[inline]
+  #[track_caller]
+  fn strict_from_limbs_slice(limbs: &[L]) -> Self {
+    match <Self as ArrayInteger>::checked_from_limbs_slice(limbs) {
+      Some(value) => value,
+      None => strict_limbs_slice(),
+    }
+  }
 }
 
 impl<B, L, const N: usize> ArrayInteger for Int<B, [L; N]>
@@ -1275,6 +1359,8 @@ where
   [L; N]: InlineIntRepr,
 {
   type Array = [L; N];
+
+  type Limb = L;
 
   #[inline]
   fn checked_from_limbs(limbs: [L; N]) -> Option<Self> {
@@ -1293,6 +1379,49 @@ where
   #[inline]
   fn as_limbs(&self) -> &[L; N] {
     &self.repr
+  }
+
+  #[inline]
+  fn checked_from_limbs_slice(limbs: &[L]) -> Option<Self> {
+    <[L; N] as IntCore>::checked_read_limbs(limbs, B::U32, Token::new()).map(Self::wrap)
+  }
+
+  #[inline]
+  fn wrapping_from_limbs_slice(limbs: &[L]) -> Self {
+    Self::wrap(<[L; N] as IntCore>::wrapping_read_limbs(
+      limbs,
+      B::U32,
+      Token::new(),
+    ))
+  }
+
+  #[inline]
+  fn overflowing_from_limbs_slice(limbs: &[L]) -> (Self, bool) {
+    match <Self as ArrayInteger>::checked_from_limbs_slice(limbs) {
+      Some(value) => (value, false),
+      None => (
+        <Self as ArrayInteger>::wrapping_from_limbs_slice(limbs),
+        true,
+      ),
+    }
+  }
+
+  #[inline]
+  fn saturating_from_limbs_slice(limbs: &[L]) -> Self {
+    Self::wrap(<[L; N] as IntCore>::saturating_read_limbs(
+      limbs,
+      B::U32,
+      Token::new(),
+    ))
+  }
+
+  #[inline]
+  #[track_caller]
+  fn strict_from_limbs_slice(limbs: &[L]) -> Self {
+    match <Self as ArrayInteger>::checked_from_limbs_slice(limbs) {
+      Some(value) => value,
+      None => strict_limbs_slice(),
+    }
   }
 }
 

@@ -1,9 +1,10 @@
 //! The bytes and the byte order of `Uint` and `Int`: the arrays of bytes in each order and the
-//! conversions back from them, checked and at whole bytes, the checked and wrapping conversions
-//! from slices, the copies to a buffer and the byte at an index, against the bit model at every
-//! width up to 24 bits and at wider ones; the number of bytes up to the widest widths; the reversal
-//! of the bytes and the conversions of the byte order at widths of whole bytes; the panics of a
-//! short buffer and of a byte index; constant contexts; and zero bits and one signed bit.
+//! conversions back from them, checked and at whole bytes, the checked, wrapping, overflowing,
+//! saturating and strict conversions from slices, the copies to a buffer and the byte at an index,
+//! against the bit model at every width up to 24 bits and at wider ones; the number of bytes up to
+//! the widest widths; the reversal of the bytes and the conversions of the byte order at widths of
+//! whole bytes; the panics of a short buffer, of a byte index and of a strict slice; constant
+//! contexts; and zero bits and one signed bit.
 
 use typenum::{
   U3, U4, U5, U6, U10, U11, U12, U13, U14, U15, U17, U18, U19, U20, U21, U22, U23, U201, U8192,
@@ -74,11 +75,13 @@ macro_rules! check_arrays {
 
 /// Checks the slices, the copies and the bytes of `$x`, a value of `$ty` whose pattern is `$p`,
 /// of the width of `$ty`, read in two's complement if `$signed`, through the inherent `const fn`s,
-/// against the bit model: the checked and wrapping conversions from each slice of
-/// `bigint::byte_slices`, least significant byte first and reversed, whose results `$read` reads,
-/// the wrapping one returning the value of the checked one wherever that returns one; the copies
-/// to buffers of the bytes of the value, two more and one less, whose other bytes stay as they
-/// were; and the byte at each index.
+/// against the bit model: the conversions from each slice of `bigint::byte_slices`, least
+/// significant byte first and reversed, whose results `$read` reads: the checked and the wrapping
+/// ones, the wrapping one returning the value of the checked one wherever that returns one, and the
+/// overflowing, saturating and strict ones, which return the wrapped value with whether the checked
+/// one returns `None`, the checked value or the bound of the range that the integer passes, and
+/// the checked value where there is one; the copies to buffers of the bytes of the value, two more
+/// and one less, whose other bytes stay as they were; and the byte at each index.
 macro_rules! check_slices {
   ($ty:ty, $x:expr, $p:expr, $signed:expr, $read:expr) => {{
     let (x, p, signed): ($ty, &[bool], bool) = ($x, $p, $signed);
@@ -89,6 +92,8 @@ macro_rules! check_slices {
       let q = model::of_le_bytes(&slice);
       let checked = model::fit(&q, width, signed).map(|r| read(&r));
       let wrapped = read(&model::wrap(&q, width, signed));
+      let negative = signed && model::sign(&q);
+      let saturated = checked.unwrap_or_else(|| read(&bound_pattern(width, signed, negative)));
       let reversed: Vec<u8> = slice.iter().rev().copied().collect();
       let reads = [
         (
@@ -105,6 +110,30 @@ macro_rules! check_slices {
         if let Some(value) = checked {
           assert_eq!(wrapped, value, "{slice:x?} at {width} bits");
         }
+      }
+      assert_eq!(
+        [
+          (
+            <$ty>::overflowing_from_le_slice(&slice),
+            <$ty>::saturating_from_le_slice(&slice),
+          ),
+          (
+            <$ty>::overflowing_from_be_slice(&reversed),
+            <$ty>::saturating_from_be_slice(&reversed),
+          ),
+        ],
+        [((wrapped, checked.is_none()), saturated); 2],
+        "{slice:x?} at {width} bits"
+      );
+      if let Some(value) = checked {
+        assert_eq!(
+          (
+            <$ty>::strict_from_le_slice(&slice),
+            <$ty>::strict_from_be_slice(&reversed),
+          ),
+          (value, value),
+          "{slice:x?} at {width} bits"
+        );
       }
     }
     let le = model::le_bytes(p, size, signed);
@@ -235,6 +264,10 @@ struct ArrayResults<T> {
   from_arrays: [Option<T>; 3],
 }
 
+/// What the overflowing, the saturating and the strict conversion from a slice give, the last only
+/// where the checked conversion returns a value, as it panics elsewhere.
+type Forms<T> = ((T, bool), T, Option<T>);
+
 /// What the slices, the copies and the bytes of a value give at some slices and at the buffers of
 /// [`buffer_lengths`], through the inherent `const fn`s in `slice_results!` and through
 /// `IntegerBytes` in [`slices_through_traits`], which must agree.
@@ -243,6 +276,9 @@ struct SliceResults<T> {
   /// At each slice, `checked_from_le_slice` and `wrapping_from_le_slice`, and the same of the
   /// reversed slice from big-endian.
   reads: Vec<[(Option<T>, T); 2]>,
+  /// At each slice, the [`Forms`] of `overflowing_from_le_slice`, `saturating_from_le_slice` and
+  /// `strict_from_le_slice`, and the same of the reversed slice from big-endian.
+  forms: Vec<[Forms<T>; 2]>,
   /// At each buffer, `checked_copy_le_bytes_to` and `checked_copy_be_bytes_to`, with the buffers
   /// that they leave.
   copies: Vec<[(Option<usize>, Vec<u8>); 2]>,
@@ -305,6 +341,25 @@ macro_rules! slice_results {
           ]
         })
         .collect(),
+      forms: slices
+        .iter()
+        .map(|slice| {
+          let reversed: Vec<u8> = slice.iter().rev().copied().collect();
+          let fits = <$ty>::checked_from_le_slice(slice).is_some();
+          [
+            (
+              <$ty>::overflowing_from_le_slice(slice),
+              <$ty>::saturating_from_le_slice(slice),
+              fits.then(|| <$ty>::strict_from_le_slice(slice)),
+            ),
+            (
+              <$ty>::overflowing_from_be_slice(&reversed),
+              <$ty>::saturating_from_be_slice(&reversed),
+              fits.then(|| <$ty>::strict_from_be_slice(&reversed)),
+            ),
+          ]
+        })
+        .collect(),
       copies: buffer_lengths(<$ty>::BYTES)
         .into_iter()
         .map(|len| {
@@ -335,6 +390,25 @@ fn slices_through_traits<T: IntegerBytes>(x: &T, slices: &[Vec<u8>]) -> SliceRes
           (
             T::checked_from_be_slice(&reversed),
             T::wrapping_from_be_slice(&reversed),
+          ),
+        ]
+      })
+      .collect(),
+    forms: slices
+      .iter()
+      .map(|slice| {
+        let reversed: Vec<u8> = slice.iter().rev().copied().collect();
+        let fits = T::checked_from_le_slice(slice).is_some();
+        [
+          (
+            T::overflowing_from_le_slice(slice),
+            T::saturating_from_le_slice(slice),
+            fits.then(|| T::strict_from_le_slice(slice)),
+          ),
+          (
+            T::overflowing_from_be_slice(&reversed),
+            T::saturating_from_be_slice(&reversed),
+            fits.then(|| T::strict_from_be_slice(&reversed)),
           ),
         ]
       })
@@ -964,9 +1038,32 @@ fn short_buffers_and_byte_indexes_panic() {
   }
 }
 
+/// `strict_from_le_slice` and `strict_from_be_slice`, inherent and through `IntegerBytes`, panic in
+/// every build on bytes that hold an integer outside the range of the width, with their messages,
+/// and report the caller: above the range and below it, in native integers and arrays, and at zero
+/// bits.
+#[test]
+fn strict_slices_panic_outside_the_range() {
+  let le = "strict_from_le_slice: the bytes hold a value outside the range of the integer";
+  let be = "strict_from_be_slice: the bytes hold a value outside the range of the integer";
+  let (le, be) = (le.to_string(), be.to_string());
+  type I24 = Int<U24, [u8; 3]>;
+  type W = u256;
+  panics_here!(u7::strict_from_le_slice(&[0x80]), le);
+  panics_here!(u7::strict_from_be_slice(&[1, 0]), be);
+  panics_here!(<u7 as IntegerBytes>::strict_from_le_slice(&[0, 1]), le);
+  panics_here!(<u7 as IntegerBytes>::strict_from_be_slice(&[0xff]), be);
+  panics_here!(I24::strict_from_le_slice(&[0xff, 0xff, 0x7f, 0xff]), le);
+  panics_here!(<I24 as IntegerBytes>::strict_from_be_slice(&[1; 4]), be);
+  panics_here!(i256::strict_from_be_slice(&[0x80; 33]), be);
+  panics_here!(<W as IntegerBytes>::strict_from_le_slice(&[1; 33]), le);
+  panics_here!(u0::strict_from_le_slice(&[1]), le);
+  panics_here!(<i0 as IntegerBytes>::strict_from_be_slice(&[0x80]), be);
+}
+
 /// The byte methods in constant contexts, in native integers and arrays, at zero bits and at one
-/// signed bit: the arrays and the conversions from them, the slices, a copy to a local buffer, the
-/// byte at an index and the byte order.
+/// signed bit: the arrays and the conversions from them, the slices in every form, a copy to a
+/// local buffer, the byte at an index and the byte order.
 #[test]
 fn bytes_in_constant_contexts() {
   type Bytes = Int<U24, [u8; 3]>;
@@ -1014,6 +1111,14 @@ fn bytes_in_constant_contexts() {
   );
   const ZERO_BITS: (u0, Option<i0>) = (u0::from_le_bytes([]), i0::checked_from_le_slice(&[0, 0]));
   const ONE_BIT: ([u8; 1], Option<i1>) = (i1::MIN.to_le_bytes(), i1::checked_from_le_bytes([1]));
+  const FORMS: ((I12, bool), I12, I12, (u7, bool), u7, u7) = (
+    I12::overflowing_from_le_slice(&[0xff, 0x0f]),
+    I12::saturating_from_be_slice(&[0x80, 0]),
+    I12::strict_from_le_slice(&[0x80]),
+    u7::overflowing_from_be_slice(&[1, 0]),
+    u7::saturating_from_le_slice(&[0x80]),
+    u7::strict_from_be_slice(&[0, 0x7f]),
+  );
 
   assert_eq!(SIZES, [0, 1, 2, 3, 32]);
   assert_eq!(ARRAYS, ([0xc0], [0x0f, 0xff], [0, 0, 0x80], []));
@@ -1034,13 +1139,26 @@ fn bytes_in_constant_contexts() {
   assert_eq!(ORDER, (Int::<U24, i32>::new(0x03_0201), to_big, to_big));
   assert_eq!(ZERO_BITS, (u0::ZERO, Some(i0::ZERO)));
   assert_eq!(ONE_BIT, ([0xff], None));
+  // 4095 wraps to -1 in 12 bits, -32768 saturates to `MIN`, and 256 wraps to zero in 7 bits.
+  assert_eq!(
+    FORMS,
+    (
+      (I12::new(-1), true),
+      I12::MIN,
+      I12::new(-128),
+      (u7::ZERO, true),
+      u7::MAX,
+      u7::MAX
+    )
+  );
 }
 
 /// Zero bits hold only zero: no bytes, an array of none, from which zero reads back, a reversal
 /// that gives zero, copies that write nothing, empty and zero slices that read as zero, and slices
-/// of another value, 1 or -1, that do not fit, in native integers and arrays. One signed bit holds
-/// -1 and 0: -1 is `[0xff]`, `[0x01]` holds no value of it, and the wrapping slices reduce modulo
-/// 2 into the range.
+/// of another value, 1 or -1, that do not fit and saturate to zero, in native integers and arrays.
+/// One signed bit holds -1 and 0: -1 is `[0xff]`, `[0x01]` holds no value of it, the wrapping and
+/// overflowing slices reduce modulo 2 into the range, and the saturating ones give -1 below it and
+/// zero above it.
 #[test]
 fn zero_bits_and_one_signed_bit() {
   macro_rules! zero_bits {
@@ -1071,11 +1189,29 @@ fn zero_bits_and_one_signed_bit() {
           (Some(zero), zero),
           "{slice:x?}"
         );
+        assert_eq!(
+          (
+            T::overflowing_from_be_slice(slice),
+            T::saturating_from_le_slice(slice),
+            T::strict_from_be_slice(slice),
+          ),
+          ((zero, false), zero, zero),
+          "{slice:x?}"
+        );
       }
       for slice in [&[1][..], &[0xff][..], &[0, 0x80][..]] {
         assert_eq!(
           (T::checked_from_le_slice(slice), T::wrapping_from_le_slice(slice)),
           (None, zero),
+          "{slice:x?}"
+        );
+        // Zero bits hold only zero, which is both bounds.
+        assert_eq!(
+          (
+            T::overflowing_from_le_slice(slice),
+            T::saturating_from_be_slice(slice),
+          ),
+          ((zero, true), zero),
           "{slice:x?}"
         );
       }
@@ -1124,6 +1260,27 @@ fn zero_bits_and_one_signed_bit() {
         (T::checked_from_le_slice(&[0xff, 0xff]), T::checked_from_be_slice(&[0, 1])),
         (Some(min), None)
       );
+      // 1 and 2 are above the range, whose largest value is zero, and -128 below it.
+      for (slice, overflowing, saturated) in [
+        (&[0xff, 0xff][..], (min, false), min),
+        (&[0x01][..], (min, true), zero),
+        (&[0x02][..], (zero, true), zero),
+        (&[0x80][..], (zero, true), min),
+        (&[][..], (zero, false), zero),
+      ] {
+        assert_eq!(
+          (
+            T::overflowing_from_le_slice(slice),
+            T::saturating_from_le_slice(slice),
+          ),
+          (overflowing, saturated),
+          "{slice:x?}"
+        );
+      }
+      assert_eq!(
+        (T::strict_from_le_slice(&[0xff]), T::strict_from_be_slice(&[0, 0])),
+        (min, zero)
+      );
       assert_eq!((min.byte(0), zero.byte(0)), (0xff, 0));
     })+};
   }
@@ -1145,6 +1302,7 @@ fn byte_traits_need_no_inline_storage() {
         a.byte(0),
         Uint::<B, R>::checked_from_be_slice(&[1, 2]),
         Uint::<B, R>::wrapping_from_le_slice(&[0xff; 40]),
+        Uint::<B, R>::saturating_from_le_slice(&[0xff; 40]),
         written,
         buf,
       )
@@ -1181,6 +1339,7 @@ fn byte_traits_need_no_inline_storage() {
           a.byte(0),
           <$ty>::checked_from_be_slice(&[1, 2]),
           <$ty>::wrapping_from_le_slice(&[0xff; 40]),
+          <$ty>::saturating_from_le_slice(&[0xff; 40]),
           written,
           buf,
         )

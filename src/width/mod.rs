@@ -338,6 +338,10 @@ mod sealed {
     /// modulo `2^bits`. Requires `bits` to be at most the bits of the storage.
     fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Self;
 
+    /// The integer in `bytes`, read as [`checked_read_bytes`](Self::checked_read_bytes) reads it,
+    /// or `2^bits - 1` if it is above that. Requires `bits` to be at most the bits of the storage.
+    fn saturating_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Self;
+
     /// The byte of the storage at `index`, its bits from `8 * index` to `8 * index + 7`. Requires
     /// `index` to be below the bytes of the storage.
     fn byte_at(&self, index: usize, token: Token) -> u8;
@@ -659,6 +663,12 @@ mod sealed {
     /// reduced modulo `2^bits` into the range of `bits` bits. Requires `bits` to be at most the
     /// bits of the storage.
     fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Self;
+
+    /// The integer in `bytes`, read as [`checked_read_bytes`](Self::checked_read_bytes) reads it,
+    /// or the bound of the range of `bits` bits that it passes: the smallest value below the range,
+    /// which only a negative integer is, and the largest above it. Requires `bits` to be at most
+    /// the bits of the storage.
+    fn saturating_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Self;
 
     /// The byte of the storage at `index`, its bits from `8 * index` to `8 * index + 7`, which
     /// copy the sign from the width up. Requires `index` to be below the bytes of the storage.
@@ -1309,6 +1319,11 @@ macro_rules! array_storage {
       }
 
       #[inline]
+      fn saturating_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, _: Token) -> Self {
+        unsigned::$lower::saturating_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
       fn byte_at(&self, index: usize, _: Token) -> u8 {
         unsigned::$lower::byte_at(self, index)
       }
@@ -1704,6 +1719,11 @@ macro_rules! array_storage {
       #[inline]
       fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, _: Token) -> Self {
         signed::$upper::wrapping_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn saturating_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, _: Token) -> Self {
+        signed::$upper::saturating_read_bytes(bytes, big_endian, bits)
       }
 
       #[inline]
@@ -2178,6 +2198,11 @@ macro_rules! native_storage {
       }
 
       #[inline]
+      fn saturating_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, _: Token) -> Self {
+        int::$uint::saturating_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
       fn byte_at(&self, index: usize, _: Token) -> u8 {
         int::$uint::byte_at(*self, index)
       }
@@ -2565,6 +2590,11 @@ macro_rules! native_storage {
       #[inline]
       fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, _: Token) -> Self {
         int::$int::wrapping_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn saturating_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, _: Token) -> Self {
+        int::$int::saturating_read_bytes(bytes, big_endian, bits)
       }
 
       #[inline]

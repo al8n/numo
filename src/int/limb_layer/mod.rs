@@ -1726,6 +1726,20 @@ macro_rules! limb_layer {
       zero_extend(&read_bytes(bytes, big_endian, 0), bits)
     }
 
+    /// The integer in `bytes`, read as [`checked_read_bytes`] reads it, or `2^bits - 1`, the
+    /// largest value of `bits` bits, if it is above that. Requires `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn saturating_read_bytes<const N: usize>(
+      bytes: &[u8],
+      big_endian: bool,
+      bits: u32,
+    ) -> [Limb; N] {
+      match checked_read_bytes(bytes, big_endian, bits) {
+        Some(value) => value,
+        None => max_of_bits(bits),
+      }
+    }
+
     /// The low `bits / 8` bytes of `value` in reverse order: the limbs that hold the width,
     /// reversed limb by limb and byte by byte, hold them above the bytes of the top limb that are
     /// above the width, which a shift removes. Requires `bits` to be a multiple of 8,
@@ -2952,6 +2966,21 @@ macro_rules! limb_layer {
     ) -> [Limb; N] {
       let fill = slice::fill(bytes, big_endian, true);
       sign_extend(&$unsigned::read_bytes(bytes, big_endian, fill), bits)
+    }
+
+    /// The integer in `bytes`, read as [`checked_read_bytes`] reads it, or the bound of the range
+    /// of `bits` bits that it passes: the smallest value below the range, which only a negative
+    /// integer is, and the largest above it. Requires `bits <= B * N`.
+    pub(crate) const fn saturating_read_bytes<const N: usize>(
+      bytes: &[u8],
+      big_endian: bool,
+      bits: u32,
+    ) -> [Limb; N] {
+      match checked_read_bytes(bytes, big_endian, bits) {
+        Some(value) => value,
+        None if slice::fill(bytes, big_endian, true) != 0 => min_of_bits(bits),
+        None => max_of_bits(bits),
+      }
     }
 
     /// The low `bits / 8` bytes of `value` in reverse order, read in two's complement: the old
