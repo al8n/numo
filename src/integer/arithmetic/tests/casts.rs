@@ -197,7 +197,7 @@ pub(super) fn samples<T: Model>() -> Vec<T> {
 /// Checks the casts into `T` of each value of `samples` through `CheckedCastFrom` and
 /// `BoundedCastFrom` against the bit model: the checked, strict, wrapping and saturating casts, and
 /// the unchecked cast of each value that `T` holds.
-fn check_cast<S: Model, T: Model + BoundedCastFrom<S>>(samples: &[S]) {
+pub(super) fn check_cast<S: Model, T: Model + BoundedCastFrom<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T>(value);
     let name = || format!("{value:?} into {}", type_name::<T>());
@@ -226,7 +226,7 @@ fn check_cast<S: Model, T: Model + BoundedCastFrom<S>>(samples: &[S]) {
 
 /// Checks `widen` from `S` into `T`, which holds every value of `S`, at each value of `samples`
 /// against the bit model.
-fn check_widen<S: Model, T: Model + WidenFrom<S>>(samples: &[S]) {
+pub(super) fn check_widen<S: Model, T: Model + WidenFrom<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T>(value);
     let name = || format!("{value:?} into {}", type_name::<T>());
@@ -237,7 +237,7 @@ fn check_widen<S: Model, T: Model + WidenFrom<S>>(samples: &[S]) {
 
 /// Checks `truncate` and its checked and saturating forms from `S` into `T` at each value of
 /// `samples` against the bit model.
-fn check_truncate<S: Model, T: Model + TruncateFrom<S>>(samples: &[S]) {
+pub(super) fn check_truncate<S: Model, T: Model + TruncateFrom<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T>(value);
     assert_eq!(

@@ -1,20 +1,24 @@
 //! The casts between integers of any width and sign: [`CheckedCastFrom`], [`BoundedCastFrom`],
-//! [`WidenFrom`] and [`TruncateFrom`], which the target implements, for [`Uint`], [`Int`] and the
-//! native integers, with the semantics of the native casts, still unstable.
+//! [`WidenFrom`] and [`TruncateFrom`], which the target implements, for [`Uint`], [`Int`], the
+//! non-zero integers [`NonZeroUint`] and [`NonZeroInt`], and the native integers and their
+//! `NonZero`, with the semantics of the native casts, still unstable.
 //!
 //! Each trait has one blanket implementation over the sealed traits of this module, so that every
 //! pair of participants converts through the same code. A source gives the 64-bit words of its
 //! value in two's complement, `CastSource`, and a target builds a value from such words,
 //! `CheckedTarget` and `BoundedTarget`: [`Uint`] and [`Int`] through the sealed `word` and
-//! `from_words` of their storage, and the native integers through `u128` and `i128`. A value is in
-//! the range of a target when it is not negative or the target is signed, and its bits from the
-//! sign bit of the target up, or from the width of an unsigned target up, copy its sign: the check
-//! reads the words of the source from the first that the target does not hold, with no allocation
-//! and no constant. `MaxWidth` and `MinWidth` give the width and the sign of each participant as
-//! `typenum` numbers, which the bounds of `widen` and `truncate` compare at compile time, and the
-//! sealed markers carry the diagnostics of a pair that fails them. The sealed traits are public in
-//! a private module, as the other sealed traits of the crate are, so that the public
-//! implementations name no private item.
+//! `from_words` of their storage, the non-zero integers through those of the storage of their
+//! integer, which `with_nonzero` lends and `to_nonzero` checks for zero, and the native integers
+//! and their `NonZero` through `u128` and `i128`. A non-zero integer is a checked target, which
+//! takes no value of zero, and not a bounded one, as a wrapped or saturated value may be zero. A
+//! value is in the range of a target when it is not negative or the target is signed, and its bits
+//! from the sign bit of the target up, or from the width of an unsigned target up, copy its sign:
+//! the check reads the words of the source from the first that the target does not hold, with no
+//! allocation and no constant. `MaxWidth` and `MinWidth` give the width and the sign of each
+//! participant, and whether it holds only values that are not zero, as `typenum` numbers, which the
+//! bounds of `widen` and `truncate` compare at compile time, and the sealed markers carry the
+//! diagnostics of a pair that fails them. The sealed traits are public in a private module, as the
+//! other sealed traits of the crate are, so that the public implementations name no private item.
 
 use core::num::TryFromIntError;
 
@@ -25,11 +29,11 @@ use sealed::{
   TruncateBits, WidenBits,
 };
 
-use super::{Int, Uint, arithmetic::overflow, convert, nonzero};
+use super::{Int, NonZeroInt, NonZeroUint, Uint, arithmetic::overflow, convert, nonzero};
 use crate::{
   int,
   layout::Token,
-  width::{self, FitsBits, IntRepr, UintRepr},
+  width::{self, FitsBits, IntCore, IntRepr, NonZeroIntRepr, NonZeroUintRepr, UintCore, UintRepr},
 };
 
 mod sealed {
@@ -39,8 +43,8 @@ mod sealed {
   /// that no other crate can implement them.
   pub trait CastPair<S> {}
 
-  /// What a cast reads of its source: [`Uint`](crate::Uint), [`Int`](crate::Int) and the native
-  /// integers.
+  /// What a cast reads of its source: [`Uint`](crate::Uint), [`Int`](crate::Int), the non-zero
+  /// integers, and the native integers and their `NonZero`.
   pub trait CastSource {
     /// The number of bits of the type: `Bits`, or the `BITS` of a native integer.
     const BITS: u32;
@@ -53,8 +57,8 @@ mod sealed {
     fn word(&self, index: usize) -> u64;
   }
 
-  /// What a checked cast builds: [`Uint`](crate::Uint), [`Int`](crate::Int) and the native
-  /// integers.
+  /// What a checked cast builds: [`Uint`](crate::Uint), [`Int`](crate::Int), the non-zero
+  /// integers, and the native integers and their `NonZero`.
   pub trait CheckedTarget: Sized {
     /// The number of bits of the type: `Bits`, or the `BITS` of a native integer.
     const BITS: u32;
@@ -70,6 +74,7 @@ mod sealed {
     /// `unchecked_cast_from` guarantees to be `Some`: `wrap_words` for an integer that may be zero.
     /// The function is safe, so it cannot rely on the guarantee: a type whose `from_words` can
     /// return `None` checks in every build and panics there.
+    #[track_caller]
     fn assume_from_words(word: impl Fn(usize) -> u64) -> Self;
   }
 
@@ -199,7 +204,8 @@ mod sealed {
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait CheckedCastFrom<S>: CastPair<S> + Sized {
-  /// Converts `value` to `Self`, or returns `None` if it is outside the range of `Self`.
+  /// Converts `value` to `Self`, or returns `None` if it is outside the range of `Self`, or if it
+  /// is zero and `Self` is a non-zero integer.
   #[must_use]
   fn checked_cast_from(value: S) -> Option<Self>;
 
@@ -207,8 +213,9 @@ pub trait CheckedCastFrom<S>: CastPair<S> + Sized {
   ///
   /// # Panics
   ///
-  /// Panics if `value` is outside the range of `Self`, in every build, with the message of the
-  /// native `strict_cast`, reporting the caller.
+  /// Panics in every build, reporting the caller, if `value` is outside the range of `Self`, with
+  /// the message of the native `strict_cast`, and if it is zero and `Self` is a non-zero integer,
+  /// with the text of the error of the kind `Zero` of the native conversions.
   #[must_use]
   #[track_caller]
   fn strict_cast_from(value: S) -> Self;
@@ -256,7 +263,8 @@ pub trait CheckedCastFrom<S>: CastPair<S> + Sized {
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
-  message = "the target of a wrapping or saturating cast must take every value it wraps to"
+  message = "the target of a wrapping or saturating cast must take every value it wraps to",
+  note = "a non-zero integer is a target of `checked_cast` and the other casts that check, not of the wrapping or saturating ones"
 )]
 pub trait BoundedCastFrom<S>: CheckedCastFrom<S> {
   /// Converts `value` modulo `2^Bits` of `Self`, read in two's complement for a signed `Self`, as
@@ -422,15 +430,27 @@ fn saturating<S: CastSource, T: BoundedTarget>(source: &S) -> T {
   }
 }
 
-/// The value of `source` in `T`, or the error of the native conversions for a value outside the
-/// range of `T`: of the kind `NegOverflow` below it, which only a negative value is, and
-/// `PosOverflow` above it.
+/// The value of `source` in `T`, or the error of the native conversions: for a value outside the
+/// range of `T`, of the kind `NegOverflow` below it, which only a negative value is, and
+/// `PosOverflow` above it, and for zero into a non-zero `T`, of the kind `Zero`.
 pub(super) fn try_cast<S: CastSource, T: CheckedTarget>(source: S) -> Result<T, TryFromIntError> {
-  match checked(&source) {
-    Some(cast) => Ok(cast),
-    None if fill(&source) != 0 => Err(convert::neg_overflow()),
-    None => Err(convert::pos_overflow()),
+  if in_range::<S, T>(&source) {
+    // In the range, only zero has no value, in a non-zero `T`.
+    T::from_words(|index| source.word(index)).ok_or_else(convert::zero)
+  } else if fill(&source) != 0 {
+    Err(convert::neg_overflow())
+  } else {
+    Err(convert::pos_overflow())
   }
+}
+
+/// Panics on the strict cast of zero into a non-zero integer, with the text of the error of the
+/// kind `Zero` of the native conversions, as no native strict cast has a non-zero target, reporting
+/// the caller.
+#[cold]
+#[track_caller]
+const fn strict_zero() -> ! {
+  panic!("number would be zero for non-zero type")
 }
 
 /// The largest value of `T` if `max`, and its smallest otherwise, from the words of their bits,
@@ -475,9 +495,14 @@ impl<S: CastSource, T: CheckedTarget> CheckedCastFrom<S> for T {
   #[inline]
   #[track_caller]
   fn strict_cast_from(value: S) -> Self {
-    match checked(&value) {
-      Some(cast) => cast,
-      None => overflow::cast(),
+    if in_range::<S, T>(&value) {
+      match T::from_words(|index| value.word(index)) {
+        Some(cast) => cast,
+        // In the range, only zero has no value, in a non-zero `T`.
+        None => strict_zero(),
+      }
+    } else {
+      overflow::cast()
     }
   }
 
@@ -610,6 +635,7 @@ macro_rules! integer_participants {
       }
 
       #[inline]
+      #[track_caller]
       fn assume_from_words(word: impl Fn(usize) -> u64) -> Self {
         Self::wrap_words(word)
       }
@@ -671,6 +697,7 @@ macro_rules! native_participants {
       }
 
       #[inline]
+      #[track_caller]
       fn assume_from_words(word: impl Fn(usize) -> u64) -> Self {
         Self::wrap_words(word)
       }
@@ -740,6 +767,201 @@ impl MinWidth for isize {
   type NonZero = B0;
 }
 
+/// Implements the sealed traits of the casts for [`NonZeroUint`] and [`NonZeroInt`] over every
+/// storage of their storage traits, written `Name: Repr, Integer, Core, Sign, signed;`, through the
+/// sealed methods of the storage of their integer, `Core`: a source reads the words of the integer
+/// that `with_nonzero` lends, and a target builds the integer of the words with `from_words` and
+/// keeps it unless `to_nonzero` finds it zero.
+macro_rules! nonzero_participants {
+  ($($name:ident: $repr:ident, $integer:ident, $core:ident, $sign:ident, $signed:literal;)+) => {$(
+    impl<B: FitsBits<R::Integer>, R: $repr> CastSource for $name<B, R> {
+      const BITS: u32 = B::U32;
+      const SIGNED: bool = $signed;
+
+      #[inline]
+      fn word(&self, index: usize) -> u64 {
+        <R::Integer as $core>::with_nonzero(
+          &self.value.repr,
+          |integer| <R::Integer as $core>::word(integer, index, Token::new()),
+          Token::new(),
+        )
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> CheckedTarget for $name<B, R> {
+      const BITS: u32 = B::U32;
+      const SIGNED: bool = $signed;
+
+      #[inline]
+      fn from_words(word: impl Fn(usize) -> u64) -> Option<Self> {
+        let integer = <R::Integer as $core>::from_words(word, B::U32, Token::new());
+        <R::Integer as $core>::to_nonzero(integer, Token::new()).map(|repr| Self {
+          value: $integer::wrap(repr),
+        })
+      }
+
+      #[inline]
+      #[track_caller]
+      fn assume_from_words(word: impl Fn(usize) -> u64) -> Self {
+        match Self::from_words(word) {
+          Some(value) => value,
+          None => nonzero::zero_cast_value(),
+        }
+      }
+    }
+
+    // Facts of the type alone, which need no bound.
+    impl<B, R> MaxWidth for $name<B, R> {
+      type Sign = $sign;
+      type Bits = B;
+    }
+
+    impl<B, R> MinWidth for $name<B, R> {
+      type Sign = $sign;
+      type Bits = B;
+      type NonZero = B1;
+    }
+  )+};
+}
+
+nonzero_participants! {
+  NonZeroUint: NonZeroUintRepr, Uint, UintCore, B0, false;
+  NonZeroInt: NonZeroIntRepr, Int, IntCore, B1, true;
+}
+
+/// Implements the sealed traits of the casts for the native `NonZero` of each native integer,
+/// written `native;`, through those of the native integer: a source reads its words, and a target
+/// builds it from the words unless they make zero; and the widths of the native `NonZero`
+/// integers but those of `usize` and `isize`, written `widths native: Sign, Bits;`.
+macro_rules! native_nonzero_participants {
+  ($($native:ident;)+) => {$(
+    impl CastSource for core::num::NonZero<$native> {
+      const BITS: u32 = $native::BITS;
+      const SIGNED: bool = <$native as CastSource>::SIGNED;
+
+      #[inline]
+      fn word(&self, index: usize) -> u64 {
+        <$native as CastSource>::word(&self.get(), index)
+      }
+    }
+
+    impl CheckedTarget for core::num::NonZero<$native> {
+      const BITS: u32 = $native::BITS;
+      const SIGNED: bool = <$native as CheckedTarget>::SIGNED;
+
+      #[inline]
+      fn from_words(word: impl Fn(usize) -> u64) -> Option<Self> {
+        Self::new(<$native as BoundedTarget>::wrap_words(word))
+      }
+
+      #[inline]
+      #[track_caller]
+      fn assume_from_words(word: impl Fn(usize) -> u64) -> Self {
+        match Self::from_words(word) {
+          Some(value) => value,
+          None => nonzero::zero_cast_value(),
+        }
+      }
+    }
+  )+};
+  (widths $($native:ident: $sign:ident, $bits:ident;)+) => {$(
+    impl MaxWidth for core::num::NonZero<$native> {
+      type Sign = $sign;
+      type Bits = $bits;
+    }
+
+    impl MinWidth for core::num::NonZero<$native> {
+      type Sign = $sign;
+      type Bits = $bits;
+      type NonZero = B1;
+    }
+  )+};
+}
+
+native_nonzero_participants! {
+  u8;
+  u16;
+  u32;
+  u64;
+  u128;
+  usize;
+  i8;
+  i16;
+  i32;
+  i64;
+  i128;
+  isize;
+}
+
+native_nonzero_participants! {
+  widths
+  u8: B0, U8;
+  u16: B0, U16;
+  u32: B0, U32;
+  u64: B0, U64;
+  u128: B0, U128;
+  i8: B1, U8;
+  i16: B1, U16;
+  i32: B1, U32;
+  i64: B1, U64;
+  i128: B1, U128;
+}
+
+// The native `NonZero` of `usize` and `isize` have at least 16 bits and no fixed upper bound, as
+// `usize` and `isize` do.
+impl MinWidth for core::num::NonZero<usize> {
+  type Sign = B0;
+  type Bits = U16;
+  type NonZero = B1;
+}
+
+impl MinWidth for core::num::NonZero<isize> {
+  type Sign = B1;
+  type Bits = U16;
+  type NonZero = B1;
+}
+
+/// Implements the identities of the native `NonZero` of `usize` and `isize`, whose width has no
+/// fixed upper bound, as `pointer_sized_identities!` does for `usize` and `isize`: `widen` into the
+/// `NonZero` itself and into its integer, which the native `From` converts it into, and `truncate`
+/// into its integer. The bounds of the blanket implementations, over [`MaxWidth`], leave them out.
+macro_rules! pointer_sized_nonzero_identities {
+  ($($native:ident),+) => {$(
+    impl WidenFrom<core::num::NonZero<$native>> for core::num::NonZero<$native> {
+      #[inline]
+      fn widen_from(value: core::num::NonZero<$native>) -> core::num::NonZero<$native> {
+        value
+      }
+    }
+
+    impl WidenFrom<core::num::NonZero<$native>> for $native {
+      #[inline]
+      fn widen_from(value: core::num::NonZero<$native>) -> $native {
+        value.get()
+      }
+    }
+
+    impl TruncateFrom<core::num::NonZero<$native>> for $native {
+      #[inline]
+      fn truncate_from(value: core::num::NonZero<$native>) -> $native {
+        value.get()
+      }
+
+      #[inline]
+      fn checked_truncate_from(value: core::num::NonZero<$native>) -> Option<$native> {
+        Some(value.get())
+      }
+
+      #[inline]
+      fn saturating_truncate_from(value: core::num::NonZero<$native>) -> $native {
+        value.get()
+      }
+    }
+  )+};
+}
+
+pointer_sized_nonzero_identities!(usize, isize);
+
 /// Implements the casts of [`Uint`] and [`Int`] over every storage of their storage traits, written
 /// `Integer: Repr`, which call the traits of the target, so that a value names its target with
 /// method syntax, as the native integers do.
@@ -748,8 +970,10 @@ macro_rules! cast_methods {
     impl<B: FitsBits<R>, R: $repr> $integer<B, R> {
       /// Checked cast: converts the value to the integer `T`, or returns `None` if it is outside
       /// the range of `T`, as the native `checked_cast` does, still unstable
-      /// ([#157388](https://github.com/rust-lang/rust/issues/157388)). `T` is [`Uint`] or
-      /// [`Int`] of any width and storage, or a native integer, as [`CheckedCastFrom`] lists them.
+      /// ([#157388](https://github.com/rust-lang/rust/issues/157388)), or if it is zero and `T` is
+      /// a non-zero integer. `T` is [`Uint`], [`Int`], [`NonZeroUint`] or [`NonZeroInt`] of any
+      /// width and storage, or a native integer or its `NonZero`, as [`CheckedCastFrom`] lists
+      /// them.
       #[must_use]
       #[inline]
       pub fn checked_cast<T: CheckedCastFrom<Self>>(self) -> Option<T> {
@@ -781,8 +1005,9 @@ macro_rules! cast_methods {
       ///
       /// # Panics
       ///
-      /// Panics if the value is outside the range of `T`, in every build, with the message of the
-      /// native `strict_cast`, reporting the caller.
+      /// Panics in every build, reporting the caller, if the value is outside the range of `T`,
+      /// with the message of the native `strict_cast`, and if it is zero and `T` is a non-zero
+      /// integer, with the text of the error of the kind `Zero` of the native conversions.
       #[must_use]
       #[inline]
       #[track_caller]
@@ -811,7 +1036,8 @@ macro_rules! cast_methods {
       /// Converts the value to the integer `T` of the same sign, which is at least as wide, as the
       /// native `widen` does, still unstable
       /// ([#154330](https://github.com/rust-lang/rust/issues/154330)). It never fails: a `T` of
-      /// the other sign or of fewer bits fails to compile, as [`WidenFrom`] lists the pairs.
+      /// the other sign or of fewer bits fails to compile, and so does a non-zero `T`, which takes
+      /// no zero, as [`WidenFrom`] lists the pairs.
       #[must_use]
       #[inline]
       pub fn widen<T: WidenFrom<Self>>(self) -> T {
@@ -851,3 +1077,98 @@ macro_rules! cast_methods {
 }
 
 cast_methods!(Uint: UintRepr, Int: IntRepr);
+
+/// Implements the casts of [`NonZeroUint`] and [`NonZeroInt`] over every storage of their storage
+/// traits, written `Name: Repr`, which call the traits of the target, as `cast_methods!` does for
+/// the integers: the value converts as the integer of the same value does, and it is not zero, so
+/// a non-zero target takes it wherever its range does, while the wrapping, saturating and
+/// truncating casts, which may give zero, take a target that holds zero.
+macro_rules! nonzero_cast_methods {
+  ($($name:ident: $repr:ident),+ $(,)?) => {$(
+    impl<B: FitsBits<R::Integer>, R: $repr> $name<B, R> {
+      /// Checked cast: converts the value to the integer `T`, or returns `None` if it is outside
+      /// the range of `T`, as `checked_cast` of the integer of the same value does. `T` is
+      /// [`Uint`], [`Int`], [`NonZeroUint`] or [`NonZeroInt`] of any width and storage, or a
+      /// native integer or its `NonZero`, as [`CheckedCastFrom`] lists them.
+      #[must_use]
+      #[inline]
+      pub fn checked_cast<T: CheckedCastFrom<Self>>(self) -> Option<T> {
+        T::checked_cast_from(self)
+      }
+
+      /// Wrapping cast: converts the value to the integer `T` modulo `2^Bits` of `T`, read in
+      /// two's complement for a signed `T`, as `wrapping_cast` of the integer of the same value
+      /// does. `T` holds zero, which a wrapped value may be: it is one of the integers that
+      /// [`BoundedCastFrom`] lists, not a non-zero integer.
+      #[must_use]
+      #[inline]
+      pub fn wrapping_cast<T: BoundedCastFrom<Self>>(self) -> T {
+        T::wrapping_cast_from(self)
+      }
+
+      /// Saturating cast: converts the value to the integer `T`, or the bound of the range of `T`
+      /// that it passes, `MIN` below the range and `MAX` above it, as `saturating_cast` of the
+      /// integer of the same value does. `T` holds zero, the `MIN` of an unsigned integer: it is
+      /// one of the integers that [`BoundedCastFrom`] lists, not a non-zero integer.
+      #[must_use]
+      #[inline]
+      pub fn saturating_cast<T: BoundedCastFrom<Self>>(self) -> T {
+        T::saturating_cast_from(self)
+      }
+
+      /// Strict cast: converts the value to the integer `T`, as `strict_cast` of the integer of the
+      /// same value does.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the value is outside the range of `T`, in every build, with the message of the
+      /// native `strict_cast`, reporting the caller.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub fn strict_cast<T: CheckedCastFrom<Self>>(self) -> T {
+        T::strict_cast_from(self)
+      }
+
+      /// Converts the value to the integer `T` of the same sign, which is at least as wide, as
+      /// `widen` of the integer of the same value does, or to such a non-zero integer, as the
+      /// native `From` converts between the `NonZero` integers. It never fails: a `T` of the other
+      /// sign or of fewer bits fails to compile, as [`WidenFrom`] lists the pairs.
+      #[must_use]
+      #[inline]
+      pub fn widen<T: WidenFrom<Self>>(self) -> T {
+        T::widen_from(self)
+      }
+
+      /// Converts the value to the integer `T` of the same sign, which is at most as wide, modulo
+      /// `2^Bits` of `T`, as `truncate` of the integer of the same value does. `T` holds zero,
+      /// which a truncated value may be, and a `T` of the other sign or of more bits fails to
+      /// compile, as [`TruncateFrom`] lists the pairs.
+      #[must_use]
+      #[inline]
+      pub fn truncate<T: TruncateFrom<Self>>(self) -> T {
+        T::truncate_from(self)
+      }
+
+      /// Converts the value to the integer `T` of the same sign, which is at most as wide, or
+      /// returns `None` if it is outside the range of `T`, as `checked_truncate` of the integer of
+      /// the same value does.
+      #[must_use]
+      #[inline]
+      pub fn checked_truncate<T: TruncateFrom<Self>>(self) -> Option<T> {
+        T::checked_truncate_from(self)
+      }
+
+      /// Converts the value to the integer `T` of the same sign, which is at most as wide, or the
+      /// bound of the range of `T` that it passes, as `saturating_truncate` of the integer of the
+      /// same value does.
+      #[must_use]
+      #[inline]
+      pub fn saturating_truncate<T: TruncateFrom<Self>>(self) -> T {
+        T::saturating_truncate_from(self)
+      }
+    }
+  )+};
+}
+
+nonzero_cast_methods!(NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);

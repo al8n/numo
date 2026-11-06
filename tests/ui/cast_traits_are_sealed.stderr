@@ -10,14 +10,14 @@ help: the trait `numo::integer::cast::sealed::CheckedTarget` is not implemented 
 6 | struct Local;
   | ^^^^^^^^^^^^
   = help: the following other types implement trait `numo::integer::cast::sealed::CheckedTarget`:
+            NonZeroInt<B, R>
+            NonZeroUint<B, R>
             Uint<B, R>
             i128
             i16
             i32
             i64
             i8
-            isize
-            numo::Int<B, R>
           and $N others
   = note: required for `Local` to implement `numo::integer::cast::sealed::CastPair<u8>`
 note: required by a bound in `CheckedCastFrom`
@@ -41,14 +41,14 @@ help: the trait `numo::integer::cast::sealed::CastSource` is not implemented for
  6 | struct Local;
    | ^^^^^^^^^^^^
    = help: the following other types implement trait `numo::integer::cast::sealed::CastSource`:
+             NonZeroInt<B, R>
+             NonZeroUint<B, R>
              Uint<B, R>
              i128
              i16
              i32
              i64
              i8
-             isize
-             numo::Int<B, R>
            and $N others
    = note: required for `u64` to implement `numo::integer::cast::sealed::CastPair<Local>`
 note: required by a bound in `WidenFrom`

@@ -59,6 +59,14 @@ pub(crate) const fn zero_value() -> ! {
   panic!("`new_unchecked` requires a value that is not zero")
 }
 
+/// Panics on a zero passed to the unchecked cast into a non-zero integer, which checks it in every
+/// build, reporting the caller.
+#[cold]
+#[track_caller]
+pub(crate) const fn zero_cast_value() -> ! {
+  panic!("`unchecked_cast` requires a value that is not zero for a non-zero target")
+}
+
 /// The integer type of a row of the non-zero tables, named by `$args`: in an inherent block of one
 /// storage the concrete integer that the table passes, and in a trait `Self::Integer`.
 macro_rules! nonzero_integer {
