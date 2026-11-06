@@ -1108,6 +1108,8 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@limbs false);
 
+    limb_layer_tests!(@compare false);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves nothing of a value, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -1966,6 +1968,8 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@limbs true);
 
+    limb_layer_tests!(@compare true);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves the sign alone, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -2653,6 +2657,76 @@ macro_rules! limb_layer_tests {
       }
       if tier.is_full() {
         limbs_against_the_model::<3>();
+      }
+    }
+  };
+  // The tests of the comparisons with the integers of 128 bits, which every instance shares, after
+  // the helpers of its arm and of `@bits`: `$signed` is whether the layer reads the limbs in two's
+  // complement.
+  (@compare $signed:literal) => {
+    /// Checks `compare_u128` and `compare_i128` of `N` limbs on `p`, a pattern of `B * N` bits,
+    /// read in two's complement if `$signed`, against the bit model, with integers of 128 bits read
+    /// unsigned and in two's complement: zero, one, every bit, the top bit alone, every bit below
+    /// it, the largest value of 64 bits and the next one, and the low 128 bits of the value and the
+    /// integers next to them.
+    fn check_compare<const N: usize>(p: &[bool]) {
+      let x = bigint::limbs_of_pattern::<Limb, N>(p, $signed);
+      let low = model::to_u128(&model::wrap(p, 128, $signed));
+      let others = [
+        0,
+        1,
+        u128::MAX,
+        1 << 127,
+        u128::MAX >> 1,
+        u128::from(u64::MAX),
+        1 << 64,
+        low.wrapping_sub(1),
+        low,
+        low.wrapping_add(1),
+      ];
+      for rhs in others {
+        let q = model::of_u128(rhs, 128);
+        assert_eq!(
+          (compare_u128(&x, rhs), compare_i128(&x, rhs as i128)),
+          (
+            model::cmp(p, $signed, &q, false),
+            model::cmp(p, $signed, &q, true),
+          ),
+          "{} and {rhs:#x}",
+          model::text(p)
+        );
+      }
+    }
+
+    /// Checks the comparisons of `N` limbs with the integers of 128 bits against the bit model, at
+    /// the patterns of `bigint::bit_patterns_by` of `B * N` bits, at every index in an optimized
+    /// build and otherwise at the reduced indexes, which include those next to 127 and 128 bits;
+    /// or under Miri at the patterns of `model::few_patterns`.
+    fn compare_against_the_model<const N: usize>() {
+      let tier = bigint::tier();
+      let top = B * N as u32;
+      let patterns: Vec<Vec<bool>> = if tier.is_miri() {
+        model::few_patterns(top, B)
+      } else {
+        bigint::bit_patterns_by::<Limb, N>(&[127, 128], !tier.is_full())
+          .iter()
+          .map(|limbs| bigint::pattern_of_limbs(limbs, top))
+          .collect()
+      };
+      for p in &patterns {
+        check_compare::<N>(p);
+      }
+    }
+
+    /// The comparisons with the integers of 128 bits against the bit model at no limbs to three;
+    /// under Miri at no limbs to two.
+    #[test]
+    fn comparisons_with_128_bits_match_the_bit_model() {
+      compare_against_the_model::<0>();
+      compare_against_the_model::<1>();
+      compare_against_the_model::<2>();
+      if !bigint::tier().is_miri() {
+        compare_against_the_model::<3>();
       }
     }
   };

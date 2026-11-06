@@ -1003,6 +1003,7 @@ pub(crate) fn bytes_of_limbs<L: Limb>(limbs: &[L]) -> Vec<u8> {
 /// definition, one bit at a time, and reads a pattern as unsigned, or in two's complement where it
 /// takes `signed`.
 pub(crate) mod model {
+  use core::cmp::Ordering;
   use std::{format, string::String, vec::Vec};
 
   /// The pattern of `width` bits whose bit `i` is `bit(i)`.
@@ -1070,6 +1071,28 @@ pub(crate) mod model {
   /// The sign of `p` in two's complement: its top bit, or `false` for zero bits.
   pub(crate) fn sign(p: &[bool]) -> bool {
     p.last().copied().unwrap_or(false)
+  }
+
+  /// The order of the integers of `p` and `q`, each read in two's complement if its flag is set
+  /// and unsigned otherwise: by their signs, then by their bits from the top down, each extended as
+  /// it is read to the width of the wider.
+  pub(crate) fn cmp(p: &[bool], p_signed: bool, q: &[bool], q_signed: bool) -> Ordering {
+    let (p_fill, q_fill) = (p_signed && sign(p), q_signed && sign(q));
+    if p_fill != q_fill {
+      // The negative one is the smaller.
+      return q_fill.cmp(&p_fill);
+    }
+    // Of the same sign, extended by the same bit, the integers compare as their bits do.
+    for i in (0..p.len().max(q.len())).rev() {
+      let (a, b) = (
+        p.get(i).copied().unwrap_or(p_fill),
+        q.get(i).copied().unwrap_or(q_fill),
+      );
+      if a != b {
+        return a.cmp(&b);
+      }
+    }
+    Ordering::Equal
   }
 
   /// `p` extended to `width` bits by zeros, or if `signed` by copies of its sign. Requires `width`
