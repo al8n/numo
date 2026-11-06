@@ -26,8 +26,12 @@ use sealed::{
 };
 
 use crate::{
-  format,
-  int::{self, signed, unsigned},
+  FromFloatError, RoundingMode, format,
+  int::{
+    self,
+    float::{FloatFormat, FloatParts},
+    signed, unsigned,
+  },
   layout::Token,
 };
 
@@ -39,7 +43,11 @@ mod sealed {
   use typenum::{B1, UInt, UTerm};
 
   use super::{FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, UintRepr};
-  use crate::layout::Token;
+  use crate::{
+    FromFloatError, RoundingMode,
+    int::float::{FloatFormat, FloatParts},
+    layout::Token,
+  };
 
   /// A `typenum` number in canonical form: `UTerm`, or a `UInt` whose most significant bit is `B1`.
   /// `typenum` forbids leading zero bits but does not enforce the rule, and its comparisons are
@@ -570,6 +578,21 @@ mod sealed {
     /// at most the bits of the storage.
     fn from_words(word: impl Fn(usize) -> u64, bits: u32, token: Token) -> Self;
 
+    /// The bits of the float of `format` nearest to the value, ties to even, or of the infinity
+    /// above the range of the float, as `as` converts a native integer to a float.
+    fn float_bits(&self, format: FloatFormat, token: Token) -> u64;
+
+    /// The float of `parts` rounded to an integer with `mode`, as an integer of `bits` bits, or the
+    /// error of a value outside their range: `NegOverflow` for a negative value but zero, and
+    /// `PosOverflow` for a magnitude of more than `bits` bits. Requires `bits` to be at most the
+    /// bits of the storage.
+    fn from_float(
+      parts: FloatParts,
+      mode: RoundingMode,
+      bits: u32,
+      token: Token,
+    ) -> Result<Self, FromFloatError>;
+
     // `ReprLimb` bounds the readers of limbs rather than being a supertrait, which would put the
     // bound `[L; N]: ReprLimb` into code bounded by `[L; N]: UintRepr` and keep the limb type of
     // the array there from normalizing to `L`.
@@ -925,6 +948,22 @@ mod sealed {
     /// bit at index `bits - 1` or above set to bit `bits - 1`, or zero for zero bits. Requires
     /// `bits` to be at most the bits of the storage.
     fn from_words(word: impl Fn(usize) -> u64, bits: u32, token: Token) -> Self;
+
+    /// The bits of the float of `format` nearest to the value, ties to even, or of the infinity of
+    /// its sign beyond the range of the float, as `as` converts a native integer to a float: zero
+    /// is `+0.0`.
+    fn float_bits(&self, format: FloatFormat, token: Token) -> u64;
+
+    /// The float of `parts` rounded to an integer with `mode`, as an integer of `bits` bits in
+    /// two's complement, or the error of a value outside their range: `NegOverflow` below
+    /// `-2^(bits - 1)`, and `PosOverflow` above `2^(bits - 1) - 1`. Requires `bits` to be at most
+    /// the bits of the storage.
+    fn from_float(
+      parts: FloatParts,
+      mode: RoundingMode,
+      bits: u32,
+      token: Token,
+    ) -> Result<Self, FromFloatError>;
 
     // `ReprLimb` bounds the readers of limbs, as for `UintCore`.
 
@@ -1631,6 +1670,21 @@ macro_rules! array_storage {
       }
 
       #[inline]
+      fn float_bits(&self, format: FloatFormat, _: Token) -> u64 {
+        unsigned::$lower::float_bits(self, format)
+      }
+
+      #[inline]
+      fn from_float(
+        parts: FloatParts,
+        mode: RoundingMode,
+        bits: u32,
+        _: Token,
+      ) -> Result<Self, FromFloatError> {
+        unsigned::$lower::place_magnitude(int::float::round_magnitude(parts, mode), bits)
+      }
+
+      #[inline]
       fn checked_read_limbs(
         limbs: &[<Self as ReprLimb>::Limb],
         bits: u32,
@@ -2052,6 +2106,21 @@ macro_rules! array_storage {
       #[inline]
       fn from_words(word: impl Fn(usize) -> u64, bits: u32, _: Token) -> Self {
         signed::$upper::sign_extend(&limbs_of_words(word, |low| low as $limb), bits)
+      }
+
+      #[inline]
+      fn float_bits(&self, format: FloatFormat, _: Token) -> u64 {
+        signed::$upper::float_bits(self, format)
+      }
+
+      #[inline]
+      fn from_float(
+        parts: FloatParts,
+        mode: RoundingMode,
+        bits: u32,
+        _: Token,
+      ) -> Result<Self, FromFloatError> {
+        signed::$upper::place_magnitude(int::float::round_magnitude(parts, mode), bits)
       }
 
       #[inline]
@@ -2531,6 +2600,21 @@ macro_rules! native_storage {
       }
 
       #[inline]
+      fn float_bits(&self, format: FloatFormat, _: Token) -> u64 {
+        int::$uint::float_bits(*self, format)
+      }
+
+      #[inline]
+      fn from_float(
+        parts: FloatParts,
+        mode: RoundingMode,
+        bits: u32,
+        _: Token,
+      ) -> Result<Self, FromFloatError> {
+        int::$uint::place_magnitude(int::float::round_magnitude(parts, mode), bits)
+      }
+
+      #[inline]
       fn checked_read_limbs(
         limbs: &[<Self as ReprLimb>::Limb],
         bits: u32,
@@ -2943,6 +3027,21 @@ macro_rules! native_storage {
       #[inline]
       fn from_words(word: impl Fn(usize) -> u64, bits: u32, _: Token) -> Self {
         int::$int::sign_extend(u128_of_words(word, $int::BITS) as $int, bits)
+      }
+
+      #[inline]
+      fn float_bits(&self, format: FloatFormat, _: Token) -> u64 {
+        int::$int::float_bits(*self, format)
+      }
+
+      #[inline]
+      fn from_float(
+        parts: FloatParts,
+        mode: RoundingMode,
+        bits: u32,
+        _: Token,
+      ) -> Result<Self, FromFloatError> {
+        int::$int::place_magnitude(int::float::round_magnitude(parts, mode), bits)
       }
 
       // The limb holds the bits of the two's complement, which the cast reads with the sign.

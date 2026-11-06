@@ -490,7 +490,7 @@ const fn strict_zero() -> ! {
 /// The largest value of `T` if `max`, and its smallest otherwise, from the words of their bits,
 /// without a constant: `2^Bits - 1` and zero for an unsigned `T`, and for a signed one the bits
 /// below the sign bit and the bits from the sign bit up.
-fn limit<T: BoundedTarget>(max: bool) -> T {
+pub(super) fn limit<T: BoundedTarget>(max: bool) -> T {
   // The bits of the largest value, those below the sign bit or below the width.
   let magnitude = if T::SIGNED {
     T::BITS.saturating_sub(1)

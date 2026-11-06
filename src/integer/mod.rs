@@ -10,7 +10,8 @@ use core::{
 
 pub use bytes::{ByteArray, FromByteArray, IntegerByteOrder, IntegerBytes};
 pub use cast::{BoundedCastFrom, CheckedCastFrom, TruncateFrom, WidenFrom};
-pub use error::TryNewError;
+pub use error::{FromFloatError, TryNewError};
+pub use float::IntegerFloat;
 pub use traits::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,
   FixedNonZero, FromLimbs, IntegerBits, IntegerMath, IntegerNonZero, IntegerOne, NativeInteger,
@@ -39,6 +40,8 @@ mod arithmetic;
 mod bits;
 #[macro_use]
 mod bytes;
+#[macro_use]
+mod float;
 #[macro_use]
 mod nonzero;
 mod cast;
@@ -1340,6 +1343,7 @@ macro_rules! array_integers {
       uint_bits_table!(inherent_items![unsigned, $lower, &, Int<B, [$limb; N]>]);
       bitwise_table!(inherent_items![unsigned, $lower, &]);
       byte_methods!([unsigned, $lower, &]);
+      float_methods!([unsigned, $lower, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1573,6 +1577,7 @@ macro_rules! array_integers {
       int_bits_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
       bitwise_table!(inherent_items![signed, $upper, &]);
       byte_methods!([signed, $upper, &]);
+      float_methods!([signed, $upper, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1973,6 +1978,7 @@ macro_rules! native_integers {
       uint_bits_table!(inherent_items![$uint, Int<B, $int>]);
       bitwise_table!(inherent_items![$uint]);
       byte_methods!([$uint]);
+      float_methods!([$uint]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -2207,6 +2213,7 @@ macro_rules! native_integers {
       int_bits_table!(inherent_items![$int, Uint<B, $uint>]);
       bitwise_table!(inherent_items![$int]);
       byte_methods!([$int]);
+      float_methods!([$int]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///

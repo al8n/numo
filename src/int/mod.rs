@@ -47,6 +47,7 @@ pub(crate) type DigitBuf = [core::primitive::u8; DIGIT_BUF_LEN];
 mod half_limbs;
 mod limb_layer;
 
+pub(crate) mod float;
 pub(crate) mod order;
 pub(crate) mod parse_errors;
 pub(crate) mod signed;
@@ -59,8 +60,15 @@ macro_rules! native {
     pub(crate) mod $uint {
       use core::{cmp::Ordering, num::ParseIntError};
 
-      use super::{DIGIT_BUF_LEN, DigitBuf, order, parse_errors, slice};
-      use crate::rounding::{self, RoundingMode};
+      use super::{
+        DIGIT_BUF_LEN, DigitBuf,
+        float::{self, FloatFormat, Rounded},
+        order, parse_errors, slice,
+      };
+      use crate::{
+        FromFloatError,
+        rounding::{self, RoundingMode},
+      };
 
       native!(@shared $uint);
 
@@ -594,6 +602,22 @@ macro_rules! native {
         }
       }
 
+      /// `rounded`, a float rounded to an integer, as a value of `bits` bits, or the error of a
+      /// value outside their range: `NegOverflow` for a negative value but zero, and `PosOverflow`
+      /// for a magnitude of more than `bits` bits. Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn place_magnitude(
+        rounded: Rounded,
+        bits: u32,
+      ) -> Result<$uint, FromFloatError> {
+        match float::check_range(rounded, bits, false) {
+          // The magnitude has at most `bits` bits, so the significand fits and the shift moves no
+          // one out. The shift of a zero significand may be any, which `unbounded_shl` takes.
+          Ok(()) => Ok((rounded.significand as $uint).unbounded_shl(rounded.shift)),
+          Err(error) => Err(error),
+        }
+      }
+
       /// Writes the low `out.len()` bytes of `value` to `out`, least significant first, or most
       /// significant first if `big_endian`. Requires `out.len() <= BITS / 8`.
       pub(crate) const fn write_bytes(value: $uint, out: &mut [u8], big_endian: bool) {
@@ -682,8 +706,12 @@ macro_rules! native {
     pub(crate) mod $int {
       use core::{cmp::Ordering, num::ParseIntError};
 
-      use super::{DigitBuf, order, parse_errors, slice};
-      use crate::rounding::RoundingMode;
+      use super::{
+        DigitBuf,
+        float::{self, FloatFormat, Rounded},
+        order, parse_errors, slice,
+      };
+      use crate::{FromFloatError, rounding::RoundingMode};
 
       native!(@shared $int);
 
@@ -1272,6 +1300,28 @@ macro_rules! native {
         order::cmp_i128(value as i128, rhs)
       }
 
+      /// `rounded`, a float rounded to an integer, as a value of `bits` bits in two's complement,
+      /// or the error of a value outside their range: `NegOverflow` below `-2^(bits - 1)`, and
+      /// `PosOverflow` above `2^(bits - 1) - 1`. Requires `bits <= BITS`.
+      pub(crate) const fn place_magnitude(
+        rounded: Rounded,
+        bits: u32,
+      ) -> Result<$int, FromFloatError> {
+        match float::check_range(rounded, bits, true) {
+          Ok(()) => {
+            // The magnitude is at most `2^(bits - 1)`, which the unsigned integer of the same size
+            // holds.
+            let magnitude = (rounded.significand as $uint).unbounded_shl(rounded.shift);
+            Ok(if rounded.negative {
+              ZERO.wrapping_sub_unsigned(magnitude)
+            } else {
+              magnitude as $int
+            })
+          }
+          Err(error) => Err(error),
+        }
+      }
+
       /// Writes the low `out.len()` bytes of the two's complement of `value` to `out`, least
       /// significant first, or most significant first if `big_endian`: those of the unsigned
       /// integer of its bits. Requires `out.len() <= BITS / 8`.
@@ -1449,6 +1499,16 @@ macro_rules! native {
     #[inline]
     pub(crate) const fn midpoint(lhs: $int, rhs: $int) -> $int {
       lhs.midpoint(rhs)
+    }
+
+    /// The bits of the float of `format` nearest to `value`, ties to even, which `as` gives: the
+    /// infinity of the sign of `value` beyond the range of the float, and `+0.0` for zero.
+    #[inline]
+    pub(crate) const fn float_bits(value: $int, format: FloatFormat) -> u64 {
+      match format {
+        FloatFormat::F64 => (value as f64).to_bits(),
+        FloatFormat::F32 => (value as f32).to_bits() as u64,
+      }
     }
 
     /// The logarithm of `value` to the base `base`, rounded down, or `None` if `value` is not

@@ -4,7 +4,9 @@
 //! from `u8` to `u128`; the functions without a limb type parameter take `u64` limbs.
 //!
 //! The tests of the bit operations compare with no big integer: [`model`] computes their results
-//! one bit at a time, and the tiers of [`tier`] size every sweep by the build.
+//! one bit at a time, and the tiers of [`tier`] size every sweep by the build. The tests of the
+//! conversions with the floats compare with the floats of std and the bit model, through
+//! [`floats`].
 
 use core::{
   cmp::Ordering,
@@ -1310,5 +1312,509 @@ pub(crate) mod model {
     patterns.sort_unstable();
     patterns.dedup();
     patterns
+  }
+}
+
+/// The models of the conversions between the integers and the floats, which compute with the floats
+/// of std as the code under test never does: the rounding functions of std for each rounding mode,
+/// the powers of two that bound the widths, the integer that a float holds as a bit pattern, the
+/// float nearest to a bit pattern of any width, what a layer gives for a float rounded to an
+/// integer, and the floats and the patterns at which the conversions are checked.
+pub(crate) mod floats {
+  use core::fmt::Debug;
+  use std::{vec, vec::Vec};
+
+  use super::model;
+  use crate::{
+    FromFloatError, RoundingMode,
+    int::float::{FloatFormat, FloatParts, Rounded, float_parts_f32, float_parts_f64},
+  };
+
+  /// A float of the tests, `f64` or `f32`: what the models read of it, and the conversions of std
+  /// that they compare with.
+  pub(crate) trait TestFloat: Copy + Debug + PartialEq {
+    /// The format of the float.
+    const FORMAT: FloatFormat;
+
+    /// The exponent of the lowest bit of a subnormal float, that of the smallest positive float.
+    const MIN_EXPONENT: i32;
+
+    /// NaN.
+    const NAN: Self;
+
+    /// The float nearest to `value`, which is `value` itself where the float holds it.
+    fn narrow(value: f64) -> Self;
+
+    /// The value of the float as an `f64`, which holds every `f32` exactly.
+    fn wide(self) -> f64;
+
+    /// The bits of the float.
+    fn to_raw(self) -> u64;
+
+    /// The float whose bits are the low bits of `bits`.
+    fn from_raw(bits: u64) -> Self;
+
+    /// The parts of the float, as the code under test reads them.
+    fn parts(self) -> Result<FloatParts, FromFloatError>;
+
+    /// The float nearest to `value`, ties to even, as `as` converts it.
+    fn of_u64(value: u64) -> Self;
+
+    /// The float nearest to `value`, ties to even, or the infinity above the range of the float,
+    /// as `as` converts it.
+    fn of_u128(value: u128) -> Self;
+
+    /// The float nearest to `value`, ties to even, as `as` converts it.
+    fn of_i128(value: i128) -> Self;
+
+    /// `self * 2^exponent`, which is exact unless it passes the largest float, and an infinity
+    /// then.
+    fn scale(self, exponent: u32) -> Self;
+
+    /// `-self`.
+    fn negate(self) -> Self;
+  }
+
+  impl TestFloat for f64 {
+    const FORMAT: FloatFormat = FloatFormat::F64;
+    const MIN_EXPONENT: i32 = -1074;
+    const NAN: Self = f64::NAN;
+
+    fn narrow(value: f64) -> Self {
+      value
+    }
+
+    fn wide(self) -> f64 {
+      self
+    }
+
+    fn to_raw(self) -> u64 {
+      self.to_bits()
+    }
+
+    fn from_raw(bits: u64) -> Self {
+      f64::from_bits(bits)
+    }
+
+    fn parts(self) -> Result<FloatParts, FromFloatError> {
+      float_parts_f64(self)
+    }
+
+    fn of_u64(value: u64) -> Self {
+      value as f64
+    }
+
+    fn of_u128(value: u128) -> Self {
+      value as f64
+    }
+
+    fn of_i128(value: i128) -> Self {
+      value as f64
+    }
+
+    fn scale(self, exponent: u32) -> Self {
+      self * pow2(i32::try_from(exponent).unwrap_or(i32::MAX))
+    }
+
+    fn negate(self) -> Self {
+      -self
+    }
+  }
+
+  impl TestFloat for f32 {
+    const FORMAT: FloatFormat = FloatFormat::F32;
+    const MIN_EXPONENT: i32 = -149;
+    const NAN: Self = f32::NAN;
+
+    fn narrow(value: f64) -> Self {
+      value as f32
+    }
+
+    fn wide(self) -> f64 {
+      f64::from(self)
+    }
+
+    fn to_raw(self) -> u64 {
+      u64::from(self.to_bits())
+    }
+
+    fn from_raw(bits: u64) -> Self {
+      f32::from_bits(bits as u32)
+    }
+
+    fn parts(self) -> Result<FloatParts, FromFloatError> {
+      float_parts_f32(self)
+    }
+
+    fn of_u64(value: u64) -> Self {
+      value as f32
+    }
+
+    fn of_u128(value: u128) -> Self {
+      value as f32
+    }
+
+    fn of_i128(value: i128) -> Self {
+      value as f32
+    }
+
+    fn scale(self, exponent: u32) -> Self {
+      self * pow2_f32(i32::try_from(exponent).unwrap_or(i32::MAX))
+    }
+
+    fn negate(self) -> Self {
+      -self
+    }
+  }
+
+  /// `2^exponent` as an `f64`, from its bits: zero below `2^-1074`, the smallest positive float,
+  /// and an infinity from `2^1024` up.
+  pub(crate) fn pow2(exponent: i32) -> f64 {
+    match exponent {
+      i32::MIN..=-1075 => 0.0,
+      -1074..=-1023 => f64::from_bits(1 << (exponent + 1074)),
+      -1022..=1023 => f64::from_bits(((exponent + 1023) as u64) << 52),
+      _ => f64::INFINITY,
+    }
+  }
+
+  /// `2^exponent` as an `f32`, from its bits: zero below `2^-149`, the smallest positive float,
+  /// and an infinity from `2^128` up.
+  pub(crate) fn pow2_f32(exponent: i32) -> f32 {
+    match exponent {
+      i32::MIN..=-150 => 0.0,
+      -149..=-127 => f32::from_bits(1 << (exponent + 149)),
+      -126..=127 => f32::from_bits(((exponent + 127) as u32) << 23),
+      _ => f32::INFINITY,
+    }
+  }
+
+  /// `value`, a finite float, rounded to an integer with `mode` by the functions of std: `trunc`
+  /// for `Down`, `ceil` for `Ceiling`, `floor` for `Floor`, `round` for `HalfUp`, `round_ties_even`
+  /// for `HalfEven`, the magnitude rounded up for `Up`, which std has no function for, and for
+  /// `HalfDown` `round` but at a tie, which `trunc` rounds toward zero.
+  pub(crate) fn round(value: f64, mode: RoundingMode) -> f64 {
+    match mode {
+      RoundingMode::Up => value.abs().ceil().copysign(value),
+      RoundingMode::Down => value.trunc(),
+      RoundingMode::Ceiling => value.ceil(),
+      RoundingMode::Floor => value.floor(),
+      RoundingMode::HalfUp => value.round(),
+      // The fraction of a float is exact, so a tie compares as one half.
+      RoundingMode::HalfDown if (value - value.trunc()).abs() == 0.5 => value.trunc(),
+      RoundingMode::HalfDown => value.round(),
+      RoundingMode::HalfEven => value.round_ties_even(),
+    }
+  }
+
+  /// Returns `true` if `value`, an integer, is in the range of `bits` bits, in two's complement if
+  /// `signed` and unsigned otherwise: from zero to `2^bits - 1`, or from `-2^(bits - 1)` to
+  /// `2^(bits - 1) - 1`. An integer is below the power of two above the range exactly when it is at
+  /// most the largest value, which a float may not hold.
+  pub(crate) fn in_range(value: f64, bits: u32, signed: bool) -> bool {
+    let bits = bits as i32;
+    match (bits, signed) {
+      (0, _) => value == 0.0,
+      (_, false) => 0.0 <= value && value < pow2(bits),
+      (_, true) => -pow2(bits - 1) <= value && value < pow2(bits - 1),
+    }
+  }
+
+  /// The pattern of `width` bits of `value`, an integer in the range of `width` bits, in two's
+  /// complement for a negative value: its significand, read from its bits, moved to its exponent,
+  /// which leaves no bit below the point for an integer.
+  pub(crate) fn pattern_of(value: f64, width: u32) -> Vec<bool> {
+    let bits = value.abs().to_bits();
+    let (biased, fraction) = ((bits >> 52) as i32, bits & ((1 << 52) - 1));
+    // A subnormal float, and zero, has no implicit bit and the exponent of the smallest normal one.
+    let (significand, exponent) = match biased {
+      0 => (fraction, -1074),
+      _ => (fraction | 1 << 52, biased - 1075),
+    };
+    // One bit more than the width, for the magnitude of the smallest value of two's complement.
+    let magnitude = model::pattern(width + 1, |i| {
+      let index = i64::from(i) - i64::from(exponent);
+      (0..64).contains(&index) && (significand >> index) & 1 == 1
+    });
+    let pattern = if value < 0.0 {
+      negate(&magnitude)
+    } else {
+      magnitude
+    };
+    pattern[..width as usize].to_vec()
+  }
+
+  /// The float of `F` nearest to the integer of `p`, read in two's complement if `signed` and
+  /// unsigned otherwise, ties to even, or the infinity of its sign beyond the range of `F`, and
+  /// `+0.0` for zero: what `as` gives for at most 128 bits, and above them the top 64 bits of the
+  /// magnitude rounded to odd, with their lowest bit set if a bit below them is, converted as `as`
+  /// converts a `u64` and scaled by the power of two of the bits below them. A float has at most
+  /// 53 bits of significand, so the rounding to odd in 64 bits leaves the second rounding exact.
+  pub(crate) fn float_of_pattern<F: TestFloat>(p: &[bool], signed: bool) -> F {
+    let width = model::width(p);
+    if width <= 128 {
+      return if signed {
+        F::of_i128(model::to_i128(p))
+      } else {
+        F::of_u128(model::to_u128(p))
+      };
+    }
+    let negative = signed && model::sign(p);
+    let magnitude = if negative {
+      negate(&model::extend(p, width + 1, true))
+    } else {
+      p.to_vec()
+    };
+    let length = match model::highest_one(&magnitude) {
+      Some(highest) => highest + 1,
+      None => return F::of_u64(0),
+    };
+    let float = if length <= 64 {
+      F::of_u64(model::to_u128(&magnitude[..64]) as u64)
+    } else {
+      let dropped = length - 64;
+      let top = model::to_u128(&magnitude[dropped as usize..length as usize]) as u64;
+      let sticky = magnitude[..dropped as usize].iter().any(|&bit| bit);
+      F::of_u64(top | u64::from(sticky)).scale(dropped)
+    };
+    if negative { float.negate() } else { float }
+  }
+
+  /// `p + 1` modulo `2^width`.
+  fn increment(p: &[bool]) -> Vec<bool> {
+    let mut carry = true;
+    p.iter()
+      .map(|&bit| {
+        let sum = bit != carry;
+        carry = bit && carry;
+        sum
+      })
+      .collect()
+  }
+
+  /// `p - 1` modulo `2^width`.
+  fn decrement(p: &[bool]) -> Vec<bool> {
+    let mut borrow = true;
+    p.iter()
+      .map(|&bit| {
+        let difference = bit != borrow;
+        borrow = !bit && borrow;
+        difference
+      })
+      .collect()
+  }
+
+  /// The two's complement of `p`, `-p` modulo `2^width`: every bit flipped, plus one.
+  pub(crate) fn negate(p: &[bool]) -> Vec<bool> {
+    increment(&model::not(p))
+  }
+
+  /// What a layer that places `rounded`, a float rounded to an integer, at `bits` bits gives, from
+  /// the bit model: the pattern of the integer, in two's complement if `signed` and unsigned
+  /// otherwise, or the error of an integer outside the range, `NegOverflow` below it, as every
+  /// negative integer is for an unsigned one, and `PosOverflow` above it.
+  pub(crate) fn place(
+    rounded: Rounded,
+    bits: u32,
+    signed: bool,
+  ) -> Result<Vec<bool>, FromFloatError> {
+    // The magnitude in enough bits to hold it with a sign bit above it.
+    let width = 64 + rounded.shift + 1;
+    let significand = model::of_u128(u128::from(rounded.significand), 64);
+    let magnitude = model::shl(&model::extend(&significand, width, false), rounded.shift);
+    let negative = rounded.negative && rounded.significand != 0;
+    let fitted = match (negative, signed) {
+      (true, false) => None,
+      (true, true) => model::fit(&negate(&magnitude), bits, true),
+      (false, _) => model::fit(&magnitude, bits, signed),
+    };
+    match fitted {
+      Some(pattern) => Ok(pattern),
+      None if negative => Err(FromFloatError::NegOverflow),
+      None => Err(FromFloatError::PosOverflow),
+    }
+  }
+
+  /// The integers rounded from floats at which a layer is checked for a width of `bits` bits:
+  /// significands of zero, one, a few small values, every bit, `2^52`, `2^53` and alternating
+  /// bits, shifted to the low bits, to those next to the width, below and above it, and to those
+  /// of large floats, each of both signs; under Miri fewer significands and shifts.
+  pub(crate) fn rounded_samples(bits: u32) -> Vec<Rounded> {
+    let miri = super::tier().is_miri();
+    let significands: &[u64] = if miri {
+      &[0, 1, 3, (1 << 53) - 1, 1 << 53]
+    } else {
+      &[
+        0,
+        1,
+        2,
+        3,
+        5,
+        (1 << 53) - 1,
+        1 << 52,
+        1 << 53,
+        0x15_5555_5555_5555,
+      ]
+    };
+    let (mut shifts, offsets): (Vec<u32>, &[u32]) = if miri {
+      (vec![0], &[53, 1])
+    } else {
+      (vec![0, 1, 2, 300, 971], &[55, 54, 53, 2, 1])
+    };
+    for &offset in offsets {
+      shifts.extend(bits.checked_sub(offset));
+    }
+    shifts.extend([bits, bits + 1]);
+    shifts.sort_unstable();
+    shifts.dedup();
+    let mut samples = Vec::new();
+    for &significand in significands {
+      for &shift in &shifts {
+        for negative in [false, true] {
+          samples.push(Rounded {
+            negative,
+            significand,
+            shift,
+          });
+        }
+      }
+    }
+    samples
+  }
+
+  /// A xorshift generator of 64-bit words, seeded so that a failure replays.
+  pub(crate) struct Words(u64);
+
+  impl Words {
+    /// The generator of `seed`.
+    pub(crate) fn new(seed: u64) -> Self {
+      Self(0x9e37_79b9_7f4a_7c15 ^ seed)
+    }
+
+    /// The next word.
+    pub(crate) fn next(&mut self) -> u64 {
+      self.0 ^= self.0 >> 12;
+      self.0 ^= self.0 << 25;
+      self.0 ^= self.0 >> 27;
+      self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+  }
+
+  /// The floats at which the conversions into integers of the widths of `bits` are checked: NaN,
+  /// zero, the infinities, the largest float, the smallest and the largest subnormal float and the
+  /// smallest normal one, the values below one half `0.0005` and `0.0001`, the halves and the
+  /// quarters near zero, `2^k` for `k` each width and one bit less, with the floats next to it and
+  /// the integers and the halves next to it, which the float may round to it, and `random` floats
+  /// of random magnitudes, from below one half to beyond the widths; each also negated.
+  pub(crate) fn samples<F: TestFloat>(bits: &[u32], random: usize) -> Vec<F> {
+    let mut seeds: Vec<f64> = vec![
+      0.0,
+      f64::INFINITY,
+      f64::MAX,
+      0.0005,
+      0.0001,
+      0.25,
+      0.5,
+      0.75,
+      1.0,
+      1.25,
+      1.5,
+      2.5,
+      3.5,
+      6.5,
+    ];
+    let mut floats: Vec<F> = Vec::new();
+    for &width in bits {
+      for exponent in [width as i32 - 1, width as i32] {
+        let power = pow2(exponent);
+        seeds.extend([power, power - 1.0, power + 1.0, power - 0.5, power + 0.5]);
+        let raw = F::narrow(power).to_raw();
+        floats.extend([F::from_raw(raw - 1), F::from_raw(raw + 1)]);
+      }
+    }
+    let widest = bits.iter().copied().max().unwrap_or(0);
+    let mut words = Words::new(u64::from(widest));
+    for _ in 0..random {
+      // A significand of 53 random bits whose top bit is at a random exponent.
+      let exponent = (words.next() % u64::from(widest + 72)) as i32 - 64;
+      seeds.push((words.next() >> 11) as f64 * pow2(exponent - 52));
+    }
+    floats.extend(seeds.into_iter().map(F::narrow));
+    // The smallest positive float, the largest subnormal float, the smallest normal float and the
+    // largest float.
+    let fraction = (1 << (F::FORMAT.precision() - 1)) - 1;
+    let infinity = F::narrow(f64::INFINITY).to_raw();
+    floats.extend([
+      F::from_raw(1),
+      F::from_raw(fraction),
+      F::from_raw(fraction + 1),
+      F::from_raw(infinity - 1),
+    ]);
+    let negated: Vec<F> = floats.iter().map(|&x| x.negate()).collect();
+    floats.extend(negated);
+    floats.push(F::NAN);
+    floats.sort_by_key(|&x| x.to_raw());
+    floats.dedup_by_key(|&mut x| x.to_raw());
+    floats
+  }
+
+  /// The patterns of `width` bits whose magnitude, read unsigned, a float of 24 or of 53 bits of
+  /// significand rounds at a tie, and those next to them: for each length from one bit more than
+  /// the significand, among those next to it, up to 64, 128 and the width, and for top bits of a
+  /// one and zeros, of a one, zeros and a one, of ones and of alternating bits, the top bits
+  /// followed by the guard bit alone, a tie, and the patterns one below and one above it.
+  pub(crate) fn tie_patterns(width: u32) -> Vec<Vec<bool>> {
+    let mut patterns = Vec::new();
+    for precision in [24, 53] {
+      let tops = [
+        model::pattern(precision, |i| i + 1 == precision),
+        model::pattern(precision, |i| i == 0 || i + 1 == precision),
+        model::pattern(precision, |_| true),
+        model::pattern(precision, |i| i % 2 == 0 || i + 1 == precision),
+      ];
+      let lengths = [
+        precision + 1,
+        precision + 2,
+        precision + 11,
+        64,
+        65,
+        128,
+        129,
+        width.saturating_sub(1),
+        width,
+      ];
+      for length in lengths {
+        if length <= precision || length > width {
+          continue;
+        }
+        // The guard bit, below the top `precision` bits of the length.
+        let guard = length - precision - 1;
+        for top in &tops {
+          let tie = model::pattern(width, |i| {
+            i == guard || (guard < i && i < length && top[(i - guard - 1) as usize])
+          });
+          patterns.extend([decrement(&tie), increment(&tie), tie]);
+        }
+      }
+    }
+    patterns.sort_unstable();
+    patterns.dedup();
+    patterns
+  }
+
+  /// `count` patterns of `width` bits of random bits, from a generator seeded by `seed`.
+  pub(crate) fn random_patterns(width: u32, count: usize, seed: u64) -> Vec<Vec<bool>> {
+    let mut words = Words::new(seed);
+    (0..count)
+      .map(|_| {
+        let mut word = 0;
+        model::pattern(width, |i| {
+          if i % 64 == 0 {
+            word = words.next();
+          }
+          (word >> (i % 64)) & 1 == 1
+        })
+      })
+      .collect()
   }
 }
