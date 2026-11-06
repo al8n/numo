@@ -13,7 +13,7 @@ use crate::{BoundedCastFrom, CheckedCastFrom, IntRepr, TruncateFrom, UintRepr, W
 
 /// A participant of the casts, as the tests read it: its sign, its width, and its value as the
 /// pattern of the width.
-trait Model: Copy + Debug + PartialEq {
+pub(super) trait Model: Copy + Debug + PartialEq {
   /// Whether the type is signed.
   const SIGNED: bool;
 
@@ -28,7 +28,7 @@ trait Model: Copy + Debug + PartialEq {
 }
 
 /// A native integer, whose `as` casts and limits the tests of the native pairs compare with.
-trait Native: Model {
+pub(super) trait Native: Model {
   /// The smallest value.
   const MIN: Self;
 
@@ -177,7 +177,7 @@ fn patterns_of(values: Vec<i128>, bits: u32) -> Vec<Vec<bool>> {
 /// The values of `T` from which the casts are checked: every value of up to 8 bits and those of
 /// [`large_values`] of 9 to 16 bits, as the tier takes them, and above 16 bits the patterns of
 /// [`wide_patterns`]; under Miri the patterns of `model::few_patterns`.
-fn samples<T: Model>() -> Vec<T> {
+pub(super) fn samples<T: Model>() -> Vec<T> {
   let (bits, signed) = (T::WIDTH, T::SIGNED);
   let patterns = match bits {
     _ if tier().is_miri() => model::few_patterns(bits, 64),

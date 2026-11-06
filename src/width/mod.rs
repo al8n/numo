@@ -292,6 +292,12 @@ mod sealed {
     /// Compares the values of `self` and `other`.
     fn compare(&self, other: &Self, token: Token) -> Ordering;
 
+    /// Compares the value with `rhs`, as integers.
+    fn compare_u128(&self, rhs: u128, token: Token) -> Ordering;
+
+    /// Compares the value with `rhs`, as integers: the value is above every negative `rhs`.
+    fn compare_i128(&self, rhs: i128, token: Token) -> Ordering;
+
     /// Writes the lowest `ceil(bits / 64)` 64-bit words of the value to `state`, least significant
     /// first, extended by zeros beyond the storage. Requires the value to have `bits` bits.
     fn hash_limbs<H: Hasher>(&self, bits: u32, state: &mut H, token: Token);
@@ -612,6 +618,12 @@ mod sealed {
 
     /// Compares the values of `self` and `other`.
     fn compare(&self, other: &Self, token: Token) -> Ordering;
+
+    /// Compares the value with `rhs`, as integers: a negative value is below every `rhs`.
+    fn compare_u128(&self, rhs: u128, token: Token) -> Ordering;
+
+    /// Compares the value with `rhs`, as integers.
+    fn compare_i128(&self, rhs: i128, token: Token) -> Ordering;
 
     /// Writes the lowest `ceil(bits / 64)` 64-bit words of the value in two's complement to
     /// `state`, least significant first, extended by copies of the sign beyond the storage.
@@ -1257,6 +1269,16 @@ macro_rules! array_storage {
       }
 
       #[inline]
+      fn compare_u128(&self, rhs: u128, _: Token) -> Ordering {
+        unsigned::$lower::compare_u128(self, rhs)
+      }
+
+      #[inline]
+      fn compare_i128(&self, rhs: i128, _: Token) -> Ordering {
+        unsigned::$lower::compare_i128(self, rhs)
+      }
+
+      #[inline]
       fn hash_limbs<H: Hasher>(&self, bits: u32, state: &mut H, _: Token) {
         hash_words(self, bits, 0, state);
       }
@@ -1645,6 +1667,16 @@ macro_rules! array_storage {
       #[inline]
       fn compare(&self, other: &Self, _: Token) -> Ordering {
         signed::$upper::cmp(self, other)
+      }
+
+      #[inline]
+      fn compare_u128(&self, rhs: u128, _: Token) -> Ordering {
+        signed::$upper::compare_u128(self, rhs)
+      }
+
+      #[inline]
+      fn compare_i128(&self, rhs: i128, _: Token) -> Ordering {
+        signed::$upper::compare_i128(self, rhs)
       }
 
       #[inline]
@@ -2138,6 +2170,16 @@ macro_rules! native_storage {
       }
 
       #[inline]
+      fn compare_u128(&self, rhs: u128, _: Token) -> Ordering {
+        int::$uint::compare_u128(*self, rhs)
+      }
+
+      #[inline]
+      fn compare_i128(&self, rhs: i128, _: Token) -> Ordering {
+        int::$uint::compare_i128(*self, rhs)
+      }
+
+      #[inline]
       fn hash_limbs<H: Hasher>(&self, bits: u32, state: &mut H, _: Token) {
         hash_words(&[*self], bits, 0, state);
       }
@@ -2527,6 +2569,16 @@ macro_rules! native_storage {
       #[inline]
       fn compare(&self, other: &Self, _: Token) -> Ordering {
         self.cmp(other)
+      }
+
+      #[inline]
+      fn compare_u128(&self, rhs: u128, _: Token) -> Ordering {
+        int::$int::compare_u128(*self, rhs)
+      }
+
+      #[inline]
+      fn compare_i128(&self, rhs: i128, _: Token) -> Ordering {
+        int::$int::compare_i128(*self, rhs)
       }
 
       #[inline]

@@ -47,6 +47,7 @@ pub(crate) type DigitBuf = [core::primitive::u8; DIGIT_BUF_LEN];
 mod half_limbs;
 mod limb_layer;
 
+pub(crate) mod order;
 pub(crate) mod parse_errors;
 pub(crate) mod signed;
 pub(crate) mod slice;
@@ -58,7 +59,7 @@ macro_rules! native {
     pub(crate) mod $uint {
       use core::{cmp::Ordering, num::ParseIntError};
 
-      use super::{DIGIT_BUF_LEN, DigitBuf, parse_errors, slice};
+      use super::{DIGIT_BUF_LEN, DigitBuf, order, parse_errors, slice};
       use crate::rounding::{self, RoundingMode};
 
       native!(@shared $uint);
@@ -577,6 +578,22 @@ macro_rules! native {
         }
       }
 
+      /// Compares `value` with `rhs`, as integers.
+      #[inline]
+      pub(crate) const fn compare_u128(value: $uint, rhs: u128) -> Ordering {
+        order::cmp_u128(value as u128, rhs)
+      }
+
+      /// Compares `value` with `rhs`, as integers: `value` is above every negative `rhs`.
+      #[inline]
+      pub(crate) const fn compare_i128(value: $uint, rhs: i128) -> Ordering {
+        if rhs < 0 {
+          Ordering::Greater
+        } else {
+          order::cmp_u128(value as u128, rhs as u128)
+        }
+      }
+
       /// Writes the low `out.len()` bytes of `value` to `out`, least significant first, or most
       /// significant first if `big_endian`. Requires `out.len() <= BITS / 8`.
       pub(crate) const fn write_bytes(value: $uint, out: &mut [u8], big_endian: bool) {
@@ -663,9 +680,9 @@ macro_rules! native {
       "`."
     )]
     pub(crate) mod $int {
-      use core::num::ParseIntError;
+      use core::{cmp::Ordering, num::ParseIntError};
 
-      use super::{DigitBuf, parse_errors, slice};
+      use super::{DigitBuf, order, parse_errors, slice};
       use crate::rounding::RoundingMode;
 
       native!(@shared $int);
@@ -1237,6 +1254,22 @@ macro_rules! native {
           // The arithmetic shift copies the sign into every bit.
           _ => (wide >> 127) as u64,
         }
+      }
+
+      /// Compares `value` with `rhs`, as integers: a negative `value` is below every `rhs`.
+      #[inline]
+      pub(crate) const fn compare_u128(value: $int, rhs: u128) -> Ordering {
+        if value < 0 {
+          Ordering::Less
+        } else {
+          order::cmp_u128(value as u128, rhs)
+        }
+      }
+
+      /// Compares `value` with `rhs`, as integers.
+      #[inline]
+      pub(crate) const fn compare_i128(value: $int, rhs: i128) -> Ordering {
+        order::cmp_i128(value as i128, rhs)
       }
 
       /// Writes the low `out.len()` bytes of the two's complement of `value` to `out`, least

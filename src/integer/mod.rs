@@ -42,6 +42,7 @@ mod bytes;
 #[macro_use]
 mod nonzero;
 mod cast;
+mod compare;
 mod convert;
 mod text;
 mod traits;

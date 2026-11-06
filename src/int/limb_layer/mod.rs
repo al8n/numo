@@ -27,7 +27,7 @@ macro_rules! limb_layer {
     use ::core::{cmp::Ordering, num::ParseIntError};
 
     use $crate::{
-      int::{DigitBuf, parse_errors, slice},
+      int::{DigitBuf, order, parse_errors, slice},
       rounding::{self, RoundingMode},
     };
 
@@ -1661,6 +1661,42 @@ macro_rules! limb_layer {
       extended_word(value, index, 0)
     }
 
+    /// The low 128 bits of `value`, extended beyond its limbs by copies of `fill`, and whether
+    /// every limb above them is `fill`, so that those bits, extended by `fill`, hold the value.
+    pub(crate) const fn low_u128<const N: usize>(value: &[Limb; N], fill: Limb) -> (u128, bool) {
+      let high = extended_word(value, 1, fill) as u128;
+      let low = high << 64 | extended_word(value, 0, fill) as u128;
+      // 128 is a multiple of the bits of every limb type, so a limb is below the low 128 bits or
+      // above them.
+      let mut i = (128 / Limb::BITS) as usize;
+      while i < N {
+        if value[i] != fill {
+          return (low, false);
+        }
+        i += 1;
+      }
+      (low, true)
+    }
+
+    /// Compares `value` with `rhs`, as integers: a value with a bit set from index 128 up is the
+    /// greater, and another compares its low 128 bits.
+    pub(crate) const fn compare_u128<const N: usize>(value: &[Limb; N], rhs: u128) -> Ordering {
+      match low_u128(value, 0) {
+        (low, true) => order::cmp_u128(low, rhs),
+        (_, false) => Ordering::Greater,
+      }
+    }
+
+    /// Compares `value` with `rhs`, as integers: `value` is above every negative `rhs`.
+    #[inline]
+    pub(crate) const fn compare_i128<const N: usize>(value: &[Limb; N], rhs: i128) -> Ordering {
+      if rhs < 0 {
+        Ordering::Greater
+      } else {
+        compare_u128(value, rhs as u128)
+      }
+    }
+
     /// Writes the low `out.len()` bytes of `value` to `out`, least significant first, or most
     /// significant first if `big_endian`. The upper layer writes with it too: the limbs hold the
     /// bits of a value of either sign, and for one in two's complement the copies of its sign above
@@ -1857,7 +1893,7 @@ macro_rules! limb_layer {
 
     use $crate::int::unsigned::$unsigned;
     use $crate::{
-      int::{DigitBuf, parse_errors, slice},
+      int::{DigitBuf, order, parse_errors, slice},
       rounding::RoundingMode,
     };
 
@@ -2937,6 +2973,30 @@ macro_rules! limb_layer {
     pub(crate) const fn word<const N: usize>(value: &[Limb; N], index: usize) -> u64 {
       let fill = if is_negative(value) { Limb::MAX } else { 0 };
       $unsigned::extended_word(value, index, fill)
+    }
+
+    /// Compares `value` with `rhs`, as integers: a negative `value` is below every `rhs`.
+    #[inline]
+    pub(crate) const fn compare_u128<const N: usize>(value: &[Limb; N], rhs: u128) -> Ordering {
+      if is_negative(value) {
+        Ordering::Less
+      } else {
+        $unsigned::compare_u128(value, rhs)
+      }
+    }
+
+    /// Compares `value` with `rhs`, as integers: `value` compares as an `i128` if its bits from
+    /// index 127 up copy its sign, and is otherwise below every `rhs` if negative and above every
+    /// `rhs` if not.
+    pub(crate) const fn compare_i128<const N: usize>(value: &[Limb; N], rhs: i128) -> Ordering {
+      let negative = is_negative(value);
+      let fill = if negative { Limb::MAX } else { 0 };
+      match $unsigned::low_u128(value, fill) {
+        // The limbs above the low 128 bits and bit 127 copy the sign: an `i128` holds the value.
+        (low, true) if ((low as i128) < 0) == negative => order::cmp_i128(low as i128, rhs),
+        _ if negative => Ordering::Less,
+        _ => Ordering::Greater,
+      }
     }
 
     /// The integer in `bytes`, least significant byte first, or most significant first if
