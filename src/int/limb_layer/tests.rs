@@ -2554,7 +2554,10 @@ macro_rules! limb_layer_tests {
   };
   // The tests of the readers of slices of limbs, which every instance shares, after the helpers of
   // its arm and of `@bits`, with `checked_read_bytes` and `wrapping_read_bytes` of the layer in
-  // scope: `$signed` is whether the layer reads the limbs in two's complement.
+  // scope: `$signed` is whether the layer reads the limbs in two's complement. Each number of limbs
+  // checks in instantiations of its own, whose frames hold the values of that number of limbs
+  // alone: the generic functions are `#[inline(never)]`, since an optimized build would inline a
+  // function that has one call site, which would put them all in the frame of the test.
   (@limbs $signed:literal) => {
     /// The pattern of the bound of the range of `bits` bits that an integer outside it passes, read
     /// in two's complement if `$signed`: the smallest value if `negative`, and the largest
@@ -2573,6 +2576,7 @@ macro_rules! limb_layer_tests {
     /// checked one wherever that returns one, and the saturating one, which returns the bound of
     /// the range that the integer passes; and the checked and the wrapping readers against the
     /// readers of bytes at the bytes of the slice, least significant first.
+    #[inline(never)]
     fn check_limbs<const N: usize>(p: &[bool]) {
       let width = model::width(p);
       let limbs = |pattern: &[bool]| bigint::limbs_of_pattern::<Limb, N>(pattern, $signed);
@@ -2611,6 +2615,7 @@ macro_rules! limb_layer_tests {
     /// `widths::<N>()`, at each pattern of `bigint::bit_patterns_by` cut to the width, at every
     /// index up to 32 bits in an optimized build and at the reduced indexes otherwise; or under
     /// Miri at 0, 1 and `B * N` bits and the patterns of `model::few_patterns`.
+    #[inline(never)]
     fn limbs_against_the_model<const N: usize>() {
       let tier = bigint::tier();
       let top = B * N as u32;
@@ -2662,13 +2667,15 @@ macro_rules! limb_layer_tests {
   };
   // The tests of the comparisons with the integers of 128 bits, which every instance shares, after
   // the helpers of its arm and of `@bits`: `$signed` is whether the layer reads the limbs in two's
-  // complement.
+  // complement. Each number of limbs checks in instantiations of its own, whose generic functions
+  // are `#[inline(never)]` for the reason of `@limbs`.
   (@compare $signed:literal) => {
     /// Checks `compare_u128` and `compare_i128` of `N` limbs on `p`, a pattern of `B * N` bits,
     /// read in two's complement if `$signed`, against the bit model, with integers of 128 bits read
     /// unsigned and in two's complement: zero, one, every bit, the top bit alone, every bit below
     /// it, the largest value of 64 bits and the next one, and the low 128 bits of the value and the
     /// integers next to them.
+    #[inline(never)]
     fn check_compare<const N: usize>(p: &[bool]) {
       let x = bigint::limbs_of_pattern::<Limb, N>(p, $signed);
       let low = model::to_u128(&model::wrap(p, 128, $signed));
@@ -2702,6 +2709,7 @@ macro_rules! limb_layer_tests {
     /// the patterns of `bigint::bit_patterns_by` of `B * N` bits, at every index in an optimized
     /// build and otherwise at the reduced indexes, which include those next to 127 and 128 bits;
     /// or under Miri at the patterns of `model::few_patterns`.
+    #[inline(never)]
     fn compare_against_the_model<const N: usize>() {
       let tier = bigint::tier();
       let top = B * N as u32;

@@ -144,8 +144,10 @@ where
 }
 
 /// Checks the conversions from slices of limbs of `Uint` and `Int` in `$n` limbs of type `$limb` at
-/// each width of the list, written `Bits, bits;`, at the patterns of [`limb_patterns`], each storage
-/// in a frame of its own.
+/// each width of the list, written `Bits, bits;`, at the patterns of [`limb_patterns`], each
+/// storage in a function of its own, whose frame holds the values of that storage alone: the
+/// function is `#[inline(never)]`, since an optimized build would inline a function that has one
+/// call site, which would put every storage in the frame of the test.
 macro_rules! limbs_agree {
   ($limb:ident, $n:literal; $($width:ty, $bits:literal);+ $(;)?) => {$({
     #[inline(never)]
