@@ -1303,6 +1303,13 @@ pub(super) mod overflow {
     panic!("attempt to shift right with overflow")
   }
 
+  /// Panics as the native `strict_cast` does.
+  #[cold]
+  #[track_caller]
+  pub(crate) const fn cast() -> ! {
+    panic!("attempt to cast integer with overflow")
+  }
+
   /// Repeats the overflow of a native addition, which panics with the message of the native
   /// integers when `overflow-checks` is on and does nothing otherwise.
   #[inline]

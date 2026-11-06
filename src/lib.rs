@@ -446,12 +446,13 @@ pub use decimal::{
   SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 pub use integer::{
-  ArrayInteger, ByteArray, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits,
-  FixedInteger, FixedNonZero, FromByteArray, FromLimbs, Int, IntegerBits, IntegerByteOrder,
-  IntegerBytes, IntegerMath, IntegerNonZero, IntegerOne, NativeInteger, NonZeroInt, NonZeroLimits,
-  NonZeroOf, NonZeroUint, OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger,
-  SignedMath, SignedNonZero, StrictOps, TryNewError, Uint, UncheckedOps, UnsignedBits,
-  UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WrappingOps,
+  ArrayInteger, BoundedCastFrom, ByteArray, CheckedCastFrom, CheckedOps, ConstFixedInteger,
+  ConstIntegerOne, ConstNonZeroLimits, FixedInteger, FixedNonZero, FromByteArray, FromLimbs, Int,
+  IntegerBits, IntegerByteOrder, IntegerBytes, IntegerMath, IntegerNonZero, IntegerOne,
+  NativeInteger, NonZeroInt, NonZeroLimits, NonZeroOf, NonZeroUint, OverflowingOps, SaturatingOps,
+  SignedBits, SignedFixedInteger, SignedMath, SignedNonZero, StrictOps, TruncateFrom, TryNewError,
+  Uint, UncheckedOps, UnsignedBits, UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WidenFrom,
+  WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

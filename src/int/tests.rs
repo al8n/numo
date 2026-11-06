@@ -1836,3 +1836,79 @@ mod bytes {
     }
   }
 }
+
+/// The words of the native layers, at the full width of each native integer, read unsigned and in
+/// two's complement: the word at each index of the two words of a `u128` and at two beyond them,
+/// against the bit model, at every value of 8 bits and at the patterns of the ends of the wider
+/// widths; and `from_words` of the sealed storage traits, which gives the value back from its words
+/// and reduces it to each narrower width. Under Miri, the ends of 8 bits, at zero bits, one and the
+/// full width.
+mod words {
+  use std::{vec, vec::Vec};
+
+  use super::bits::ends;
+  use crate::{
+    bigint::{self, model},
+    int,
+    layout::Token,
+    width::{IntCore, UintCore},
+  };
+
+  /// Checks the words of the native layers `$uint` and `$int` at the patterns of their full width
+  /// of `$patterns`, and `from_words` of their words at every width up to the full one, or under
+  /// Miri at zero bits, one and the full width.
+  macro_rules! check_words {
+    ($uint:ident, $int:ident, $patterns:expr) => {{
+      let bits = $uint::BITS;
+      let widths: Vec<u32> = if bigint::tier().is_miri() {
+        vec![0, 1, bits]
+      } else {
+        (0..=bits).collect()
+      };
+      for pattern in $patterns {
+        let p = model::of_u128(pattern, bits);
+        let (x, y) = (pattern as $uint, pattern as $uint as $int);
+        for index in 0..4 {
+          assert_eq!(
+            (int::$uint::word(x, index), int::$int::word(y, index)),
+            (model::word(&p, index, false), model::word(&p, index, true)),
+            "word {index} of {x}"
+          );
+        }
+        let unsigned = |index| int::$uint::word(x, index);
+        let signed = |index| int::$int::word(y, index);
+        for &width in &widths {
+          assert_eq!(
+            (
+              <$uint as UintCore>::from_words(unsigned, width, Token::new()),
+              <$int as IntCore>::from_words(signed, width, Token::new()),
+            ),
+            (
+              model::to_u128(&model::wrap(&p, width, false)) as $uint,
+              model::to_i128(&model::wrap(&p, width, true)) as $int,
+            ),
+            "{x} at {width} bits"
+          );
+        }
+      }
+    }};
+  }
+
+  #[test]
+  fn u8_and_i8_words_match_the_bit_model() {
+    let patterns: Vec<u128> = if bigint::tier().is_miri() {
+      ends(8)
+    } else {
+      (0..1 << 8).collect()
+    };
+    check_words!(u8, i8, patterns);
+  }
+
+  #[test]
+  fn u16_to_i128_words_match_the_bit_model() {
+    check_words!(u16, i16, ends(16));
+    check_words!(u32, i32, ends(32));
+    check_words!(u64, i64, ends(64));
+    check_words!(u128, i128, ends(128));
+  }
+}

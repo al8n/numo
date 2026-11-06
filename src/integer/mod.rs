@@ -9,6 +9,7 @@ use core::{
 };
 
 pub use bytes::{ByteArray, FromByteArray, IntegerByteOrder, IntegerBytes};
+pub use cast::{BoundedCastFrom, CheckedCastFrom, TruncateFrom, WidenFrom};
 pub use error::TryNewError;
 pub use traits::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,
@@ -40,6 +41,7 @@ mod bits;
 mod bytes;
 #[macro_use]
 mod nonzero;
+mod cast;
 mod text;
 mod traits;
 

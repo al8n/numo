@@ -536,6 +536,15 @@ mod sealed {
     /// arithmetic is. A zero is a bug of this crate: it panics in a native integer, whose non-zero
     /// storage cannot hold it, and fails a debug assertion in an array.
     fn known_nonzero(self, token: Token) -> Self::NonZeroStorage;
+
+    /// The 64-bit word of the value at `index`, its bits from `64 * index` to `64 * index + 63`:
+    /// zero beyond the storage.
+    fn word(&self, index: usize, token: Token) -> u64;
+
+    /// The integer whose 64-bit words, least significant first, `word` gives, modulo `2^bits`: the
+    /// storage of the words, with every bit at index `bits` or above cleared. Requires `bits` to be
+    /// at most the bits of the storage.
+    fn from_words(word: impl Fn(usize) -> u64, bits: u32, token: Token) -> Self;
   }
 
   /// Seals [`IntRepr`](super::IntRepr) and gives the trait implementations of [`Int`](crate::Int)
@@ -843,6 +852,16 @@ mod sealed {
     /// The non-zero storage of a value that is not zero, as for
     /// [`UintCore::known_nonzero`].
     fn known_nonzero(self, token: Token) -> Self::NonZeroStorage;
+
+    /// The 64-bit word of the value at `index` in two's complement, its bits from `64 * index` to
+    /// `64 * index + 63`: copies of the sign beyond the storage.
+    fn word(&self, index: usize, token: Token) -> u64;
+
+    /// The integer whose 64-bit words in two's complement, least significant first, `word` gives,
+    /// reduced modulo `2^bits` into the range of `bits` bits: the storage of the words, with every
+    /// bit at index `bits - 1` or above set to bit `bits - 1`, or zero for zero bits. Requires
+    /// `bits` to be at most the bits of the storage.
+    fn from_words(word: impl Fn(usize) -> u64, bits: u32, token: Token) -> Self;
   }
 }
 
@@ -1493,6 +1512,16 @@ macro_rules! array_storage {
         debug_assert!(!unsigned::$lower::is_zero(&self), "a non-zero result is zero");
         self
       }
+
+      #[inline]
+      fn word(&self, index: usize, _: Token) -> u64 {
+        unsigned::$lower::word(self, index)
+      }
+
+      #[inline]
+      fn from_words(word: impl Fn(usize) -> u64, bits: u32, _: Token) -> Self {
+        unsigned::$lower::zero_extend(&limbs_of_words(word, |low| low as $limb), bits)
+      }
     }
 
     impl<const N: usize> IntRepr for [$limb; N] {
@@ -1872,6 +1901,16 @@ macro_rules! array_storage {
       fn known_nonzero(self, _: Token) -> Self {
         debug_assert!(!signed::$upper::is_zero(&self), "a non-zero result is zero");
         self
+      }
+
+      #[inline]
+      fn word(&self, index: usize, _: Token) -> u64 {
+        signed::$upper::word(self, index)
+      }
+
+      #[inline]
+      fn from_words(word: impl Fn(usize) -> u64, bits: u32, _: Token) -> Self {
+        signed::$upper::sign_extend(&limbs_of_words(word, |low| low as $limb), bits)
       }
     }
 
@@ -2304,6 +2343,16 @@ macro_rules! native_storage {
       fn known_nonzero(self, _: Token) -> core::num::NonZero<$uint> {
         int::$uint::known_nonzero(self)
       }
+
+      #[inline]
+      fn word(&self, index: usize, _: Token) -> u64 {
+        int::$uint::word(*self, index)
+      }
+
+      #[inline]
+      fn from_words(word: impl Fn(usize) -> u64, bits: u32, _: Token) -> Self {
+        int::$uint::zero_extend(u128_of_words(word, $uint::BITS) as $uint, bits)
+      }
     }
 
     impl IntRepr for $int {
@@ -2672,6 +2721,16 @@ macro_rules! native_storage {
       #[inline]
       fn known_nonzero(self, _: Token) -> core::num::NonZero<$int> {
         int::$int::known_nonzero(self)
+      }
+
+      #[inline]
+      fn word(&self, index: usize, _: Token) -> u64 {
+        int::$int::word(*self, index)
+      }
+
+      #[inline]
+      fn from_words(word: impl Fn(usize) -> u64, bits: u32, _: Token) -> Self {
+        int::$int::sign_extend(u128_of_words(word, $int::BITS) as $int, bits)
       }
     }
 
@@ -3125,6 +3184,40 @@ fn hash_words<L: Copy + Into<u128>, H: Hasher>(limbs: &[L], bits: u32, fill: L, 
     // The low 64 bits: a word of narrower limbs has no others, and the high half of a 128-bit limb
     // is the next word.
     state.write_u64(value as u64);
+  }
+}
+
+/// The `N` limbs of type `L`, least significant first, of the integer whose 64-bit words `word`
+/// gives, least significant first, as [`hash_words`] joins the limbs into words: for limbs of
+/// `B <= 64` bits, limb `i` holds the bits of word `i / (64 / B)` from `B * (i % (64 / B))` up,
+/// and a limb of 128 bits joins two words, the low one first. `limb` keeps the low bits of its
+/// argument as a limb.
+fn limbs_of_words<L, const N: usize>(
+  word: impl Fn(usize) -> u64,
+  limb: impl Fn(u128) -> L,
+) -> [L; N] {
+  let limb_bits = 8 * size_of::<L>();
+  core::array::from_fn(|i| {
+    if limb_bits == 128 {
+      limb(u128::from(word(2 * i)) | u128::from(word(2 * i + 1)) << 64)
+    } else {
+      let per_word = 64 / limb_bits;
+      limb(u128::from(
+        word(i / per_word) >> (limb_bits * (i % per_word)),
+      ))
+    }
+  })
+}
+
+/// The integer whose 64-bit words `word` gives, least significant first, cut to the 128 bits of a
+/// `u128`, of which a native integer of `bits` bits keeps the low ones: the first word, and above
+/// 64 bits the second.
+pub(crate) fn u128_of_words(word: impl Fn(usize) -> u64, bits: u32) -> u128 {
+  let low = u128::from(word(0));
+  if bits > 64 {
+    low | u128::from(word(1)) << 64
+  } else {
+    low
   }
 }
 
