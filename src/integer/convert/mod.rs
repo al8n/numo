@@ -5,6 +5,9 @@
 //! `bool` where the width holds one, and `TryFrom` into `bool`. `TryFrom` converts an integer into
 //! the non-zero integer of the same width and storage, [`NonZeroUint`] or [`NonZeroInt`], with the
 //! error of the kind `Zero` for zero, as the native `NonZero` integers convert from their integers.
+//! The non-zero integers convert with the native `NonZero` integers by the directions of the
+//! integers with the native integers, through the conversion of the integer of the same value,
+//! whose result is not zero either.
 //!
 //! Each conversion goes through the casts, and the errors are the values of
 //! `core::num::TryFromIntError` that the native conversions return: the type has no public
@@ -19,7 +22,7 @@ use typenum::{Gr, GrEq, IsGreater, IsGreaterOrEqual, NonZero, True, U1, U8, U16,
 
 use sealed::HoldsEvery;
 
-use super::{BoundedCastFrom, Int, NonZeroInt, NonZeroUint, Uint, cast};
+use super::{BoundedCastFrom, Int, NonZeroInt, NonZeroUint, Uint, cast, nonzero::Parts};
 use crate::{
   layout::Token,
   width::{FitsBits, IntCore, IntRepr, NonZeroIntRepr, NonZeroUintRepr, UintCore, UintRepr},
@@ -239,4 +242,117 @@ macro_rules! nonzero_try_from_integer {
 nonzero_try_from_integer!(
   NonZeroUint: NonZeroUintRepr, Uint, UintCore;
   NonZeroInt: NonZeroIntRepr, Int, IntCore;
+);
+
+/// Implements `From` of the native `NonZero` of the native integers of `$natives`, written
+/// `native: Bits`, into the non-zero integer `$name` of the integer `$integer` over every storage
+/// of `$repr` whose width compares with `Bits` as `$compare`, of which `$result` names the result,
+/// as `From` of the native integers converts into `$integer`: the integer of the value, which is
+/// not zero.
+macro_rules! nonzero_from_natives {
+  (
+    $name:ident, $integer:ident: $repr:ident, $compare:ident, $result:ident;
+    $($native:ident: $bits:ident),+
+  ) => {$(
+    impl<B, R> From<core::num::NonZero<$native>> for $name<B, R>
+    where
+      R: $repr,
+      B: FitsBits<R::Integer> + $compare<$bits>,
+      $result<B, $bits>: HoldsEvery,
+    {
+      /// Converts `value`, which the width holds, as every value of the native integer.
+      #[inline]
+      fn from(value: core::num::NonZero<$native>) -> Self {
+        Self::known(<$integer<B, R::Integer>>::from(value.get()))
+      }
+    }
+  )+};
+}
+
+nonzero_from_natives!(
+  NonZeroUint, Uint: NonZeroUintRepr, IsGreaterOrEqual, GrEq;
+  u8: U8, u16: U16, u32: U32, u64: U64, u128: U128
+);
+nonzero_from_natives!(
+  NonZeroInt, Int: NonZeroIntRepr, IsGreater, Gr;
+  u8: U8, u16: U16, u32: U32, u64: U64, u128: U128
+);
+nonzero_from_natives!(
+  NonZeroInt, Int: NonZeroIntRepr, IsGreaterOrEqual, GrEq;
+  i8: U8, i16: U16, i32: U32, i64: U64, i128: U128
+);
+
+/// Implements `TryFrom` of the native `NonZero` of `usize` and `isize` into the non-zero integer
+/// `$name` of the integer `$integer` over every storage of `$repr`, written
+/// `$name: $repr, $integer;`, at every width, as `TryFrom` of `usize` and `isize` converts into
+/// `$integer`: the integer of the value, which is not zero.
+macro_rules! nonzero_try_from_pointer_sized {
+  ($($name:ident: $repr:ident, $integer:ident);+ $(;)?) => {$(
+    impl<B: FitsBits<R::Integer>, R: $repr> TryFrom<core::num::NonZero<usize>> for $name<B, R> {
+      type Error = TryFromIntError;
+
+      /// Converts `value`, or returns the error of the native conversions, of the kind
+      /// `PosOverflow`, if it is above `MAX`.
+      #[inline]
+      fn try_from(value: core::num::NonZero<usize>) -> Result<Self, TryFromIntError> {
+        <$integer<B, R::Integer>>::try_from(value.get()).map(Self::known)
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: $repr> TryFrom<core::num::NonZero<isize>> for $name<B, R> {
+      type Error = TryFromIntError;
+
+      /// Converts `value`, or returns the error of the native conversions if it is outside the
+      /// range of `Bits` bits: of the kind `PosOverflow` above `MAX`, and `NegOverflow` below
+      /// `MIN`.
+      #[inline]
+      fn try_from(value: core::num::NonZero<isize>) -> Result<Self, TryFromIntError> {
+        <$integer<B, R::Integer>>::try_from(value.get()).map(Self::known)
+      }
+    }
+  )+};
+}
+
+nonzero_try_from_pointer_sized!(
+  NonZeroUint: NonZeroUintRepr, Uint;
+  NonZeroInt: NonZeroIntRepr, Int;
+);
+
+/// Implements `TryFrom` of [`NonZeroUint`] and [`NonZeroInt`] over every storage into the native
+/// `NonZero` of each native integer of `$natives`, at every width, as `TryFrom` of the integers
+/// converts into the native integers: the native integer of the integer of the value, which is
+/// not zero.
+macro_rules! native_nonzeros_try_from {
+  ($($native:ident),+) => {$(
+    impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> TryFrom<NonZeroUint<B, R>>
+      for core::num::NonZero<$native>
+    {
+      type Error = TryFromIntError;
+
+      /// Converts `value`, or returns the error of the native conversions, of the kind
+      /// `PosOverflow`, if it is above the largest value of the native integer.
+      #[inline]
+      fn try_from(value: NonZeroUint<B, R>) -> Result<Self, TryFromIntError> {
+        $native::try_from(Uint::from(value)).and_then(core::num::NonZero::try_from)
+      }
+    }
+
+    impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> TryFrom<NonZeroInt<B, R>>
+      for core::num::NonZero<$native>
+    {
+      type Error = TryFromIntError;
+
+      /// Converts `value`, or returns the error of the native conversions if it is outside the
+      /// range of the native integer: of the kind `PosOverflow` above it, and `NegOverflow` below
+      /// it, as every negative value is for an unsigned integer.
+      #[inline]
+      fn try_from(value: NonZeroInt<B, R>) -> Result<Self, TryFromIntError> {
+        $native::try_from(Int::from(value)).and_then(core::num::NonZero::try_from)
+      }
+    }
+  )+};
+}
+
+native_nonzeros_try_from!(
+  u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize
 );
