@@ -682,10 +682,9 @@ fn strict_casts_into_nonzero_integers_panic() {
   panics_here!(Uint::<U0>::ZERO.strict_cast::<NonZeroUint<U0>>(), zero);
   panics_here!(Byte::strict_cast_from(0u64), zero);
   panics_here!(NonZero::<u8>::strict_cast_from(0isize), zero);
-  panics_here!(
-    <Wide as CheckedCastFrom<i7>>::strict_cast_from(i7::ZERO),
-    zero
-  );
+  // A short argument keeps the invocation on one line, as `panics_here!` requires.
+  let x = i7::ZERO;
+  panics_here!(<Wide as CheckedCastFrom<i7>>::strict_cast_from(x), zero);
   panics_here!(u256::MAX.strict_cast::<Byte>(), overflow);
   panics_here!(i7::new(-1).strict_cast::<Byte>(), overflow);
   panics_here!(NonZero::<u8>::strict_cast_from(300u16), overflow);
