@@ -1,0 +1,42 @@
+error[E0277]: `widen` into a non-zero integer needs a non-zero source
+ --> tests/ui/widen_integer_into_nonzero.rs:8:30
+  |
+8 |   let _ = u7::new(5).widen::<NonZeroUint<U16>>();
+  |                      -----   ^^^^^^^^^^^^^^^^ the trait `numo::integer::cast::sealed::KindWidens<B1>` is not implemented for `B0`
+  |                      |
+  |                      required by a bound introduced by this call
+  |
+  = note: `checked_cast` returns `None` for zero
+help: the trait `KindWidens<B1>` is not implemented for `B0`
+      but trait `KindWidens<B0>` is implemented for it
+ --> src/integer/cast/mod.rs
+  |
+  |   impl KindWidens<B0> for B0 {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: for that trait implementation, expected `B0`, found `B1`
+  = note: required for `NonZeroUint<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, std::num::NonZero<u16>>` to implement `WidenFrom<Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>>`
+note: required by a bound in `numo::integer::cast::<impl Uint<B, R>>::widen`
+ --> src/integer/cast/mod.rs
+  |
+  |       pub fn widen<T: WidenFrom<Self>>(self) -> T {
+  |                       ^^^^^^^^^^^^^^^ required by this bound in `numo::integer::cast::<impl Uint<B, R>>::widen`
+...
+  | cast_methods!(Uint: UintRepr, Int: IntRepr);
+  | ------------------------------------------- in this macro invocation
+  = note: this error originates in the macro `cast_methods` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `widen` into a non-zero integer needs a non-zero source
+ --> tests/ui/widen_integer_into_nonzero.rs:9:11
+  |
+9 |   let _ = NonZero::<u16>::widen_from(5u8);
+  |           ^^^^^^^^^^^^^^ the trait `numo::integer::cast::sealed::KindWidens<B1>` is not implemented for `B0`
+  |
+  = note: `checked_cast` returns `None` for zero
+help: the trait `KindWidens<B1>` is not implemented for `B0`
+      but trait `KindWidens<B0>` is implemented for it
+ --> src/integer/cast/mod.rs
+  |
+  |   impl KindWidens<B0> for B0 {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: for that trait implementation, expected `B0`, found `B1`
+  = note: required for `std::num::NonZero<u16>` to implement `WidenFrom<u8>`
