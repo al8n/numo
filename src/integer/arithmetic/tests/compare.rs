@@ -2,7 +2,9 @@
 //! casts against the twelve native integers, both ways, with every comparison operator and
 //! `partial_cmp`, against the bit model; literals, mixed signs and widths; and code generic over
 //! the width. Each pair checks in an instantiation of a generic function of its own, whose frame
-//! holds the values of that pair alone.
+//! holds the values of that pair alone: the function is `#[inline(never)]`, since an optimized
+//! build would inline a function that has one call site, which would put every pair in the frame of
+//! the test, beyond the stack of a test thread.
 
 use core::{any::type_name, cmp::Ordering};
 
@@ -64,6 +66,7 @@ fn numo_ends<T: Model>() -> Vec<T> {
 /// the bit model: each value of `numos` with each value of `native_ends`, and each value of
 /// `numo_ends` with each value of `natives`, with `==`, `!=`, `<`, `>`, `<=`, `>=` and
 /// `partial_cmp`.
+#[inline(never)]
 fn check_compare<T, N>(numos: &[T], numo_ends: &[T], natives: &[N], native_ends: &[N])
 where
   T: Model + PartialEq<N> + PartialOrd<N>,
