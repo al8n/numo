@@ -5,7 +5,9 @@
 //! truncated against the rule of the native `to_int_checked` and saturated as `as` converts, and
 //! exactly, with the order of its errors; `From` into the floats at the widths whose every value
 //! they hold; and the conversions in constant contexts and the panics of the strict ones. Each type
-//! checks in a function of its own, whose frame holds its values alone.
+//! checks in a function of its own, whose frame holds its values alone, and which is never inlined:
+//! an optimized build would inline a function that has one call site, and the frame of its caller
+//! would hold the values of every type.
 
 use core::any::type_name;
 

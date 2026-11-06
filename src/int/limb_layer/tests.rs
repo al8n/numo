@@ -2743,7 +2743,9 @@ macro_rules! limb_layer_tests {
     }
   };
   // The tests of the floats, which every instance shares, after the helpers of its arm and of
-  // `@bits`: `$signed` is whether the layer reads the limbs in two's complement.
+  // `@bits`: `$signed` is whether the layer reads the limbs in two's complement. Each `N` checks in
+  // a function of its own, which is never inlined: an optimized build would inline a function that
+  // has one call site, and the frame of the test would hold those of every `N`.
   (@float $signed:literal) => {
     use crate::{
       bigint::floats::{self, TestFloat},
@@ -2772,6 +2774,7 @@ macro_rules! limb_layer_tests {
     /// an optimized build and at the reduced indexes otherwise, at the patterns that the floats
     /// round at a tie and those next to them, and at random patterns, as many as the tier takes;
     /// or under Miri at the patterns of `model::few_patterns`.
+    #[inline(never)]
     fn float_bits_against_the_model<const N: usize>() {
       let tier = bigint::tier();
       let top = B * N as u32;
@@ -2812,6 +2815,7 @@ macro_rules! limb_layer_tests {
 
     /// Checks the placement of the rounded integers of `floats::rounded_samples` into `N` limbs at
     /// each width of `widths::<N>()` against the bit model, read in two's complement if `$signed`.
+    #[inline(never)]
     fn placement_against_the_model<const N: usize>() {
       for bits in widths::<N>() {
         for rounded in floats::rounded_samples(bits) {

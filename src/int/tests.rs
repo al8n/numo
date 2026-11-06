@@ -2012,6 +2012,10 @@ mod limbs {
 /// values below one half whose exponent a shift would not reach, the range of a width against its
 /// bounds, and the native layers, whose placement of a rounded integer gives what the bit model
 /// gives and whose float bits are those that `as` gives. Under Miri, the structured floats alone.
+///
+/// Each format and each pair of native layers checks in a function of its own, which is never
+/// inlined: an optimized build would inline a function that has one call site, and the frame of the
+/// test would hold those of every format or pair.
 mod float {
   use std::{vec, vec::Vec};
 
@@ -2055,6 +2059,7 @@ mod float {
   /// float is `significand * 2^exponent` with its sign, in the canonical form of its format, with
   /// the implicit bit of a normal float or the exponent of the smallest normal one, and is an
   /// integer when `trunc` leaves it unchanged.
+  #[inline(never)]
   fn check_parts<F: TestFloat>(samples: &[F]) {
     for &x in samples {
       let wide = x.wide();
@@ -2103,6 +2108,7 @@ mod float {
   /// Checks the rounding of each float of `samples` in every mode against the rounding functions
   /// of std: the sign of the float, and the magnitude of the rounded value, whose significand is at
   /// most `2^53`.
+  #[inline(never)]
   fn check_rounding<F: TestFloat>(samples: &[F]) {
     for &x in samples {
       let Ok(parts) = x.parts() else { continue };
@@ -2222,42 +2228,45 @@ mod float {
   /// Checks the native layers `$uint` and `$int` at each width of `$widths`: the placement of the
   /// rounded integers of `floats::rounded_samples` against the bit model, unsigned and in two's
   /// complement; and their float bits at each pattern of their full width of `$patterns`, against
-  /// `as`.
+  /// `as`; in a function of its own.
   macro_rules! check_layers {
     ($uint:ident, $int:ident, $widths:expr, $patterns:expr) => {{
-      let widths: Vec<u32> = $widths;
-      for bits in widths {
-        for rounded in floats::rounded_samples(bits) {
+      #[inline(never)]
+      fn check(widths: Vec<u32>, patterns: Vec<u128>) {
+        for bits in widths {
+          for rounded in floats::rounded_samples(bits) {
+            assert_eq!(
+              int::$uint::place_magnitude(rounded, bits),
+              floats::place(rounded, bits, false).map(|p| model::to_u128(&p) as $uint),
+              "{rounded:?} at {bits} bits"
+            );
+            assert_eq!(
+              int::$int::place_magnitude(rounded, bits),
+              floats::place(rounded, bits, true).map(|p| model::to_i128(&p) as $int),
+              "{rounded:?} at {bits} bits"
+            );
+          }
+        }
+        for pattern in patterns {
+          let (x, y) = (pattern as $uint, pattern as $uint as $int);
           assert_eq!(
-            int::$uint::place_magnitude(rounded, bits),
-            floats::place(rounded, bits, false).map(|p| model::to_u128(&p) as $uint),
-            "{rounded:?} at {bits} bits"
-          );
-          assert_eq!(
-            int::$int::place_magnitude(rounded, bits),
-            floats::place(rounded, bits, true).map(|p| model::to_i128(&p) as $int),
-            "{rounded:?} at {bits} bits"
+            (
+              int::$uint::float_bits(x, FloatFormat::F64),
+              int::$uint::float_bits(x, FloatFormat::F32),
+              int::$int::float_bits(y, FloatFormat::F64),
+              int::$int::float_bits(y, FloatFormat::F32),
+            ),
+            (
+              (x as f64).to_bits(),
+              u64::from((x as f32).to_bits()),
+              (y as f64).to_bits(),
+              u64::from((y as f32).to_bits()),
+            ),
+            "{x}"
           );
         }
       }
-      for pattern in $patterns {
-        let (x, y) = (pattern as $uint, pattern as $uint as $int);
-        assert_eq!(
-          (
-            int::$uint::float_bits(x, FloatFormat::F64),
-            int::$uint::float_bits(x, FloatFormat::F32),
-            int::$int::float_bits(y, FloatFormat::F64),
-            int::$int::float_bits(y, FloatFormat::F32),
-          ),
-          (
-            (x as f64).to_bits(),
-            u64::from((x as f32).to_bits()),
-            (y as f64).to_bits(),
-            u64::from((y as f32).to_bits()),
-          ),
-          "{x}"
-        );
-      }
+      check($widths, $patterns);
     }};
   }
 
