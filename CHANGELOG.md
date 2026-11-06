@@ -446,9 +446,9 @@ FEATURES
     inherent `checked_cast`, `wrapping_cast`, `saturating_cast`, `strict_cast`, the `unsafe`
     `unchecked_cast`, `widen`, `truncate`, `checked_truncate` and `saturating_truncate`, generic
     over the target, as `Uint` and `Int` have them. The caller of `unchecked_cast` into a non-zero
-    integer guarantees a value that is not zero, as `checked_cast` would return `Some`; the cast
-    checks it in every build and panics there, reporting the caller, as no non-zero integer of
-    zero exists to return.
+    integer guarantees a value that is not zero, that is, `checked_cast` would return `Some`; the
+    cast checks it in every build and panics there, reporting the caller, as no non-zero integer
+    of zero exists to return.
   - The sealed traits `FixedNonZero`, with `Integer`, `BITS`, `new`, `get`, `new_unchecked`, which
     checks the value in every build, `from_str_radix` and the methods of both signs, and with
     `FromStr<Err = ParseIntError>`, the radix formats and the exponent formats as supertraits,

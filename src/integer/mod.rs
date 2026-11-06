@@ -933,14 +933,14 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// [`widen`](Self::widen), [`truncate`](Self::truncate),
 /// [`checked_truncate`](Self::checked_truncate) and
 /// [`saturating_truncate`](Self::saturating_truncate). A non-zero integer, numo's or a native
-/// `NonZero`, is also the target of the casts that check, which return `None` for zero, where
-/// `strict_cast` panics with the text of the error of the kind `Zero` and `unchecked_cast`, whose
-/// caller guarantees a value that is not zero, checks it in every build and panics, and of
-/// `widen` from a non-zero integer of the same sign that is at most as wide, as the native `From`
-/// converts between the `NonZero` integers; not of the wrapping, saturating and truncating casts,
-/// whose value may be zero. Between numo's non-zero integers, the casts are the conversions, as
-/// between the integers, and `widen` converts one losslessly into a native `NonZero`, as in
-/// `x.widen::<NonZero<u64>>()`.
+/// `NonZero`, is also the target of the casts that check, which treat zero apart: `checked_cast`
+/// returns `None`, `strict_cast` panics with the text of the error of the kind `Zero`, and
+/// `unchecked_cast`, whose caller guarantees a value that is not zero, checks it in every build and
+/// panics. It is the target of `widen` from a non-zero integer of the same sign that is at most as
+/// wide, as the native `From` converts between the `NonZero` integers, and not of the wrapping,
+/// saturating and truncating casts, whose value may be zero. Between numo's non-zero integers, the
+/// casts are the conversions, as between the integers, and `widen` converts one losslessly into a
+/// native `NonZero`, as in `x.widen::<NonZero<u64>>()`.
 ///
 /// ```
 /// use core::num::NonZero;

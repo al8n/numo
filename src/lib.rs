@@ -188,17 +188,18 @@
 //!
 //! The integers convert between any widths and signs with the casts of the native integers, still
 //! unstable: `checked_cast`, `wrapping_cast`, `saturating_cast`, `strict_cast` and the `unsafe`
-//! `unchecked_cast` into a `Uint`, an `Int` or a native integer, `widen` into an integer of the
-//! same sign that is at least as wide and `truncate`, with its checked and saturating forms, into
-//! one that is at most as wide, the widths compared at compile time, and the checked, saturating
-//! and strict casts between `Uint` and `Int` of the same width (see
-//! [Conversions](Uint#conversions)). With the native integers, `From` converts into a numo integer
-//! whose width holds every value of the native integer, and `TryFrom` converts a `usize` or an
-//! `isize` into any width and a numo integer into each native integer, with the error of the
-//! native conversions, [`core::num::TryFromIntError`]; `bool` converts both ways. `PartialEq` and
-//! `PartialOrd` compare the integers with each native integer, both ways, as integers, whatever the
-//! widths and the signs; a comparison of a native integer with an expression whose type is inferred
-//! from it, such as `n == m.into()`, then needs the type named.
+//! `unchecked_cast` into a `Uint`, an `Int` or a native integer, the checked, strict and unchecked
+//! ones also into a non-zero integer, `widen` into an integer of the same sign that is at least as
+//! wide and `truncate`, with its checked and saturating forms, into one that is at most as wide,
+//! the widths compared at compile time, and the checked, saturating and strict casts between
+//! `Uint` and `Int` of the same width (see [Conversions](Uint#conversions)). With the native
+//! integers, `From` converts into a numo integer whose width holds every value of the native
+//! integer, and `TryFrom` converts a `usize` or an `isize` into any width and a numo integer into
+//! each native integer, with the error of the native conversions, [`core::num::TryFromIntError`];
+//! `bool` converts both ways. `PartialEq` and `PartialOrd` compare the integers with each native
+//! integer, both ways, as integers, whatever the widths and the signs; a comparison of a native
+//! integer with an expression whose type is inferred from it, such as `n == m.into()`, then needs
+//! the type named.
 //!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,
