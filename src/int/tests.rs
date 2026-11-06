@@ -1912,3 +1912,97 @@ mod words {
     check_words!(u128, i128, ends(128));
   }
 }
+
+/// The readers of slices of limbs of the sealed storage traits for the native integers, which read
+/// a slice of limbs of their width as an array of one limb: at the slices of `bigint::limb_slices`
+/// of the patterns of the ends of a width, read unsigned and in two's complement, the checked and
+/// the wrapping readers give what the readers of bytes give at the bytes of the slice, and the
+/// saturating reader the checked value, or the bound of the range that the integer passes. Every
+/// width up to the full one in an optimized build, zero bits, one, about half, one less than the
+/// full width and the full width in an unoptimized one, and zero bits, one and the full width
+/// under Miri.
+mod limbs {
+  use std::{vec, vec::Vec};
+
+  use super::bits::ends;
+  use crate::{
+    bigint::{self, model},
+    int,
+    layout::Token,
+    width::{IntCore, UintCore},
+  };
+
+  /// The widths at which the readers of a native integer of `bits` bits are checked.
+  fn widths(bits: u32) -> Vec<u32> {
+    let tier = bigint::tier();
+    if tier.is_full() {
+      (0..=bits).collect()
+    } else if tier.is_miri() {
+      vec![0, 1, bits]
+    } else {
+      vec![0, 1, bits / 2 + 1, bits - 1, bits]
+    }
+  }
+
+  /// Checks the readers of slices of limbs of `$uint` and `$int`, whose limbs are `$uint`s.
+  macro_rules! check_limbs {
+    ($uint:ident, $int:ident) => {{
+      for width in widths($uint::BITS) {
+        for pattern in ends(width) {
+          let p = model::of_u128(pattern, width);
+          for slice in bigint::limb_slices::<$uint>(&p, false, 1) {
+            let bytes = bigint::bytes_of_limbs(&slice);
+            let checked = <$uint as UintCore>::checked_read_limbs(&slice, width, Token::new());
+            assert_eq!(
+              (
+                checked,
+                <$uint as UintCore>::wrapping_read_limbs(&slice, width, Token::new()),
+                <$uint as UintCore>::saturating_read_limbs(&slice, width, Token::new()),
+              ),
+              (
+                <$uint as UintCore>::checked_read_bytes(&bytes, false, width, Token::new()),
+                <$uint as UintCore>::wrapping_read_bytes(&bytes, false, width, Token::new()),
+                checked.unwrap_or(int::$uint::max_of_bits(width)),
+              ),
+              "{slice:x?} at {width} bits"
+            );
+          }
+          for slice in bigint::limb_slices::<$uint>(&p, true, 1) {
+            let bytes = bigint::bytes_of_limbs(&slice);
+            let checked = <$int as IntCore>::checked_read_limbs(&slice, width, Token::new());
+            let negative = slice
+              .last()
+              .is_some_and(|&top| top >> ($uint::BITS - 1) == 1);
+            let bound = if negative {
+              int::$int::min_of_bits(width)
+            } else {
+              int::$int::max_of_bits(width)
+            };
+            assert_eq!(
+              (
+                checked,
+                <$int as IntCore>::wrapping_read_limbs(&slice, width, Token::new()),
+                <$int as IntCore>::saturating_read_limbs(&slice, width, Token::new()),
+              ),
+              (
+                <$int as IntCore>::checked_read_bytes(&bytes, false, width, Token::new()),
+                <$int as IntCore>::wrapping_read_bytes(&bytes, false, width, Token::new()),
+                checked.unwrap_or(bound),
+              ),
+              "{slice:x?} at {width} bits"
+            );
+          }
+        }
+      }
+    }};
+  }
+
+  #[test]
+  fn native_storages_read_slices_of_limbs() {
+    check_limbs!(u8, i8);
+    check_limbs!(u16, i16);
+    check_limbs!(u32, i32);
+    check_limbs!(u64, i64);
+    check_limbs!(u128, i128);
+  }
+}

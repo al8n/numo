@@ -22,7 +22,7 @@ pub(crate) use sealed::{
 
 use sealed::{
   ArrayLimb, BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr,
-  LimbFor, MutableRepr, NativeBitsFit, NativeReprFilled, NonZeroRepr, ReprFilled, Width,
+  LimbFor, MutableRepr, NativeBitsFit, NativeReprFilled, NonZeroRepr, ReprFilled, ReprLimb, Width,
 };
 
 use crate::{
@@ -254,6 +254,20 @@ mod sealed {
   pub trait ArrayLimb {
     /// The base-2 logarithm of the number of bits of a limb.
     type BitsLog2;
+  }
+
+  /// The type of the limbs of a storage, which the slices of limbs that it reads hold: `L` for an
+  /// array `[L; N]`, and for a native integer the unsigned integer of its width, of which it is one
+  /// limb, as its hash reads it.
+  pub trait ReprLimb {
+    /// The type of a limb.
+    type Limb;
+  }
+
+  // One implementation for every array, so that `<[L; N] as ReprLimb>::Limb` is `L` also in code
+  // generic over the limb type.
+  impl<L, const N: usize> ReprLimb for [L; N] {
+    type Limb = L;
   }
 
   /// Seals [`UintRepr`](super::UintRepr) and gives the trait implementations of
@@ -545,6 +559,33 @@ mod sealed {
     /// storage of the words, with every bit at index `bits` or above cleared. Requires `bits` to be
     /// at most the bits of the storage.
     fn from_words(word: impl Fn(usize) -> u64, bits: u32, token: Token) -> Self;
+
+    // `ReprLimb` bounds the readers of limbs rather than being a supertrait, which would put the
+    // bound `[L; N]: ReprLimb` into code bounded by `[L; N]: UintRepr` and keep the limb type of
+    // the array there from normalizing to `L`.
+
+    /// The integer in `limbs`, least significant limb first, unsigned, as an integer of `bits`
+    /// bits, or `None` if it is `2^bits` or more, whatever the number of limbs. No limbs are zero.
+    /// Requires `bits` to be at most the bits of the storage.
+    fn checked_read_limbs(
+      limbs: &[<Self as ReprLimb>::Limb],
+      bits: u32,
+      token: Token,
+    ) -> Option<Self>
+    where
+      Self: ReprLimb;
+
+    /// The integer in `limbs`, read as [`checked_read_limbs`](Self::checked_read_limbs) reads it,
+    /// modulo `2^bits`. Requires `bits` to be at most the bits of the storage.
+    fn wrapping_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, token: Token) -> Self
+    where
+      Self: ReprLimb;
+
+    /// The integer in `limbs`, read as [`checked_read_limbs`](Self::checked_read_limbs) reads it,
+    /// or `2^bits - 1` if it is above that. Requires `bits` to be at most the bits of the storage.
+    fn saturating_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, token: Token) -> Self
+    where
+      Self: ReprLimb;
   }
 
   /// Seals [`IntRepr`](super::IntRepr) and gives the trait implementations of [`Int`](crate::Int)
@@ -862,6 +903,35 @@ mod sealed {
     /// bit at index `bits - 1` or above set to bit `bits - 1`, or zero for zero bits. Requires
     /// `bits` to be at most the bits of the storage.
     fn from_words(word: impl Fn(usize) -> u64, bits: u32, token: Token) -> Self;
+
+    // `ReprLimb` bounds the readers of limbs, as for `UintCore`.
+
+    /// The integer in `limbs`, least significant limb first, in two's complement of the bits of
+    /// its limbs, as an integer of `bits` bits, or `None` if it is outside their range, whatever
+    /// the number of limbs. No limbs are zero. Requires `bits` to be at most the bits of the
+    /// storage.
+    fn checked_read_limbs(
+      limbs: &[<Self as ReprLimb>::Limb],
+      bits: u32,
+      token: Token,
+    ) -> Option<Self>
+    where
+      Self: ReprLimb;
+
+    /// The integer in `limbs`, read as [`checked_read_limbs`](Self::checked_read_limbs) reads it,
+    /// reduced modulo `2^bits` into the range of `bits` bits. Requires `bits` to be at most the
+    /// bits of the storage.
+    fn wrapping_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, token: Token) -> Self
+    where
+      Self: ReprLimb;
+
+    /// The integer in `limbs`, read as [`checked_read_limbs`](Self::checked_read_limbs) reads it,
+    /// or the bound of the range of `bits` bits that it passes: the smallest value below the range,
+    /// which only a negative integer is, and the largest above it. Requires `bits` to be at most
+    /// the bits of the storage.
+    fn saturating_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, token: Token) -> Self
+    where
+      Self: ReprLimb;
   }
 }
 
@@ -1522,6 +1592,25 @@ macro_rules! array_storage {
       fn from_words(word: impl Fn(usize) -> u64, bits: u32, _: Token) -> Self {
         unsigned::$lower::zero_extend(&limbs_of_words(word, |low| low as $limb), bits)
       }
+
+      #[inline]
+      fn checked_read_limbs(
+        limbs: &[<Self as ReprLimb>::Limb],
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        unsigned::$lower::checked_read_limbs(limbs, bits)
+      }
+
+      #[inline]
+      fn wrapping_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, _: Token) -> Self {
+        unsigned::$lower::wrapping_read_limbs(limbs, bits)
+      }
+
+      #[inline]
+      fn saturating_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, _: Token) -> Self {
+        unsigned::$lower::saturating_read_limbs(limbs, bits)
+      }
     }
 
     impl<const N: usize> IntRepr for [$limb; N] {
@@ -1912,6 +2001,25 @@ macro_rules! array_storage {
       fn from_words(word: impl Fn(usize) -> u64, bits: u32, _: Token) -> Self {
         signed::$upper::sign_extend(&limbs_of_words(word, |low| low as $limb), bits)
       }
+
+      #[inline]
+      fn checked_read_limbs(
+        limbs: &[<Self as ReprLimb>::Limb],
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        signed::$upper::checked_read_limbs(limbs, bits)
+      }
+
+      #[inline]
+      fn wrapping_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, _: Token) -> Self {
+        signed::$upper::wrapping_read_limbs(limbs, bits)
+      }
+
+      #[inline]
+      fn saturating_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, _: Token) -> Self {
+        signed::$upper::saturating_read_limbs(limbs, bits)
+      }
     }
 
     impl<const N: usize> NonZeroRepr for [$limb; N] {}
@@ -1980,12 +2088,13 @@ array_storage!(
 
 /// Implements [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`], [`InlineUintRepr`] and
 /// [`InlineIntRepr`] for the native integers, and their width relations, and [`NonZeroUintRepr`]
-/// and [`NonZeroIntRepr`] for their `NonZero`, written `unsigned, signed: Bits`, where `Bits` is
-/// the number of bits of both.
+/// and [`NonZeroIntRepr`] for their `NonZero`, written `unsigned, signed: Bits, layer`, where
+/// `Bits` is the number of bits of both and `layer` the module of the limb layers of that width,
+/// through which they read a slice of limbs as an array of one limb.
 // Each native type has width impls of its own, as each array type constructor has: one impl over
 // every storage, bounded by a trait of the storages, would degrade the diagnostics of the arrays.
 macro_rules! native_storage {
-  ($($uint:ident, $int:ident: $bits:ident);+ $(;)?) => {$(
+  ($($uint:ident, $int:ident: $bits:ident, $layer:ident);+ $(;)?) => {$(
     native_storage!(@width $uint, $bits);
     native_storage!(@width $int, $bits);
 
@@ -2352,6 +2461,27 @@ macro_rules! native_storage {
       #[inline]
       fn from_words(word: impl Fn(usize) -> u64, bits: u32, _: Token) -> Self {
         int::$uint::zero_extend(u128_of_words(word, $uint::BITS) as $uint, bits)
+      }
+
+      #[inline]
+      fn checked_read_limbs(
+        limbs: &[<Self as ReprLimb>::Limb],
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        unsigned::$layer::checked_read_limbs::<1>(limbs, bits).map(|[value]| value)
+      }
+
+      #[inline]
+      fn wrapping_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, _: Token) -> Self {
+        let [value] = unsigned::$layer::wrapping_read_limbs::<1>(limbs, bits);
+        value
+      }
+
+      #[inline]
+      fn saturating_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, _: Token) -> Self {
+        let [value] = unsigned::$layer::saturating_read_limbs::<1>(limbs, bits);
+        value
       }
     }
 
@@ -2732,6 +2862,36 @@ macro_rules! native_storage {
       fn from_words(word: impl Fn(usize) -> u64, bits: u32, _: Token) -> Self {
         int::$int::sign_extend(u128_of_words(word, $int::BITS) as $int, bits)
       }
+
+      // The limb holds the bits of the two's complement, which the cast reads with the sign.
+      #[inline]
+      fn checked_read_limbs(
+        limbs: &[<Self as ReprLimb>::Limb],
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        signed::$layer::checked_read_limbs::<1>(limbs, bits).map(|[limb]| limb.cast_signed())
+      }
+
+      #[inline]
+      fn wrapping_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, _: Token) -> Self {
+        let [limb] = signed::$layer::wrapping_read_limbs::<1>(limbs, bits);
+        limb.cast_signed()
+      }
+
+      #[inline]
+      fn saturating_read_limbs(limbs: &[<Self as ReprLimb>::Limb], bits: u32, _: Token) -> Self {
+        let [limb] = signed::$layer::saturating_read_limbs::<1>(limbs, bits);
+        limb.cast_signed()
+      }
+    }
+
+    impl ReprLimb for $uint {
+      type Limb = $uint;
+    }
+
+    impl ReprLimb for $int {
+      type Limb = $uint;
     }
 
     impl NonZeroRepr for core::num::NonZero<$uint> {}
@@ -2812,11 +2972,11 @@ macro_rules! native_storage {
 }
 
 native_storage!(
-  u8, i8: U8;
-  u16, i16: U16;
-  u32, i32: U32;
-  u64, i64: U64;
-  u128, i128: U128;
+  u8, i8: U8, b8;
+  u16, i16: U16, b16;
+  u32, i32: U32, b32;
+  u64, i64: U64, b64;
+  u128, i128: U128, b128;
 );
 
 /// The array of limbs of type `Self` that holds `Bits` bits: `ceil(Bits / Self::BITS)` limbs.

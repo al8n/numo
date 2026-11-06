@@ -1741,6 +1741,102 @@ macro_rules! limb_layer {
       let gap = (Limb::BITS - bits % Limb::BITS) % Limb::BITS;
       shr(&swapped, gap)
     }
+
+    /// The limb that extends the integer in `limbs`, least significant limb first, read in two's
+    /// complement if `signed`: `Limb::MAX`, the copies of its sign, if the top bit of its last limb
+    /// is set, and zero otherwise, as for an unsigned integer and for no limbs.
+    #[inline]
+    pub(crate) const fn limbs_fill(limbs: &[Limb], signed: bool) -> Limb {
+      match limbs.last() {
+        Some(&top) if signed && top >> (Limb::BITS - 1) != 0 => Limb::MAX,
+        _ => 0,
+      }
+    }
+
+    /// Returns `true` if the integer in `limbs`, least significant limb first, read in two's
+    /// complement if `signed` and unsigned otherwise, is within the range of `bits` bits: every bit
+    /// from index `bits` up is zero for an unsigned integer, and every bit from index `bits - 1` up
+    /// copies the sign for a signed one, whose zero bits hold only zero, as for an unsigned one.
+    pub(crate) const fn limbs_fit_bits(limbs: &[Limb], bits: u32, signed: bool) -> bool {
+      // The lowest bit that must equal the bits of `fill`, and `fill`.
+      let (low, fill) = if signed && bits > 0 {
+        (bits - 1, limbs_fill(limbs, true))
+      } else {
+        (bits, 0)
+      };
+      // The index of the limb that holds bit `low`, compared before it is narrowed to `usize`,
+      // which can have fewer bits than `u32`, and the bits below `low` in that limb.
+      let (first, below) = ((low / Limb::BITS) as u64, low % Limb::BITS);
+      let len = limbs.len();
+      let mut k = if first < len as u64 {
+        first as usize
+      } else {
+        len
+      };
+      while k < len {
+        let differ = limbs[k] ^ fill;
+        let excess = if k as u64 == first {
+          differ >> below
+        } else {
+          differ
+        };
+        if excess != 0 {
+          return false;
+        }
+        k += 1;
+      }
+      true
+    }
+
+    /// The low `B * N` bits of the integer in `limbs`, least significant limb first, extended
+    /// beyond its limbs by copies of `fill`: zero for an unsigned integer, and the bits of its sign
+    /// for one in two's complement.
+    pub(crate) const fn read_limbs<const N: usize>(limbs: &[Limb], fill: Limb) -> [Limb; N] {
+      let mut value = [fill; N];
+      let mut i = 0;
+      while i < N && i < limbs.len() {
+        value[i] = limbs[i];
+        i += 1;
+      }
+      value
+    }
+
+    /// The integer in `limbs`, least significant limb first, unsigned, as a value of `bits` bits,
+    /// or `None` if it is `2^bits` or more, whatever the number of limbs. No limbs are zero.
+    /// Requires `bits <= B * N`.
+    pub(crate) const fn checked_read_limbs<const N: usize>(
+      limbs: &[Limb],
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      if limbs_fit_bits(limbs, bits, false) {
+        Some(read_limbs(limbs, 0))
+      } else {
+        None
+      }
+    }
+
+    /// The integer in `limbs`, read as [`checked_read_limbs`] reads it, modulo `2^bits`. Requires
+    /// `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn wrapping_read_limbs<const N: usize>(
+      limbs: &[Limb],
+      bits: u32,
+    ) -> [Limb; N] {
+      zero_extend(&read_limbs(limbs, 0), bits)
+    }
+
+    /// The integer in `limbs`, read as [`checked_read_limbs`] reads it, or `2^bits - 1`, the
+    /// largest value of `bits` bits, if it is above that. Requires `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn saturating_read_limbs<const N: usize>(
+      limbs: &[Limb],
+      bits: u32,
+    ) -> [Limb; N] {
+      match checked_read_limbs(limbs, bits) {
+        Some(value) => value,
+        None => max_of_bits(bits),
+      }
+    }
   };
   (signed limb: $limb:ident, signed: $signed:ident, unsigned: $unsigned:ident) => {
     use ::core::{cmp::Ordering, num::ParseIntError};
@@ -2865,6 +2961,45 @@ macro_rules! limb_layer {
     pub(crate) const fn swap_bytes_bits<const N: usize>(value: &[Limb; N], bits: u32) -> [Limb; N] {
       let pattern = $unsigned::zero_extend(value, bits);
       sign_extend(&$unsigned::swap_bytes_bits(&pattern, bits), bits)
+    }
+
+    /// The integer in `limbs`, least significant limb first, in two's complement of the bits of
+    /// its limbs, as a value of `bits` bits, or `None` if it is outside their range, whatever the
+    /// number of limbs. No limbs are zero, and zero bits hold only zero. Requires `bits <= B * N`.
+    pub(crate) const fn checked_read_limbs<const N: usize>(
+      limbs: &[Limb],
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      if $unsigned::limbs_fit_bits(limbs, bits, true) {
+        Some($unsigned::read_limbs(limbs, $unsigned::limbs_fill(limbs, true)))
+      } else {
+        None
+      }
+    }
+
+    /// The integer in `limbs`, read as [`checked_read_limbs`] reads it, reduced modulo `2^bits`
+    /// into the range of `bits` bits, or zero for zero bits. Requires `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn wrapping_read_limbs<const N: usize>(
+      limbs: &[Limb],
+      bits: u32,
+    ) -> [Limb; N] {
+      let fill = $unsigned::limbs_fill(limbs, true);
+      sign_extend(&$unsigned::read_limbs(limbs, fill), bits)
+    }
+
+    /// The integer in `limbs`, read as [`checked_read_limbs`] reads it, or the bound of the range
+    /// of `bits` bits that it passes: the smallest value below the range, which only a negative
+    /// integer is, and the largest above it. Requires `bits <= B * N`.
+    pub(crate) const fn saturating_read_limbs<const N: usize>(
+      limbs: &[Limb],
+      bits: u32,
+    ) -> [Limb; N] {
+      match checked_read_limbs(limbs, bits) {
+        Some(value) => value,
+        None if $unsigned::limbs_fill(limbs, true) != 0 => min_of_bits(bits),
+        None => max_of_bits(bits),
+      }
     }
   };
 }
