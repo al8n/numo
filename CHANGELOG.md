@@ -422,6 +422,30 @@ FEATURES
     negation `-` of `NonZeroInt`, which overflows at `MIN` as the native one does. The operators
     work on references for every storage, and on values for a storage whose integer holds the value
     inline. `Int` has no division by a `NonZeroInt`, as `MIN / -1` overflows.
+  - `TryFrom` of the `Uint` or the `Int` of the same width and storage, which returns the error of
+    the native conversions, `core::num::TryFromIntError`, of the kind `Zero` for zero, as the
+    native `NonZero` integers convert from their integers.
+  - The standard conversions with the native `NonZero` integers, by the directions of the integers
+    with the native integers: `From` from `NonZero<u8>` to `NonZero<u128>` into a `NonZeroUint` of
+    at least their width and into a `NonZeroInt` of more, and from `NonZero<i8>` to `NonZero<i128>`
+    into a `NonZeroInt` of at least their width, which the marker of the integers checks, with the
+    `TryFrom` that the standard library derives from it; `TryFrom` from `NonZero<usize>` and
+    `NonZero<isize>` at every width; and `TryFrom` into the `NonZero` of each of the twelve native
+    integers at every width, with the errors of the kinds `PosOverflow` and `NegOverflow`. Between
+    numo's non-zero integers, the casts are the conversions, as between the integers.
+  - The casts with the non-zero integers: `NonZeroUint`, `NonZeroInt` and the native `NonZero`
+    integers are sources of every cast, which converts them as the integers of the same values, and
+    targets of the casts that check, those of `CheckedCastFrom`, which return `None` for zero,
+    where the strict cast panics in every build with the text of the error of the kind `Zero`,
+    reporting the caller, and of `WidenFrom` from a non-zero integer of the same sign that is at
+    most as wide, as the native `From` converts between the `NonZero` integers. They are not
+    targets of the wrapping, saturating and truncating casts, whose value may be zero, nor of
+    `widen` from an integer: these fail to compile, with a diagnostic. `NonZero<usize>` and
+    `NonZero<isize>` count as 16 bits, as `usize` and `isize` do, and widen into themselves and
+    into their integers, which they also truncate into. `NonZeroUint` and `NonZeroInt` have the
+    inherent `checked_cast`, `wrapping_cast`, `saturating_cast`, `strict_cast`, `widen`,
+    `truncate`, `checked_truncate` and `saturating_truncate`, generic over the target, as `Uint`
+    and `Int` have them.
   - The sealed traits `FixedNonZero`, with `Integer`, `BITS`, `new`, `get`, `new_unchecked`, which
     checks the value in every build, `from_str_radix` and the methods of both signs, and with
     `FromStr<Err = ParseIntError>`, the radix formats and the exponent formats as supertraits,

@@ -32,7 +32,7 @@ traits do.
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
 | `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, and generic traits |
-| `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, and generic traits |
+| `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, `TryFrom` of the integer, the conversions with the native `NonZero` integers by direction, the casts into any integer and, checking for zero, from any integer, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
 
@@ -307,7 +307,13 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   rotations, the byte order of whole bytes, the checked and saturating multiplication, powers and
   addition, the logarithms, the square root, the midpoint, the division rounded up, the casts, and
   the negation and the absolute value of `NonZeroInt`. `Uint / NonZeroUint` and
-  `Uint % NonZeroUint` cannot panic. The traits `FixedNonZero`, `UnsignedNonZero`,
+  `Uint % NonZeroUint` cannot panic. `TryFrom` converts the integer of the same width and storage
+  into a non-zero integer, with the error of the kind `Zero` for zero, as the native `NonZero`
+  integers convert, and the conversions with the native `NonZero` integers go by the directions of
+  the integers with the native integers, as in `NonZeroUint::<U16>::from(NonZero::<u8>::MAX)`. The
+  casts take a non-zero integer as a source, into any integer, and as a target that takes no zero:
+  of `checked_cast` and `strict_cast`, and of `widen` from a non-zero integer, as the native `From`
+  converts between the `NonZero` integers. The traits `FixedNonZero`, `UnsignedNonZero`,
   `SignedNonZero`, `NonZeroLimits`, `ConstNonZeroLimits` and `IntegerByteOrder` give them to
   generic code.
 

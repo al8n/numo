@@ -388,7 +388,11 @@ mod traits;
 /// wide. The traits of the target, [`CheckedCastFrom`](crate::CheckedCastFrom),
 /// [`BoundedCastFrom`](crate::BoundedCastFrom), [`WidenFrom`](crate::WidenFrom) and
 /// [`TruncateFrom`](crate::TruncateFrom), give generic code the casts and convert from a native
-/// integer, as in `u7::checked_cast_from(5u64)`; their documentation lists the pairs.
+/// integer, as in `u7::checked_cast_from(5u64)`; their documentation lists the pairs. The casts
+/// that check, [`checked_cast`](Self::checked_cast) and [`strict_cast`](Self::strict_cast), also
+/// take a non-zero target, a [`NonZeroUint`], a [`NonZeroInt`] or a native `NonZero` integer,
+/// which has no value of zero: `checked_cast` returns `None` for zero, and `strict_cast` panics
+/// with the text of the error of the kind `Zero` (see [Conversions](NonZeroUint#conversions)).
 /// [`checked_cast_signed`](Self::checked_cast_signed),
 /// [`saturating_cast_signed`](Self::saturating_cast_signed) and
 /// [`strict_cast_signed`](Self::strict_cast_signed) convert into the [`Int`] of the same width in a
@@ -422,7 +426,7 @@ mod traits;
 ///
 /// ```
 /// use numo::{
-///   CheckedCastFrom, Uint, i7,
+///   CheckedCastFrom, NonZeroUint, Uint, i7,
 ///   typenum::{U16, U200},
 ///   u7, u256,
 /// };
@@ -432,6 +436,7 @@ mod traits;
 /// assert_eq!(x.wrapping_cast::<i7>(), i7::new(-28));
 /// assert_eq!(x.saturating_cast::<i7>(), i7::MAX);
 /// assert_eq!(x.checked_cast::<u64>(), Some(100));
+/// assert_eq!(u7::ZERO.checked_cast::<NonZeroUint<U16>>(), None);
 /// let wide: u256 = x.widen();
 /// assert_eq!(wide.truncate::<u8>(), 100);
 /// assert_eq!(Uint::<U200>::checked_cast_from(-1i8), None);
@@ -906,6 +911,61 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// assert_eq!(u7::new(105) % ten, u7::new(5));
 /// assert_eq!((ten | u7::new(1)).get(), u7::new(11));
 /// ```
+///
+/// # Conversions
+///
+/// `TryFrom` converts the [`Uint`] of the same width and storage into a non-zero integer, or
+/// returns the error of the native conversions of the kind `Zero` for zero,
+/// [`TryFromIntError`](core::num::TryFromIntError), as the native `NonZero` integers convert from
+/// their integers, and `From` converts it back. With the native `NonZero` integers, the
+/// conversions go by the directions of the integers with the native integers (see
+/// [Conversions](Uint#conversions)): `From` converts `NonZero<u8>` to `NonZero<u128>` into a
+/// `NonZeroUint` whose width holds every value of it, and `TryFrom` converts `NonZero<usize>` and
+/// `NonZero<isize>` into any width, and a `NonZeroUint` of any width into the `NonZero` of each
+/// native integer, with the errors of the kinds `PosOverflow` and `NegOverflow`.
+///
+/// The casts of [`Uint`] (see [Conversions](Uint#conversions)) convert a non-zero integer as the
+/// integer of the same value: [`checked_cast`](Self::checked_cast),
+/// [`wrapping_cast`](Self::wrapping_cast), [`saturating_cast`](Self::saturating_cast),
+/// [`strict_cast`](Self::strict_cast), [`widen`](Self::widen), [`truncate`](Self::truncate),
+/// [`checked_truncate`](Self::checked_truncate) and
+/// [`saturating_truncate`](Self::saturating_truncate). A non-zero integer, numo's or a native
+/// `NonZero`, is also the target of the casts that check, which return `None` for zero, where
+/// `strict_cast` panics with the text of the error of the kind `Zero`, and of `widen` from a
+/// non-zero integer of the same sign that is at most as wide, as the native `From` converts
+/// between the `NonZero` integers; not of the wrapping, saturating and truncating casts, whose
+/// value may be zero. Between numo's non-zero integers, the casts are the conversions, as between
+/// the integers, and `widen` converts one losslessly into a native `NonZero`, as in
+/// `x.widen::<NonZero<u64>>()`.
+///
+/// ```
+/// use core::num::NonZero;
+///
+/// use numo::{
+///   NonZeroUint,
+///   typenum::{U7, U16},
+///   u7,
+/// };
+///
+/// let five = NonZeroUint::<U7>::try_from(u7::new(5))?;
+/// assert_eq!(u7::from(five), u7::new(5));
+/// let zero = NonZeroUint::<U7>::try_from(u7::ZERO).unwrap_err();
+/// assert_eq!(zero.to_string(), "number would be zero for non-zero type");
+///
+/// // The native `NonZero` integers, by direction.
+/// let wide = NonZeroUint::<U16>::from(NonZero::<u8>::MAX);
+/// assert_eq!(NonZero::<u8>::try_from(wide)?, NonZero::<u8>::MAX);
+/// assert!(NonZero::<i8>::try_from(wide).is_err());
+///
+/// // The casts, from a non-zero integer and into one.
+/// assert_eq!(five.checked_cast::<u8>(), Some(5));
+/// let widened: NonZeroUint<U16> = five.widen();
+/// assert_eq!(widened.checked_cast::<NonZeroUint<U7>>(), Some(five));
+/// assert_eq!(wide.checked_cast::<NonZeroUint<U7>>(), None);
+/// assert_eq!(u7::ZERO.checked_cast::<NonZeroUint<U7>>(), None);
+/// assert_eq!(five.widen::<NonZero<u64>>().get(), 5);
+/// # Ok::<(), core::num::TryFromIntError>(())
+/// ```
 #[repr(transparent)]
 pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
   // `Repr` is the storage of the value itself: `core::num::NonZero<u8>` to `NonZero<u128>` for a
@@ -978,6 +1038,38 @@ pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
 /// assert_eq!(I1::MIN, I1::MAX);
 /// assert_eq!(I1::MIN.checked_mul(&I1::MIN), None);
 /// assert_eq!(I1::MIN.saturating_neg(), I1::MIN);
+/// ```
+///
+/// # Conversions
+///
+/// The conversions are those of [`NonZeroUint`] (see [Conversions](NonZeroUint#conversions)):
+/// `TryFrom` of the [`Int`] of the same width and storage, with the error of the kind `Zero` for
+/// zero, and `From` back; `From` of `NonZero<i8>` to `NonZero<i128>` into a `NonZeroInt` whose
+/// width holds every value of it, and of `NonZero<u8>` to `NonZero<u128>` into one with a bit more
+/// for the sign; `TryFrom` of `NonZero<usize>` and `NonZero<isize>` into any width, and of a
+/// `NonZeroInt` of any width into the `NonZero` of each native integer; and the casts, which
+/// convert a negative value as those of [`Int`] do.
+///
+/// ```
+/// use core::num::NonZero;
+///
+/// use numo::{
+///   NonZeroInt, NonZeroUint, i7,
+///   typenum::{U7, U16},
+/// };
+///
+/// let minus_five = NonZeroInt::<U7>::try_from(i7::new(-5))?;
+/// assert_eq!(minus_five.checked_cast::<u8>(), None);
+/// assert_eq!(minus_five.saturating_cast::<u8>(), 0);
+/// assert_eq!(minus_five.widen::<NonZero<i64>>().get(), -5);
+/// let error = NonZero::<u16>::try_from(minus_five).unwrap_err();
+/// assert_eq!(error.to_string(), "number too small to fit in target type");
+///
+/// let wide = NonZeroInt::<U16>::from(NonZero::<u8>::MAX);
+/// assert_eq!(wide.checked_cast::<NonZeroUint<U7>>(), None);
+/// let positive = wide.checked_cast::<NonZeroUint<U16>>().unwrap();
+/// assert_eq!(positive.get().value(), 255);
+/// # Ok::<(), core::num::TryFromIntError>(())
 /// ```
 ///
 /// # Overflow
