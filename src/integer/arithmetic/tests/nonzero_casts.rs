@@ -473,9 +473,10 @@ fn nonzero_integers_cast_into_integers() {
   }
 }
 
-/// Checks the checked and the strict cast into the non-zero integer `T` of each value of `samples`
-/// against the bit model: the value, if `T` holds it and it is not zero, and otherwise `None`,
-/// where the strict cast panics, which [`strict_casts_into_nonzero_integers_panic`] checks.
+/// Checks the checked, the strict and the unchecked cast into the non-zero integer `T` of each
+/// value of `samples` against the bit model: the value, if `T` holds it and it is not zero, and
+/// otherwise `None`, where the strict cast panics, which
+/// [`strict_casts_into_nonzero_integers_panic`] checks, and the unchecked one is not called.
 fn check_nonzero_target<S: Model, T: NonZeroModel + CheckedCastFrom<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T::Integer>(value);
@@ -488,6 +489,10 @@ fn check_nonzero_target<S: Model, T: NonZeroModel + CheckedCastFrom<S>>(samples:
     assert_eq!(T::checked_cast_from(value), cast, "{}", name());
     if let Some(cast) = cast {
       assert_eq!(T::strict_cast_from(value), cast, "{}", name());
+      // SAFETY: `checked_cast_from` returns `Some`, as asserted above, which is the precondition of
+      // `unchecked_cast_from`.
+      let unchecked = unsafe { T::unchecked_cast_from(value) };
+      assert_eq!(unchecked, cast, "{}", name());
     }
   }
 }
@@ -601,7 +606,8 @@ fn nonzero_integers_widen_and_truncate() {
 fn inherent_nonzero_casts_agree_with_the_traits() {
   // The casts of `$x`, a value of `$ty`, inherent and through the traits: into each integer of
   // `$integers`, and the checked and the strict cast into each non-zero integer of `$nonzeros`,
-  // where the checked one returns a value; each value in a frame of its own.
+  // where the checked one returns a value; the unchecked cast into both where the checked one
+  // returns a value; each value in a frame of its own.
   macro_rules! agree {
     ($ty:ty = $x:expr => [$($integer:ty),+], [$($nonzero:ty),+]) => {{
       #[inline(never)]
@@ -621,6 +627,11 @@ fn inherent_nonzero_casts_agree_with_the_traits() {
             "{x:?} into {}",
             type_name::<$integer>()
           );
+          if let Some(checked) = x.checked_cast::<$integer>() {
+            // SAFETY: `checked_cast` returns `Some`, which is the precondition of `unchecked_cast`.
+            let unchecked = unsafe { x.unchecked_cast::<$integer>() };
+            assert_eq!(unchecked, checked, "{x:?} into {}", type_name::<$integer>());
+          }
         )+
         $(
           let checked = x.checked_cast::<$nonzero>();
@@ -628,6 +639,10 @@ fn inherent_nonzero_casts_agree_with_the_traits() {
           assert_eq!(checked, <$nonzero>::checked_cast_from(x), "{}", name());
           if let Some(checked) = checked {
             assert_eq!(x.strict_cast::<$nonzero>(), checked, "{}", name());
+            // SAFETY: `checked_cast` returns `Some`, as asserted above, which is the precondition
+            // of `unchecked_cast`.
+            let unchecked = unsafe { x.unchecked_cast::<$nonzero>() };
+            assert_eq!(unchecked, checked, "{}", name());
           }
         )+
       }
@@ -692,6 +707,64 @@ fn strict_casts_into_nonzero_integers_panic() {
   panics_here!(Byte::MAX.strict_cast::<NonZeroInt<U8>>(), overflow);
   panics_here!(NonZeroInt::<U7>::MIN.strict_cast::<u8>(), overflow);
   panics_here!(u8::strict_cast_from(NonZero::<i8>::MIN), overflow);
+}
+
+/// The unchecked cast into a non-zero integer, inherent and through `CheckedCastFrom`: the value
+/// where the checked cast returns one, and on zero, which breaks its contract, a panic in every
+/// build that reports the caller, as no non-zero integer of zero exists to return: from integers
+/// of both signs into non-zero integers of every kind of storage, zero bits included, and into the
+/// native `NonZero` integers.
+#[test]
+fn unchecked_casts_into_nonzero_integers() {
+  // The unchecked cast of `value` into `T` through the trait, whose panic reports the caller of
+  // this function.
+  #[track_caller]
+  fn through_the_trait<S, T: CheckedCastFrom<S>>(value: S) -> T {
+    // SAFETY: a non-zero target checks for zero in every build and panics, and every other value
+    // that this test passes is in the range of `T`, so no call has undefined behavior: the test
+    // breaks the contract with zero to check the panic.
+    unsafe { T::unchecked_cast_from(value) }
+  }
+
+  // The inherent unchecked cast of `value` into `NonZeroUint<U8>`, whose panic reports the caller
+  // of this function.
+  #[track_caller]
+  fn from_u7(value: u7) -> NonZeroUint<U8> {
+    // SAFETY: as for `through_the_trait`.
+    unsafe { value.unchecked_cast() }
+  }
+
+  // The inherent unchecked cast of `value` into `NonZero<i8>`, whose panic reports the caller of
+  // this function.
+  #[track_caller]
+  fn from_i256(value: i256) -> NonZero<i8> {
+    // SAFETY: as for `through_the_trait`.
+    unsafe { value.unchecked_cast() }
+  }
+
+  type Byte = NonZeroUint<U8>;
+  type Wide = NonZeroInt<U200, [u8; 25]>;
+  // A non-zero integer of zero bits, which holds no value; a short name keeps each invocation of
+  // `panics_here!` on one line, as it requires.
+  type Empty = NonZeroUint<U0>;
+  assert_eq!(Some(from_u7(u7::new(5))), Byte::new(Uint::<U8>::new(5)));
+  assert_eq!(Some(from_i256(i256::from(-128))), NonZero::new(-128));
+  assert_eq!(
+    Some(through_the_trait::<i7, Wide>(i7::MIN)),
+    Wide::checked_cast_from(i7::MIN)
+  );
+  assert_eq!(
+    through_the_trait::<u64, NonZero<u16>>(65535),
+    NonZero::<u16>::MAX
+  );
+
+  let zero = "`unchecked_cast` requires a value that is not zero for a non-zero target".to_string();
+  panics_here!(from_u7(u7::ZERO), zero);
+  panics_here!(from_i256(i256::ZERO), zero);
+  panics_here!(through_the_trait::<u8, Byte>(0), zero);
+  panics_here!(through_the_trait::<i7, Wide>(i7::ZERO), zero);
+  panics_here!(through_the_trait::<isize, NonZero<i64>>(0), zero);
+  panics_here!(through_the_trait::<Uint<U0>, Empty>(Uint::ZERO), zero);
 }
 
 /// `try_cast` into a non-zero integer returns the error of the kind `Zero` for zero, at zero bits

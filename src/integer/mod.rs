@@ -389,10 +389,12 @@ mod traits;
 /// [`BoundedCastFrom`](crate::BoundedCastFrom), [`WidenFrom`](crate::WidenFrom) and
 /// [`TruncateFrom`](crate::TruncateFrom), give generic code the casts and convert from a native
 /// integer, as in `u7::checked_cast_from(5u64)`; their documentation lists the pairs. The casts
-/// that check, [`checked_cast`](Self::checked_cast) and [`strict_cast`](Self::strict_cast), also
-/// take a non-zero target, a [`NonZeroUint`], a [`NonZeroInt`] or a native `NonZero` integer,
-/// which has no value of zero: `checked_cast` returns `None` for zero, and `strict_cast` panics
-/// with the text of the error of the kind `Zero` (see [Conversions](NonZeroUint#conversions)).
+/// that check, [`checked_cast`](Self::checked_cast) and [`strict_cast`](Self::strict_cast), and
+/// `unchecked_cast` also take a non-zero target, a [`NonZeroUint`], a [`NonZeroInt`] or a native
+/// `NonZero` integer, which has no value of zero: `checked_cast` returns `None` for zero,
+/// `strict_cast` panics with the text of the error of the kind `Zero`, and `unchecked_cast`,
+/// whose caller guarantees a value that is not zero, checks it in every build and panics there
+/// (see [Conversions](NonZeroUint#conversions)).
 /// [`checked_cast_signed`](Self::checked_cast_signed),
 /// [`saturating_cast_signed`](Self::saturating_cast_signed) and
 /// [`strict_cast_signed`](Self::strict_cast_signed) convert into the [`Int`] of the same width in a
@@ -927,15 +929,17 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// The casts of [`Uint`] (see [Conversions](Uint#conversions)) convert a non-zero integer as the
 /// integer of the same value: [`checked_cast`](Self::checked_cast),
 /// [`wrapping_cast`](Self::wrapping_cast), [`saturating_cast`](Self::saturating_cast),
-/// [`strict_cast`](Self::strict_cast), [`widen`](Self::widen), [`truncate`](Self::truncate),
+/// [`strict_cast`](Self::strict_cast), the `unsafe` [`unchecked_cast`](Self::unchecked_cast),
+/// [`widen`](Self::widen), [`truncate`](Self::truncate),
 /// [`checked_truncate`](Self::checked_truncate) and
 /// [`saturating_truncate`](Self::saturating_truncate). A non-zero integer, numo's or a native
 /// `NonZero`, is also the target of the casts that check, which return `None` for zero, where
-/// `strict_cast` panics with the text of the error of the kind `Zero`, and of `widen` from a
-/// non-zero integer of the same sign that is at most as wide, as the native `From` converts
-/// between the `NonZero` integers; not of the wrapping, saturating and truncating casts, whose
-/// value may be zero. Between numo's non-zero integers, the casts are the conversions, as between
-/// the integers, and `widen` converts one losslessly into a native `NonZero`, as in
+/// `strict_cast` panics with the text of the error of the kind `Zero` and `unchecked_cast`, whose
+/// caller guarantees a value that is not zero, checks it in every build and panics, and of
+/// `widen` from a non-zero integer of the same sign that is at most as wide, as the native `From`
+/// converts between the `NonZero` integers; not of the wrapping, saturating and truncating casts,
+/// whose value may be zero. Between numo's non-zero integers, the casts are the conversions, as
+/// between the integers, and `widen` converts one losslessly into a native `NonZero`, as in
 /// `x.widen::<NonZero<u64>>()`.
 ///
 /// ```

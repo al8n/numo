@@ -231,13 +231,15 @@ pub trait CheckedCastFrom<S>: CastPair<S> + Sized {
   #[track_caller]
   fn strict_cast_from(value: S) -> Self;
 
-  /// Converts `value` to `Self`, assuming that it is in the range of `Self`.
+  /// Converts `value` to `Self`, assuming that it is in the range of `Self`, and not zero for a
+  /// non-zero integer.
   ///
   /// # Safety
   ///
-  /// `value` must be in the range of `Self`, from its `MIN` to its `MAX`, that is,
-  /// [`checked_cast_from`](Self::checked_cast_from) would return `Some`. Otherwise the behavior is
-  /// undefined.
+  /// `value` must be in the range of `Self`, from its `MIN` to its `MAX`, and not zero if `Self` is
+  /// a non-zero integer, that is, [`checked_cast_from`](Self::checked_cast_from) would return
+  /// `Some`. Otherwise the behavior is undefined. A non-zero `Self` checks for zero in every build
+  /// and panics there, reporting the caller, as no non-zero integer of zero exists to return.
   #[must_use]
   #[track_caller]
   unsafe fn unchecked_cast_from(value: S) -> Self;
@@ -1048,20 +1050,21 @@ macro_rules! cast_methods {
       }
 
       /// Unchecked cast: converts the value to the integer `T`, assuming that it is in the range
-      /// of `T`, as the native `unchecked_cast` does, still unstable
-      /// ([#157388](https://github.com/rust-lang/rust/issues/157388)).
+      /// of `T`, and not zero for a non-zero `T`, as the native `unchecked_cast` does, still
+      /// unstable ([#157388](https://github.com/rust-lang/rust/issues/157388)).
       ///
       /// # Safety
       ///
-      /// The value must be in the range of `T`, from its `MIN` to its `MAX`, that is,
-      /// [`checked_cast`](Self::checked_cast) would return `Some`. Otherwise the behavior is
-      /// undefined.
+      /// The value must be in the range of `T`, from its `MIN` to its `MAX`, and not zero if `T` is
+      /// a non-zero integer, that is, [`checked_cast`](Self::checked_cast) would return `Some`.
+      /// Otherwise the behavior is undefined. A non-zero `T` checks for zero in every build and
+      /// panics there, reporting the caller, as no non-zero integer of zero exists to return.
       #[must_use]
       #[inline]
       #[track_caller]
       pub unsafe fn unchecked_cast<T: CheckedCastFrom<Self>>(self) -> T {
-        // SAFETY: the caller guarantees that the value is in the range of `T`, the precondition of
-        // `unchecked_cast_from`.
+        // SAFETY: the caller guarantees that `checked_cast` would return `Some`, the precondition
+        // of `unchecked_cast_from`.
         unsafe { T::unchecked_cast_from(self) }
       }
 
@@ -1160,6 +1163,24 @@ macro_rules! nonzero_cast_methods {
       #[track_caller]
       pub fn strict_cast<T: CheckedCastFrom<Self>>(self) -> T {
         T::strict_cast_from(self)
+      }
+
+      /// Unchecked cast: converts the value to the integer `T`, assuming that it is in the range
+      /// of `T`, as `unchecked_cast` of the integer of the same value does. The value is not zero,
+      /// so a non-zero `T` takes it wherever its range does.
+      ///
+      /// # Safety
+      ///
+      /// The value must be in the range of `T`, from its `MIN` to its `MAX`, that is,
+      /// [`checked_cast`](Self::checked_cast) would return `Some`. Otherwise the behavior is
+      /// undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub unsafe fn unchecked_cast<T: CheckedCastFrom<Self>>(self) -> T {
+        // SAFETY: the caller guarantees that `checked_cast` would return `Some`, the precondition
+        // of `unchecked_cast_from`.
+        unsafe { T::unchecked_cast_from(self) }
       }
 
       /// Converts the value to the integer `T` of the same sign, which is at least as wide, as
