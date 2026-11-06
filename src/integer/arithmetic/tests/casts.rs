@@ -4,9 +4,9 @@
 //! storages and signs against the bit model. Each pair checks in an instantiation of a generic
 //! function of its own, whose frame holds the values of that pair alone.
 
-use core::any::type_name;
+use core::{any::type_name, num::TryFromIntError};
 
-use typenum::{U3, U5, U12, U33, U150, U193};
+use typenum::{U3, U5, U12, U17, U33, U150, U193};
 
 use super::*;
 use crate::{BoundedCastFrom, CheckedCastFrom, IntRepr, TruncateFrom, UintRepr, WidenFrom, i0, u0};
@@ -889,4 +889,152 @@ fn sign_casts_in_constant_contexts() {
   assert_eq!(SIGNED, (None, u7::ZERO, u7::new(63), None, Bytes::ZERO));
   assert_eq!(ZERO_BITS, (Some(i0::ZERO), Some(u0::ZERO)));
   assert_eq!(ONE_BIT, (None, I1x8::ZERO, None, U1x8::ZERO));
+}
+
+/// The errors of the native conversions for a value above the range of the target, of the kind
+/// `PosOverflow`, and below it, of the kind `NegOverflow`.
+fn errors() -> (TryFromIntError, TryFromIntError) {
+  (
+    u8::try_from(u16::MAX).unwrap_err(),
+    u8::try_from(-1i8).unwrap_err(),
+  )
+}
+
+/// Checks `From` from the native integer `S` into `T`, whose width holds every value of `S`, at
+/// each value of `samples` against the bit model.
+fn check_from<S: Model, T: Model + From<S>>(samples: &[S]) {
+  for &value in samples {
+    let expected = expected::<S, T>(value);
+    let name = || format!("{value:?} into {}", type_name::<T>());
+    assert!(expected.fits, "{}", name());
+    assert_eq!(T::from(value), expected.wrapped, "{}", name());
+  }
+}
+
+/// Checks `TryFrom` from `S` into `T` at each value of `samples` against the bit model: the value,
+/// or the error that the native conversions return for a value above the range of `T` or below
+/// it.
+fn check_try_from<S: Model, T: Model + TryFrom<S, Error = TryFromIntError>>(samples: &[S]) {
+  let (above, below) = errors();
+  for &value in samples {
+    let expected = expected::<S, T>(value);
+    let negative = S::SIGNED && model::sign(&value.pattern());
+    let error = if negative { below } else { above };
+    assert_eq!(
+      T::try_from(value),
+      if expected.fits {
+        Ok(expected.wrapped)
+      } else {
+        Err(error)
+      },
+      "{value:?} into {}",
+      type_name::<T>()
+    );
+  }
+}
+
+/// `From` from each native integer of up to 128 bits into numo integers of each kind of storage
+/// whose width holds every value of it: at least its width for an integer of the same sign, and one
+/// bit more for an unsigned native integer into `Int`.
+#[test]
+fn native_integers_convert_into_numo_integers_where_lossless() {
+  pairs!(check_from:
+    u8 => Uint<U8, u8>, Uint<U8, [u8; 1]>, Uint<U200, [u64; 4]>, Int<U9, i16>, Int<U9, [u16; 1]>;
+    u16 => Uint<U16, [u8; 2]>, Uint<U33, [u32; 2]>, Int<U17, i32>, Int<U129, [u64; 3]>;
+    u32 => Uint<U32, u32>, Int<U33, [u32; 2]>, Uint<U200, [u8; 25]>;
+    u64 => Uint<U64, u64>, Uint<U65, [u64; 2]>, Int<U65, i128>, Int<U200, [u128; 2]>;
+    u128 => Uint<U128, u128>, Uint<U128, [u16; 8]>, Int<U129, [u64; 3]>;
+    i8 => Int<U8, i8>, Int<U8, [u8; 1]>, Int<U100, [u128; 1]>;
+    i16 => Int<U16, i16>, Int<U24, [u8; 3]>;
+    i32 => Int<U32, i32>, Int<U33, [u32; 2]>;
+    i64 => Int<U64, i64>, Int<U64, [u16; 4]>, Int<U200, [u64; 4]>;
+    i128 => Int<U128, i128>, Int<U129, [u64; 3]>, Int<U200, [u8; 25]>;
+  );
+}
+
+/// `TryFrom` from `usize` and `isize` into `Uint` and `Int` of every width, zero bits included,
+/// and from numo integers into each native integer, against the bit model, with the errors of the
+/// native conversions.
+#[test]
+fn numo_and_native_integers_try_from_each_other() {
+  pairs!(check_try_from:
+    usize => Uint<U0>, Uint<U7, u8>, Uint<U16, [u8; 2]>, Uint<U64, u64>, Uint<U200, [u64; 4]>,
+      Int<U0, [u8; 0]>, Int<U7, i8>, Int<U64, i64>, Int<U65, [u64; 2]>;
+    isize => Uint<U0>, Uint<U7, u8>, Uint<U64, u64>, Uint<U200, [u64; 4]>, Int<U0, [u8; 0]>,
+      Int<U7, i8>, Int<U33, [u32; 2]>, Int<U64, i64>, Int<U129, [u64; 3]>;
+  );
+  cast_pairs!(
+    check_try_from: [
+      Uint<U0>,
+      Uint<U7, u8>,
+      Int<U7, i8>,
+      Int<U12, [u16; 1]>,
+      Uint<U65, [u64; 2]>,
+      Int<U129, [u64; 3]>,
+      Uint<U200, [u8; 25]>,
+    ] => [u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize]
+  );
+}
+
+/// The errors of `TryFrom` are those that the native conversions return in the same situation,
+/// with their text: of the kind `PosOverflow` above the range of the target, and `NegOverflow`
+/// below it.
+#[test]
+fn conversion_errors_are_those_of_the_native_conversions() {
+  let (above, below) = errors();
+  assert_ne!(above, below);
+  assert_eq!(above, u8::try_from(256u16).unwrap_err());
+  assert_eq!(below, u8::try_from(i64::MIN).unwrap_err());
+  assert_eq!(u8::try_from(u256::MAX), Err(above));
+  assert_eq!(i8::try_from(i256::MAX), Err(above));
+  assert_eq!(u8::try_from(i256::MIN), Err(below));
+  assert_eq!(i128::try_from(i256::MIN), Err(below));
+  assert_eq!(Uint::<U7>::try_from(128usize), Err(above));
+  assert_eq!(Uint::<U7>::try_from(-1isize), Err(below));
+  assert_eq!(Int::<U7>::try_from(-65isize), Err(below));
+  assert_eq!(above.to_string(), "number too large to fit in target type");
+  assert_eq!(below.to_string(), "number too small to fit in target type");
+}
+
+/// `From<bool>` gives zero and one where the width holds one, from one bit for `Uint` and from two
+/// for `Int`, and `TryFrom` into `bool` gives `false` and `true` back from zero and one, and the
+/// errors of the native conversions above one and below zero, at every width, zero bits included.
+#[test]
+fn bool_converts_both_ways() {
+  let (above, below) = errors();
+  // `$ty` converts `false` and `true` to zero and one, and back.
+  macro_rules! from_bool {
+    ($($ty:ty),+ $(,)?) => {$(
+      assert_eq!(
+        (<$ty>::from(false), <$ty>::from(true)),
+        (<$ty>::ZERO, <$ty>::ONE),
+        "{}",
+        type_name::<$ty>()
+      );
+      assert_eq!(
+        (bool::try_from(<$ty>::ZERO), bool::try_from(<$ty>::ONE)),
+        (Ok(false), Ok(true)),
+        "{}",
+        type_name::<$ty>()
+      );
+    )+};
+  }
+  from_bool!(
+    Uint<U1, u8>,
+    Uint<U1, [u64; 1]>,
+    u7,
+    Uint<U200, [u8; 25]>,
+    Int<U2, i8>,
+    Int<U2, [u16; 1]>,
+    i256,
+  );
+  assert_eq!(bool::try_from(Uint::<U2, u8>::new(2)), Err(above));
+  assert_eq!(bool::try_from(u256::MAX), Err(above));
+  assert_eq!(bool::try_from(Int::<U1, i8>::MIN), Err(below));
+  assert_eq!(bool::try_from(i256::MIN), Err(below));
+  assert_eq!(bool::try_from(u0::ZERO), Ok(false));
+  assert_eq!(bool::try_from(i0::ZERO), Ok(false));
+  // As `bool` converts from the native integers.
+  assert_eq!(bool::try_from(2u8), Err(above));
+  assert_eq!(bool::try_from(-1i8), Err(below));
 }

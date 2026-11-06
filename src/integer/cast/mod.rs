@@ -16,6 +16,8 @@
 //! a private module, as the other sealed traits of the crate are, so that the public
 //! implementations name no private item.
 
+use core::num::TryFromIntError;
+
 use typenum::{B0, B1, IsLessOrEqual, LeEq, U8, U16, U32, U64, U128};
 
 use sealed::{
@@ -23,7 +25,7 @@ use sealed::{
   TruncateBits, WidenBits,
 };
 
-use super::{Int, Uint, arithmetic::overflow, nonzero};
+use super::{Int, Uint, arithmetic::overflow, convert, nonzero};
 use crate::{
   int,
   layout::Token,
@@ -398,6 +400,17 @@ fn saturating<S: CastSource, T: BoundedTarget>(source: &S) -> T {
     wrapping(source)
   } else {
     limit(fill(source) == 0)
+  }
+}
+
+/// The value of `source` in `T`, or the error of the native conversions for a value outside the
+/// range of `T`: of the kind `NegOverflow` below it, which only a negative value is, and
+/// `PosOverflow` above it.
+pub(super) fn try_cast<S: CastSource, T: CheckedTarget>(source: S) -> Result<T, TryFromIntError> {
+  match checked(&source) {
+    Some(cast) => Ok(cast),
+    None if fill(&source) != 0 => Err(convert::neg_overflow()),
+    None => Err(convert::pos_overflow()),
   }
 }
 
