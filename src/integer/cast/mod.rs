@@ -685,3 +685,97 @@ impl MinWidth for isize {
   type Bits = U16;
   type NonZero = B0;
 }
+
+/// Implements the casts of [`Uint`] and [`Int`] over every storage of their storage traits, written
+/// `Integer: Repr`, which call the traits of the target, so that a value names its target with
+/// method syntax, as the native integers do.
+macro_rules! cast_methods {
+  ($($integer:ident: $repr:ident),+ $(,)?) => {$(
+    impl<B: FitsBits<R>, R: $repr> $integer<B, R> {
+      /// Checked cast: converts the value to the integer `T`, or returns `None` if it is outside
+      /// the range of `T`, as the native `checked_cast` does, still unstable
+      /// ([#157388](https://github.com/rust-lang/rust/issues/157388)). `T` is [`Uint`] or
+      /// [`Int`] of any width and storage, or a native integer, as [`CheckedCastFrom`] lists them.
+      #[must_use]
+      #[inline]
+      pub fn checked_cast<T: CheckedCastFrom<Self>>(self) -> Option<T> {
+        T::checked_cast_from(self)
+      }
+
+      /// Wrapping cast: converts the value to the integer `T` modulo `2^Bits` of `T`, read in
+      /// two's complement for a signed `T`, as `as` casts the native integers and the native
+      /// `wrapping_cast` does, still unstable
+      /// ([#157388](https://github.com/rust-lang/rust/issues/157388)).
+      #[must_use]
+      #[inline]
+      pub fn wrapping_cast<T: BoundedCastFrom<Self>>(self) -> T {
+        T::wrapping_cast_from(self)
+      }
+
+      /// Saturating cast: converts the value to the integer `T`, or the bound of the range of `T`
+      /// that it passes, `MIN` below the range and `MAX` above it, as the native
+      /// `saturating_cast` does, still unstable
+      /// ([#157388](https://github.com/rust-lang/rust/issues/157388)).
+      #[must_use]
+      #[inline]
+      pub fn saturating_cast<T: BoundedCastFrom<Self>>(self) -> T {
+        T::saturating_cast_from(self)
+      }
+
+      /// Strict cast: converts the value to the integer `T`, as the native `strict_cast` does,
+      /// still unstable ([#157388](https://github.com/rust-lang/rust/issues/157388)).
+      ///
+      /// # Panics
+      ///
+      /// Panics if the value is outside the range of `T`, in every build, with the message of the
+      /// native `strict_cast`, reporting the caller.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub fn strict_cast<T: CheckedCastFrom<Self>>(self) -> T {
+        T::strict_cast_from(self)
+      }
+
+      /// Converts the value to the integer `T` of the same sign, which is at least as wide, as the
+      /// native `widen` does, still unstable
+      /// ([#154330](https://github.com/rust-lang/rust/issues/154330)). It never fails: a `T` of
+      /// the other sign or of fewer bits fails to compile, as [`WidenFrom`] lists the pairs.
+      #[must_use]
+      #[inline]
+      pub fn widen<T: WidenFrom<Self>>(self) -> T {
+        T::widen_from(self)
+      }
+
+      /// Converts the value to the integer `T` of the same sign, which is at most as wide, modulo
+      /// `2^Bits` of `T`, as the native `truncate` does, still unstable
+      /// ([#154330](https://github.com/rust-lang/rust/issues/154330)), and as
+      /// [`wrapping_cast`](Self::wrapping_cast) does. A `T` of the other sign or of more bits
+      /// fails to compile, as [`TruncateFrom`] lists the pairs.
+      #[must_use]
+      #[inline]
+      pub fn truncate<T: TruncateFrom<Self>>(self) -> T {
+        T::truncate_from(self)
+      }
+
+      /// Converts the value to the integer `T` of the same sign, which is at most as wide, or
+      /// returns `None` if it is outside the range of `T`, as the native `checked_truncate` does,
+      /// still unstable ([#154330](https://github.com/rust-lang/rust/issues/154330)).
+      #[must_use]
+      #[inline]
+      pub fn checked_truncate<T: TruncateFrom<Self>>(self) -> Option<T> {
+        T::checked_truncate_from(self)
+      }
+
+      /// Converts the value to the integer `T` of the same sign, which is at most as wide, or the
+      /// bound of the range of `T` that it passes, as the native `saturating_truncate` does,
+      /// still unstable ([#154330](https://github.com/rust-lang/rust/issues/154330)).
+      #[must_use]
+      #[inline]
+      pub fn saturating_truncate<T: TruncateFrom<Self>>(self) -> T {
+        T::saturating_truncate_from(self)
+      }
+    }
+  )+};
+}
+
+cast_methods!(Uint: UintRepr, Int: IntRepr);

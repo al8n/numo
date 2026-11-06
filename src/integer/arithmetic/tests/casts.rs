@@ -9,7 +9,7 @@ use core::any::type_name;
 use typenum::{U3, U5, U12, U33, U150, U193};
 
 use super::*;
-use crate::{BoundedCastFrom, IntRepr, TruncateFrom, UintRepr, WidenFrom};
+use crate::{BoundedCastFrom, CheckedCastFrom, IntRepr, TruncateFrom, UintRepr, WidenFrom};
 
 /// A participant of the casts, as the tests read it: its sign, its width, and its value as the
 /// pattern of the width.
@@ -519,4 +519,152 @@ fn numo_integers_cast_between_widths_storages_and_signs() {
       Uint<U1024, [u128; 8]> => Int<U1024, [u64; 16]>, Uint<U200, [u64; 4]>;
     );
   }
+}
+
+/// The inherent casts of `Uint` and `Int` give what the traits of the target give, and infer the
+/// target from the expected type: between numo integers of both signs, and with the native
+/// integers, `usize` included.
+#[test]
+fn inherent_casts_agree_with_the_traits() {
+  // The inherent casts of `$x` into `$target` and those of the traits.
+  macro_rules! agree {
+    ($x:expr => $($target:ty),+) => {{
+      let x = $x;
+      $(
+        assert_eq!(
+          (
+            x.checked_cast::<$target>(),
+            x.wrapping_cast::<$target>(),
+            x.saturating_cast::<$target>(),
+          ),
+          (
+            <$target>::checked_cast_from(x),
+            <$target>::wrapping_cast_from(x),
+            <$target>::saturating_cast_from(x),
+          ),
+          "{x:?} into {}",
+          type_name::<$target>()
+        );
+      )+
+    }};
+  }
+  agree!(u7::MAX => u8, i8, i7, Uint<U3, u8>, i256, usize, isize);
+  agree!(i7::MIN => u8, i8, u7, Int<U3, i8>, u256, usize, isize);
+  agree!(u256::MAX => u128, i128, u7, i7, i256, Uint<U200, [u8; 25]>);
+  agree!(i256::MIN => u128, i128, u7, i7, u256, Int<U200, [u8; 25]>);
+  agree!(Int::<U12>::new(-5) => u8, i8, u7, i7, u256, i256);
+
+  assert_eq!(u7::new(100).strict_cast::<i8>(), 100);
+  assert_eq!(
+    i7::new(-5).strict_cast::<i256>(),
+    i256::from_limbs([-5i64 as u64, u64::MAX, u64::MAX, u64::MAX])
+  );
+  assert_eq!(u7::MAX.widen::<u8>(), 127);
+  assert_eq!(i7::MIN.widen::<isize>(), -64);
+  let wide: u256 = Uint::<U16>::new(5).widen();
+  assert_eq!(wide, u256::from_limbs([5, 0, 0, 0]));
+  let pointer: usize = Uint::<U16>::MAX.widen();
+  assert_eq!(pointer, 65535);
+  assert_eq!(u256::MAX.truncate::<u8>(), u8::MAX);
+  assert_eq!(i256::MIN.truncate::<i7>(), i7::ZERO);
+  assert_eq!(u256::MAX.checked_truncate::<u128>(), None);
+  assert_eq!(i7::new(-5).checked_truncate::<Int<U3, i8>>(), None);
+  assert_eq!(
+    i7::new(-3).checked_truncate::<Int<U3, i8>>(),
+    Some(Int::<U3, i8>::new(-3))
+  );
+  assert_eq!(u256::MAX.saturating_truncate::<u7>(), u7::MAX);
+  assert_eq!(i256::MIN.saturating_truncate::<i7>(), i7::MIN);
+}
+
+/// `strict_cast`, inherent and through `CheckedCastFrom`, panics in every build on a value outside
+/// the range of the target, with the message of the native `strict_cast`, and reports the caller:
+/// between numo integers of both signs, and with the native integers both ways.
+#[test]
+fn strict_casts_panic_outside_the_range() {
+  let message = "attempt to cast integer with overflow".to_string();
+  type Wide = Uint<U200, [u8; 25]>;
+  panics_here!(u7::MAX.strict_cast::<i7>(), message);
+  panics_here!(i7::new(-1).strict_cast::<u8>(), message);
+  panics_here!(i256::MIN.strict_cast::<i128>(), message);
+  panics_here!(u256::MAX.strict_cast::<i256>(), message);
+  panics_here!(Wide::MAX.strict_cast::<u128>(), message);
+  panics_here!(u8::strict_cast_from(i7::MIN), message);
+  panics_here!(<i7 as CheckedCastFrom<u64>>::strict_cast_from(64), message);
+  panics_here!(u7::strict_cast_from(-1i8), message);
+  panics_here!(Int::<U0, [u8; 0]>::strict_cast_from(1u8), message);
+}
+
+/// The saturating cast of `x` into a `u64`, in code generic over the width alone.
+fn saturating_into_u64<B: BitWidth>(x: Uint<B>) -> u64 {
+  x.saturating_cast()
+}
+
+/// The saturating cast of `n` into `Uint<B>`, in code generic over the width alone.
+fn saturating_from_u64<B: BitWidth>(n: u64) -> Uint<B> {
+  Uint::<B>::saturating_cast_from(n)
+}
+
+/// The saturating cast of `x` into an `i128`, in code generic over the width alone.
+fn saturating_into_i128<B: BitWidth>(x: Int<B>) -> i128 {
+  x.saturating_cast()
+}
+
+/// The saturating cast of `n` into `Int<B>`, in code generic over the width alone.
+fn saturating_from_i128<B: BitWidth>(n: i128) -> Int<B> {
+  Int::<B>::saturating_cast_from(n)
+}
+
+/// Checks the saturating casts of `Uint<B>` and `Int<B>`, of `bits` bits, with `u64` and `i128`, in
+/// code generic over the width alone, at the limits of both and at zero.
+fn check_casts_over_the_width<B: BitWidth>(bits: u32) {
+  // The largest value of `Uint<B>` that a `u64` holds, and the limits of `Int<B>` that an `i128`
+  // holds.
+  let max = if bits >= 64 {
+    u64::MAX
+  } else {
+    (1 << bits) - 1
+  };
+  let (min, signed_max) = match bits {
+    0 => (0, 0),
+    1..=128 => (i128::MIN >> (128 - bits), i128::MAX >> (128 - bits)),
+    _ => (i128::MIN, i128::MAX),
+  };
+  assert_eq!(
+    (
+      saturating_into_u64(Uint::<B>::MAX),
+      saturating_into_u64(Uint::<B>::ZERO),
+      saturating_into_u64(saturating_from_u64::<B>(u64::MAX)),
+      saturating_from_u64::<B>(0),
+    ),
+    (max, 0, max, Uint::<B>::ZERO),
+    "{bits} bits"
+  );
+  assert_eq!(
+    (
+      saturating_into_i128(Int::<B>::MIN),
+      saturating_into_i128(Int::<B>::MAX),
+      saturating_into_i128(saturating_from_i128::<B>(i128::MIN)),
+      saturating_into_i128(saturating_from_i128::<B>(i128::MAX)),
+      saturating_from_i128::<B>(0),
+    ),
+    (min, signed_max, min, signed_max, Int::<B>::ZERO),
+    "{bits} bits"
+  );
+}
+
+/// The casts in code generic over the width, whose bound `B: BitWidth` alone gives `Uint<B>` and
+/// `Int<B>` the casts with the native integers, at widths from zero bits to 1024.
+#[test]
+fn casts_in_code_generic_over_the_width() {
+  check_casts_over_the_width::<U0>(0);
+  check_casts_over_the_width::<U1>(1);
+  check_casts_over_the_width::<U7>(7);
+  check_casts_over_the_width::<U8>(8);
+  check_casts_over_the_width::<U64>(64);
+  check_casts_over_the_width::<U65>(65);
+  check_casts_over_the_width::<U128>(128);
+  check_casts_over_the_width::<U129>(129);
+  check_casts_over_the_width::<U200>(200);
+  check_casts_over_the_width::<U1024>(1024);
 }
