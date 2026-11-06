@@ -1,0 +1,61 @@
+error[E0277]: the trait bound `Local: numo::integer::cast::sealed::CastPair<u8>` is not satisfied
+ --> tests/ui/cast_traits_are_sealed.rs:8:30
+  |
+8 | impl CheckedCastFrom<u8> for Local {
+  |                              ^^^^^ unsatisfied trait bound
+  |
+help: the trait `numo::integer::cast::sealed::CheckedTarget` is not implemented for `Local`
+ --> tests/ui/cast_traits_are_sealed.rs:6:1
+  |
+6 | struct Local;
+  | ^^^^^^^^^^^^
+  = help: the following other types implement trait `numo::integer::cast::sealed::CheckedTarget`:
+            Uint<B, R>
+            i128
+            i16
+            i32
+            i64
+            i8
+            isize
+            numo::Int<B, R>
+          and $N others
+  = note: required for `Local` to implement `numo::integer::cast::sealed::CastPair<u8>`
+note: required by a bound in `CheckedCastFrom`
+ --> src/integer/cast/mod.rs
+  |
+  | pub trait CheckedCastFrom<S>: CastPair<S> + Sized {
+  |                               ^^^^^^^^^^^ required by this bound in `CheckedCastFrom`
+  = note: `CheckedCastFrom` is a "sealed trait", because to implement it you also need to implement `numo::integer::cast::sealed::CastPair`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+  = help: the following type implements the trait:
+            T
+
+error[E0277]: the trait bound `Local: numo::integer::cast::sealed::CastSource` is not satisfied
+  --> tests/ui/cast_traits_are_sealed.rs:22:27
+   |
+22 | impl WidenFrom<Local> for u64 {
+   |                           ^^^ unsatisfied trait bound
+   |
+help: the trait `numo::integer::cast::sealed::CastSource` is not implemented for `Local`
+  --> tests/ui/cast_traits_are_sealed.rs:6:1
+   |
+ 6 | struct Local;
+   | ^^^^^^^^^^^^
+   = help: the following other types implement trait `numo::integer::cast::sealed::CastSource`:
+             Uint<B, R>
+             i128
+             i16
+             i32
+             i64
+             i8
+             isize
+             numo::Int<B, R>
+           and $N others
+   = note: required for `u64` to implement `numo::integer::cast::sealed::CastPair<Local>`
+note: required by a bound in `WidenFrom`
+  --> src/integer/cast/mod.rs
+   |
+   | pub trait WidenFrom<S>: CastPair<S> + Sized {
+   |                         ^^^^^^^^^^^ required by this bound in `WidenFrom`
+   = note: `WidenFrom` is a "sealed trait", because to implement it you also need to implement `numo::integer::cast::sealed::CastPair`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+   = help: the following type implements the trait:
+             T

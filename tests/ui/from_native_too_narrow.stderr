@@ -1,0 +1,48 @@
+error[E0277]: the width cannot hold every value of the integer converted from
+ --> tests/ui/from_native_too_narrow.rs:6:11
+  |
+6 |   let _ = u7::from(5u64);
+  |           ^^ `Bits` is too narrow for a lossless conversion
+  |
+  = help: the trait `numo::integer::convert::sealed::HoldsEvery` is not implemented for `B0`
+  = note: a narrower width converts with `checked_cast_from` and the other casts
+help: the trait `numo::integer::convert::sealed::HoldsEvery` is implemented for `B1`
+ --> src/integer/convert/mod.rs
+  |
+  |   impl HoldsEvery for typenum::B1 {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` to implement `From<u64>`
+
+error[E0277]: the width cannot hold every value of the integer converted from
+ --> tests/ui/from_native_too_narrow.rs:7:11
+  |
+7 |   let _ = u7::try_from(5u64);
+  |           ^^ `Bits` is too narrow for a lossless conversion
+  |
+  = help: the trait `numo::integer::convert::sealed::HoldsEvery` is not implemented for `B0`
+  = note: a narrower width converts with `checked_cast_from` and the other casts
+help: the trait `numo::integer::convert::sealed::HoldsEvery` is implemented for `B1`
+ --> src/integer/convert/mod.rs
+  |
+  |   impl HoldsEvery for typenum::B1 {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` to implement `From<u64>`
+  = note: required for `u64` to implement `Into<Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>>`
+  = note: required for `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` to implement `TryFrom<u64>`
+
+error[E0277]: the width cannot hold every value of the integer converted from
+ --> tests/ui/from_native_too_narrow.rs:7:11
+  |
+7 |   let _ = u7::try_from(5u64);
+  |           ^^^^^^^^^^^^^^^^^^ `Bits` is too narrow for a lossless conversion
+  |
+  = help: the trait `numo::integer::convert::sealed::HoldsEvery` is not implemented for `B0`
+  = note: a narrower width converts with `checked_cast_from` and the other casts
+help: the trait `numo::integer::convert::sealed::HoldsEvery` is implemented for `B1`
+ --> src/integer/convert/mod.rs
+  |
+  |   impl HoldsEvery for typenum::B1 {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` to implement `From<u64>`
+  = note: required for `u64` to implement `Into<Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>>`
+  = note: required for `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` to implement `TryFrom<u64>`

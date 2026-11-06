@@ -1212,6 +1212,16 @@ pub(crate) mod model {
     p.chunks(8).rev().flatten().copied().collect()
   }
 
+  /// The 64-bit word of `p` at `index`, its bits from `64 * index` to `64 * index + 63`, extended
+  /// beyond its width by zeros, or if `signed` by copies of its sign.
+  pub(crate) fn word(p: &[bool], index: usize, signed: bool) -> u64 {
+    let fill = signed && sign(p);
+    (0..64).fold(0, |word, j| {
+      let bit = p.get(64 * index + j).copied().unwrap_or(fill);
+      word | u64::from(bit) << j
+    })
+  }
+
   /// The patterns of `width` bits that the tier of Miri checks: zero, every bit, the top bit, the
   /// top two bits, alternating bits from bit 0, and bit 0 of each limb of `limb_bits` bits.
   pub(crate) fn few_patterns(width: u32, limb_bits: u32) -> Vec<Vec<bool>> {

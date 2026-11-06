@@ -564,6 +564,19 @@ macro_rules! native {
         (value >> (8 * index) as u32) as u8
       }
 
+      /// The 64-bit word of `value` at `index`, its bits from `64 * index` to `64 * index + 63`:
+      /// zero beyond the integer.
+      #[inline]
+      pub(crate) const fn word(value: $uint, index: usize) -> u64 {
+        // Every native integer has at most the two words of a `u128`.
+        let wide = value as u128;
+        match index {
+          0 => wide as u64,
+          1 => (wide >> 64) as u64,
+          _ => 0,
+        }
+      }
+
       /// Writes the low `out.len()` bytes of `value` to `out`, least significant first, or most
       /// significant first if `big_endian`. Requires `out.len() <= BITS / 8`.
       pub(crate) const fn write_bytes(value: $uint, out: &mut [u8], big_endian: bool) {
@@ -1196,6 +1209,20 @@ macro_rules! native {
       #[inline]
       pub(crate) const fn byte_at(value: $int, index: usize) -> u8 {
         super::$uint::byte_at(value.cast_unsigned(), index)
+      }
+
+      /// The 64-bit word of `value` at `index` in two's complement, its bits from `64 * index` to
+      /// `64 * index + 63`: copies of the sign beyond the integer.
+      #[inline]
+      pub(crate) const fn word(value: $int, index: usize) -> u64 {
+        // Every native integer has at most the two words of an `i128`.
+        let wide = value as i128;
+        match index {
+          0 => wide as u64,
+          1 => (wide >> 64) as u64,
+          // The arithmetic shift copies the sign into every bit.
+          _ => (wide >> 127) as u64,
+        }
       }
 
       /// Writes the low `out.len()` bytes of the two's complement of `value` to `out`, least

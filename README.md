@@ -24,13 +24,14 @@ native integer, or a 192-, 256-, 320-, 384-, 448- or 512-bit integer of this cra
 checked during type checking, so no value can be created for a type that cannot hold its digits.
 The arithmetic methods take the receiver and the operands by reference, as in `a.checked_add(&b)`,
 so that a call does not copy a wide value, while the operators keep the signatures of their
-standard traits. The casts between `Uint` and `Int` and the bitwise `const fn`s, such as `bitand`,
-take their operands by value, as the native casts and the methods of the operator traits do.
+standard traits. The casts, such as `checked_cast` and `cast_signed`, and the bitwise `const fn`s,
+such as `bitand`, take their operands by value, as the native casts and the methods of the operator
+traits do.
 
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, and generic traits |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, and generic traits |
 | `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
@@ -257,6 +258,17 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   buffer at any width, and `byte` reads one byte. At a width of whole bytes, `swap_bytes`,
   `to_be`, `to_le`, `from_be` and `from_le` convert the byte order as the native integers do, by
   value rather than by layout.
+- The casts of the native integers, still unstable, between any widths and signs: `checked_cast`,
+  `wrapping_cast`, `saturating_cast`, `strict_cast` and the `unsafe` `unchecked_cast` into a
+  `Uint`, an `Int` or a native integer, `widen` into an integer of the same sign that is at least as
+  wide and `truncate`, with its checked and saturating forms, into one that is at most as wide, the
+  widths and the signs checked at compile time, and the checked, saturating and strict casts
+  between `Uint` and `Int` of the same width. The standard conversions go by direction: `From`
+  converts a native integer into a numo integer whose width holds every value of it, as in
+  `u256::from(5u64)`, `TryFrom` converts a `usize` or an `isize` into any width and a numo integer
+  into each native integer, with the error of the native conversions, and `bool` converts both
+  ways. A literal without a suffix is an `i32`, so `u256::from(5)` fails to compile, while
+  `i256::from(5)` compiles.
 - Traits with one implementation for every storage of a kind, for generic code, in two layers. The
   general layer requires `Clone` but not `Copy`: `FixedInteger`, with `zero()`, `min_value()`,
   `max_value()`, `is_zero`, `is_one`, the operators, `FromStr`, the formats and
@@ -268,9 +280,10 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`
   and `UncheckedOps` the arithmetic, `IntegerMath`, `UnsignedMath` and `SignedMath` the functions
   without an overflow prefix, such as `pow`, `isqrt` and `ilog10`, `IntegerBits`, `UnsignedBits`
-  and `SignedBits` the bit operations, and `IntegerBytes`, `ByteArray`, `FromByteArray` and
-  `IntegerByteOrder` the bytes; with the bound `B: BitWidth`, such code uses `Uint<B>` and `Int<B>`
-  for any width from 0 to 65536 bits.
+  and `SignedBits` the bit operations, `IntegerBytes`, `ByteArray`, `FromByteArray` and
+  `IntegerByteOrder` the bytes, and `CheckedCastFrom`, `BoundedCastFrom`, `WidenFrom` and
+  `TruncateFrom`, which the target implements, the casts; with the bound `B: BitWidth`, such code
+  uses `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
   width of more than 65536 bits without an explicit storage.

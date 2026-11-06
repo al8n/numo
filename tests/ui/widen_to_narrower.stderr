@@ -1,0 +1,45 @@
+error[E0277]: `widen` needs a target at least as wide as the source
+ --> tests/ui/widen_to_narrower.rs:5:35
+  |
+5 |   let _ = Uint::<U9>::MAX.widen::<u8>();
+  |                           -----   ^^ the trait `numo::integer::cast::sealed::WidenBits` is not implemented for `B0`
+  |                           |
+  |                           required by a bound introduced by this call
+  |
+help: the trait `numo::integer::cast::sealed::WidenBits` is implemented for `B1`
+ --> src/integer/cast/mod.rs
+  |
+  |   impl WidenBits for B1 {}
+  |   ^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `u8` to implement `WidenFrom<Uint<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, u16>>`
+note: required by a bound in `numo::integer::cast::<impl Uint<B, R>>::widen`
+ --> src/integer/cast/mod.rs
+  |
+  |       pub fn widen<T: WidenFrom<Self>>(self) -> T {
+  |                       ^^^^^^^^^^^^^^^ required by this bound in `numo::integer::cast::<impl Uint<B, R>>::widen`
+...
+  | cast_methods!(Uint: UintRepr, Int: IntRepr);
+  | ------------------------------------------- in this macro invocation
+  = note: this error originates in the macro `cast_methods` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `widen` needs a target at least as wide as the source
+ --> tests/ui/widen_to_narrower.rs:6:31
+  |
+6 |   let _: u7 = Uint::<U9>::MAX.widen();
+  |                               ^^^^^ the trait `numo::integer::cast::sealed::WidenBits` is not implemented for `B0`
+  |
+help: the trait `numo::integer::cast::sealed::WidenBits` is implemented for `B1`
+ --> src/integer/cast/mod.rs
+  |
+  |   impl WidenBits for B1 {}
+  |   ^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `Uint<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, u8>` to implement `WidenFrom<Uint<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, u16>>`
+note: required by a bound in `numo::integer::cast::<impl Uint<B, R>>::widen`
+ --> src/integer/cast/mod.rs
+  |
+  |       pub fn widen<T: WidenFrom<Self>>(self) -> T {
+  |                       ^^^^^^^^^^^^^^^ required by this bound in `numo::integer::cast::<impl Uint<B, R>>::widen`
+...
+  | cast_methods!(Uint: UintRepr, Int: IntRepr);
+  | ------------------------------------------- in this macro invocation
+  = note: this error originates in the macro `cast_methods` (in Nightly builds, run with -Z macro-backtrace for more info)

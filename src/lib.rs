@@ -184,6 +184,17 @@
 //! `&`, `|`, `^`, `<<` and `>>`; a shift amount is bounded by `Bits`, and `bitand`, `bitor`,
 //! `bitxor` and `not` do the bitwise operations as `const fn`s for constant contexts.
 //!
+//! The integers convert between any widths and signs with the casts of the native integers, still
+//! unstable: `checked_cast`, `wrapping_cast`, `saturating_cast`, `strict_cast` and the `unsafe`
+//! `unchecked_cast` into a `Uint`, an `Int` or a native integer, `widen` into an integer of the
+//! same sign that is at least as wide and `truncate`, with its checked and saturating forms, into
+//! one that is at most as wide, the widths compared at compile time, and the checked, saturating
+//! and strict casts between `Uint` and `Int` of the same width (see
+//! [Conversions](Uint#conversions)). With the native integers, `From` converts into a numo integer
+//! whose width holds every value of the native integer, and `TryFrom` converts a `usize` or an
+//! `isize` into any width and a numo integer into each native integer, with the error of the
+//! native conversions, [`core::num::TryFromIntError`]; `bool` converts both ways.
+//!
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,
 //! `is_one`, the operators, the text and the functions `zero`, `min_value`, `max_value` and
@@ -196,16 +207,18 @@
 //! [`UncheckedOps`] the arithmetic, [`IntegerMath`], [`UnsignedMath`] and [`SignedMath`] the
 //! functions without an overflow prefix, [`IntegerBits`], [`UnsignedBits`] and [`SignedBits`] the
 //! bit operations, [`IntegerBytes`], [`ByteArray`], [`FromByteArray`] and [`IntegerByteOrder`] the
-//! bytes, and [`NativeInteger`], [`ArrayInteger`] and [`FromLimbs`] the construction of each kind.
-//! The bound `B: BitWidth` gives `Uint<B>` and `Int<B>` [`FixedInteger`] and
-//! [`ConstFixedInteger`], the sign traits, the families, the math traits, the bit traits and
-//! [`IntegerBytes`]; [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one; and
-//! [`IntegerByteOrder`] with `B: WholeBytes`. The trait methods are not `const`, so constant
-//! contexts call the inherent `const fn`s, which a concrete type reaches without importing a trait.
+//! bytes, [`CheckedCastFrom`], [`BoundedCastFrom`], [`WidenFrom`] and [`TruncateFrom`], which the
+//! target implements, the casts, also those with the native integers, and [`NativeInteger`],
+//! [`ArrayInteger`] and [`FromLimbs`] the construction of each kind. The bound `B: BitWidth` gives
+//! `Uint<B>` and `Int<B>` [`FixedInteger`] and [`ConstFixedInteger`], the sign traits, the
+//! families, the math traits, the bit traits, [`IntegerBytes`] and the casts; [`IntegerOne`] and
+//! [`ConstIntegerOne`] with a width that holds one; and [`IntegerByteOrder`] with `B: WholeBytes`.
+//! The trait methods are not `const`, so constant contexts call the inherent `const fn`s, which a
+//! concrete type reaches without importing a trait.
 //!
 //! ```
 //! use numo::{
-//!   BitWidth, CheckedOps, FixedInteger, Int, Uint, i256,
+//!   BitWidth, CheckedCastFrom, CheckedOps, FixedInteger, Int, Uint, i256,
 //!   typenum::{U7, U24, U200},
 //!   u7,
 //! };
@@ -253,6 +266,12 @@
 //! // The bytes of 7 bits, and of 24, a whole number of bytes, in reverse order.
 //! assert_eq!(SMALL.to_le_bytes(), [100]);
 //! assert_eq!(Uint::<U24>::new(0x01_0203).swap_bytes(), Uint::<U24>::new(0x03_0201));
+//!
+//! // The casts of 7 bits, and the conversions with the native integers.
+//! assert_eq!(SMALL.widen::<u64>(), 100);
+//! assert_eq!(SMALL.checked_cast::<Int<U7>>(), None);
+//! assert_eq!(u7::checked_cast_from(200u64), None);
+//! assert_eq!(u64::try_from(SMALL), Ok(100));
 //!
 //! // Generic code over the width alone.
 //! fn zero_values<B: BitWidth>(values: &[Int<B>]) -> usize {
@@ -446,12 +465,13 @@ pub use decimal::{
   SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 pub use integer::{
-  ArrayInteger, ByteArray, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits,
-  FixedInteger, FixedNonZero, FromByteArray, FromLimbs, Int, IntegerBits, IntegerByteOrder,
-  IntegerBytes, IntegerMath, IntegerNonZero, IntegerOne, NativeInteger, NonZeroInt, NonZeroLimits,
-  NonZeroOf, NonZeroUint, OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger,
-  SignedMath, SignedNonZero, StrictOps, TryNewError, Uint, UncheckedOps, UnsignedBits,
-  UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WrappingOps,
+  ArrayInteger, BoundedCastFrom, ByteArray, CheckedCastFrom, CheckedOps, ConstFixedInteger,
+  ConstIntegerOne, ConstNonZeroLimits, FixedInteger, FixedNonZero, FromByteArray, FromLimbs, Int,
+  IntegerBits, IntegerByteOrder, IntegerBytes, IntegerMath, IntegerNonZero, IntegerOne,
+  NativeInteger, NonZeroInt, NonZeroLimits, NonZeroOf, NonZeroUint, OverflowingOps, SaturatingOps,
+  SignedBits, SignedFixedInteger, SignedMath, SignedNonZero, StrictOps, TruncateFrom, TryNewError,
+  Uint, UncheckedOps, UnsignedBits, UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WidenFrom,
+  WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

@@ -1104,6 +1104,8 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@bytes false);
 
+    limb_layer_tests!(@words false, UintCore);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves nothing of a value, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -1958,6 +1960,8 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@bytes true);
 
+    limb_layer_tests!(@words true, IntCore);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves the sign alone, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -2440,6 +2444,103 @@ macro_rules! limb_layer_tests {
       }
       if tier.is_full() {
         bytes_against_the_model::<3>();
+      }
+    }
+  };
+  // The tests of the words, which every instance shares, after the helpers of its arm and of
+  // `@bits`: `$signed` is whether the layer reads the limbs in two's complement, and `$core` the
+  // sealed storage trait of that sign, whose `from_words` makes the limbs of words.
+  (@words $signed:literal, $core:ident) => {
+    use crate::{layout::Token, width::$core};
+
+    /// A word beyond the words of the limbs, which `from_words` never reads.
+    const JUNK: u64 = 0xa5a5_a5a5_a5a5_a5a5;
+
+    /// Checks the words of `N` limbs on `p`, a pattern of a width, read in two's complement if
+    /// `$signed`, against the bit model: `word` at every index of the limbs and at the two beyond
+    /// them, which are zeros or copies of the sign; `from_words` of those words at the width,
+    /// which gives the limbs back; and `from_words` at each width of `widths`, which reduces the
+    /// value to it, whatever the words beyond the limbs hold.
+    fn check_words<const N: usize>(p: &[bool], widths: &[u32]) {
+      let text = || model::text(p);
+      let x = bigint::limbs_of_pattern::<Limb, N>(p, $signed);
+      let count = (B as usize * N).div_ceil(64);
+      for index in 0..count + 2 {
+        assert_eq!(
+          word(&x, index),
+          model::word(p, index, $signed),
+          "word {index} of {}",
+          text()
+        );
+      }
+      let words = |index: usize| word(&x, index);
+      assert_eq!(
+        <[Limb; N] as $core>::from_words(words, model::width(p), Token::new()),
+        x,
+        "{}",
+        text()
+      );
+      let junk = |index: usize| if index < count { word(&x, index) } else { JUNK };
+      for &bits in widths {
+        let wrapped = bigint::limbs_of_pattern::<Limb, N>(&model::wrap(p, bits, $signed), $signed);
+        assert_eq!(
+          (
+            <[Limb; N] as $core>::from_words(words, bits, Token::new()),
+            <[Limb; N] as $core>::from_words(junk, bits, Token::new()),
+          ),
+          (wrapped, wrapped),
+          "{} at {bits} bits",
+          text()
+        );
+      }
+    }
+
+    /// Checks the words of `N` limbs against the bit model at each width of `widths::<N>()`, at
+    /// each pattern of `bigint::bit_patterns_by` cut to the width, at every index in an optimized
+    /// build and at the reduced indexes otherwise; or under Miri at 0, 1 and `B * N` bits and the
+    /// patterns of `model::few_patterns`.
+    fn words_against_the_model<const N: usize>() {
+      let tier = bigint::tier();
+      let top = B * N as u32;
+      let mut widths = if tier.is_miri() {
+        vec![0, 1, top]
+      } else {
+        widths::<N>()
+      };
+      widths.retain(|&width| width <= top);
+      widths.sort_unstable();
+      widths.dedup();
+      let patterns: Vec<[Limb; N]> = if tier.is_miri() {
+        Vec::new()
+      } else {
+        bigint::bit_patterns_by(&widths, !tier.is_full())
+      };
+      for &width in &widths {
+        let mut cut: Vec<Vec<bool>> = if tier.is_miri() {
+          model::few_patterns(width, B)
+        } else {
+          patterns
+            .iter()
+            .map(|pattern| bigint::pattern_of_limbs(pattern, width))
+            .collect()
+        };
+        cut.sort_unstable();
+        cut.dedup();
+        for p in &cut {
+          check_words::<N>(p, &widths);
+        }
+      }
+    }
+
+    /// The words of the limbs, and the limbs of words, against the bit model at no limbs to three;
+    /// under Miri at no limbs to two.
+    #[test]
+    fn words_match_the_bit_model() {
+      words_against_the_model::<0>();
+      words_against_the_model::<1>();
+      words_against_the_model::<2>();
+      if !bigint::tier().is_miri() {
+        words_against_the_model::<3>();
       }
     }
   };

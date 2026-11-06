@@ -1627,6 +1627,40 @@ macro_rules! limb_layer {
       (value[(bit / Limb::BITS as u64) as usize] >> (bit % Limb::BITS as u64) as u32) as u8
     }
 
+    /// The 64-bit word at `index` of the integer in `value`, its bits from `64 * index` to
+    /// `64 * index + 63`, extended beyond the limbs by copies of `fill`: zero for an unsigned
+    /// integer, and the bits of its sign for one in two's complement. A word joins `64 / B` limbs,
+    /// the least significant first, or is the low or the high half of a limb of 128 bits.
+    pub(crate) const fn extended_word<const N: usize>(
+      value: &[Limb; N],
+      index: usize,
+      fill: Limb,
+    ) -> u64 {
+      if Limb::BITS == 128 {
+        let limb = if index / 2 < N { value[index / 2] } else { fill };
+        return (limb as u128 >> (64 * (index % 2))) as u64;
+      }
+      let per_word = (u64::BITS / Limb::BITS) as usize;
+      // The index of the first limb of the word, which saturates far beyond the limbs, where every
+      // limb is the fill.
+      let first = index.saturating_mul(per_word);
+      let mut word = 0;
+      let mut k = 0;
+      while k < per_word {
+        let i = first.saturating_add(k);
+        let limb = if i < N { value[i] } else { fill };
+        word |= (limb as u64) << (Limb::BITS * k as u32);
+        k += 1;
+      }
+      word
+    }
+
+    /// The 64-bit word at `index` of `value`, as [`extended_word`] gives it: zero beyond the limbs.
+    #[inline]
+    pub(crate) const fn word<const N: usize>(value: &[Limb; N], index: usize) -> u64 {
+      extended_word(value, index, 0)
+    }
+
     /// Writes the low `out.len()` bytes of `value` to `out`, least significant first, or most
     /// significant first if `big_endian`. The upper layer writes with it too: the limbs hold the
     /// bits of a value of either sign, and for one in two's complement the copies of its sign above
@@ -2784,6 +2818,15 @@ macro_rules! limb_layer {
         Some(changed) => Some(sign_extend(&changed, bits)),
         None => None,
       }
+    }
+
+    /// The 64-bit word at `index` of `value` in two's complement, its bits from `64 * index` to
+    /// `64 * index + 63`, as the lower layer's `extended_word` gives it: copies of the sign beyond
+    /// the limbs.
+    #[inline]
+    pub(crate) const fn word<const N: usize>(value: &[Limb; N], index: usize) -> u64 {
+      let fill = if is_negative(value) { Limb::MAX } else { 0 };
+      $unsigned::extended_word(value, index, fill)
     }
 
     /// The integer in `bytes`, least significant byte first, or most significant first if

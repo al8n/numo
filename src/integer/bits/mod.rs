@@ -142,8 +142,25 @@ macro_rules! integer_bits_table {
   };
 }
 
+/// The integer of the other sign of a cast row of the bit tables, named by `$args`: in an inherent
+/// block of one storage the concrete integer that the table passes last, and in a trait the
+/// associated type `$assoc`.
+macro_rules! cast_other {
+  ([], $assoc:ident) => {
+    Self::$assoc
+  };
+  ([$layer:ident, $other:ty], $assoc:ident) => {
+    $other
+  };
+  ([$group:ident, $layer:ident, &, $other:ty], $assoc:ident) => {
+    $other
+  };
+}
+
 /// Passes the bit methods of `Uint` alone to `$callback`, after the tokens of `$args`: the bit
-/// width and the cast to `Int`.
+/// width and the casts to `Int`. The checked, saturating and strict casts read the sign bit of the
+/// result with `bit`, and build the bound of a saturation from the value, without a constant, so
+/// that every storage has them.
 macro_rules! uint_bits_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -155,12 +172,56 @@ macro_rules! uint_bits_table {
       /// The bits of `self` read as the `Int` of the same width in a storage of the same size, its
       /// two's complement, as `as` casts a native integer: `MAX` becomes -1.
       fn cast_signed(self) -> Self::Signed = prim signed cast_signed_bits(self; Self::BITS);
+
+      /// Checked cast to the `Int` of the same width in a storage of the same size: `self`, or
+      /// `None` if it is above the `MAX` of that `Int`, which is when bit `Bits - 1` is set, as the
+      /// native `checked_cast_signed` does, still unstable
+      /// ([#154650](https://github.com/rust-lang/rust/issues/154650)). Zero bits hold only zero,
+      /// which converts.
+      fn checked_cast_signed(self) -> Option<cast_other!($args, Signed)> {
+        if self.bit(Self::BITS.wrapping_sub(1)) {
+          None
+        } else {
+          Some(self.cast_signed())
+        }
+      }
+
+      /// Saturating cast to the `Int` of the same width in a storage of the same size: `self`, or
+      /// the `MAX` of that `Int` if it is above it, as the native `saturating_cast_signed` does,
+      /// still unstable ([#154650](https://github.com/rust-lang/rust/issues/154650)).
+      fn saturating_cast_signed(self) -> cast_other!($args, Signed) {
+        if self.bit(Self::BITS.wrapping_sub(1)) {
+          // `MAX` of `Int` has every bit below the sign bit: the complement of the sign bit alone,
+          // which is the highest one of `self`.
+          self.isolate_highest_one().not().cast_signed()
+        } else {
+          self.cast_signed()
+        }
+      }
+
+      /// Strict cast to the `Int` of the same width in a storage of the same size: `self`, as the
+      /// native `strict_cast_signed` does, still unstable
+      /// ([#154650](https://github.com/rust-lang/rust/issues/154650)).
+      ///
+      /// # Panics
+      ///
+      /// Panics if `self` is above the `MAX` of that `Int`, in every build, with the message of the
+      /// native `strict_cast_signed`, reporting the caller.
+      #[track_caller]
+      fn strict_cast_signed(self) -> cast_other!($args, Signed) {
+        if self.bit(Self::BITS.wrapping_sub(1)) {
+          $crate::integer::arithmetic::overflow::cast()
+        } else {
+          self.cast_signed()
+        }
+      }
     }
   };
 }
 
-/// Passes the bit methods of `Int` alone to `$callback`, after the tokens of `$args`: the cast to
-/// `Uint`.
+/// Passes the bit methods of `Int` alone to `$callback`, after the tokens of `$args`: the casts to
+/// `Uint`. The checked, saturating and strict casts read the sign with `bit`, and build the zero of
+/// a saturation from the value, without a constant, so that every storage has them.
 macro_rules! int_bits_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -168,6 +229,46 @@ macro_rules! int_bits_table {
       /// storage of the same size, as `as` casts a native integer: -1 becomes `MAX`.
       fn cast_unsigned(self) -> Self::Magnitude
         = prim unsigned cast_unsigned_bits(self; Self::BITS);
+
+      /// Checked cast to the `Uint` of the same width in a storage of the same size: `self`, or
+      /// `None` if it is negative, as the native `checked_cast_unsigned` does, still unstable
+      /// ([#154650](https://github.com/rust-lang/rust/issues/154650)).
+      fn checked_cast_unsigned(self) -> Option<cast_other!($args, Magnitude)> {
+        if self.bit(Self::BITS.wrapping_sub(1)) {
+          None
+        } else {
+          Some(self.cast_unsigned())
+        }
+      }
+
+      /// Saturating cast to the `Uint` of the same width in a storage of the same size: `self`, or
+      /// zero if it is negative, as the native `saturating_cast_unsigned` does, still unstable
+      /// ([#154650](https://github.com/rust-lang/rust/issues/154650)).
+      fn saturating_cast_unsigned(self) -> cast_other!($args, Magnitude) {
+        if self.bit(Self::BITS.wrapping_sub(1)) {
+          // Zero, which a shift of every bit out of `self` gives.
+          self.unbounded_shl(Self::BITS).cast_unsigned()
+        } else {
+          self.cast_unsigned()
+        }
+      }
+
+      /// Strict cast to the `Uint` of the same width in a storage of the same size: `self`, as the
+      /// native `strict_cast_unsigned` does, still unstable
+      /// ([#154650](https://github.com/rust-lang/rust/issues/154650)).
+      ///
+      /// # Panics
+      ///
+      /// Panics if `self` is negative, in every build, with the message of the native
+      /// `strict_cast_unsigned`, reporting the caller.
+      #[track_caller]
+      fn strict_cast_unsigned(self) -> cast_other!($args, Magnitude) {
+        if self.bit(Self::BITS.wrapping_sub(1)) {
+          $crate::integer::arithmetic::overflow::cast()
+        } else {
+          self.cast_unsigned()
+        }
+      }
     }
   };
 }
