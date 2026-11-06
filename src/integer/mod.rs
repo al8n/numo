@@ -346,6 +346,74 @@ mod traits;
 /// assert_eq!(value.checked_copy_be_bytes_to(&mut [0; 2]), None);
 /// ```
 ///
+/// # Conversions
+///
+/// The casts convert between integers of any width and sign, as the casts of the native integers
+/// do, still unstable ([#157388](https://github.com/rust-lang/rust/issues/157388),
+/// [#154330](https://github.com/rust-lang/rust/issues/154330)). The target is a [`Uint`] or an
+/// [`Int`] of any width and storage, or a native integer, which method syntax names, as in
+/// `x.checked_cast::<u64>()`, or the expected type infers, as in `let y: u256 = x.widen();`.
+/// [`checked_cast`](Self::checked_cast) returns `None` for a value outside the range of the target,
+/// [`strict_cast`](Self::strict_cast) panics there, [`wrapping_cast`](Self::wrapping_cast) takes
+/// the value modulo `2^Bits` of the target, as `as` casts the native integers, and
+/// [`saturating_cast`](Self::saturating_cast) the bound of the range that the value passes.
+/// [`widen`](Self::widen) converts into an integer of the same sign that is at least as wide, which
+/// the compiler checks, so it never fails, and [`truncate`](Self::truncate),
+/// [`checked_truncate`](Self::checked_truncate) and
+/// [`saturating_truncate`](Self::saturating_truncate) into one of the same sign that is at most as
+/// wide. The traits of the target, [`CheckedCastFrom`](crate::CheckedCastFrom),
+/// [`BoundedCastFrom`](crate::BoundedCastFrom), [`WidenFrom`](crate::WidenFrom) and
+/// [`TruncateFrom`](crate::TruncateFrom), give generic code the casts and convert from a native
+/// integer, as in `u7::checked_cast_from(5u64)`; their documentation lists the pairs.
+/// [`checked_cast_signed`](Self::checked_cast_signed),
+/// [`saturating_cast_signed`](Self::saturating_cast_signed) and
+/// [`strict_cast_signed`](Self::strict_cast_signed) convert into the [`Int`] of the same width in a
+/// storage of the same size, whose bits [`cast_signed`](Self::cast_signed) reads, as the native
+/// methods do, still unstable ([#154650](https://github.com/rust-lang/rust/issues/154650)). The
+/// casts take the value, as conversions do, and only the casts between the signs are `const fn`s:
+/// the others are generic over the target, whose trait functions a constant context cannot call.
+///
+/// The standard conversions with the native integers go by direction. `From` converts a native
+/// unsigned integer, `u8` to `u128`, into a `Uint` whose width holds every value of it, and
+/// `TryFrom` converts a `usize` or an `isize` at every width. `TryFrom` converts a `Uint` of any
+/// width into each native integer, with the error of the native conversions,
+/// [`TryFromIntError`](core::num::TryFromIntError), whose kind is `PosOverflow` above the range of
+/// the target and `NegOverflow` below it. No signed integer converts into a `Uint` by `From`, and a
+/// literal without a suffix is an `i32`: `u256::from(5)` fails to compile, while `u256::from(5u64)`
+/// compiles. `From<bool>` converts `false` and `true` to zero and one, from one bit, and `TryFrom`
+/// into `bool` converts zero and one back. Between numo integers, the casts are the conversions:
+/// `From` and `TryFrom` there would overlap the standard implementations from a type to itself.
+///
+/// ```
+/// use numo::{
+///   CheckedCastFrom, Uint, i7,
+///   typenum::{U16, U200},
+///   u7, u256,
+/// };
+///
+/// let x = u7::new(100);
+/// assert_eq!(x.checked_cast::<i7>(), None);
+/// assert_eq!(x.wrapping_cast::<i7>(), i7::new(-28));
+/// assert_eq!(x.saturating_cast::<i7>(), i7::MAX);
+/// assert_eq!(x.checked_cast::<u64>(), Some(100));
+/// let wide: u256 = x.widen();
+/// assert_eq!(wide.truncate::<u8>(), 100);
+/// assert_eq!(Uint::<U200>::checked_cast_from(-1i8), None);
+/// assert_eq!(u7::checked_cast_from(300u16), None);
+/// assert_eq!(u7::MAX.checked_cast_signed(), None);
+/// assert_eq!(u7::MAX.saturating_cast_signed(), i7::MAX);
+///
+/// // The standard conversions, by direction.
+/// assert_eq!(u256::from(5u64), u256::from_limbs([5, 0, 0, 0]));
+/// let n: u64 = wide.try_into()?;
+/// assert_eq!(n, 100);
+/// let error = u64::try_from(u256::MAX).unwrap_err();
+/// assert_eq!(error.to_string(), "number too large to fit in target type");
+/// assert!(Uint::<U16>::try_from(70_000usize).is_err());
+/// assert_eq!(u7::from(true), u7::ONE);
+/// # Ok::<(), core::num::TryFromIntError>(())
+/// ```
+///
 /// # Overflow
 ///
 /// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
@@ -585,6 +653,41 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// assert_eq!(I12::wrapping_from_le_slice(&[0x80]), I12::new(-128));
 /// assert_eq!(I12::checked_from_le_slice(&[0xff, 0x0f]), None);
 /// assert_eq!(I12::wrapping_from_le_slice(&[0xff, 0x0f]), I12::new(-1));
+/// ```
+///
+/// # Conversions
+///
+/// The casts are those of [`Uint`] (see [Conversions](Uint#conversions)), which convert a negative
+/// value too: [`checked_cast`](Self::checked_cast) returns `None` for it into an unsigned target,
+/// [`wrapping_cast`](Self::wrapping_cast) takes its two's complement modulo `2^Bits` of the target,
+/// and [`saturating_cast`](Self::saturating_cast) gives the `MIN` of the target, zero for an
+/// unsigned one. [`checked_cast_unsigned`](Self::checked_cast_unsigned),
+/// [`saturating_cast_unsigned`](Self::saturating_cast_unsigned) and
+/// [`strict_cast_unsigned`](Self::strict_cast_unsigned) convert into the [`Uint`] of the same width
+/// in a storage of the same size, whose bits [`cast_unsigned`](Self::cast_unsigned) reads.
+///
+/// `From` converts a native signed integer, `i8` to `i128`, into an `Int` whose width holds every
+/// value of it, and a native unsigned integer, `u8` to `u128`, into one with a bit more for the
+/// sign, so that a literal without a suffix, an `i32`, converts: `i256::from(5)` compiles, where
+/// `u256::from(5)` does not. `TryFrom` converts a `usize` or an `isize` at every width, and an `Int`
+/// of any width into each native integer, as for [`Uint`], and `From<bool>` converts from two bits,
+/// as `ONE` exists.
+///
+/// ```
+/// use numo::{Int, i7, i256, typenum::U12, u7};
+///
+/// let x = i7::new(-5);
+/// assert_eq!(x.checked_cast::<u8>(), None);
+/// assert_eq!(x.wrapping_cast::<u8>(), 251);
+/// assert_eq!(x.saturating_cast::<u8>(), 0);
+/// assert_eq!(x.widen::<i64>(), -5);
+/// assert_eq!(Int::<U12>::new(-2000).truncate::<i8>(), 48);
+/// assert_eq!(x.checked_cast_unsigned(), None);
+/// assert_eq!(i7::MAX.checked_cast_unsigned(), Some(u7::new(63)));
+///
+/// assert_eq!(i256::from(5), i256::from(5i8));
+/// let error = i8::try_from(i256::MIN).unwrap_err();
+/// assert_eq!(error.to_string(), "number too small to fit in target type");
 /// ```
 ///
 /// # Overflow

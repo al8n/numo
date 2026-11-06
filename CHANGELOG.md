@@ -258,6 +258,37 @@ FEATURES
     `bitor`, `bitxor` and `not` do the bitwise operations as `const fn`s for constant contexts; they
     take their operands by value, as the methods of the operator traits do, so that method syntax on
     a value calls them also where those traits are in scope.
+  - The casts of the native integers, still unstable (#157388, #154330, #154650), between integers
+    of any width and sign, as methods of every storage that take the value: `checked_cast`,
+    `wrapping_cast`, `saturating_cast` and `strict_cast`, whose target is a `Uint` or an `Int` of
+    any width and storage or a native integer, and which follow `as` and the native casts at every
+    width, so that -1 of 7 bits wraps to 255 in a `u8` and 300 to 44 in 7 bits; `widen` into an
+    integer of the same sign that is at least as wide, and `truncate`, `checked_truncate` and
+    `saturating_truncate` into one that is at most as wide, whose widths and signs are compared at
+    compile time, with `usize` and `isize` as in the native tables: of at least 16 bits, and no
+    fixed upper bound; and the `const fn`s `checked_cast_signed`, `saturating_cast_signed` and
+    `strict_cast_signed` of `Uint` and `checked_cast_unsigned`, `saturating_cast_unsigned` and
+    `strict_cast_unsigned` of `Int`, into the integer of the same width and the other sign. The
+    strict casts panic in every build with the message of the native ones, reporting the caller.
+    The other casts are not `const`: they are generic over the target, whose trait functions a
+    constant context cannot call.
+  - The sealed traits `CheckedCastFrom`, `BoundedCastFrom`, `WidenFrom` and `TruncateFrom`, which
+    the target implements, with the functions of the casts, such as `checked_cast_from`, for every
+    pair of `Uint`, `Int` and the native integers that the casts take, each through one blanket
+    implementation: generic code bounded by `T: CheckedCastFrom<S>` takes every pair, and a native
+    integer is a target, as in `u8::checked_cast_from(x)`. Their documentation lists the pairs.
+    `UnsignedBits` and `SignedBits` have the casts between the signs.
+  - The standard conversions with the native integers, by direction: `From` from `u8` to `u128`
+    into a `Uint` of at least their width and into an `Int` of more, and from `i8` to `i128` into an
+    `Int` of at least their width, which a sealed marker checks with a diagnostic, with the
+    `TryFrom` that the standard library derives from it; `TryFrom` from `usize` and `isize` at every
+    width; `TryFrom` into each of the twelve native integers at every width, with the error of the
+    native conversions, `core::num::TryFromIntError`, of the kind `PosOverflow` above the range and
+    `NegOverflow` below it; and `From<bool>` from one bit for `Uint` and from two for `Int`, with
+    `TryFrom` into `bool`. A literal without a suffix is an `i32`, so `u256::from(5)` does not
+    compile and `u256::from(5u64)` does, while `i256::from(5)` compiles. Between numo integers the
+    casts are the conversions: `From` and `TryFrom` there would overlap the standard
+    implementations from a type to itself.
   - The sealed traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`,
     `UncheckedOps` and `IntegerOne`, each with one implementation for every storage; `is_one`, the
     operators, their compound assignments and `Sum` on `FixedInteger`, the methods of each sign on
@@ -376,8 +407,8 @@ FEATURES
     `NonZeroU7` is `NonZeroOf<u7>`.
 - The arithmetic methods of `Decimal`, `Uint` and `Int`, inherent and in the traits, take the
   receiver and the operands by reference, as in `a.checked_add(&b)`, so that a call does not copy a
-  wide value, while the operators keep the signatures of their standard traits. The casts between
-  `Uint` and `Int` and the bitwise `const fn`s take their operands by value, as the native casts
-  and the methods of the operator traits do; a shift amount or a bit index is a `u32`.
+  wide value, while the operators keep the signatures of their standard traits. The casts, between
+  any widths and signs, and the bitwise `const fn`s take their operands by value, as the native
+  casts and the methods of the operator traits do; a shift amount or a bit index is a `u32`.
 - `Storage`, `DigitCount`, `FitsDigits`, `Layout`, `Widen`, `WidenRepr` and `Pick`: the type-level
   capacity and sign checks, with compile-time diagnostics for invalid digit counts and storages.
