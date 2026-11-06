@@ -1,9 +1,12 @@
 //! The conversions of the non-zero integers `NonZeroUint` and `NonZeroInt`: `TryFrom` of the
 //! integer of the same width and storage, which returns the error of the kind `Zero` for zero, at
 //! every value of 8 bits against the native `NonZero` integers, and at the values of the casts in
-//! every kind of storage against the bit model; and the conversions with the native `NonZero`
+//! every kind of storage against the bit model; the conversions with the native `NonZero`
 //! integers, both ways, against the bit model and, at 8 and 16 bits, against the conversions
-//! between the native `NonZero` integers. Each type or pair checks in an instantiation of a generic
+//! between the native `NonZero` integers; and the casts with the non-zero integers and the native
+//! `NonZero` integers as sources, into every kind of integer, and as targets, from every kind of
+//! source, zero included, `widen` and `truncate` and the inherent methods, against the bit model,
+//! with the panics of the strict cast. Each type or pair checks in an instantiation of a generic
 //! function of its own, whose frame holds its values alone.
 
 use core::{
@@ -12,13 +15,16 @@ use core::{
   num::{NonZero, TryFromIntError},
 };
 
-use typenum::{U12, U17, U33};
+use typenum::{U3, U12, U17, U33, U150};
 
 use super::{
-  casts::{Model, errors, expected, samples},
+  casts::{Model, check_cast, check_truncate, check_widen, errors, expected, samples},
   *,
 };
-use crate::{NonZeroInt, NonZeroIntRepr, NonZeroUint, NonZeroUintRepr};
+use crate::{
+  BoundedCastFrom, CheckedCastFrom, NonZeroInt, NonZeroIntRepr, NonZeroUint, NonZeroUintRepr,
+  WidenFrom, integer::cast::try_cast,
+};
 
 /// The error of the native conversions for zero into a non-zero integer, of the kind `Zero`.
 fn zero_error() -> TryFromIntError {
@@ -431,4 +437,307 @@ fn pointer_sized_nonzero_integers_convert_as_the_native_nonzero() {
   check_as_native::<_, NonZeroUint<U8, [u64; 1]>, NonZero<u8>>(&signed);
   check_as_native::<_, NonZeroInt<U8, NonZero<i8>>, NonZero<i8>>(&signed);
   check_as_native::<_, NonZeroInt<U16, NonZero<i16>>, NonZero<i16>>(&signed);
+}
+
+/// The casts from the non-zero integers, of widths from one bit to 200 and of every kind of
+/// storage, and from the native `NonZero` integers, into integers of each kind, the native integers
+/// and `Uint` and `Int` of zero bits up to 200, against the bit model, and in an optimized build
+/// also those of 256 and 1024 bits.
+#[test]
+fn nonzero_integers_cast_into_integers() {
+  pairs!(nonzero_samples, check_cast:
+    NonZeroInt<U1, NonZero<i8>> => u8, i8, Uint<U0>, Int<U1, [u8; 1]>;
+    NonZeroUint<U7, NonZero<u8>> => u8, i8, usize, Int<U7, i8>, Uint<U3, [u16; 1]>;
+    NonZeroInt<U7, NonZero<i8>> => u16, i8, isize, Uint<U7, u8>, Int<U200, [u64; 4]>;
+    NonZeroUint<U8, [u8; 1]> => u8, i16, Int<U8, [u8; 1]>, Uint<U0>;
+    NonZeroInt<U12, [u16; 1]> => u8, i8, i32, Int<U9, [u16; 1]>, Uint<U12, u16>;
+    NonZeroUint<U33, [u32; 2]> => u32, i64, Int<U33, i64>, Uint<U12, [u8; 2]>;
+    NonZeroInt<U64, NonZero<i64>> => u64, i64, usize, Int<U63, [u32; 2]>, Uint<U65, [u64; 2]>;
+    NonZeroUint<U65, [u64; 2]> => u64, i128, Uint<U65, u128>, Int<U64, i64>;
+    NonZeroInt<U100, [u128; 1]> => u128, i64, Int<U100, i128>, Uint<U129, [u64; 3]>;
+    NonZeroUint<U128, NonZero<u128>> => u128, i128, isize, Int<U129, [u64; 3]>;
+    NonZeroInt<U129, [u64; 3]> => i128, u64, Int<U129, [u8; 17]>, Uint<U128, u128>;
+    NonZeroUint<U200, [u8; 25]> => u8, u128, Uint<U200, [u64; 4]>, Int<U150, [u64; 3]>;
+    NonZero<u8> => u8, i8, Uint<U7, u8>, Int<U9, i16>;
+    NonZero<i16> => i8, u16, Int<U12, [u16; 1]>, Uint<U16, [u8; 2]>;
+    NonZero<u64> => u32, i64, Uint<U65, [u64; 2]>;
+    NonZero<i128> => u128, i64, Int<U100, [u128; 1]>;
+    NonZero<usize> => u16, isize, Uint<U33, [u32; 2]>;
+    NonZero<isize> => i16, usize, Int<U64, [u16; 4]>;
+  );
+  if tier().is_full() {
+    pairs!(nonzero_samples, check_cast:
+      NonZeroUint<U1024, [u64; 16]> => Int<U256, [u8; 32]>, u64;
+      NonZeroInt<U256, [u32; 8]> => Uint<U1024, [u128; 8]>, i8;
+    );
+  }
+}
+
+/// Checks the checked and the strict cast into the non-zero integer `T` of each value of `samples`
+/// against the bit model: the value, if `T` holds it and it is not zero, and otherwise `None`,
+/// where the strict cast panics, which [`strict_casts_into_nonzero_integers_panic`] checks.
+fn check_nonzero_target<S: Model, T: NonZeroModel + CheckedCastFrom<S>>(samples: &[S]) {
+  for &value in samples {
+    let expected = expected::<S, T::Integer>(value);
+    let cast = if expected.fits {
+      T::of_integer(expected.wrapped)
+    } else {
+      None
+    };
+    let name = || format!("{value:?} into {}", type_name::<T>());
+    assert_eq!(T::checked_cast_from(value), cast, "{}", name());
+    if let Some(cast) = cast {
+      assert_eq!(T::strict_cast_from(value), cast, "{}", name());
+    }
+  }
+}
+
+/// The checked and the strict cast into the non-zero integers, of widths from zero bits, which take
+/// no value, to 200 and of every kind of storage, and into the native `NonZero` integers, from
+/// integers, which hold zero, non-zero integers and native integers and their `NonZero`, of both
+/// signs, against the bit model.
+#[test]
+fn casts_into_nonzero_integers() {
+  pairs!(samples, check_nonzero_target:
+    Uint<U0> => NonZeroUint<U7, NonZero<u8>>, NonZero<u8>;
+    Int<U1, i8> => NonZeroInt<U1, [u8; 1]>, NonZeroUint<U1, NonZero<u8>>, NonZero<i8>;
+    Uint<U7, u8> => NonZeroUint<U7, [u8; 1]>, NonZeroInt<U7, NonZero<i8>>, NonZero<u8>,
+      NonZero<i8>;
+    Int<U12, [u16; 1]> => NonZeroInt<U9, [u16; 1]>, NonZeroUint<U16, [u8; 2]>, NonZero<i16>,
+      NonZero<u8>;
+    Uint<U65, [u64; 2]> => NonZeroUint<U65, NonZero<u128>>, NonZeroInt<U64, NonZero<i64>>,
+      NonZero<u64>;
+    Int<U129, [u64; 3]> => NonZeroInt<U129, [u8; 17]>, NonZeroUint<U128, [u64; 2]>, NonZero<i128>;
+    Uint<U200, [u8; 25]> => NonZeroUint<U200, [u64; 4]>, NonZeroInt<U0, [u8; 0]>, NonZero<usize>;
+    u8 => NonZeroUint<U8, NonZero<u8>>, NonZeroInt<U8, [u8; 1]>, NonZero<i8>, NonZero<u8>;
+    i16 => NonZeroInt<U12, [u16; 1]>, NonZeroUint<U16, NonZero<u16>>, NonZero<isize>;
+    u64 => NonZeroUint<U33, [u32; 2]>, NonZero<u32>, NonZero<i64>;
+    i128 => NonZeroInt<U100, [u128; 1]>, NonZero<u128>;
+    usize => NonZeroUint<U16, [u8; 2]>, NonZero<usize>, NonZero<i32>;
+    isize => NonZeroInt<U64, NonZero<i64>>, NonZero<isize>;
+  );
+  pairs!(nonzero_samples, check_nonzero_target:
+    NonZeroInt<U1, NonZero<i8>> => NonZeroInt<U1, [u8; 1]>, NonZeroUint<U1, NonZero<u8>>,
+      NonZero<i8>;
+    NonZeroUint<U7, NonZero<u8>> => NonZeroUint<U3, NonZero<u8>>, NonZeroInt<U7, [u8; 1]>,
+      NonZero<u8>, NonZero<i8>;
+    NonZeroInt<U12, [u16; 1]> => NonZeroInt<U8, NonZero<i8>>, NonZeroUint<U12, [u16; 1]>,
+      NonZero<u16>;
+    NonZeroUint<U65, [u64; 2]> => NonZeroUint<U64, NonZero<u64>>, NonZeroInt<U200, [u64; 4]>,
+      NonZero<u128>;
+    NonZeroInt<U129, [u64; 3]> => NonZeroInt<U65, [u32; 3]>, NonZeroUint<U129, [u16; 9]>,
+      NonZero<i64>;
+    NonZeroUint<U200, [u8; 25]> => NonZeroUint<U200, [u64; 4]>, NonZero<u8>;
+    NonZero<u8> => NonZeroUint<U7, NonZero<u8>>, NonZeroInt<U8, NonZero<i8>>, NonZero<i8>;
+    NonZero<i64> => NonZeroInt<U33, [u32; 2]>, NonZeroUint<U64, [u8; 8]>, NonZero<u16>;
+    NonZero<usize> => NonZeroUint<U16, [u8; 2]>, NonZero<u8>;
+    NonZero<isize> => NonZeroInt<U8, NonZero<i8>>, NonZero<usize>;
+  );
+}
+
+/// Checks `widen` of each value of `samples` of the non-zero integer `S` into the non-zero integer
+/// `T`, which holds every value of `S`, against the bit model: the value.
+fn check_nonzero_widen<S: NonZeroModel, T: NonZeroModel + WidenFrom<S>>(samples: &[S]) {
+  for &value in samples {
+    let expected = expected::<S, T::Integer>(value);
+    let name = || format!("{value:?} into {}", type_name::<T>());
+    assert!(expected.fits, "{}", name());
+    assert_eq!(
+      Some(T::widen_from(value)),
+      T::of_integer(expected.wrapped),
+      "{}",
+      name()
+    );
+  }
+}
+
+/// `widen` from the non-zero integers and the native `NonZero` integers into the non-zero integers
+/// of the same sign that are at least as wide, as the native `From` converts between the `NonZero`
+/// integers, and into the integers of the same sign that are at least as wide, `usize` and
+/// `isize` and their `NonZero` among them as 16 bits and as their own identities; and `truncate`
+/// with its checked and saturating forms from them into the integers of the same sign that are at
+/// most as wide; against the bit model.
+#[test]
+fn nonzero_integers_widen_and_truncate() {
+  pairs!(nonzero_samples, check_nonzero_widen:
+    NonZeroUint<U1, NonZero<u8>> => NonZeroUint<U1, [u8; 1]>, NonZero<u8>;
+    NonZeroUint<U7, NonZero<u8>> => NonZeroUint<U8, [u8; 1]>, NonZero<u8>, NonZero<usize>,
+      NonZeroUint<U200, [u64; 4]>;
+    NonZeroInt<U7, NonZero<i8>> => NonZeroInt<U7, [u64; 1]>, NonZero<i8>, NonZero<isize>,
+      NonZeroInt<U129, [u64; 3]>;
+    NonZeroUint<U65, [u64; 2]> => NonZero<u128>, NonZeroUint<U65, NonZero<u128>>;
+    NonZeroInt<U100, [u128; 1]> => NonZero<i128>, NonZeroInt<U200, [u8; 25]>;
+    NonZero<u8> => NonZero<u16>, NonZero<usize>, NonZeroUint<U8, NonZero<u8>>,
+      NonZeroUint<U33, [u32; 2]>;
+    NonZero<i16> => NonZero<i32>, NonZero<isize>, NonZeroInt<U16, [u8; 2]>;
+    NonZero<u64> => NonZero<u128>, NonZeroUint<U64, [u16; 4]>;
+    NonZero<usize> => NonZero<usize>;
+    NonZero<isize> => NonZero<isize>;
+  );
+  pairs!(nonzero_samples, check_widen:
+    NonZeroUint<U7, NonZero<u8>> => u8, usize, Uint<U7, u8>, Uint<U200, [u8; 25]>;
+    NonZeroInt<U12, [u16; 1]> => i16, isize, Int<U12, i16>;
+    NonZeroUint<U128, NonZero<u128>> => u128, Uint<U129, [u64; 3]>;
+    NonZero<u16> => u16, usize, Uint<U16, [u8; 2]>;
+    NonZero<i64> => i64, i128, Int<U64, [u32; 2]>;
+    NonZero<usize> => usize;
+    NonZero<isize> => isize;
+  );
+  pairs!(nonzero_samples, check_truncate:
+    NonZeroUint<U200, [u8; 25]> => u8, u64, Uint<U65, [u64; 2]>, Uint<U200, [u64; 4]>;
+    NonZeroInt<U129, [u64; 3]> => i8, i128, Int<U7, i8>;
+    NonZeroUint<U16, NonZero<u16>> => u8, u16, Uint<U0>;
+    NonZero<u64> => u8, u64, Uint<U33, [u32; 2]>;
+    NonZero<i32> => i8, i32, Int<U12, [u16; 1]>;
+    NonZero<usize> => u8, u16, usize, Uint<U16, [u8; 2]>;
+    NonZero<isize> => i8, i16, isize;
+  );
+}
+
+/// The inherent casts of `NonZeroUint` and `NonZeroInt` give what the traits of the target give:
+/// into integers and native integers, which hold zero, and into non-zero integers and the native
+/// `NonZero` integers; and they infer the target from the expected type.
+#[test]
+fn inherent_nonzero_casts_agree_with_the_traits() {
+  // The casts of `$x`, a value of `$ty`, inherent and through the traits: into each integer of
+  // `$integers`, and the checked and the strict cast into each non-zero integer of `$nonzeros`,
+  // where the checked one returns a value; each value in a frame of its own.
+  macro_rules! agree {
+    ($ty:ty = $x:expr => [$($integer:ty),+], [$($nonzero:ty),+]) => {{
+      #[inline(never)]
+      fn check(x: $ty) {
+        $(
+          assert_eq!(
+            (
+              x.checked_cast::<$integer>(),
+              x.wrapping_cast::<$integer>(),
+              x.saturating_cast::<$integer>(),
+            ),
+            (
+              <$integer>::checked_cast_from(x),
+              <$integer>::wrapping_cast_from(x),
+              <$integer>::saturating_cast_from(x),
+            ),
+            "{x:?} into {}",
+            type_name::<$integer>()
+          );
+        )+
+        $(
+          let checked = x.checked_cast::<$nonzero>();
+          let name = || format!("{x:?} into {}", type_name::<$nonzero>());
+          assert_eq!(checked, <$nonzero>::checked_cast_from(x), "{}", name());
+          if let Some(checked) = checked {
+            assert_eq!(x.strict_cast::<$nonzero>(), checked, "{}", name());
+          }
+        )+
+      }
+      check($x);
+    }};
+  }
+  type Wide = NonZeroUint<U200, [u8; 25]>;
+  agree!(NonZeroUint<U7> = NonZeroUint::<U7>::MAX =>
+    [u8, i8, u7, i7, Uint<U3, u8>, isize],
+    [NonZeroUint<U8>, NonZeroInt<U7>, NonZeroUint<U3>, NonZero<u8>, NonZero<i8>]);
+  agree!(NonZeroInt<U7> = NonZeroInt::<U7>::MIN =>
+    [u8, i8, u7, Int<U3, i8>, u256, usize],
+    [NonZeroInt<U8, [u8; 1]>, NonZeroUint<U7>, NonZero<i8>, NonZero<u16>]);
+  agree!(Wide = Wide::MAX =>
+    [u128, i128, u7, i256, Uint<U200, [u64; 4]>],
+    [NonZeroUint<U256>, NonZeroInt<U200>, NonZero<u128>]);
+  agree!(NonZeroInt<U200> = NonZeroInt::<U200>::MIN =>
+    [i128, u128, i7, i256],
+    [NonZeroInt<U256>, NonZeroUint<U200>, NonZero<i64>]);
+
+  let five = NonZeroUint::<U7>::new(u7::new(5)).expect("not zero");
+  let wide: NonZeroUint<U16> = five.widen();
+  assert_eq!(wide.get(), Uint::<U16>::new(5));
+  let native: NonZero<u64> = five.widen();
+  assert_eq!(native.get(), 5);
+  let integer: u8 = five.widen();
+  assert_eq!(integer, 5);
+  assert_eq!(five.truncate::<Uint<U3, u8>>(), Uint::<U3, u8>::new(5));
+  assert_eq!(NonZeroUint::<U16>::MAX.truncate::<u8>(), u8::MAX);
+  assert_eq!(NonZeroUint::<U16>::MAX.checked_truncate::<u8>(), None);
+  assert_eq!(NonZeroInt::<U16>::MIN.saturating_truncate::<i8>(), i8::MIN);
+  assert_eq!(
+    NonZeroInt::<U16>::MIN.truncate::<Int<U3, i8>>(),
+    Int::<U3, i8>::ZERO
+  );
+}
+
+/// The strict cast, inherent and through `CheckedCastFrom`, panics in every build on zero into a
+/// non-zero integer, at zero bits too, with the text of the error of the kind `Zero` of the native
+/// conversions, and on a value outside the range of the target, with the message of the native
+/// `strict_cast`, and reports the caller: from integers, non-zero integers and native integers and
+/// their `NonZero`, into non-zero integers and native `NonZero` integers, and from non-zero
+/// integers into integers.
+#[test]
+fn strict_casts_into_nonzero_integers_panic() {
+  let zero = "number would be zero for non-zero type".to_string();
+  let overflow = "attempt to cast integer with overflow".to_string();
+  type Byte = NonZeroUint<U8>;
+  type Wide = NonZeroInt<U200, [u8; 25]>;
+  panics_here!(u7::ZERO.strict_cast::<Byte>(), zero);
+  panics_here!(i256::ZERO.strict_cast::<NonZero<i8>>(), zero);
+  panics_here!(Uint::<U0>::ZERO.strict_cast::<NonZeroUint<U0>>(), zero);
+  panics_here!(Byte::strict_cast_from(0u64), zero);
+  panics_here!(NonZero::<u8>::strict_cast_from(0isize), zero);
+  panics_here!(
+    <Wide as CheckedCastFrom<i7>>::strict_cast_from(i7::ZERO),
+    zero
+  );
+  panics_here!(u256::MAX.strict_cast::<Byte>(), overflow);
+  panics_here!(i7::new(-1).strict_cast::<Byte>(), overflow);
+  panics_here!(NonZero::<u8>::strict_cast_from(300u16), overflow);
+  panics_here!(Wide::MIN.strict_cast::<NonZero<i128>>(), overflow);
+  panics_here!(Byte::MAX.strict_cast::<NonZeroInt<U8>>(), overflow);
+  panics_here!(NonZeroInt::<U7>::MIN.strict_cast::<u8>(), overflow);
+  panics_here!(u8::strict_cast_from(NonZero::<i8>::MIN), overflow);
+}
+
+/// `try_cast` into a non-zero integer returns the error of the kind `Zero` for zero, at zero bits
+/// too, as the native conversions do, and those of the kinds `PosOverflow` and `NegOverflow` for a
+/// value outside the range, which it checks first.
+#[test]
+fn try_cast_into_nonzero_integers() {
+  let (above, below) = errors();
+  let zero = zero_error();
+  let one = NonZeroUint::<U200>::new(Uint::<U200>::ONE);
+  assert_eq!(try_cast::<_, NonZeroUint<U8>>(Uint::<U8>::ZERO), Err(zero));
+  assert_eq!(try_cast::<_, NonZero<i64>>(0u8), Err(zero));
+  assert_eq!(try_cast::<_, NonZeroUint<U0>>(Uint::<U0>::ZERO), Err(zero));
+  assert_eq!(try_cast::<_, NonZeroInt<U7>>(64i64), Err(above));
+  assert_eq!(try_cast::<_, NonZero<u8>>(-1i8), Err(below));
+  assert_eq!(try_cast::<_, NonZero<u16>>(NonZero::<u32>::MAX), Err(above));
+  assert_eq!(try_cast::<_, NonZeroUint<U200>>(1u8).ok(), one);
+}
+
+/// The checked cast of `x` into a `u64`, in code generic over the width alone.
+fn nonzero_into_u64<B: BitWidth>(x: NonZeroUint<B>) -> Option<u64> {
+  x.checked_cast()
+}
+
+/// The checked cast of `n` into `NonZeroInt<B>`, in code generic over the width alone.
+fn nonzero_from_i64<B: BitWidth>(n: i64) -> Option<NonZeroInt<B>> {
+  NonZeroInt::<B>::checked_cast_from(n)
+}
+
+/// The casts in code generic over the width, whose bound `B: BitWidth` alone gives
+/// `NonZeroUint<B>` and `NonZeroInt<B>` the casts with the native integers, at widths from zero
+/// bits, which take no value, to 200.
+#[test]
+fn nonzero_casts_in_code_generic_over_the_width() {
+  assert_eq!(nonzero_into_u64(NonZeroUint::<U1>::MIN), Some(1));
+  assert_eq!(nonzero_into_u64(NonZeroUint::<U64>::MAX), Some(u64::MAX));
+  assert_eq!(nonzero_into_u64(NonZeroUint::<U65>::MAX), None);
+  assert_eq!(nonzero_into_u64(NonZeroUint::<U200>::MIN), Some(1));
+  assert_eq!(nonzero_from_i64::<U0>(5), None);
+  assert_eq!(nonzero_from_i64::<U1>(-1), Some(NonZeroInt::<U1>::MIN));
+  assert_eq!(nonzero_from_i64::<U7>(0), None);
+  assert_eq!(nonzero_from_i64::<U7>(-64), Some(NonZeroInt::<U7>::MIN));
+  assert_eq!(nonzero_from_i64::<U7>(64), None);
+  assert_eq!(
+    nonzero_from_i64::<U200>(i64::MIN).map(Int::from),
+    Some(Int::<U200>::from(i64::MIN))
+  );
 }
