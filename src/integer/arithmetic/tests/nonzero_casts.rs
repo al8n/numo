@@ -744,9 +744,11 @@ fn unchecked_casts_into_nonzero_integers() {
 
   type Byte = NonZeroUint<U8>;
   type Wide = NonZeroInt<U200, [u8; 25]>;
-  // A non-zero integer of zero bits, which holds no value; a short name keeps each invocation of
-  // `panics_here!` on one line, as it requires.
+  // A non-zero integer of zero bits, which holds no value, of each sign, and one in an array of
+  // limbs; short names keep each invocation of `panics_here!` on one line, as it requires.
   type Empty = NonZeroUint<U0>;
+  type EmptySigned = NonZeroInt<U0, [u8; 0]>;
+  type Limbs = NonZeroUint<U200, [u64; 4]>;
   assert_eq!(Some(from_u7(u7::new(5))), Byte::new(Uint::<U8>::new(5)));
   assert_eq!(Some(from_i256(i256::from(-128))), NonZero::new(-128));
   assert_eq!(
@@ -765,6 +767,11 @@ fn unchecked_casts_into_nonzero_integers() {
   panics_here!(through_the_trait::<i7, Wide>(i7::ZERO), zero);
   panics_here!(through_the_trait::<isize, NonZero<i64>>(0), zero);
   panics_here!(through_the_trait::<Uint<U0>, Empty>(Uint::ZERO), zero);
+  panics_here!(through_the_trait::<u8, Limbs>(0), zero);
+  panics_here!(through_the_trait::<i64, NonZeroInt<U7>>(0), zero);
+  panics_here!(through_the_trait::<u16, NonZero<u8>>(0), zero);
+  panics_here!(through_the_trait::<i128, NonZero<usize>>(0), zero);
+  panics_here!(through_the_trait::<u8, EmptySigned>(0), zero);
 }
 
 /// `try_cast` into a non-zero integer returns the error of the kind `Zero` for zero, at zero bits
