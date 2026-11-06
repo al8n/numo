@@ -195,7 +195,8 @@ fn samples<T: Model>() -> Vec<T> {
 }
 
 /// Checks the casts into `T` of each value of `samples` through `CheckedCastFrom` and
-/// `BoundedCastFrom` against the bit model: the checked, strict, wrapping and saturating casts.
+/// `BoundedCastFrom` against the bit model: the checked, strict, wrapping and saturating casts, and
+/// the unchecked cast of each value that `T` holds.
 fn check_cast<S: Model, T: Model + BoundedCastFrom<S>>(samples: &[S]) {
   for &value in samples {
     let expected = expected::<S, T>(value);
@@ -215,6 +216,10 @@ fn check_cast<S: Model, T: Model + BoundedCastFrom<S>>(samples: &[S]) {
     );
     if expected.fits {
       assert_eq!(T::strict_cast_from(value), expected.wrapped, "{}", name());
+      // SAFETY: `checked_cast_from` returns `Some`, as asserted above, which is the precondition of
+      // `unchecked_cast_from`.
+      let unchecked = unsafe { T::unchecked_cast_from(value) };
+      assert_eq!(unchecked, expected.wrapped, "{}", name());
     }
   }
 }
@@ -526,7 +531,8 @@ fn numo_integers_cast_between_widths_storages_and_signs() {
 /// integers, `usize` included.
 #[test]
 fn inherent_casts_agree_with_the_traits() {
-  // The inherent casts of `$x` into `$target` and those of the traits.
+  // The inherent casts of `$x` into `$target` and those of the traits, and the unchecked cast where
+  // the checked one returns a value.
   macro_rules! agree {
     ($x:expr => $($target:ty),+) => {{
       let x = $x;
@@ -545,6 +551,11 @@ fn inherent_casts_agree_with_the_traits() {
           "{x:?} into {}",
           type_name::<$target>()
         );
+        if let Some(checked) = x.checked_cast::<$target>() {
+          // SAFETY: `checked_cast` returns `Some`, which is the precondition of `unchecked_cast`.
+          let unchecked = unsafe { x.unchecked_cast::<$target>() };
+          assert_eq!(unchecked, checked, "{x:?} into {}", type_name::<$target>());
+        }
       )+
     }};
   }

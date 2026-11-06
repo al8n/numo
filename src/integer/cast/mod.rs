@@ -65,6 +65,11 @@ mod sealed {
     /// The value whose 64-bit words in two's complement, least significant first, `word` gives,
     /// which is within the range of `Self`. Every value of an integer that may be zero is `Some`.
     fn from_words(word: impl Fn(usize) -> u64) -> Option<Self>;
+
+    /// The value of [`from_words`](Self::from_words), whose `Some` the caller of
+    /// `unchecked_cast_from` guarantees: for an integer that may be zero, the value of
+    /// `wrap_words`, which is that value when the guarantee holds.
+    fn assume_from_words(word: impl Fn(usize) -> u64) -> Self;
   }
 
   /// What a wrapping or saturating cast builds: a [`CheckedTarget`] that takes every value modulo
@@ -145,8 +150,8 @@ mod sealed {
   impl KindWidens<B1> for B1 {}
 }
 
-/// Conversions to `Self` from the integer `S` that check the range of `Self`: the checked cast and
-/// the strict cast of the native integers, still unstable
+/// Conversions to `Self` from the integer `S` that check the range of `Self`, or assume it: the
+/// checked, the strict and the unchecked cast of the native integers, still unstable
 /// ([#157388](https://github.com/rust-lang/rust/issues/157388)).
 ///
 /// The target implements this trait, as it implements `TryFrom`, so that a native integer converts
@@ -173,6 +178,8 @@ mod sealed {
 /// assert_eq!(u8::checked_cast_from(i7::new(-1)), None);
 /// assert_eq!(i64::checked_cast_from(i7::MIN), Some(-64));
 /// assert_eq!(u8::strict_cast_from(u7::MAX), 127);
+/// // SAFETY: 100 is in the range of `u7`, so `checked_cast_from` would return `Some`.
+/// assert_eq!(unsafe { u7::unchecked_cast_from(100u64) }, u7::new(100));
 ///
 /// // Numo integers convert between any widths and signs.
 /// let wide = Int::<U200>::checked_cast_from(u7::MAX).unwrap();
@@ -204,6 +211,17 @@ pub trait CheckedCastFrom<S>: CastPair<S> + Sized {
   #[must_use]
   #[track_caller]
   fn strict_cast_from(value: S) -> Self;
+
+  /// Converts `value` to `Self`, assuming that it is in the range of `Self`.
+  ///
+  /// # Safety
+  ///
+  /// `value` must be in the range of `Self`, from its `MIN` to its `MAX`, that is,
+  /// [`checked_cast_from`](Self::checked_cast_from) would return `Some`. Otherwise the behavior is
+  /// undefined.
+  #[must_use]
+  #[track_caller]
+  unsafe fn unchecked_cast_from(value: S) -> Self;
 }
 
 /// Conversions to `Self` from the integer `S` for every value: wrapping, as `as` casts the native
@@ -461,6 +479,18 @@ impl<S: CastSource, T: CheckedTarget> CheckedCastFrom<S> for T {
       None => overflow::cast(),
     }
   }
+
+  // The body is safe: a debug build checks the caller's guarantee, and the value of the words is
+  // the cast when the guarantee holds.
+  #[inline]
+  #[track_caller]
+  unsafe fn unchecked_cast_from(value: S) -> Self {
+    debug_assert!(
+      in_range::<S, T>(&value),
+      "attempt to cast integer with overflow"
+    );
+    T::assume_from_words(|index| value.word(index))
+  }
 }
 
 impl<S: CastSource, T: BoundedTarget> BoundedCastFrom<S> for T {
@@ -577,6 +607,11 @@ macro_rules! integer_participants {
       fn from_words(word: impl Fn(usize) -> u64) -> Option<Self> {
         Some(Self::wrap_words(word))
       }
+
+      #[inline]
+      fn assume_from_words(word: impl Fn(usize) -> u64) -> Self {
+        Self::wrap_words(word)
+      }
     }
 
     impl<B: FitsBits<R>, R: $repr> BoundedTarget for $integer<B, R> {
@@ -632,6 +667,11 @@ macro_rules! native_participants {
       #[inline]
       fn from_words(word: impl Fn(usize) -> u64) -> Option<Self> {
         Some(Self::wrap_words(word))
+      }
+
+      #[inline]
+      fn assume_from_words(word: impl Fn(usize) -> u64) -> Self {
+        Self::wrap_words(word)
       }
     }
 
@@ -747,6 +787,24 @@ macro_rules! cast_methods {
       #[track_caller]
       pub fn strict_cast<T: CheckedCastFrom<Self>>(self) -> T {
         T::strict_cast_from(self)
+      }
+
+      /// Unchecked cast: converts the value to the integer `T`, assuming that it is in the range
+      /// of `T`, as the native `unchecked_cast` does, still unstable
+      /// ([#157388](https://github.com/rust-lang/rust/issues/157388)).
+      ///
+      /// # Safety
+      ///
+      /// The value must be in the range of `T`, from its `MIN` to its `MAX`, that is,
+      /// [`checked_cast`](Self::checked_cast) would return `Some`. Otherwise the behavior is
+      /// undefined.
+      #[must_use]
+      #[inline]
+      #[track_caller]
+      pub unsafe fn unchecked_cast<T: CheckedCastFrom<Self>>(self) -> T {
+        // SAFETY: the caller guarantees that the value is in the range of `T`, the precondition of
+        // `unchecked_cast_from`.
+        unsafe { T::unchecked_cast_from(self) }
       }
 
       /// Converts the value to the integer `T` of the same sign, which is at least as wide, as the

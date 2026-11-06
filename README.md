@@ -259,15 +259,16 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   `to_be`, `to_le`, `from_be` and `from_le` convert the byte order as the native integers do, by
   value rather than by layout.
 - The casts of the native integers, still unstable, between any widths and signs: `checked_cast`,
-  `wrapping_cast`, `saturating_cast` and `strict_cast` into a `Uint`, an `Int` or a native integer,
-  `widen` into an integer of the same sign that is at least as wide and `truncate`, with its checked
-  and saturating forms, into one that is at most as wide, the widths and the signs checked at
-  compile time, and the checked, saturating and strict casts between `Uint` and `Int` of the same
-  width. The standard conversions go by direction: `From` converts a native integer into a numo
-  integer whose width holds every value of it, as in `u256::from(5u64)`, `TryFrom` converts a
-  `usize` or an `isize` into any width and a numo integer into each native integer, with the error
-  of the native conversions, and `bool` converts both ways. A literal without a suffix is an `i32`,
-  so `u256::from(5)` fails to compile, while `i256::from(5)` compiles.
+  `wrapping_cast`, `saturating_cast`, `strict_cast` and the `unsafe` `unchecked_cast` into a
+  `Uint`, an `Int` or a native integer, `widen` into an integer of the same sign that is at least as
+  wide and `truncate`, with its checked and saturating forms, into one that is at most as wide, the
+  widths and the signs checked at compile time, and the checked, saturating and strict casts
+  between `Uint` and `Int` of the same width. The standard conversions go by direction: `From`
+  converts a native integer into a numo integer whose width holds every value of it, as in
+  `u256::from(5u64)`, `TryFrom` converts a `usize` or an `isize` into any width and a numo integer
+  into each native integer, with the error of the native conversions, and `bool` converts both
+  ways. A literal without a suffix is an `i32`, so `u256::from(5)` fails to compile, while
+  `i256::from(5)` compiles.
 - Traits with one implementation for every storage of a kind, for generic code, in two layers. The
   general layer requires `Clone` but not `Copy`: `FixedInteger`, with `zero()`, `min_value()`,
   `max_value()`, `is_zero`, `is_one`, the operators, `FromStr`, the formats and

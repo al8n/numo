@@ -260,18 +260,20 @@ FEATURES
     a value calls them also where those traits are in scope.
   - The casts of the native integers, still unstable (#157388, #154330, #154650), between integers
     of any width and sign, as methods of every storage that take the value: `checked_cast`,
-    `wrapping_cast`, `saturating_cast` and `strict_cast`, whose target is a `Uint` or an `Int` of
-    any width and storage or a native integer, and which follow `as` and the native casts at every
-    width, so that -1 of 7 bits wraps to 255 in a `u8` and 300 to 44 in 7 bits; `widen` into an
-    integer of the same sign that is at least as wide, and `truncate`, `checked_truncate` and
-    `saturating_truncate` into one that is at most as wide, whose widths and signs are compared at
-    compile time, with `usize` and `isize` as in the native tables: of at least 16 bits, and no
-    fixed upper bound; and the `const fn`s `checked_cast_signed`, `saturating_cast_signed` and
-    `strict_cast_signed` of `Uint` and `checked_cast_unsigned`, `saturating_cast_unsigned` and
-    `strict_cast_unsigned` of `Int`, into the integer of the same width and the other sign. The
-    strict casts panic in every build with the message of the native ones, reporting the caller.
-    The other casts are not `const`: they are generic over the target, whose trait functions a
-    constant context cannot call.
+    `wrapping_cast`, `saturating_cast`, `strict_cast` and the `unsafe` `unchecked_cast`, whose
+    target is a `Uint` or an `Int` of any width and storage or a native integer, and which follow
+    `as` and the native casts at every width, so that -1 of 7 bits wraps to 255 in a `u8` and 300 to
+    44 in 7 bits; `widen` into an integer of the same sign that is at least as wide, and `truncate`,
+    `checked_truncate` and `saturating_truncate` into one that is at most as wide, whose widths and
+    signs are compared at compile time, with `usize` and `isize` as in the native tables: of at
+    least 16 bits, and no fixed upper bound; and the `const fn`s `checked_cast_signed`,
+    `saturating_cast_signed` and `strict_cast_signed` of `Uint` and `checked_cast_unsigned`,
+    `saturating_cast_unsigned` and `strict_cast_unsigned` of `Int`, into the integer of the same
+    width and the other sign. The strict casts panic in every build with the message of the native
+    ones, reporting the caller. The caller of `unchecked_cast` guarantees that `checked_cast` would
+    return `Some`, and the behavior is undefined otherwise. The casts but those between the signs
+    are not `const`: they are generic over the target, whose trait functions a constant context
+    cannot call.
   - The sealed traits `CheckedCastFrom`, `BoundedCastFrom`, `WidenFrom` and `TruncateFrom`, which
     the target implements, with the functions of the casts, such as `checked_cast_from`, for every
     pair of `Uint`, `Int` and the native integers that the casts take, each through one blanket

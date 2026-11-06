@@ -354,9 +354,11 @@ mod traits;
 /// [`Int`] of any width and storage, or a native integer, which method syntax names, as in
 /// `x.checked_cast::<u64>()`, or the expected type infers, as in `let y: u256 = x.widen();`.
 /// [`checked_cast`](Self::checked_cast) returns `None` for a value outside the range of the target,
-/// [`strict_cast`](Self::strict_cast) panics there, [`wrapping_cast`](Self::wrapping_cast) takes
-/// the value modulo `2^Bits` of the target, as `as` casts the native integers, and
-/// [`saturating_cast`](Self::saturating_cast) the bound of the range that the value passes.
+/// [`strict_cast`](Self::strict_cast) panics there, the `unsafe`
+/// [`unchecked_cast`](Self::unchecked_cast) assumes that the value is in that range,
+/// [`wrapping_cast`](Self::wrapping_cast) takes the value modulo `2^Bits` of the target, as `as`
+/// casts the native integers, and [`saturating_cast`](Self::saturating_cast) the bound of the range
+/// that the value passes.
 /// [`widen`](Self::widen) converts into an integer of the same sign that is at least as wide, which
 /// the compiler checks, so it never fails, and [`truncate`](Self::truncate),
 /// [`checked_truncate`](Self::checked_truncate) and

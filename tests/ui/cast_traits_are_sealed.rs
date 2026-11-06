@@ -13,6 +13,10 @@ impl CheckedCastFrom<u8> for Local {
   fn strict_cast_from(_: u8) -> Self {
     Local
   }
+
+  unsafe fn unchecked_cast_from(_: u8) -> Self {
+    Local
+  }
 }
 
 impl WidenFrom<Local> for u64 {
