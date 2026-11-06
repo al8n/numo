@@ -27,7 +27,12 @@ macro_rules! limb_layer {
     use ::core::{cmp::Ordering, num::ParseIntError};
 
     use $crate::{
-      int::{DigitBuf, order, parse_errors, slice},
+      FromFloatError,
+      int::{
+        DigitBuf,
+        float::{self, FloatFormat, Rounded},
+        order, parse_errors, slice,
+      },
       rounding::{self, RoundingMode},
     };
 
@@ -1697,6 +1702,97 @@ macro_rules! limb_layer {
       }
     }
 
+    /// `value` in limbs. Requires `value < 2^(B * N)`.
+    pub(crate) const fn from_u64<const N: usize>(value: u64) -> [Limb; N] {
+      let mut limbs = [0; N];
+      let mut rest = value;
+      let mut i = 0;
+      while rest != 0 {
+        limbs[i] = rest as Limb;
+        // A limb of 64 bits or more takes all of `value`, which a shift by the width of the limb
+        // would overflow.
+        rest = match rest.checked_shr(Limb::BITS) {
+          Some(rest) => rest,
+          None => 0,
+        };
+        i += 1;
+      }
+      limbs
+    }
+
+    /// The bits of the float of `format` nearest to `magnitude`, negated if `negative`, ties to
+    /// even, or of the infinity of that sign if the magnitude rounds to `2^(2^(e - 1))` or more,
+    /// for `e` bits of exponent. A magnitude of at most `p` bits, the precision of the format,
+    /// converts exactly. A longer one keeps its top `p` bits, which round up when the bit below
+    /// them, the guard bit, is set and either a lower bit is set or the top bits are odd; a carry
+    /// out of them makes one bit more. Zero is `+0.0`, whatever `negative`.
+    pub(crate) const fn magnitude_float_bits<const N: usize>(
+      magnitude: &[Limb; N],
+      negative: bool,
+      format: FloatFormat,
+    ) -> u64 {
+      // The index of the highest one of the magnitude, the exponent of the float.
+      let mut log = match checked_ilog2(magnitude) {
+        Some(log) => log,
+        None => return 0,
+      };
+      let precision = format.precision();
+      // The significand, with its top bit at `precision - 1`, the implicit bit of the format.
+      let significand = if log < precision {
+        // At most `precision` bits, which the low word holds.
+        word(magnitude, 0) << (precision - 1 - log)
+      } else {
+        let dropped = log + 1 - precision;
+        let top = word(&shift_right(magnitude, dropped), 0);
+        let guard = dropped - 1;
+        let guard_set = (word(magnitude, (guard / 64) as usize) >> (guard % 64)) & 1 == 1;
+        let sticky = match lowest_one(magnitude) {
+          Some(lowest) => lowest < guard,
+          None => false,
+        };
+        if !(guard_set && (sticky || top & 1 == 1)) {
+          top
+        } else if top + 1 == 1 << precision {
+          log += 1;
+          1 << (precision - 1)
+        } else {
+          top + 1
+        }
+      };
+      let exponent_bits = format.exponent_bits();
+      let fraction_bits = precision - 1;
+      let sign = (negative as u64) << (fraction_bits + exponent_bits);
+      // The biased exponent of every bit set marks the infinities.
+      let infinite = (1 << exponent_bits) - 1;
+      let biased = log as u64 + (1 << (exponent_bits - 1)) - 1;
+      if biased >= infinite {
+        sign | infinite << fraction_bits
+      } else {
+        sign | biased << fraction_bits | (significand & ((1 << fraction_bits) - 1))
+      }
+    }
+
+    /// The bits of the float of `format` nearest to `value`, ties to even, or of the infinity
+    /// above its range, as [`magnitude_float_bits`] gives them for a value that is not negative.
+    #[inline]
+    pub(crate) const fn float_bits<const N: usize>(value: &[Limb; N], format: FloatFormat) -> u64 {
+      magnitude_float_bits(value, false, format)
+    }
+
+    /// `rounded`, a float rounded to an integer, as a value of `bits` bits, or the error of a value
+    /// outside their range: `NegOverflow` for a negative value but zero, and `PosOverflow` for a
+    /// magnitude of more than `bits` bits. Requires `bits <= B * N`.
+    pub(crate) const fn place_magnitude<const N: usize>(
+      rounded: Rounded,
+      bits: u32,
+    ) -> Result<[Limb; N], FromFloatError> {
+      match float::check_range(rounded, bits, false) {
+        // The magnitude is below `2^bits`, so its significand is below `2^(B * N)`.
+        Ok(()) => Ok(shift_left(&from_u64(rounded.significand), rounded.shift)),
+        Err(error) => Err(error),
+      }
+    }
+
     /// Writes the low `out.len()` bytes of `value` to `out`, least significant first, or most
     /// significant first if `big_endian`. The upper layer writes with it too: the limbs hold the
     /// bits of a value of either sign, and for one in two's complement the copies of its sign above
@@ -1893,7 +1989,12 @@ macro_rules! limb_layer {
 
     use $crate::int::unsigned::$unsigned;
     use $crate::{
-      int::{DigitBuf, order, parse_errors, slice},
+      FromFloatError,
+      int::{
+        DigitBuf,
+        float::{self, FloatFormat, Rounded},
+        order, parse_errors, slice,
+      },
       rounding::RoundingMode,
     };
 
@@ -2996,6 +3097,37 @@ macro_rules! limb_layer {
         (low, true) if ((low as i128) < 0) == negative => order::cmp_i128(low as i128, rhs),
         _ if negative => Ordering::Less,
         _ => Ordering::Greater,
+      }
+    }
+
+    /// The bits of the float of `format` nearest to `value`, ties to even, or of the infinity of
+    /// its sign beyond the range of the float, as the lower layer's `magnitude_float_bits` gives
+    /// them for the magnitude and the sign of `value`: zero is `+0.0`.
+    #[inline]
+    pub(crate) const fn float_bits<const N: usize>(value: &[Limb; N], format: FloatFormat) -> u64 {
+      $unsigned::magnitude_float_bits(&unsigned_abs(value), is_negative(value), format)
+    }
+
+    /// `rounded`, a float rounded to an integer, as a value of `bits` bits in two's complement, or
+    /// the error of a value outside their range: `NegOverflow` below `-2^(bits - 1)`, and
+    /// `PosOverflow` above `2^(bits - 1) - 1`. Requires `bits <= B * N`.
+    pub(crate) const fn place_magnitude<const N: usize>(
+      rounded: Rounded,
+      bits: u32,
+    ) -> Result<[Limb; N], FromFloatError> {
+      match float::check_range(rounded, bits, true) {
+        Ok(()) => {
+          // The magnitude is at most `2^(bits - 1)`, so its negation holds copies of its sign from
+          // bit `bits - 1` up, as a value of `bits` bits does.
+          let magnitude =
+            $unsigned::shift_left(&$unsigned::from_u64(rounded.significand), rounded.shift);
+          Ok(if rounded.negative {
+            wrapping_neg(&magnitude)
+          } else {
+            magnitude
+          })
+        }
+        Err(error) => Err(error),
       }
     }
 

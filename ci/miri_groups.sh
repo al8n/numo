@@ -40,6 +40,7 @@ miri_groups=(
   "10 integer::arithmetic::tests::compare::"
   "5 integer::arithmetic::tests::limbs::"
   "9 integer::arithmetic::tests::nonzero_casts::"
+  "7 integer::arithmetic::tests::floats::"
   "1 integer::arithmetic::"
   "2 integer::tests::int_"
   "2 integer::tests::uint_"

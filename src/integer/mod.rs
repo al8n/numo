@@ -10,7 +10,8 @@ use core::{
 
 pub use bytes::{ByteArray, FromByteArray, IntegerByteOrder, IntegerBytes};
 pub use cast::{BoundedCastFrom, CheckedCastFrom, TruncateFrom, WidenFrom};
-pub use error::TryNewError;
+pub use error::{FromFloatError, TryNewError};
+pub use float::IntegerFloat;
 pub use traits::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,
   FixedNonZero, FromLimbs, IntegerBits, IntegerMath, IntegerNonZero, IntegerOne, NativeInteger,
@@ -39,6 +40,8 @@ mod arithmetic;
 mod bits;
 #[macro_use]
 mod bytes;
+#[macro_use]
+mod float;
 #[macro_use]
 mod nonzero;
 mod cast;
@@ -461,6 +464,52 @@ mod traits;
 /// # Ok::<(), core::num::TryFromIntError>(())
 /// ```
 ///
+/// # Floats
+///
+/// [`to_f64`](Self::to_f64) and [`to_f32`](Self::to_f32) convert the value to the nearest float,
+/// ties to even, as `as` converts the native integers: a value of at most 53 bits converts exactly
+/// to `f64`, and one of at most 24 bits to `f32`, and a value whose magnitude rounds beyond the
+/// largest float gives an infinity, as `u128::MAX` does as an `f32`. `From` converts a `Uint` of at
+/// most 53 bits into `f64` and one of at most 24 bits into `f32`, which hold every value of such a
+/// width; there is no direct `TryFrom` between the integers and the floats, only the one that the
+/// standard library derives from `From`, whose error is `Infallible`.
+///
+/// The conversions from a float are `const fn`s of each storage. Three truncate the float toward
+/// zero, as the native methods do, still unstable
+/// ([#159913](https://github.com/rust-lang/rust/issues/159913)):
+/// [`checked_from_f64`](Self::checked_from_f64) returns `None` for NaN, an infinity and a truncated
+/// value outside the range of `Bits` bits, [`saturating_from_f64`](Self::saturating_from_f64)
+/// converts as `as` does, to zero for NaN and otherwise to the bound of the range that the float
+/// passes, and [`strict_from_f64`](Self::strict_from_f64) panics where `checked_from_f64` returns
+/// `None`. [`round_from_f64`](Self::round_from_f64) rounds the float to an integer with a
+/// [`RoundingMode`](crate::RoundingMode), as `HalfEven` rounds to the nearest one, and
+/// [`exact_from_f64`](Self::exact_from_f64) converts only a float that is an integer of the range.
+/// Both return a [`FromFloatError`](crate::FromFloatError), which reports NaN, the infinities, a
+/// value above the range and one below it apart: `round_from_f64` judges the rounded value, so that
+/// `-0.4` converts to zero with `HalfEven`, and `exact_from_f64` judges the value of the float
+/// before it reports a fraction, so that `255.5` is above the range of 8 bits and `-0.5` below that
+/// of `Uint`. Each has an `f32` form, such as [`round_from_f32`](Self::round_from_f32), which
+/// converts the `f64` of the same value, and [`IntegerFloat`](crate::IntegerFloat) gives them to
+/// generic code.
+///
+/// ```
+/// use numo::{FromFloatError, RoundingMode, Uint, typenum::U53, u7};
+///
+/// assert_eq!(u7::MAX.to_f64(), 127.0);
+/// assert_eq!(f64::from(Uint::<U53>::MAX), 9_007_199_254_740_991.0);
+/// assert_eq!(u7::checked_from_f64(127.9), Some(u7::MAX));
+/// assert_eq!(u7::checked_from_f64(128.0), None);
+/// assert_eq!(u7::saturating_from_f64(-5.0), u7::ZERO);
+/// assert_eq!(u7::saturating_from_f64(f64::NAN), u7::ZERO);
+/// assert_eq!(u7::round_from_f64(2.5, RoundingMode::HalfEven), Ok(u7::new(2)));
+/// assert_eq!(u7::round_from_f64(-0.4, RoundingMode::HalfEven), Ok(u7::ZERO));
+/// let infinite = Err(FromFloatError::Infinite);
+/// assert_eq!(u7::round_from_f32(f32::INFINITY, RoundingMode::Down), infinite);
+/// assert_eq!(u7::exact_from_f64(126.5), Err(FromFloatError::Inexact));
+/// assert_eq!(u7::exact_from_f64(127.5), Err(FromFloatError::PosOverflow));
+/// assert_eq!(u7::exact_from_f64(-0.5), Err(FromFloatError::NegOverflow));
+/// ```
+///
 /// # Overflow
 ///
 /// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
@@ -752,6 +801,28 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 ///
 /// // The comparisons with the native integers, both ways.
 /// assert!(x < 0u8 && -5i64 == x && i256::MIN < i128::MIN);
+/// ```
+///
+/// # Floats
+///
+/// The conversions with the floats are those of [`Uint`] (see [Floats](Uint#floats)), for a value
+/// of either sign. `From` converts an `Int` of at most 54 bits into `f64` and one of at most 25
+/// bits into `f32`, a bit more than for `Uint`, as the largest magnitude, that of `MIN`, is a power
+/// of two. The saturating conversion gives [`MIN`](Self::MIN) below the range and for negative
+/// infinity. A negative value that rounds to zero converts to zero, and `exact_from_f64` converts
+/// `-0.0` to zero and reports `-0.5` as inexact from one bit, where it is in the range.
+///
+/// ```
+/// use numo::{FromFloatError, Int, RoundingMode, i7, typenum::U54};
+///
+/// assert_eq!(i7::MIN.to_f32(), -64.0);
+/// assert_eq!(f64::from(Int::<U54>::MIN), -9_007_199_254_740_992.0);
+/// assert_eq!(i7::saturating_from_f64(f64::NEG_INFINITY), i7::MIN);
+/// assert_eq!(i7::checked_from_f64(-64.9), Some(i7::MIN));
+/// assert_eq!(i7::round_from_f64(-2.5, RoundingMode::HalfUp), Ok(i7::new(-3)));
+/// assert_eq!(i7::round_from_f64(-64.5, RoundingMode::HalfEven), Ok(i7::MIN));
+/// assert_eq!(i7::exact_from_f64(-0.5), Err(FromFloatError::Inexact));
+/// assert_eq!(i7::exact_from_f64(-64.5), Err(FromFloatError::NegOverflow));
 /// ```
 ///
 /// # Overflow
@@ -1340,6 +1411,7 @@ macro_rules! array_integers {
       uint_bits_table!(inherent_items![unsigned, $lower, &, Int<B, [$limb; N]>]);
       bitwise_table!(inherent_items![unsigned, $lower, &]);
       byte_methods!([unsigned, $lower, &]);
+      float_methods!([unsigned, $lower, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1573,6 +1645,7 @@ macro_rules! array_integers {
       int_bits_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
       bitwise_table!(inherent_items![signed, $upper, &]);
       byte_methods!([signed, $upper, &]);
+      float_methods!([signed, $upper, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1973,6 +2046,7 @@ macro_rules! native_integers {
       uint_bits_table!(inherent_items![$uint, Int<B, $int>]);
       bitwise_table!(inherent_items![$uint]);
       byte_methods!([$uint]);
+      float_methods!([$uint]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -2207,6 +2281,7 @@ macro_rules! native_integers {
       int_bits_table!(inherent_items![$int, Uint<B, $uint>]);
       bitwise_table!(inherent_items![$int]);
       byte_methods!([$int]);
+      float_methods!([$int]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///

@@ -1110,6 +1110,8 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@compare false);
 
+    limb_layer_tests!(@float false);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves nothing of a value, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -1970,6 +1972,8 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@compare true);
 
+    limb_layer_tests!(@float true);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves the sign alone, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -2735,6 +2739,105 @@ macro_rules! limb_layer_tests {
       compare_against_the_model::<2>();
       if !bigint::tier().is_miri() {
         compare_against_the_model::<3>();
+      }
+    }
+  };
+  // The tests of the floats, which every instance shares, after the helpers of its arm and of
+  // `@bits`: `$signed` is whether the layer reads the limbs in two's complement. Each `N` checks in
+  // a function of its own, which is never inlined: an optimized build would inline a function that
+  // has one call site, and the frame of the test would hold those of every `N`.
+  (@float $signed:literal) => {
+    use crate::{
+      bigint::floats::{self, TestFloat},
+      int::float::FloatFormat,
+    };
+
+    /// Checks the float bits of `N` limbs on `p`, a pattern of `B * N` bits read in two's
+    /// complement if `$signed`, against `floats::float_of_pattern`: what `as` gives up to 128 bits,
+    /// and above them the rounding to odd in 64 bits, for `f64` and `f32`.
+    fn check_float_bits<const N: usize>(p: &[bool]) {
+      let x = bigint::limbs_of_pattern::<Limb, N>(p, $signed);
+      assert_eq!(
+        (float_bits(&x, FloatFormat::F64), float_bits(&x, FloatFormat::F32)),
+        (
+          floats::float_of_pattern::<f64>(p, $signed).to_raw(),
+          floats::float_of_pattern::<f32>(p, $signed).to_raw(),
+        ),
+        "{}",
+        model::text(p)
+      );
+    }
+
+    /// Checks the float bits of `N` limbs against the model: at every pattern of up to 16 bits,
+    /// or under Miri every 61st; above 16 bits at the patterns of `bigint::bit_patterns_by` next
+    /// to the precisions of the floats and to the widths of the native integers, at every index in
+    /// an optimized build and at the reduced indexes otherwise, at the patterns that the floats
+    /// round at a tie and those next to them, and at random patterns, as many as the tier takes;
+    /// or under Miri at the patterns of `model::few_patterns`.
+    #[inline(never)]
+    fn float_bits_against_the_model<const N: usize>() {
+      let tier = bigint::tier();
+      let top = B * N as u32;
+      let mut patterns: Vec<Vec<bool>> = if top <= 16 {
+        let step = if tier.is_miri() { 61 } else { 1 };
+        (0..1u128 << top)
+          .step_by(step)
+          .map(|value| model::of_u128(value, top))
+          .collect()
+      } else if tier.is_miri() {
+        model::few_patterns(top, B)
+      } else {
+        bigint::bit_patterns_by::<Limb, N>(&[24, 25, 53, 54, 64, 65, 128, 129], !tier.is_full())
+          .iter()
+          .map(|limbs| bigint::pattern_of_limbs(limbs, top))
+          .collect()
+      };
+      if !tier.is_miri() && top > 16 {
+        patterns.extend(floats::tie_patterns(top));
+        let random = if tier.is_full() { 4096 } else { 64 };
+        patterns.extend(floats::random_patterns(top, random, u64::from(top)));
+      }
+      for p in &patterns {
+        check_float_bits::<N>(p);
+      }
+    }
+
+    /// The float bits of no limbs to three, and under Miri of no limbs to two.
+    #[test]
+    fn float_bits_match_the_model() {
+      float_bits_against_the_model::<0>();
+      float_bits_against_the_model::<1>();
+      float_bits_against_the_model::<2>();
+      if !bigint::tier().is_miri() {
+        float_bits_against_the_model::<3>();
+      }
+    }
+
+    /// Checks the placement of the rounded integers of `floats::rounded_samples` into `N` limbs at
+    /// each width of `widths::<N>()` against the bit model, read in two's complement if `$signed`.
+    #[inline(never)]
+    fn placement_against_the_model<const N: usize>() {
+      for bits in widths::<N>() {
+        for rounded in floats::rounded_samples(bits) {
+          assert_eq!(
+            place_magnitude::<N>(rounded, bits),
+            floats::place(rounded, bits, $signed)
+              .map(|p| bigint::limbs_of_pattern::<Limb, N>(&p, $signed)),
+            "{rounded:?} at {bits} bits"
+          );
+        }
+      }
+    }
+
+    /// The placement of rounded integers into no limbs to three, and under Miri into no limbs and
+    /// one.
+    #[test]
+    fn placement_matches_the_model() {
+      placement_against_the_model::<0>();
+      placement_against_the_model::<1>();
+      if !bigint::tier().is_miri() {
+        placement_against_the_model::<2>();
+        placement_against_the_model::<3>();
       }
     }
   };

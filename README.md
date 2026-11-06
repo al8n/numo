@@ -31,7 +31,7 @@ traits do.
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, and generic traits |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, the conversions with `f64` and `f32`, truncating, saturating, rounded by a mode or exact, with `From` where lossless, and generic traits |
 | `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, `TryFrom` of the integer, the conversions with the native `NonZero` integers by direction, the casts into any integer and, checking for zero, from any integer, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
@@ -277,6 +277,15 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   converts a `usize` or an `isize` into any width and a numo integer into each native integer, with
   the error of the native conversions, and `bool` converts both ways. A literal without a suffix is
   an `i32`, so `u256::from(5)` fails to compile, while `i256::from(5)` compiles.
+- The conversions with the floats: `to_f64` and `to_f32` round to the nearest float, ties to even,
+  as `as` converts the native integers, and `From` converts a width whose every value the float
+  holds, at most 53 bits of `Uint` and 54 of `Int` into `f64`, and 24 and 25 bits into `f32`. From
+  a float, as `const fn`s, `checked_from_f64`, `saturating_from_f64` and `strict_from_f64` truncate
+  toward zero as the native `to_int_checked`, `as` and `to_int_strict` do, `round_from_f64` rounds
+  with a `RoundingMode`, so that `HalfEven` rounds to the nearest integer, and `exact_from_f64`
+  takes only an integer of the range. Their error, `FromFloatError`, reports NaN, the infinities, a
+  value above the range and one below it apart, and for `exact_from_f64` a fraction. Each has an
+  `f32` form.
 - Traits with one implementation for every storage of a kind, for generic code, in two layers. The
   general layer requires `Clone` but not `Copy`: `FixedInteger`, with `zero()`, `min_value()`,
   `max_value()`, `is_zero`, `is_one`, the operators, `FromStr`, the formats and
@@ -289,9 +298,10 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   `SaturatingOps`, `StrictOps` and `UncheckedOps` the arithmetic, `IntegerMath`, `UnsignedMath`
   and `SignedMath` the functions without an overflow prefix, such as `pow`, `isqrt` and `ilog10`,
   `IntegerBits`, `UnsignedBits` and `SignedBits` the bit operations, `IntegerBytes`, `ByteArray`,
-  `FromByteArray` and `IntegerByteOrder` the bytes, and `CheckedCastFrom`, `BoundedCastFrom`,
-  `WidenFrom` and `TruncateFrom`, which the target implements, the casts; with the bound
-  `B: BitWidth`, such code uses `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
+  `FromByteArray` and `IntegerByteOrder` the bytes, `CheckedCastFrom`, `BoundedCastFrom`,
+  `WidenFrom` and `TruncateFrom`, which the target implements, the casts, and `IntegerFloat` the
+  conversions with the floats; with the bound `B: BitWidth`, such code uses `Uint<B>` and `Int<B>`
+  for any width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
   width of more than 65536 bits without an explicit storage.

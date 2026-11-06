@@ -2006,3 +2006,295 @@ mod limbs {
     check_limbs!(u128, i128);
   }
 }
+
+/// The floats in the integer core: the parts of the floats of both formats against their values,
+/// their rounding to an integer in every mode against the rounding functions of std, with the
+/// values below one half whose exponent a shift would not reach, the range of a width against its
+/// bounds, and the native layers, whose placement of a rounded integer gives what the bit model
+/// gives and whose float bits are those that `as` gives. Under Miri, the structured floats alone.
+///
+/// Each format and each pair of native layers checks in a function of its own, which is never
+/// inlined: an optimized build would inline a function that has one call site, and the frame of the
+/// test would hold those of every format or pair.
+mod float {
+  use std::{vec, vec::Vec};
+
+  use super::bits::ends;
+  use crate::{
+    FromFloatError, RoundingMode,
+    bigint::{
+      self, MODES,
+      floats::{self, TestFloat},
+      model,
+    },
+    int::{
+      self,
+      float::{
+        FloatFormat, Rounded, check_range, float_parts_f32, float_parts_f64, round_magnitude,
+      },
+    },
+  };
+
+  /// The number of floats of random magnitude that the tier adds to the structured ones.
+  fn random_floats() -> usize {
+    match bigint::tier() {
+      bigint::Tier::Full => 300_000,
+      bigint::Tier::Debug => 2_000,
+      bigint::Tier::Miri => 0,
+    }
+  }
+
+  /// The widths near which the floats of the tests are structured: those next to the precisions
+  /// of the floats, to the native widths and to the exponent of the largest float, or under Miri
+  /// a few of them.
+  fn widths() -> &'static [u32] {
+    if bigint::tier().is_miri() {
+      &[0, 1, 53, 64]
+    } else {
+      &[0, 1, 7, 8, 24, 25, 53, 54, 64, 65, 128, 1024]
+    }
+  }
+
+  /// Checks the parts of each float of `samples`: NaN and the infinities have none, and a finite
+  /// float is `significand * 2^exponent` with its sign, in the canonical form of its format, with
+  /// the implicit bit of a normal float or the exponent of the smallest normal one, and is an
+  /// integer when `trunc` leaves it unchanged.
+  #[inline(never)]
+  fn check_parts<F: TestFloat>(samples: &[F]) {
+    for &x in samples {
+      let wide = x.wide();
+      match x.parts() {
+        Err(FromFloatError::Nan) => assert!(wide.is_nan(), "{x:?}"),
+        Err(FromFloatError::Infinite) => assert!(wide.is_infinite(), "{x:?}"),
+        Err(error) => panic!("{x:?} has no parts: {error:?}"),
+        Ok(parts) => {
+          let precision = F::FORMAT.precision();
+          assert_eq!(parts.precision, precision, "{x:?}");
+          assert_eq!(parts.negative, wide.is_sign_negative(), "{x:?}");
+          assert!(parts.significand >> precision == 0, "{x:?}");
+          assert!(
+            parts.significand >> (precision - 1) == 1 || parts.exponent == F::MIN_EXPONENT,
+            "{x:?}"
+          );
+          assert_eq!(
+            parts.significand as f64 * floats::pow2(parts.exponent),
+            wide.abs(),
+            "{x:?}"
+          );
+          assert_eq!(parts.is_integer(), wide == wide.trunc(), "{x:?}");
+        }
+      }
+    }
+  }
+
+  /// The parts of the floats of both formats, at the structured floats of the widths and the
+  /// floats of random magnitude that the tier takes.
+  #[test]
+  fn parts_hold_the_values_of_the_floats() {
+    check_parts::<f64>(&floats::samples(widths(), random_floats()));
+    check_parts::<f32>(&floats::samples(widths(), random_floats()));
+    assert_eq!(float_parts_f64(f64::NAN), Err(FromFloatError::Nan));
+    assert_eq!(float_parts_f64(-f64::NAN), Err(FromFloatError::Nan));
+    assert_eq!(
+      float_parts_f32(f32::INFINITY),
+      Err(FromFloatError::Infinite)
+    );
+    assert_eq!(
+      float_parts_f32(f32::NEG_INFINITY),
+      Err(FromFloatError::Infinite)
+    );
+  }
+
+  /// Checks the rounding of each float of `samples` in every mode against the rounding functions
+  /// of std: the sign of the float, and the magnitude of the rounded value, whose significand is at
+  /// most `2^53`.
+  #[inline(never)]
+  fn check_rounding<F: TestFloat>(samples: &[F]) {
+    for &x in samples {
+      let Ok(parts) = x.parts() else { continue };
+      let wide = x.wide();
+      for mode in MODES {
+        let rounded = round_magnitude(parts, mode);
+        let expected = floats::round(wide, mode);
+        assert_eq!(rounded.negative, wide.is_sign_negative(), "{x:?} {mode:?}");
+        assert!(rounded.significand <= 1 << 53, "{x:?} {mode:?}");
+        assert_eq!(
+          rounded.significand as f64 * floats::pow2(rounded.shift as i32),
+          expected.abs(),
+          "{x:?} {mode:?}"
+        );
+      }
+    }
+  }
+
+  /// The rounding of the floats of both formats in every mode, at the structured floats of the
+  /// widths and the floats of random magnitude that the tier takes.
+  #[test]
+  fn rounding_matches_the_rounding_functions() {
+    check_rounding::<f64>(&floats::samples(widths(), random_floats()));
+    check_rounding::<f32>(&floats::samples(widths(), random_floats()));
+  }
+
+  /// A value below one half whose exponent is below `-precision`, which no shift of the
+  /// significand reaches: `0.0005`, whose `-exponent` is from 54 to 63, `0.0001`, whose
+  /// `-exponent` is above 63, the subnormals and the smallest normal float, of both signs and both
+  /// formats, round to one in the modes that round it away from zero, `Up`, `Ceiling` of a positive
+  /// value and `Floor` of a negative one, and to zero in every other mode.
+  #[test]
+  fn values_below_one_half_round_in_every_mode() {
+    let f64_parts = |value: f64| float_parts_f64(value).expect("finite");
+    let f32_parts = |value: f32| float_parts_f32(value).expect("finite");
+    // The `f64` values whose exponents the cases name.
+    assert!((54..=63).contains(&f64_parts(0.0005).exponent.unsigned_abs()));
+    assert!(f64_parts(0.0001).exponent.unsigned_abs() > 63);
+    let tiny = [
+      f64_parts(0.0005),
+      f64_parts(0.0001),
+      f64_parts(f64::from_bits(1)),
+      f64_parts(f64::from_bits((1 << 52) - 1)),
+      f64_parts(f64::MIN_POSITIVE),
+      f64_parts(floats::pow2(-60)),
+      f32_parts(0.0005),
+      f32_parts(0.0001),
+      f32_parts(f32::from_bits(1)),
+      f32_parts(f32::from_bits((1 << 23) - 1)),
+      f32_parts(f32::MIN_POSITIVE),
+      f32_parts(floats::pow2_f32(-30)),
+    ];
+    for parts in tiny {
+      assert!(parts.exponent.unsigned_abs() > parts.precision, "{parts:?}");
+      for negative in [false, true] {
+        let parts = int::float::FloatParts { negative, ..parts };
+        for mode in MODES {
+          let away = match mode {
+            RoundingMode::Up => true,
+            RoundingMode::Ceiling => !negative,
+            RoundingMode::Floor => negative,
+            _ => false,
+          };
+          assert_eq!(
+            round_magnitude(parts, mode),
+            Rounded {
+              negative,
+              significand: u64::from(away),
+              shift: 0,
+            },
+            "{parts:?} {mode:?}"
+          );
+        }
+      }
+    }
+  }
+
+  /// The range of every width up to 66, of those next to 128 and of those next to 1024, read
+  /// unsigned and in two's complement, at the floats rounded in every mode, against the bounds of
+  /// the range as powers of two.
+  #[test]
+  fn ranges_match_the_bounds_of_the_widths() {
+    let ranges: Vec<u32> = if bigint::tier().is_miri() {
+      vec![0, 1, 2, 53, 54, 64, 1024, 1025]
+    } else {
+      (0..=66).chain([127, 128, 129, 1023, 1024, 1025]).collect()
+    };
+    for x in floats::samples::<f64>(widths(), random_floats() / 100) {
+      let Ok(parts) = x.parts() else { continue };
+      for mode in MODES {
+        let rounded = round_magnitude(parts, mode);
+        // The rounded value, which the float of the rounding holds exactly.
+        let magnitude = rounded.significand as f64 * floats::pow2(rounded.shift as i32);
+        let value = if rounded.negative {
+          -magnitude
+        } else {
+          magnitude
+        };
+        for &bits in &ranges {
+          for signed in [false, true] {
+            let expected = match (floats::in_range(value, bits, signed), value < 0.0) {
+              (true, _) => Ok(()),
+              (false, true) => Err(FromFloatError::NegOverflow),
+              (false, false) => Err(FromFloatError::PosOverflow),
+            };
+            assert_eq!(
+              check_range(rounded, bits, signed),
+              expected,
+              "{value} at {bits} bits, signed: {signed}"
+            );
+          }
+        }
+      }
+    }
+  }
+
+  /// Checks the native layers `$uint` and `$int` at each width of `$widths`: the placement of the
+  /// rounded integers of `floats::rounded_samples` against the bit model, unsigned and in two's
+  /// complement; and their float bits at each pattern of their full width of `$patterns`, against
+  /// `as`; in a function of its own.
+  macro_rules! check_layers {
+    ($uint:ident, $int:ident, $widths:expr, $patterns:expr) => {{
+      #[inline(never)]
+      fn check(widths: Vec<u32>, patterns: Vec<u128>) {
+        for bits in widths {
+          for rounded in floats::rounded_samples(bits) {
+            assert_eq!(
+              int::$uint::place_magnitude(rounded, bits),
+              floats::place(rounded, bits, false).map(|p| model::to_u128(&p) as $uint),
+              "{rounded:?} at {bits} bits"
+            );
+            assert_eq!(
+              int::$int::place_magnitude(rounded, bits),
+              floats::place(rounded, bits, true).map(|p| model::to_i128(&p) as $int),
+              "{rounded:?} at {bits} bits"
+            );
+          }
+        }
+        for pattern in patterns {
+          let (x, y) = (pattern as $uint, pattern as $uint as $int);
+          assert_eq!(
+            (
+              int::$uint::float_bits(x, FloatFormat::F64),
+              int::$uint::float_bits(x, FloatFormat::F32),
+              int::$int::float_bits(y, FloatFormat::F64),
+              int::$int::float_bits(y, FloatFormat::F32),
+            ),
+            (
+              (x as f64).to_bits(),
+              u64::from((x as f32).to_bits()),
+              (y as f64).to_bits(),
+              u64::from((y as f32).to_bits()),
+            ),
+            "{x}"
+          );
+        }
+      }
+      check($widths, $patterns);
+    }};
+  }
+
+  /// The widths at which a native layer of `bits` bits places the rounded integers: zero bits,
+  /// one, about half, one less than the full width and the full width, or under Miri zero bits,
+  /// one and the full width.
+  fn layer_widths(bits: u32) -> Vec<u32> {
+    if bigint::tier().is_miri() {
+      vec![0, 1, bits]
+    } else {
+      vec![0, 1, bits / 2 + 1, bits - 1, bits]
+    }
+  }
+
+  #[test]
+  fn native_layers_place_rounded_integers_and_write_floats() {
+    let every: Vec<u128> = if bigint::tier().is_miri() {
+      ends(8)
+    } else {
+      (0..1 << 8).collect()
+    };
+    check_layers!(u8, i8, layer_widths(8), every);
+    check_layers!(u16, i16, layer_widths(16), ends(16));
+    check_layers!(u32, i32, layer_widths(32), ends(32));
+    check_layers!(u64, i64, layer_widths(64), ends(64));
+    check_layers!(u128, i128, layer_widths(128), ends(128));
+    // Zero is `+0.0` in both layers of each sign.
+    assert_eq!(int::i8::float_bits(0, FloatFormat::F64), 0);
+    assert_eq!(int::i128::float_bits(0, FloatFormat::F32), 0);
+  }
+}
