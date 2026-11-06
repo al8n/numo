@@ -623,6 +623,20 @@ macro_rules! native {
         zero_extend(read_bytes(bytes, big_endian, 0), bits)
       }
 
+      /// The integer in `bytes`, read as [`checked_read_bytes`] reads it, or `2^bits - 1`, the
+      /// largest value of `bits` bits, if it is above that. Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn saturating_read_bytes(
+        bytes: &[u8],
+        big_endian: bool,
+        bits: u32,
+      ) -> $uint {
+        match checked_read_bytes(bytes, big_endian, bits) {
+          Some(value) => value,
+          None => max_of_bits(bits),
+        }
+      }
+
       /// The low `bits / 8` bytes of `value` in reverse order: the reversal of the bytes of the
       /// native integer, shifted down by the `BITS - bits` zeros that it moves from above the
       /// width to below it. Requires `bits` to be a multiple of 8, `bits <= BITS` and
@@ -1259,6 +1273,21 @@ macro_rules! native {
           super::$uint::read_bytes(bytes, big_endian, fill).cast_signed(),
           bits,
         )
+      }
+
+      /// The integer in `bytes`, read as [`checked_read_bytes`] reads it, or the bound of the
+      /// range of `bits` bits that it passes: the smallest value below the range, which only a
+      /// negative integer is, and the largest above it. Requires `bits <= BITS`.
+      pub(crate) const fn saturating_read_bytes(
+        bytes: &[u8],
+        big_endian: bool,
+        bits: u32,
+      ) -> $int {
+        match checked_read_bytes(bytes, big_endian, bits) {
+          Some(value) => value,
+          None if slice::fill(bytes, big_endian, true) != 0 => min_of_bits(bits),
+          None => max_of_bits(bits),
+        }
       }
 
       /// The low `bits / 8` bytes of `value` in reverse order, read in two's complement: the

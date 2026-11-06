@@ -1015,6 +1015,86 @@ impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: InlineIntRepr> Int<B, R> 
   pub const ONE: Self = Self::wrap(R::ONE);
 }
 
+/// Emits the conversions of [`Uint`] and [`Int`] from slices of limbs of type `$limb` as inherent
+/// `const fn`s of the arrays of that limb type, in an impl block whose width relation holds:
+/// `[group, layer]` is the layer of the sign of the storage in `int::group`, which reads the limbs
+/// by reference.
+// They follow the slices of bytes of `byte_methods!`, whose rules they apply to limbs.
+macro_rules! limb_slice_methods {
+  ($limb:ident, [$group:ident, $layer:ident]) => {
+    /// Creates an integer from the integer in `limbs`, least significant limb first, of any
+    /// length: unsigned for `Uint`, and for `Int` in two's complement of the bits of the limbs,
+    /// whose sign is the top bit of the last limb; no limbs hold zero. Returns `None` if that
+    /// integer is outside the range of `Bits` bits, whatever the length, so limbs that only extend
+    /// it, zeros or copies of its sign, are accepted. It is the integer that
+    /// [`checked_from_le_slice`](Self::checked_from_le_slice) reads from the bytes of the limbs,
+    /// least significant first.
+    #[must_use]
+    #[inline]
+    pub const fn checked_from_limbs_slice(limbs: &[$limb]) -> Option<Self> {
+      match int::$group::$layer::checked_read_limbs(limbs, Self::BITS) {
+        Some(repr) => Some(Self::wrap(repr)),
+        None => None,
+      }
+    }
+
+    /// Creates an integer from the integer in `limbs`, least significant limb first, read as
+    /// [`checked_from_limbs_slice`](Self::checked_from_limbs_slice) reads it, modulo `2^Bits`:
+    /// for `Int`, reduced into the range of `Bits` bits. Wherever `checked_from_limbs_slice`
+    /// returns a value, this returns it too.
+    #[must_use]
+    #[inline]
+    pub const fn wrapping_from_limbs_slice(limbs: &[$limb]) -> Self {
+      Self::wrap(int::$group::$layer::wrapping_read_limbs(limbs, Self::BITS))
+    }
+
+    /// Creates an integer from the integer in `limbs`, least significant limb first, read as
+    /// [`checked_from_limbs_slice`](Self::checked_from_limbs_slice) reads it, modulo `2^Bits`, as
+    /// [`wrapping_from_limbs_slice`](Self::wrapping_from_limbs_slice) does, and returns whether
+    /// that integer is outside the range of `Bits` bits, where `checked_from_limbs_slice` returns
+    /// `None`.
+    #[must_use]
+    #[inline]
+    pub const fn overflowing_from_limbs_slice(limbs: &[$limb]) -> (Self, bool) {
+      match Self::checked_from_limbs_slice(limbs) {
+        Some(value) => (value, false),
+        None => (Self::wrapping_from_limbs_slice(limbs), true),
+      }
+    }
+
+    /// Creates an integer from the integer in `limbs`, least significant limb first, read as
+    /// [`checked_from_limbs_slice`](Self::checked_from_limbs_slice) reads it, or the bound of the
+    /// range of `Bits` bits that it passes: [`MAX`](Self::MAX) above the range, and for `Int`
+    /// [`MIN`](Self::MIN) below it, which the integer passes when the top bit of its last limb,
+    /// its sign, is set.
+    #[must_use]
+    #[inline]
+    pub const fn saturating_from_limbs_slice(limbs: &[$limb]) -> Self {
+      Self::wrap(int::$group::$layer::saturating_read_limbs(
+        limbs,
+        Self::BITS,
+      ))
+    }
+
+    /// Creates an integer from the integer in `limbs`, least significant limb first, read as
+    /// [`checked_from_limbs_slice`](Self::checked_from_limbs_slice) reads it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if that integer is outside the range of `Bits` bits, in every build, reporting the
+    /// caller; `checked_from_limbs_slice` returns `None` instead.
+    #[must_use]
+    #[inline]
+    #[track_caller]
+    pub const fn strict_from_limbs_slice(limbs: &[$limb]) -> Self {
+      match Self::checked_from_limbs_slice(limbs) {
+        Some(value) => value,
+        None => bytes::strict_limbs_slice(),
+      }
+    }
+  };
+}
+
 /// Generates the `const fn`s of [`Uint`] and [`Int`] over the arrays of each limb type, written
 /// `limb, bits, lower, upper;`, where `bits` is the number of bits of a limb and `lower` and
 /// `upper` are the modules of its limb layers, and followed by the examples of
@@ -1069,6 +1149,8 @@ macro_rules! array_integers {
           None
         }
       }
+
+      limb_slice_methods!($limb, [unsigned, $lower]);
 
       /// Parses an integer from the digits of `radix` after an optional `+`, as the native
       /// `from_str_radix` does at the width `Bits`: the ASCII digits and letters of either case
@@ -1299,6 +1381,8 @@ macro_rules! array_integers {
           None
         }
       }
+
+      limb_slice_methods!($limb, [signed, $upper]);
 
       /// Parses an integer from the digits of `radix` after an optional `+` or `-`, as the native
       /// `from_str_radix` does at the width `Bits`: the ASCII digits and letters of either case

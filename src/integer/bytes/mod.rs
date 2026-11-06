@@ -1,6 +1,7 @@
 //! The bytes of [`Uint`] and [`Int`]: the byte methods of every storage, which `byte_methods!`
 //! emits as inherent `const fn`s, the traits that give them to generic code, and the panics of the
-//! methods that index the bytes or copy them to a buffer.
+//! methods that index the bytes, copy them to a buffer, or read a slice of bytes, or of limbs,
+//! strictly.
 //!
 //! Every storage holds the value of `Bits` bits in its low `BYTES` bytes, zero-extended for `Uint`
 //! and sign-extended for `Int`, so those bytes, least significant first, are the bytes of the
@@ -52,6 +53,30 @@ pub(crate) const fn short_le_buffer() -> ! {
 #[track_caller]
 pub(crate) const fn short_be_buffer() -> ! {
   panic!("copy_be_bytes_to: the buffer is shorter than the bytes of the value")
+}
+
+/// Panics on bytes, least significant first, that hold an integer outside the range of the integer
+/// in `strict_from_le_slice`.
+#[cold]
+#[track_caller]
+pub(crate) const fn strict_le_slice() -> ! {
+  panic!("strict_from_le_slice: the bytes hold a value outside the range of the integer")
+}
+
+/// Panics on bytes, most significant first, that hold an integer outside the range of the integer
+/// in `strict_from_be_slice`.
+#[cold]
+#[track_caller]
+pub(crate) const fn strict_be_slice() -> ! {
+  panic!("strict_from_be_slice: the bytes hold a value outside the range of the integer")
+}
+
+/// Panics on limbs that hold an integer outside the range of the integer in
+/// `strict_from_limbs_slice`.
+#[cold]
+#[track_caller]
+pub(crate) const fn strict_limbs_slice() -> ! {
+  panic!("strict_from_limbs_slice: the limbs hold a value outside the range of the integer")
 }
 
 /// Emits the byte methods of `Uint` and `Int` as inherent `const fn`s of one storage, in an impl
@@ -109,6 +134,23 @@ macro_rules! byte_methods {
     #[inline]
     const fn wrapping_read_bytes(bytes: &[u8], big_endian: bool) -> Self {
       Self::wrap(byte_methods!(@layer $args wrapping_read_bytes(bytes, big_endian, Self::BITS)))
+    }
+
+    /// The integer in `bytes`, read as [`checked_read_bytes`](Self::checked_read_bytes) reads
+    /// it, modulo `2^Bits`, and whether it is outside the range of `Bits` bits.
+    #[inline]
+    const fn overflowing_read_bytes(bytes: &[u8], big_endian: bool) -> (Self, bool) {
+      match Self::checked_read_bytes(bytes, big_endian) {
+        Some(value) => (value, false),
+        None => (Self::wrapping_read_bytes(bytes, big_endian), true),
+      }
+    }
+
+    /// The integer in `bytes`, read as [`checked_read_bytes`](Self::checked_read_bytes) reads
+    /// it, or the bound of the range of `Bits` bits that it passes.
+    #[inline]
+    const fn saturating_read_bytes(bytes: &[u8], big_endian: bool) -> Self {
+      Self::wrap(byte_methods!(@layer $args saturating_read_bytes(bytes, big_endian, Self::BITS)))
     }
 
     /// Writes the bytes of the value to the start of `buf`, least significant first, or most
@@ -288,6 +330,79 @@ macro_rules! byte_methods {
     #[inline]
     pub const fn wrapping_from_be_slice(bytes: &[u8]) -> Self {
       Self::wrapping_read_bytes(bytes, true)
+    }
+
+    /// Creates an integer from the integer in `bytes`, least significant byte first, read as
+    /// [`checked_from_le_slice`](Self::checked_from_le_slice) reads it, modulo `2^Bits`, as
+    /// [`wrapping_from_le_slice`](Self::wrapping_from_le_slice) does, and returns whether that
+    /// integer is outside the range of `Bits` bits, where `checked_from_le_slice` returns `None`.
+    #[must_use]
+    #[inline]
+    pub const fn overflowing_from_le_slice(bytes: &[u8]) -> (Self, bool) {
+      Self::overflowing_read_bytes(bytes, false)
+    }
+
+    /// Creates an integer from the integer in `bytes`, most significant byte first, as
+    /// [`overflowing_from_le_slice`](Self::overflowing_from_le_slice) does from them in reverse
+    /// order.
+    #[must_use]
+    #[inline]
+    pub const fn overflowing_from_be_slice(bytes: &[u8]) -> (Self, bool) {
+      Self::overflowing_read_bytes(bytes, true)
+    }
+
+    /// Creates an integer from the integer in `bytes`, least significant byte first, read as
+    /// [`checked_from_le_slice`](Self::checked_from_le_slice) reads it, or the bound of the range
+    /// of `Bits` bits that it passes: [`MAX`](Self::MAX) above the range, and for `Int`
+    /// [`MIN`](Self::MIN) below it, which the integer passes when the top bit of its last byte, its
+    /// sign, is set.
+    #[must_use]
+    #[inline]
+    pub const fn saturating_from_le_slice(bytes: &[u8]) -> Self {
+      Self::saturating_read_bytes(bytes, false)
+    }
+
+    /// Creates an integer from the integer in `bytes`, most significant byte first, as
+    /// [`saturating_from_le_slice`](Self::saturating_from_le_slice) does from them in reverse
+    /// order: the sign of `Int` is the top bit of the first byte.
+    #[must_use]
+    #[inline]
+    pub const fn saturating_from_be_slice(bytes: &[u8]) -> Self {
+      Self::saturating_read_bytes(bytes, true)
+    }
+
+    /// Creates an integer from the integer in `bytes`, least significant byte first, read as
+    /// [`checked_from_le_slice`](Self::checked_from_le_slice) reads it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if that integer is outside the range of `Bits` bits, in every build, reporting the
+    /// caller; `checked_from_le_slice` returns `None` instead.
+    #[must_use]
+    #[inline]
+    #[track_caller]
+    pub const fn strict_from_le_slice(bytes: &[u8]) -> Self {
+      match Self::checked_read_bytes(bytes, false) {
+        Some(value) => value,
+        None => bytes::strict_le_slice(),
+      }
+    }
+
+    /// Creates an integer from the integer in `bytes`, most significant byte first, as
+    /// [`strict_from_le_slice`](Self::strict_from_le_slice) does from them in reverse order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if that integer is outside the range of `Bits` bits, in every build, reporting the
+    /// caller; [`checked_from_be_slice`](Self::checked_from_be_slice) returns `None` instead.
+    #[must_use]
+    #[inline]
+    #[track_caller]
+    pub const fn strict_from_be_slice(bytes: &[u8]) -> Self {
+      match Self::checked_read_bytes(bytes, true) {
+        Some(value) => value,
+        None => bytes::strict_be_slice(),
+      }
     }
 
     /// Writes the bytes of the value, least significant first, those of
@@ -524,6 +639,49 @@ pub trait IntegerBytes: Sealed + Sized {
   /// [`wrapping_from_le_slice`](Self::wrapping_from_le_slice) does from them in reverse order.
   #[must_use]
   fn wrapping_from_be_slice(bytes: &[u8]) -> Self;
+
+  /// Creates an integer from the integer in `bytes`, least significant byte first, read as
+  /// [`checked_from_le_slice`](Self::checked_from_le_slice) reads it, modulo `2^Bits`, and returns
+  /// whether that integer is outside the range of `Bits` bits.
+  #[must_use]
+  fn overflowing_from_le_slice(bytes: &[u8]) -> (Self, bool);
+
+  /// Creates an integer from the integer in `bytes`, most significant byte first, as
+  /// [`overflowing_from_le_slice`](Self::overflowing_from_le_slice) does from them in reverse
+  /// order.
+  #[must_use]
+  fn overflowing_from_be_slice(bytes: &[u8]) -> (Self, bool);
+
+  /// Creates an integer from the integer in `bytes`, least significant byte first, read as
+  /// [`checked_from_le_slice`](Self::checked_from_le_slice) reads it, or the bound of the range of
+  /// `Bits` bits that it passes: `MAX` above the range, and `MIN` below it.
+  #[must_use]
+  fn saturating_from_le_slice(bytes: &[u8]) -> Self;
+
+  /// Creates an integer from the integer in `bytes`, most significant byte first, as
+  /// [`saturating_from_le_slice`](Self::saturating_from_le_slice) does from them in reverse order.
+  #[must_use]
+  fn saturating_from_be_slice(bytes: &[u8]) -> Self;
+
+  /// Creates an integer from the integer in `bytes`, least significant byte first, read as
+  /// [`checked_from_le_slice`](Self::checked_from_le_slice) reads it.
+  ///
+  /// # Panics
+  ///
+  /// Panics if that integer is outside the range of `Bits` bits, reporting the caller.
+  #[must_use]
+  #[track_caller]
+  fn strict_from_le_slice(bytes: &[u8]) -> Self;
+
+  /// Creates an integer from the integer in `bytes`, most significant byte first, as
+  /// [`strict_from_le_slice`](Self::strict_from_le_slice) does from them in reverse order.
+  ///
+  /// # Panics
+  ///
+  /// Panics if that integer is outside the range of `Bits` bits, reporting the caller.
+  #[must_use]
+  #[track_caller]
+  fn strict_from_be_slice(bytes: &[u8]) -> Self;
 }
 
 /// The bytes of an integer as an array whose length is part of its type: [`Uint`] and [`Int`]
@@ -735,6 +893,50 @@ macro_rules! byte_traits {
       #[inline]
       fn wrapping_from_be_slice(bytes: &[u8]) -> Self {
         Self::wrap(R::wrapping_read_bytes(bytes, true, B::U32, Token::new()))
+      }
+
+      #[inline]
+      fn overflowing_from_le_slice(bytes: &[u8]) -> (Self, bool) {
+        match IntegerBytes::checked_from_le_slice(bytes) {
+          Some(value) => (value, false),
+          None => (IntegerBytes::wrapping_from_le_slice(bytes), true),
+        }
+      }
+
+      #[inline]
+      fn overflowing_from_be_slice(bytes: &[u8]) -> (Self, bool) {
+        match IntegerBytes::checked_from_be_slice(bytes) {
+          Some(value) => (value, false),
+          None => (IntegerBytes::wrapping_from_be_slice(bytes), true),
+        }
+      }
+
+      #[inline]
+      fn saturating_from_le_slice(bytes: &[u8]) -> Self {
+        Self::wrap(R::saturating_read_bytes(bytes, false, B::U32, Token::new()))
+      }
+
+      #[inline]
+      fn saturating_from_be_slice(bytes: &[u8]) -> Self {
+        Self::wrap(R::saturating_read_bytes(bytes, true, B::U32, Token::new()))
+      }
+
+      #[inline]
+      #[track_caller]
+      fn strict_from_le_slice(bytes: &[u8]) -> Self {
+        match IntegerBytes::checked_from_le_slice(bytes) {
+          Some(value) => value,
+          None => strict_le_slice(),
+        }
+      }
+
+      #[inline]
+      #[track_caller]
+      fn strict_from_be_slice(bytes: &[u8]) -> Self {
+        match IntegerBytes::checked_from_be_slice(bytes) {
+          Some(value) => value,
+          None => strict_be_slice(),
+        }
       }
     }
 

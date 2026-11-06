@@ -2152,6 +2152,16 @@ fn value_of(pattern: &[bool], signed: bool) -> i128 {
   }
 }
 
+/// The pattern of `bits` bits of the bound of the range that an integer outside it passes, read in
+/// two's complement if `signed`: the smallest value if `negative`, which only a signed integer is,
+/// and the largest otherwise.
+fn bound_pattern(bits: u32, signed: bool, negative: bool) -> Vec<bool> {
+  model::pattern(bits, |i| {
+    // Every bit of an unsigned bound, and of a signed one the sign bit alone or every bit below it.
+    !signed || (i + 1 == bits) == negative
+  })
+}
+
 /// The values of up to 16 bits at which a sweep of the bit operations checks a storage: those of
 /// [`small_values`] up to 8 bits and of [`large_values`] above, or under Miri, in a storage that
 /// every tier checks, `primary`, the [`ends`] and the patterns of `model::few_patterns`, and none
@@ -2292,6 +2302,7 @@ mod bits;
 mod bytes;
 mod casts;
 mod division;
+mod limbs;
 mod nonzero;
 mod powers;
 mod shifts;
