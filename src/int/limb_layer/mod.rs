@@ -27,7 +27,7 @@ macro_rules! limb_layer {
     use ::core::{cmp::Ordering, num::ParseIntError};
 
     use $crate::{
-      int::{DigitBuf, parse_errors},
+      int::{DigitBuf, parse_errors, slice},
       rounding::{self, RoundingMode},
     };
 
@@ -1614,13 +1614,106 @@ macro_rules! limb_layer {
         None
       }
     }
+
+    /// The number of bytes of a limb.
+    const LIMB_BYTES: usize = (Limb::BITS / 8) as usize;
+
+    /// The byte of `value` at `index`: its bits from `8 * index` to `8 * index + 7`. Requires
+    /// `index < B * N / 8`.
+    #[inline]
+    pub(crate) const fn byte_at<const N: usize>(value: &[Limb; N], index: usize) -> u8 {
+      // The offset of the byte in bits, which a `u64` holds for every index of the limbs.
+      let bit = 8 * index as u64;
+      (value[(bit / Limb::BITS as u64) as usize] >> (bit % Limb::BITS as u64) as u32) as u8
+    }
+
+    /// Writes the low `out.len()` bytes of `value` to `out`, least significant first, or most
+    /// significant first if `big_endian`. The upper layer writes with it too: the limbs hold the
+    /// bits of a value of either sign, and for one in two's complement the copies of its sign above
+    /// them. Requires `out.len() <= B * N / 8`.
+    pub(crate) const fn write_bytes<const N: usize>(
+      value: &[Limb; N],
+      out: &mut [u8],
+      big_endian: bool,
+    ) {
+      let len = out.len();
+      let mut k = 0;
+      while k < len {
+        out[slice::index(len, k, big_endian)] = byte_at(value, k);
+        k += 1;
+      }
+    }
+
+    /// The low `B * N` bits of the integer in `bytes`, least significant byte first, or most
+    /// significant first if `big_endian`, extended beyond its bytes by copies of `fill`: zero for
+    /// an unsigned integer, and the bits of its sign for one in two's complement.
+    pub(crate) const fn read_bytes<const N: usize>(
+      bytes: &[u8],
+      big_endian: bool,
+      fill: u8,
+    ) -> [Limb; N] {
+      let mut value = [0; N];
+      let mut i = 0;
+      while i < N {
+        let mut j = 0;
+        while j < LIMB_BYTES {
+          let byte = slice::byte(bytes, LIMB_BYTES * i + j, big_endian, fill) as Limb;
+          value[i] |= byte << (8 * j) as u32;
+          j += 1;
+        }
+        i += 1;
+      }
+      value
+    }
+
+    /// The integer in `bytes`, least significant byte first, or most significant first if
+    /// `big_endian`, unsigned, as a value of `bits` bits, or `None` if it is `2^bits` or more,
+    /// whatever the number of bytes. No bytes are zero. Requires `bits <= B * N`.
+    pub(crate) const fn checked_read_bytes<const N: usize>(
+      bytes: &[u8],
+      big_endian: bool,
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      if slice::fits_bits(bytes, big_endian, bits, false) {
+        Some(read_bytes(bytes, big_endian, 0))
+      } else {
+        None
+      }
+    }
+
+    /// The integer in `bytes`, read as [`checked_read_bytes`] reads it, modulo `2^bits`. Requires
+    /// `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn wrapping_read_bytes<const N: usize>(
+      bytes: &[u8],
+      big_endian: bool,
+      bits: u32,
+    ) -> [Limb; N] {
+      zero_extend(&read_bytes(bytes, big_endian, 0), bits)
+    }
+
+    /// The low `bits / 8` bytes of `value` in reverse order: the limbs that hold the width,
+    /// reversed limb by limb and byte by byte, hold them above the bytes of the top limb that are
+    /// above the width, which a shift removes. Requires `bits` to be a multiple of 8,
+    /// `bits <= B * N` and `value < 2^bits`.
+    pub(crate) const fn swap_bytes_bits<const N: usize>(value: &[Limb; N], bits: u32) -> [Limb; N] {
+      let limbs = bits.div_ceil(Limb::BITS) as usize;
+      let mut swapped = [0; N];
+      let mut i = 0;
+      while i < limbs {
+        swapped[i] = value[limbs - 1 - i].swap_bytes();
+        i += 1;
+      }
+      let gap = (Limb::BITS - bits % Limb::BITS) % Limb::BITS;
+      shr(&swapped, gap)
+    }
   };
   (signed limb: $limb:ident, signed: $signed:ident, unsigned: $unsigned:ident) => {
     use ::core::{cmp::Ordering, num::ParseIntError};
 
     use $crate::int::unsigned::$unsigned;
     use $crate::{
-      int::{DigitBuf, parse_errors},
+      int::{DigitBuf, parse_errors, slice},
       rounding::RoundingMode,
     };
 
@@ -2691,6 +2784,44 @@ macro_rules! limb_layer {
         Some(changed) => Some(sign_extend(&changed, bits)),
         None => None,
       }
+    }
+
+    /// The integer in `bytes`, least significant byte first, or most significant first if
+    /// `big_endian`, in two's complement of `8 * bytes.len()` bits, as a value of `bits` bits, or
+    /// `None` if it is outside their range, whatever the number of bytes. No bytes are zero, and
+    /// zero bits hold only zero. Requires `bits <= B * N`.
+    pub(crate) const fn checked_read_bytes<const N: usize>(
+      bytes: &[u8],
+      big_endian: bool,
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      if slice::fits_bits(bytes, big_endian, bits, true) {
+        let fill = slice::fill(bytes, big_endian, true);
+        Some($unsigned::read_bytes(bytes, big_endian, fill))
+      } else {
+        None
+      }
+    }
+
+    /// The integer in `bytes`, read as [`checked_read_bytes`] reads it, reduced modulo `2^bits`
+    /// into the range of `bits` bits, or zero for zero bits. Requires `bits <= B * N`.
+    #[inline]
+    pub(crate) const fn wrapping_read_bytes<const N: usize>(
+      bytes: &[u8],
+      big_endian: bool,
+      bits: u32,
+    ) -> [Limb; N] {
+      let fill = slice::fill(bytes, big_endian, true);
+      sign_extend(&$unsigned::read_bytes(bytes, big_endian, fill), bits)
+    }
+
+    /// The low `bits / 8` bytes of `value` in reverse order, read in two's complement: the old
+    /// low byte holds the new sign bit. Requires `bits` to be a multiple of 8, `bits <= B * N` and
+    /// `value` within the range of `bits` bits.
+    #[inline]
+    pub(crate) const fn swap_bytes_bits<const N: usize>(value: &[Limb; N], bits: u32) -> [Limb; N] {
+      let pattern = $unsigned::zero_extend(value, bits);
+      sign_extend(&$unsigned::swap_bytes_bits(&pattern, bits), bits)
     }
   };
 }

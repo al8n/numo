@@ -310,6 +310,28 @@ mod sealed {
       token: Token,
     ) -> Result<Self, ParseIntError>;
 
+    /// Writes the low `out.len()` bytes of the storage to `out`, least significant first, or most
+    /// significant first if `big_endian`. Requires `out.len()` to be at most the bytes of the
+    /// storage.
+    fn write_bytes(&self, out: &mut [u8], big_endian: bool, token: Token);
+
+    /// The integer in `bytes`, least significant byte first, or most significant first if
+    /// `big_endian`, unsigned, as an integer of `bits` bits, or `None` if it is `2^bits` or more.
+    /// Requires `bits` to be at most the bits of the storage.
+    fn checked_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Option<Self>;
+
+    /// The integer in `bytes`, read as [`checked_read_bytes`](Self::checked_read_bytes) reads it,
+    /// modulo `2^bits`. Requires `bits` to be at most the bits of the storage.
+    fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Self;
+
+    /// The byte of the storage at `index`, its bits from `8 * index` to `8 * index + 7`. Requires
+    /// `index` to be below the bytes of the storage.
+    fn byte_at(&self, index: usize, token: Token) -> u8;
+
+    /// The low `bits / 8` bytes of the value in reverse order. Requires `bits` to be a multiple of
+    /// 8 and at most the bits of the storage, and the value to have `bits` bits.
+    fn swap_bytes_bits(&self, bits: u32, token: Token) -> Self;
+
     /// Returns `true` if the value is zero.
     fn is_zero(&self, token: Token) -> bool;
 
@@ -571,6 +593,31 @@ mod sealed {
       bits: u32,
       token: Token,
     ) -> Result<Self, ParseIntError>;
+
+    /// Writes the low `out.len()` bytes of the storage to `out`, least significant first, or most
+    /// significant first if `big_endian`: the two's complement of the value, extended by copies of
+    /// its sign. Requires `out.len()` to be at most the bytes of the storage.
+    fn write_bytes(&self, out: &mut [u8], big_endian: bool, token: Token);
+
+    /// The integer in `bytes`, least significant byte first, or most significant first if
+    /// `big_endian`, in two's complement of `8 * bytes.len()` bits, as an integer of `bits` bits,
+    /// or `None` if it is outside their range. Requires `bits` to be at most the bits of the
+    /// storage.
+    fn checked_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Option<Self>;
+
+    /// The integer in `bytes`, read as [`checked_read_bytes`](Self::checked_read_bytes) reads it,
+    /// reduced modulo `2^bits` into the range of `bits` bits. Requires `bits` to be at most the
+    /// bits of the storage.
+    fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Self;
+
+    /// The byte of the storage at `index`, its bits from `8 * index` to `8 * index + 7`, which
+    /// copy the sign from the width up. Requires `index` to be below the bytes of the storage.
+    fn byte_at(&self, index: usize, token: Token) -> u8;
+
+    /// The low `bits / 8` bytes of the value in reverse order, read in two's complement. Requires
+    /// `bits` to be a multiple of 8 and at most the bits of the storage, and the value to have
+    /// `bits` bits.
+    fn swap_bytes_bits(&self, bits: u32, token: Token) -> Self;
 
     /// Returns `true` if the value is zero.
     fn is_zero(&self, token: Token) -> bool;
@@ -854,6 +901,25 @@ pub trait FillsRepr<Repr>: FitsBits<Repr> + BitsFill<Repr> {}
 
 impl<B, R> FillsRepr<R> for B where B: FitsBits<R> + BitsFill<R> {}
 
+/// Marks a width of whole bytes: `Self`, a [`typenum`] number, is a multiple of 8, zero included.
+///
+/// The byte order of [`Uint`](crate::Uint) and [`Int`](crate::Int), `swap_bytes`, `to_be`,
+/// `to_le`, `from_be` and `from_le`, and their conversions from a byte array, `from_le_bytes` and
+/// the others, exist at such widths, where every array of bytes holds a value; the conversions
+/// `checked_from_le_bytes` and the others, and those from a slice, read any width. A `typenum`
+/// number lists its bits, and the three lowest of a multiple of 8 are zeros, which is what the
+/// implementations match. This trait is sealed and cannot be implemented outside this crate.
+#[diagnostic::on_unimplemented(
+  message = "`Bits` is not a whole number of bytes",
+  label = "the width is not a multiple of 8",
+  note = "the byte order and the conversions from a byte array exist for widths of whole bytes; `checked_from_le_bytes` and `checked_from_le_slice` read any width"
+)]
+pub trait WholeBytes: Unsigned {}
+
+impl WholeBytes for UTerm {}
+
+impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
+
 /// `N * B` for limbs of `B` bits, the number of bits of `[L; N]`.
 type LimbBits<L, const N: usize> = Shleft<U<N>, <L as ArrayLimb>::BitsLog2>;
 
@@ -1131,6 +1197,36 @@ macro_rules! array_storage {
         _: Token,
       ) -> Result<Self, ParseIntError> {
         unsigned::$lower::from_str_radix_bits(src, radix, bits)
+      }
+
+      #[inline]
+      fn write_bytes(&self, out: &mut [u8], big_endian: bool, _: Token) {
+        unsigned::$lower::write_bytes(self, out, big_endian);
+      }
+
+      #[inline]
+      fn checked_read_bytes(
+        bytes: &[u8],
+        big_endian: bool,
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        unsigned::$lower::checked_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, _: Token) -> Self {
+        unsigned::$lower::wrapping_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn byte_at(&self, index: usize, _: Token) -> u8 {
+        unsigned::$lower::byte_at(self, index)
+      }
+
+      #[inline]
+      fn swap_bytes_bits(&self, bits: u32, _: Token) -> Self {
+        unsigned::$lower::swap_bytes_bits(self, bits)
       }
 
       #[inline]
@@ -1468,6 +1564,38 @@ macro_rules! array_storage {
         _: Token,
       ) -> Result<Self, ParseIntError> {
         signed::$upper::from_str_radix_bits(src, radix, bits)
+      }
+
+      // The limbs hold the two's complement of the value and the copies of its sign, which the
+      // lower layer writes and reads byte by byte.
+      #[inline]
+      fn write_bytes(&self, out: &mut [u8], big_endian: bool, _: Token) {
+        unsigned::$lower::write_bytes(self, out, big_endian);
+      }
+
+      #[inline]
+      fn checked_read_bytes(
+        bytes: &[u8],
+        big_endian: bool,
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        signed::$upper::checked_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, _: Token) -> Self {
+        signed::$upper::wrapping_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn byte_at(&self, index: usize, _: Token) -> u8 {
+        unsigned::$lower::byte_at(self, index)
+      }
+
+      #[inline]
+      fn swap_bytes_bits(&self, bits: u32, _: Token) -> Self {
+        signed::$upper::swap_bytes_bits(self, bits)
       }
 
       #[inline]
@@ -1882,6 +2010,36 @@ macro_rules! native_storage {
       }
 
       #[inline]
+      fn write_bytes(&self, out: &mut [u8], big_endian: bool, _: Token) {
+        int::$uint::write_bytes(*self, out, big_endian);
+      }
+
+      #[inline]
+      fn checked_read_bytes(
+        bytes: &[u8],
+        big_endian: bool,
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        int::$uint::checked_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, _: Token) -> Self {
+        int::$uint::wrapping_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn byte_at(&self, index: usize, _: Token) -> u8 {
+        int::$uint::byte_at(*self, index)
+      }
+
+      #[inline]
+      fn swap_bytes_bits(&self, bits: u32, _: Token) -> Self {
+        int::$uint::swap_bytes_bits(*self, bits)
+      }
+
+      #[inline]
       fn is_zero(&self, _: Token) -> bool {
         int::$uint::is_zero(*self)
       }
@@ -2208,6 +2366,36 @@ macro_rules! native_storage {
         _: Token,
       ) -> Result<Self, ParseIntError> {
         int::$int::from_str_radix_bits(src, radix, bits)
+      }
+
+      #[inline]
+      fn write_bytes(&self, out: &mut [u8], big_endian: bool, _: Token) {
+        int::$int::write_bytes(*self, out, big_endian);
+      }
+
+      #[inline]
+      fn checked_read_bytes(
+        bytes: &[u8],
+        big_endian: bool,
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        int::$int::checked_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, _: Token) -> Self {
+        int::$int::wrapping_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn byte_at(&self, index: usize, _: Token) -> u8 {
+        int::$int::byte_at(*self, index)
+      }
+
+      #[inline]
+      fn swap_bytes_bits(&self, bits: u32, _: Token) -> Self {
+        int::$int::swap_bytes_bits(*self, bits)
       }
 
       #[inline]

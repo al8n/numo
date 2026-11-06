@@ -1,0 +1,137 @@
+error[E0277]: `Bits` is not a whole number of bytes
+ --> tests/ui/byte_order_partial_width.rs:9:24
+  |
+9 |   let _swapped = value.swap_bytes();
+  |                        ^^^^^^^^^^ the width is not a multiple of 8
+  |
+  = help: the trait `WholeBytes` is not implemented for `UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>`
+  = note: the byte order and the conversions from a byte array exist for widths of whole bytes; `checked_from_le_bytes` and `checked_from_le_slice` read any width
+help: the trait `WholeBytes` is implemented for `UInt<UInt<UInt<U, B0>, B0>, B0>`
+ --> src/width/mod.rs
+  |
+  | impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `Uint::<B, u16>::swap_bytes`
+ --> src/integer/bytes/mod.rs
+  |
+  |       pub const fn swap_bytes(&self) -> Self
+  |                    ---------- required by a bound in this associated function
+  |       where
+  |         B: WholeBytes,
+  |            ^^^^^^^^^^ required by this bound in `Uint::<B, u16>::swap_bytes`
+  |
+ ::: src/integer/mod.rs
+  |
+  | / native_integers!(
+  | |   u8, i8;
+  | |   u16, i16;
+  | |   u32, i32;
+  | |   u64, i64;
+  | |   u128, i128;
+  | | );
+  | |_- in this macro invocation
+  = note: this error originates in the macro `byte_methods` which comes from the expansion of the macro `native_integers` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `Bits` is not a whole number of bytes
+  --> tests/ui/byte_order_partial_width.rs:10:20
+   |
+10 |   let _big = value.to_be();
+   |                    ^^^^^ the width is not a multiple of 8
+   |
+   = help: the trait `WholeBytes` is not implemented for `UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>`
+   = note: the byte order and the conversions from a byte array exist for widths of whole bytes; `checked_from_le_bytes` and `checked_from_le_slice` read any width
+help: the trait `WholeBytes` is implemented for `UInt<UInt<UInt<U, B0>, B0>, B0>`
+  --> src/width/mod.rs
+   |
+   | impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `Uint::<B, u16>::to_be`
+  --> src/integer/bytes/mod.rs
+   |
+   |       pub const fn to_be(&self) -> Self
+   |                    ----- required by a bound in this associated function
+   |       where
+   |         B: WholeBytes,
+   |            ^^^^^^^^^^ required by this bound in `Uint::<B, u16>::to_be`
+   |
+  ::: src/integer/mod.rs
+   |
+   | / native_integers!(
+   | |   u8, i8;
+   | |   u16, i16;
+   | |   u32, i32;
+   | |   u64, i64;
+   | |   u128, i128;
+   | | );
+   | |_- in this macro invocation
+   = note: this error originates in the macro `byte_methods` which comes from the expansion of the macro `native_integers` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `Bits` is not a whole number of bytes
+  --> tests/ui/byte_order_partial_width.rs:11:42
+   |
+11 |   let _value = Uint::<U12, u16>::from_be(value);
+   |                ------------------------- ^^^^^ the width is not a multiple of 8
+   |                |
+   |                required by a bound introduced by this call
+   |
+   = help: the trait `WholeBytes` is not implemented for `UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>`
+   = note: the byte order and the conversions from a byte array exist for widths of whole bytes; `checked_from_le_bytes` and `checked_from_le_slice` read any width
+help: the trait `WholeBytes` is implemented for `UInt<UInt<UInt<U, B0>, B0>, B0>`
+  --> src/width/mod.rs
+   |
+   | impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `Uint::<B, u16>::from_be`
+  --> src/integer/bytes/mod.rs
+   |
+   |       pub const fn from_be(x: Self) -> Self
+   |                    ------- required by a bound in this associated function
+   |       where
+   |         B: WholeBytes,
+   |            ^^^^^^^^^^ required by this bound in `Uint::<B, u16>::from_be`
+   |
+  ::: src/integer/mod.rs
+   |
+   | / native_integers!(
+   | |   u8, i8;
+   | |   u16, i16;
+   | |   u32, i32;
+   | |   u64, i64;
+   | |   u128, i128;
+   | | );
+   | |_- in this macro invocation
+   = note: this error originates in the macro `byte_methods` which comes from the expansion of the macro `native_integers` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `Bits` is not a whole number of bytes
+  --> tests/ui/byte_order_partial_width.rs:13:41
+   |
+13 |   let _swapped = Int::<U7, i8>::new(-1).swap_bytes();
+   |                                         ^^^^^^^^^^ the width is not a multiple of 8
+   |
+   = help: the trait `WholeBytes` is not implemented for `UInt<UInt<UInt<UTerm, B1>, B1>, B1>`
+   = note: the byte order and the conversions from a byte array exist for widths of whole bytes; `checked_from_le_bytes` and `checked_from_le_slice` read any width
+help: the trait `WholeBytes` is implemented for `UInt<UInt<UInt<U, B0>, B0>, B0>`
+  --> src/width/mod.rs
+   |
+   | impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `numo::Int::<B, i8>::swap_bytes`
+  --> src/integer/bytes/mod.rs
+   |
+   |       pub const fn swap_bytes(&self) -> Self
+   |                    ---------- required by a bound in this associated function
+   |       where
+   |         B: WholeBytes,
+   |            ^^^^^^^^^^ required by this bound in `Int::<B, i8>::swap_bytes`
+   |
+  ::: src/integer/mod.rs
+   |
+   | / native_integers!(
+   | |   u8, i8;
+   | |   u16, i16;
+   | |   u32, i32;
+   | |   u64, i64;
+   | |   u128, i128;
+   | | );
+   | |_- in this macro invocation
+   = note: this error originates in the macro `byte_methods` which comes from the expansion of the macro `native_integers` (in Nightly builds, run with -Z macro-backtrace for more info)

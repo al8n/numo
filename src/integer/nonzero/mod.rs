@@ -40,7 +40,7 @@ use crate::{
   width::{
     FitsBits, InlineIntConsts, InlineIntRepr, InlineUintConsts, InlineUintRepr, IntCore, IntRepr,
     IntReprMut, IntWidth, NonZeroIntRepr, NonZeroUintRepr, UintCore, UintRepr, UintReprMut,
-    UintWidth,
+    UintWidth, WholeBytes,
   },
 };
 
@@ -515,6 +515,70 @@ macro_rules! nonzero_from_str_radix {
   };
 }
 
+/// Emits the byte order of a non-zero integer in an inherent block of one storage, whose integer of
+/// the same width and storage is `$integer`. Each method computes the method of the same name of
+/// the integer on the value: a permutation of its bytes, which is not zero, as the bytes of a value
+/// that is not zero are not all zeros.
+macro_rules! nonzero_byte_order {
+  ($integer:ty) => {
+    /// The value with its bytes in reverse order, at a width of whole bytes, as `swap_bytes` of the
+    /// integer of the same value gives it. Reversing them twice gives the value back.
+    #[must_use]
+    #[inline]
+    pub const fn swap_bytes(&self) -> Self
+    where
+      B: WholeBytes,
+    {
+      Self::known(self.integer().swap_bytes())
+    }
+
+    /// Converts the value to big-endian order, as `to_be` of the integer of the same value does:
+    /// `self` on a big-endian target and [`swap_bytes`](Self::swap_bytes) on a little-endian one.
+    /// It converts the value, not a layout: an array keeps its limbs least significant first on
+    /// every target.
+    #[must_use]
+    #[inline]
+    pub const fn to_be(&self) -> Self
+    where
+      B: WholeBytes,
+    {
+      Self::known(self.integer().to_be())
+    }
+
+    /// Converts the value to little-endian order, as `to_le` of the integer of the same value
+    /// does: `self` on a little-endian target and [`swap_bytes`](Self::swap_bytes) on a big-endian
+    /// one, a conversion of the value, as for [`to_be`](Self::to_be).
+    #[must_use]
+    #[inline]
+    pub const fn to_le(&self) -> Self
+    where
+      B: WholeBytes,
+    {
+      Self::known(self.integer().to_le())
+    }
+
+    /// Converts `x` from big-endian order, as `from_be` of the integer does: `x.to_be()`.
+    #[must_use]
+    #[inline]
+    pub const fn from_be(x: Self) -> Self
+    where
+      B: WholeBytes,
+    {
+      Self::known(<$integer>::from_be(x.get()))
+    }
+
+    /// Converts `x` from little-endian order, as `from_le` of the integer does: `x.to_le()`.
+    #[must_use]
+    #[inline]
+    pub const fn from_le(x: Self) -> Self
+    where
+      B: WholeBytes,
+    {
+      Self::known(<$integer>::from_le(x.get()))
+    }
+  };
+}
+
 /// Generates the constructor, the value and the rows of [`NonZeroUint`] and [`NonZeroInt`] over the
 /// arrays of each limb type, written `limb, lower, upper;`, where `lower` and `upper` are the
 /// modules of its limb layers. The array is the integer's storage, which the rows lend.
@@ -586,6 +650,7 @@ macro_rules! array_nonzero {
       }
 
       nonzero_from_str_radix!(Uint<B, [$limb; N]>);
+      nonzero_byte_order!(Uint<B, [$limb; N]>);
 
       nonzero_table!(Uint, inherent_items![Uint<B, [$limb; N]>, NonZeroInt<B, [$limb; N]>]);
       nonzero_uint_table!(inherent_items![Uint<B, [$limb; N]>, NonZeroInt<B, [$limb; N]>]);
@@ -668,6 +733,7 @@ macro_rules! array_nonzero {
       }
 
       nonzero_from_str_radix!(Int<B, [$limb; N]>);
+      nonzero_byte_order!(Int<B, [$limb; N]>);
 
       nonzero_table!(Int, inherent_items![Int<B, [$limb; N]>, NonZeroUint<B, [$limb; N]>]);
       nonzero_int_table!(inherent_items![Int<B, [$limb; N]>, NonZeroUint<B, [$limb; N]>]);
@@ -746,6 +812,7 @@ macro_rules! native_nonzero {
       }
 
       nonzero_from_str_radix!(Uint<B, $uint>);
+      nonzero_byte_order!(Uint<B, $uint>);
 
       nonzero_table!(Uint, inherent_items![Uint<B, $uint>, NonZeroInt<B, core::num::NonZero<$int>>]);
       nonzero_uint_table!(inherent_items![Uint<B, $uint>, NonZeroInt<B, core::num::NonZero<$int>>]);
@@ -820,6 +887,7 @@ macro_rules! native_nonzero {
       }
 
       nonzero_from_str_radix!(Int<B, $int>);
+      nonzero_byte_order!(Int<B, $int>);
 
       nonzero_table!(Int, inherent_items![Int<B, $int>, NonZeroUint<B, core::num::NonZero<$uint>>]);
       nonzero_int_table!(inherent_items![Int<B, $int>, NonZeroUint<B, core::num::NonZero<$uint>>]);

@@ -1,0 +1,38 @@
+error[E0308]: mismatched types
+ --> tests/ui/byte_array_length.rs:5:26
+  |
+5 |   let _bytes: [u8; 31] = u256::MAX.to_le_bytes();
+  |               --------   ^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 31, found one with a size of 32
+  |               |
+  |               expected due to this
+  |
+help: consider specifying the actual array length
+  |
+5 -   let _bytes: [u8; 31] = u256::MAX.to_le_bytes();
+5 +   let _bytes: [u8; 32] = u256::MAX.to_le_bytes();
+  |
+
+error[E0308]: mismatched types
+ --> tests/ui/byte_array_length.rs:6:44
+  |
+6 |   let _value = u256::checked_from_le_bytes([0; 31]);
+  |                --------------------------- ^^^^^^^ expected an array with a size of 32, found one with a size of 31
+  |                |
+  |                arguments to this function are incorrect
+  |
+note: associated function defined here
+ --> src/integer/bytes/mod.rs
+  |
+  |       pub const fn checked_from_le_bytes<const M: usize>(bytes: [u8; M]) -> Option<Self>
+  |                    ^^^^^^^^^^^^^^^^^^^^^
+  |
+ ::: src/integer/mod.rs
+  |
+  | / array_integers! {
+  | |   u64, 64, b64, b64;
+  | |   Uint: {
+  | |     /// ```
+... |
+  | | }
+  | |_- in this macro invocation
+  = note: this error originates in the macro `byte_methods` which comes from the expansion of the macro `array_integers` (in Nightly builds, run with -Z macro-backtrace for more info)

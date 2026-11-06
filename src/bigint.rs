@@ -911,6 +911,42 @@ pub(crate) fn limit_texts(bits: u32, signed: bool, radix: u32) -> Vec<Vec<u8>> {
   texts
 }
 
+/// The slices of bytes, least significant first, at which the readers of bytes are checked for
+/// `p`, the pattern of a value read in two's complement if `signed`: at each length of no bytes,
+/// one byte, and from one less than the bytes of its width, `ceil(width / 8)`, to two more, the
+/// bytes of `p` extended or cut to the length, and those bytes with the most significant one
+/// replaced by `0x00`, `0xff`, `0x01` or `0x80`, which keep or break the width and set or clear the
+/// sign of the slice. Under Miri, the lengths of no bytes, of the width and one more, and `0x80`
+/// alone.
+pub(crate) fn byte_slices(p: &[bool], signed: bool) -> Vec<Vec<u8>> {
+  let bytes = model::width(p).div_ceil(8) as usize;
+  let (mut lengths, highs): (Vec<usize>, &[u8]) = if tier().is_miri() {
+    (vec![0, bytes, bytes + 1], &[0x80])
+  } else {
+    (
+      vec![0, 1, bytes.saturating_sub(1), bytes, bytes + 1, bytes + 2],
+      &[0x00, 0xff, 0x01, 0x80],
+    )
+  };
+  lengths.sort_unstable();
+  lengths.dedup();
+  let mut slices = Vec::new();
+  for len in lengths {
+    let natural = model::le_bytes(p, len, signed);
+    if len > 0 {
+      for &high in highs {
+        let mut slice = natural.clone();
+        slice[len - 1] = high;
+        slices.push(slice);
+      }
+    }
+    slices.push(natural);
+  }
+  slices.sort_unstable();
+  slices.dedup();
+  slices
+}
+
 /// The bit operations on patterns of bits, bit 0 first, as wide as the integers that hold them:
 /// the model that the tests of the bit operations compare with. Each operation is written from its
 /// definition, one bit at a time, and reads a pattern as unsigned, or in two's complement where it
@@ -1131,6 +1167,49 @@ pub(crate) mod model {
       changed[index as usize] = value;
       changed
     })
+  }
+
+  /// The `len` bytes of `p`, least significant first: its bits extended by zeros, or if `signed`
+  /// by copies of its sign, or cut, to `8 * len` bits.
+  pub(crate) fn le_bytes(p: &[bool], len: usize, signed: bool) -> Vec<u8> {
+    let fill = signed && sign(p);
+    (0..len)
+      .map(|k| {
+        (0..8).fold(0, |byte, j| {
+          byte | u8::from(p.get(8 * k + j).copied().unwrap_or(fill)) << j
+        })
+      })
+      .collect()
+  }
+
+  /// The pattern of the integer in `bytes`, least significant byte first: its `8 * bytes.len()`
+  /// bits.
+  pub(crate) fn of_le_bytes(bytes: &[u8]) -> Vec<bool> {
+    bytes
+      .iter()
+      .flat_map(|&byte| (0..8).map(move |j| (byte >> j) & 1 == 1))
+      .collect()
+  }
+
+  /// The integer of `p`, read in two's complement if `signed` and unsigned otherwise, as a pattern
+  /// of `bits` bits, or `None` if `bits` bits do not hold it: if its low `bits` bits, extended as
+  /// `p` is, do not give `p` back. Zero bits hold only zero.
+  pub(crate) fn fit(p: &[bool], bits: u32, signed: bool) -> Option<Vec<bool>> {
+    let wide = extend(p, bits.max(width(p)), signed);
+    let cut = wide[..bits as usize].to_vec();
+    (extend(&cut, width(&wide), signed) == wide).then_some(cut)
+  }
+
+  /// The integer of `p`, read in two's complement if `signed` and unsigned otherwise, modulo
+  /// `2^bits`: the low `bits` bits of `p` extended as it is, which, read with the same sign, are
+  /// within the range of `bits` bits.
+  pub(crate) fn wrap(p: &[bool], bits: u32, signed: bool) -> Vec<bool> {
+    extend(p, bits.max(width(p)), signed)[..bits as usize].to_vec()
+  }
+
+  /// The bytes of `p`, a pattern of whole bytes, in reverse order.
+  pub(crate) fn swap_bytes(p: &[bool]) -> Vec<bool> {
+    p.chunks(8).rev().flatten().copied().collect()
   }
 
   /// The patterns of `width` bits that the tier of Miri checks: zero, every bit, the top bit, the

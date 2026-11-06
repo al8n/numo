@@ -30,8 +30,8 @@ take their operands by value, as the native casts and the methods of the operato
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, and generic traits |
-| `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the division of `Uint` by `NonZeroUint`, which cannot panic, and generic traits |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, comparison, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, and generic traits |
+| `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
 
@@ -248,6 +248,15 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   the digits of a `Uint` and the two's complement of the `Bits` bits of an `Int`, and `{:e}` and
   `{:E}` write scientific notation, rounding half to even at a precision, all with the flags of the
   native integers and without allocation.
+- The bytes of the native integers at the width `Bits`, the low `BYTES` bytes of the storage, in
+  two's complement for `Int`: `to_le_bytes`, `to_be_bytes` and `to_ne_bytes` return an array whose
+  length is part of its type, up to 8192 bits, and `checked_from_le_bytes` and the other orders read
+  one back, checking the bits of the last byte above the width, while at a width of whole bytes
+  `from_le_bytes` and the others read every array. `checked_from_le_slice` and
+  `wrapping_from_le_slice` read a slice of any length, `copy_le_bytes_to` writes the bytes to a
+  buffer at any width, and `byte` reads one byte. At a width of whole bytes, `swap_bytes`,
+  `to_be`, `to_le`, `from_be` and `from_le` convert the byte order as the native integers do, by
+  value rather than by layout.
 - Traits with one implementation for every storage of a kind, for generic code, in two layers. The
   general layer requires `Clone` but not `Copy`: `FixedInteger`, with `zero()`, `min_value()`,
   `max_value()`, `is_zero`, `is_one`, the operators, `FromStr`, the formats and
@@ -258,9 +267,10 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   each sign, `NativeInteger`, `ArrayInteger` and `FromLimbs` the construction of each kind, the
   arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`
   and `UncheckedOps` the arithmetic, `IntegerMath`, `UnsignedMath` and `SignedMath` the functions
-  without an overflow prefix, such as `pow`, `isqrt` and `ilog10`, and `IntegerBits`,
-  `UnsignedBits` and `SignedBits` the bit operations; with the bound `B: BitWidth`, such code uses
-  `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
+  without an overflow prefix, such as `pow`, `isqrt` and `ilog10`, `IntegerBits`, `UnsignedBits`
+  and `SignedBits` the bit operations, and `IntegerBytes`, `ByteArray`, `FromByteArray` and
+  `IntegerByteOrder` the bytes; with the bound `B: BitWidth`, such code uses `Uint<B>` and `Int<B>`
+  for any width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
   width of more than 65536 bits without an explicit storage.
@@ -273,11 +283,12 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   integer does, with the error of the native `NonZero` integers for zero, the formats write what
   the integer writes, and the methods of the native `NonZero`
   integers at the width are `const fn`s: the bit counts, the highest and the lowest one, the
-  rotations, the checked and saturating multiplication, powers and addition, the logarithms, the
-  square root, the midpoint, the division rounded up, the casts, and the negation and the absolute
-  value of `NonZeroInt`. `Uint / NonZeroUint` and `Uint % NonZeroUint` cannot panic. The traits
-  `FixedNonZero`, `UnsignedNonZero`, `SignedNonZero`, `NonZeroLimits` and `ConstNonZeroLimits` give
-  them to generic code.
+  rotations, the byte order of whole bytes, the checked and saturating multiplication, powers and
+  addition, the logarithms, the square root, the midpoint, the division rounded up, the casts, and
+  the negation and the absolute value of `NonZeroInt`. `Uint / NonZeroUint` and
+  `Uint % NonZeroUint` cannot panic. The traits `FixedNonZero`, `UnsignedNonZero`,
+  `SignedNonZero`, `NonZeroLimits`, `ConstNonZeroLimits` and `IntegerByteOrder` give them to
+  generic code.
 
 #### License
 

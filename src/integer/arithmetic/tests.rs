@@ -2289,6 +2289,7 @@ fn wide_patterns<const K: usize>(bits: u32) -> Vec<Vec<bool>> {
 }
 
 mod bits;
+mod bytes;
 mod division;
 mod nonzero;
 mod powers;

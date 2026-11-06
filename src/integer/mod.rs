@@ -8,6 +8,7 @@ use core::{
   num::ParseIntError,
 };
 
+pub use bytes::{ByteArray, FromByteArray, IntegerByteOrder, IntegerBytes};
 pub use error::TryNewError;
 pub use traits::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,
@@ -23,8 +24,8 @@ use crate::{
   int,
   layout::Token,
   width::{
-    BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntWidth, UintRepr,
-    UintWidth,
+    BitWidth, FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntWidth, LimbArray,
+    UintRepr, UintWidth, WholeBytes,
   },
 };
 
@@ -35,6 +36,8 @@ mod tables;
 mod arithmetic;
 #[macro_use]
 mod bits;
+#[macro_use]
+mod bytes;
 #[macro_use]
 mod nonzero;
 mod text;
@@ -277,6 +280,69 @@ mod traits;
 /// # Ok::<(), core::num::ParseIntError>(())
 /// ```
 ///
+/// # Bytes
+///
+/// The bytes of a value are the low [`BYTES`](Self::BYTES), `ceil(Bits / 8)`, bytes of the
+/// storage: least significant first in [`to_le_bytes`](Self::to_le_bytes), most significant first
+/// in [`to_be_bytes`](Self::to_be_bytes), and in the order of the target in
+/// [`to_ne_bytes`](Self::to_ne_bytes). An array of bytes has its length in its type,
+/// `[u8; BYTES]`, which is inferred, so that a wrong length fails to compile, and exists up to 8192
+/// bits. At a width that is not a whole number of bytes, the bits of the last byte above the width
+/// are zeros: [`checked_from_le_bytes`](Self::checked_from_le_bytes) and the other orders read an
+/// array back and return `None` if one of them is set, while at a width of whole bytes, a
+/// [`WholeBytes`](crate::WholeBytes), [`from_le_bytes`](Self::from_le_bytes) and the other orders
+/// read every array. [`checked_from_le_slice`](Self::checked_from_le_slice) and
+/// [`checked_from_be_slice`](Self::checked_from_be_slice) read the value of a slice of any length,
+/// zero for an empty one, and return `None` if it is above `MAX`, whatever the length;
+/// [`wrapping_from_le_slice`](Self::wrapping_from_le_slice) and
+/// [`wrapping_from_be_slice`](Self::wrapping_from_be_slice) read it modulo `2^Bits`.
+/// [`copy_le_bytes_to`](Self::copy_le_bytes_to) and [`copy_be_bytes_to`](Self::copy_be_bytes_to)
+/// write the bytes to the start of a buffer at any width, also one above 8192 bits, and panic if it
+/// is shorter, where their `checked_*` forms return `None`, and [`byte`](Self::byte) reads the
+/// byte at an index and panics from `BYTES` up. The methods that read a value borrow it, as every
+/// `to_*` method does, and nothing allocates.
+///
+/// At a width of whole bytes, [`swap_bytes`](Self::swap_bytes) reverses the bytes, and
+/// [`to_be`](Self::to_be), [`to_le`](Self::to_le), [`from_be`](Self::from_be) and
+/// [`from_le`](Self::from_le) convert the value to and from an order as the native integers do: on
+/// a little-endian target, `to_be` reverses the bytes and `to_le` returns the value. They convert
+/// the value, not a layout: an array keeps its limbs least significant first on every target, so
+/// on a big-endian target the memory of an array is not its bytes in either order. The same holds
+/// for [`to_ne_bytes`](Self::to_ne_bytes), which gives the bytes of the value in the order of the
+/// target, not the memory of the storage, and for [`from_ne_bytes`](Self::from_ne_bytes) and
+/// [`checked_from_ne_bytes`](Self::checked_from_ne_bytes), which read such bytes as a value. The
+/// traits [`IntegerBytes`](crate::IntegerBytes), [`ByteArray`](crate::ByteArray),
+/// [`FromByteArray`](crate::FromByteArray) and [`IntegerByteOrder`](crate::IntegerByteOrder) give
+/// generic code the methods.
+///
+/// ```
+/// use numo::{
+///   Uint,
+///   typenum::{U12, U24},
+/// };
+///
+/// let value = Uint::<U24>::new(0x01_0203);
+/// assert_eq!(value.to_le_bytes(), [3, 2, 1]);
+/// assert_eq!(value.to_be_bytes(), [1, 2, 3]);
+/// assert_eq!(Uint::<U24>::from_be_bytes([1, 2, 3]), value);
+/// assert_eq!(value.swap_bytes(), Uint::<U24>::new(0x03_0201));
+/// assert_eq!(value.byte(2), 1);
+///
+/// // 12 bits leave four bits of the second byte, which must be zeros.
+/// type U12x2 = Uint<U12, [u8; 2]>;
+/// assert_eq!(U12x2::MAX.to_le_bytes(), [0xff, 0x0f]);
+/// assert_eq!(U12x2::checked_from_le_bytes([0xff, 0x1f]), None);
+/// // A slice of any length, whose value decides, and its value modulo 2^12.
+/// assert_eq!(U12x2::checked_from_le_slice(&[0xff, 0x0f, 0, 0]), Some(U12x2::MAX));
+/// assert_eq!(U12x2::wrapping_from_le_slice(&[0xff, 0xff]), U12x2::MAX);
+///
+/// // A copy to a buffer, which leaves the rest of it.
+/// let mut buf = [0; 4];
+/// assert_eq!(value.copy_be_bytes_to(&mut buf), 3);
+/// assert_eq!(buf, [1, 2, 3, 0]);
+/// assert_eq!(value.checked_copy_be_bytes_to(&mut [0; 2]), None);
+/// ```
+///
 /// # Overflow
 ///
 /// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
@@ -482,6 +548,42 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// assert_eq!(format!("{:e} {:.0e}", i7::MIN, i7::new(-35)), "-6.4e1 -4e1");
 /// ```
 ///
+/// # Bytes
+///
+/// The bytes are those of [`Uint`] (see [Bytes](Uint#bytes)), in two's complement: at a width that
+/// is not a whole number of bytes, the bits of the last byte above the width copy the sign, as the
+/// storage holds them, so that the bytes, read as an integer of `8 * BYTES` bits in two's
+/// complement, give the value, and [`checked_from_le_bytes`](Self::checked_from_le_bytes) returns
+/// `None` unless they do; [`cast_unsigned`](Self::cast_unsigned) gives the bytes of the `Bits` bits
+/// with zeros above them. [`checked_from_le_slice`](Self::checked_from_le_slice) reads a slice as
+/// an integer in two's complement of `8 * len` bits, whose sign is the top bit of its most
+/// significant byte, and returns `None` if that integer is outside the range of `Bits` bits;
+/// [`wrapping_from_le_slice`](Self::wrapping_from_le_slice) reduces it modulo `2^Bits` into the
+/// range, so that it returns the value of `checked_from_le_slice` wherever that returns one. The
+/// byte order is that of [`Uint`], and [`swap_bytes`](Self::swap_bytes) reads the reversed bytes
+/// again in two's complement.
+///
+/// ```
+/// use numo::{
+///   Int, i7,
+///   typenum::{U12, U24},
+/// };
+///
+/// assert_eq!(i7::new(-1).to_le_bytes(), [0xff]);
+/// assert_eq!(Int::<U24>::new(-2).to_be_bytes(), [0xff, 0xff, 0xfe]);
+/// assert_eq!(Int::<U24>::new(-2).swap_bytes(), Int::<U24>::new(-0x01_0001));
+///
+/// // 12 bits in two bytes, whose four bits above the width copy the sign.
+/// type I12 = Int<U12>;
+/// assert_eq!(I12::MIN.to_le_bytes(), [0x00, 0xf8]);
+/// assert_eq!(I12::checked_from_le_bytes([0x00, 0x08]), None);
+/// // A short slice keeps its sign, and the wrapping form reduces a value into the range.
+/// assert_eq!(I12::checked_from_le_slice(&[0x80]), Some(I12::new(-128)));
+/// assert_eq!(I12::wrapping_from_le_slice(&[0x80]), I12::new(-128));
+/// assert_eq!(I12::checked_from_le_slice(&[0xff, 0x0f]), None);
+/// assert_eq!(I12::wrapping_from_le_slice(&[0xff, 0x0f]), I12::new(-1));
+/// ```
+///
 /// # Overflow
 ///
 /// The `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` methods behave the
@@ -553,6 +655,13 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// value as the native `NonZero` integers do: as the [`Uint`] of the same width and storage parses
 /// it (see [Text](Uint#text)), then the error of the kind `Zero` for zero, after every error of the
 /// integer, so that at zero bits every text is an error.
+///
+/// At a width of whole bytes, [`swap_bytes`](Self::swap_bytes), [`to_be`](Self::to_be),
+/// [`to_le`](Self::to_le), [`from_be`](Self::from_be) and [`from_le`](Self::from_le) give the byte
+/// order of the [`Uint`] of the same value (see [Bytes](Uint#bytes)), which is not zero, and follow
+/// the native methods, still unstable ([#128281](https://github.com/rust-lang/rust/issues/128281)).
+/// As for the integers, they convert the value, not a layout, for an array storage.
+/// [`IntegerByteOrder`](crate::IntegerByteOrder) gives them to generic code.
 ///
 /// ```
 /// use core::num::NonZero;
@@ -664,6 +773,10 @@ pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
 /// `MAX` of one bit are both -1; zero bits hold no value but zero. Values compare, hash and format
 /// as the integers of the same values, and [`from_str_radix`](Self::from_str_radix) and `FromStr`
 /// parse as for [`NonZeroUint`], with `-` as well as `+`: `-0` is the error of the kind `Zero`.
+/// The byte order, [`swap_bytes`](Self::swap_bytes), [`to_be`](Self::to_be),
+/// [`to_le`](Self::to_le), [`from_be`](Self::from_be) and [`from_le`](Self::from_le), is that of
+/// the [`Int`] of the same value at a width of whole bytes, as for [`NonZeroUint`]: a conversion of
+/// the value, not a layout, for an array storage.
 ///
 /// # Arithmetic
 ///
@@ -746,6 +859,10 @@ impl<B, R> Int<B, R> {
 impl<B: FitsBits<R>, R: UintRepr> Uint<B, R> {
   /// The number of bits, `Bits`.
   pub const BITS: u32 = B::U32;
+
+  /// The number of bytes of the value, `ceil(Bits / 8)`: the length of its arrays of bytes, and
+  /// of the buffer that it copies its bytes to.
+  pub const BYTES: usize = bytes::byte_count(B::U32);
 }
 
 impl<B: FitsBits<R>, R: InlineUintRepr> Uint<B, R> {
@@ -767,6 +884,10 @@ impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> Uint<B, R> {
 impl<B: FitsBits<R>, R: IntRepr> Int<B, R> {
   /// The number of bits, `Bits`, including the sign bit.
   pub const BITS: u32 = B::U32;
+
+  /// The number of bytes of the value, `ceil(Bits / 8)`: the length of its arrays of bytes, and
+  /// of the buffer that it copies its bytes to.
+  pub const BYTES: usize = bytes::byte_count(B::U32);
 }
 
 impl<B: FitsBits<R>, R: InlineIntRepr> Int<B, R> {
@@ -877,6 +998,7 @@ macro_rules! array_integers {
       integer_bits_table!(inherent_items![unsigned, $lower, &]);
       uint_bits_table!(inherent_items![unsigned, $lower, &, Int<B, [$limb; N]>]);
       bitwise_table!(inherent_items![unsigned, $lower, &]);
+      byte_methods!([unsigned, $lower, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -997,14 +1119,14 @@ macro_rules! array_integers {
 
     impl<B, const N: usize> Uint<B, [$limb; N]> {
       #[doc = concat!(
-        "Returns the ",
+        "Returns a copy of the ",
         stringify!($bits),
         "-bit limbs of the value, least significant first. The bits above `Bits`, if any,"
       )]
       /// are zero.
       #[must_use]
       #[inline]
-      pub const fn to_limbs(self) -> [$limb; N] {
+      pub const fn to_limbs(&self) -> [$limb; N] {
         self.repr
       }
 
@@ -1107,6 +1229,7 @@ macro_rules! array_integers {
       integer_bits_table!(inherent_items![signed, $upper, &]);
       int_bits_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
       bitwise_table!(inherent_items![signed, $upper, &]);
+      byte_methods!([signed, $upper, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1249,14 +1372,14 @@ macro_rules! array_integers {
 
     impl<B, const N: usize> Int<B, [$limb; N]> {
       #[doc = concat!(
-        "Returns the ",
+        "Returns a copy of the ",
         stringify!($bits),
         "-bit limbs of the value, least significant first, in two's complement. The bits"
       )]
       /// above `Bits`, if any, are copies of the sign bit.
       #[must_use]
       #[inline]
-      pub const fn to_limbs(self) -> [$limb; N] {
+      pub const fn to_limbs(&self) -> [$limb; N] {
         self.repr
       }
 
@@ -1506,6 +1629,7 @@ macro_rules! native_integers {
       integer_bits_table!(inherent_items![$uint]);
       uint_bits_table!(inherent_items![$uint, Int<B, $int>]);
       bitwise_table!(inherent_items![$uint]);
+      byte_methods!([$uint]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///
@@ -1739,6 +1863,7 @@ macro_rules! native_integers {
       integer_bits_table!(inherent_items![$int]);
       int_bits_table!(inherent_items![$int, Uint<B, $uint>]);
       bitwise_table!(inherent_items![$int]);
+      byte_methods!([$int]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
       ///

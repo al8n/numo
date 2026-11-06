@@ -1102,6 +1102,8 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@text false);
 
+    limb_layer_tests!(@bytes false);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves nothing of a value, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -1951,6 +1953,11 @@ macro_rules! limb_layer_tests {
 
     limb_layer_tests!(@text true);
 
+    // The lower layer writes the bytes and reads the byte at an index for both signs.
+    use super::$unsigned::{byte_at, write_bytes};
+
+    limb_layer_tests!(@bytes true);
+
     /// A shift whose whole-limb offset does not fit in 16 bits leaves the sign alone, as the
     /// offsets `1 << 16` and one more, `u32::MAX` and `B * N` do.
     #[test]
@@ -2312,6 +2319,127 @@ macro_rules! limb_layer_tests {
       parse_at_widths::<2>(&widths::<2>(), &texts);
       if tier.is_full() {
         parse_at_widths::<3>(&widths::<3>(), &texts);
+      }
+    }
+  };
+  // The tests of the byte functions, which every instance shares, after the helpers of its arm and
+  // of `@bits`, with `byte_at` and `write_bytes` of the lower layer in scope: `$signed` is whether
+  // the layer reads the limbs in two's complement.
+  (@bytes $signed:literal) => {
+    /// Checks the byte functions of `N` limbs on `p`, a pattern of a width, read in two's
+    /// complement if `$signed`, against the bit model: the writer at no bytes, one, the bytes of
+    /// the width and those of the limbs, in both orders, the byte at each index of the limbs, the
+    /// readers at each slice of `bigint::byte_slices`, least significant byte first and reversed,
+    /// and at a width of whole bytes their reversal. Wherever the checked reader returns a value,
+    /// the wrapping reader returns it too.
+    fn check_bytes<const N: usize>(p: &[bool]) {
+      let width = model::width(p);
+      let text = || model::text(p);
+      let limbs = |pattern: &[bool]| bigint::limbs_of_pattern::<Limb, N>(pattern, $signed);
+      let x = limbs(p);
+      // The bytes of the limbs, which hold the value extended by zeros or copies of its sign.
+      let size = (B / 8) as usize * N;
+      let storage = model::le_bytes(p, size, $signed);
+      let mut lengths = vec![0, 1, (width as usize).div_ceil(8), size];
+      lengths.retain(|&len| len <= size);
+      lengths.sort_unstable();
+      lengths.dedup();
+      for len in lengths {
+        let (mut little, mut big) = (vec![0; len], vec![0; len]);
+        write_bytes(&x, &mut little, false);
+        write_bytes(&x, &mut big, true);
+        let low = storage[..len].to_vec();
+        let reversed: Vec<u8> = low.iter().rev().copied().collect();
+        assert_eq!((little, big), (low, reversed), "{} in {len} bytes", text());
+      }
+      for (index, &byte) in storage.iter().enumerate() {
+        assert_eq!(byte_at(&x, index), byte, "byte {index} of {}", text());
+      }
+      for slice in bigint::byte_slices(p, $signed) {
+        let q = model::of_le_bytes(&slice);
+        let checked = model::fit(&q, width, $signed).map(|r| limbs(&r));
+        let wrapped = limbs(&model::wrap(&q, width, $signed));
+        let reversed: Vec<u8> = slice.iter().rev().copied().collect();
+        let reads = [
+          (
+            checked_read_bytes::<N>(&slice, false, width),
+            wrapping_read_bytes::<N>(&slice, false, width),
+          ),
+          (
+            checked_read_bytes::<N>(&reversed, true, width),
+            wrapping_read_bytes::<N>(&reversed, true, width),
+          ),
+        ];
+        assert_eq!(reads, [(checked, wrapped); 2], "{slice:x?} at {width} bits");
+        for (checked, wrapped) in reads {
+          if let Some(value) = checked {
+            assert_eq!(wrapped, value, "{slice:x?} at {width} bits");
+          }
+        }
+      }
+      if width % 8 == 0 {
+        assert_eq!(
+          swap_bytes_bits(&x, width),
+          limbs(&model::swap_bytes(p)),
+          "{}",
+          text()
+        );
+      }
+    }
+
+    /// Checks the byte functions of `N` limbs against the bit model at each width of `widths`,
+    /// and at 8 and `B * N - 8` bits, whole bytes that are no multiple of a limb wider than a
+    /// byte, at each pattern of `bigint::bit_patterns_by` cut to the width, at every index up to
+    /// 32 bits in an optimized build and at the reduced indexes otherwise; or under Miri at 0, 1,
+    /// 8 and `B` bits and the patterns of `model::few_patterns`.
+    fn bytes_against_the_model<const N: usize>() {
+      let tier = bigint::tier();
+      let top = B * N as u32;
+      let mut widths = if tier.is_miri() {
+        vec![0, 1, 8, B]
+      } else {
+        let mut widths = widths::<N>();
+        widths.extend([8, top.saturating_sub(8)]);
+        widths
+      };
+      widths.retain(|&width| width <= top);
+      widths.sort_unstable();
+      widths.dedup();
+      let reduced = !tier.is_full() || top > 32;
+      let patterns: Vec<[Limb; N]> = if tier.is_miri() {
+        Vec::new()
+      } else {
+        bigint::bit_patterns_by(&widths, reduced)
+      };
+      for &width in &widths {
+        let mut cut: Vec<Vec<bool>> = if tier.is_miri() {
+          model::few_patterns(width, B)
+        } else {
+          patterns
+            .iter()
+            .map(|pattern| bigint::pattern_of_limbs(pattern, width))
+            .collect()
+        };
+        cut.sort_unstable();
+        cut.dedup();
+        for p in &cut {
+          check_bytes::<N>(p);
+        }
+      }
+    }
+
+    /// The byte functions against the bit model at no limbs to two, and in an optimized build
+    /// also three; under Miri at no limbs and one.
+    #[test]
+    fn bytes_match_the_bit_model() {
+      let tier = bigint::tier();
+      bytes_against_the_model::<0>();
+      bytes_against_the_model::<1>();
+      if !tier.is_miri() {
+        bytes_against_the_model::<2>();
+      }
+      if tier.is_full() {
+        bytes_against_the_model::<3>();
       }
     }
   };

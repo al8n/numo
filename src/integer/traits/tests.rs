@@ -84,7 +84,7 @@ macro_rules! assert_array {
       let checked = <T as ArrayInteger>::checked_from_limbs(limbs);
       assert_eq!(checked, T::checked_from_limbs(limbs), "{limbs:x?}");
       if let Some(integer) = checked {
-        assert_eq!(ArrayInteger::to_limbs(integer), integer.to_limbs());
+        assert_eq!(ArrayInteger::to_limbs(&integer), integer.to_limbs());
         assert_eq!(ArrayInteger::as_limbs(&integer), integer.as_limbs());
       }
     }

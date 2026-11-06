@@ -49,6 +49,7 @@ mod limb_layer;
 
 pub(crate) mod parse_errors;
 pub(crate) mod signed;
+pub(crate) mod slice;
 pub(crate) mod unsigned;
 
 macro_rules! native {
@@ -57,7 +58,7 @@ macro_rules! native {
     pub(crate) mod $uint {
       use core::{cmp::Ordering, num::ParseIntError};
 
-      use super::{DIGIT_BUF_LEN, DigitBuf, parse_errors};
+      use super::{DIGIT_BUF_LEN, DigitBuf, parse_errors, slice};
       use crate::rounding::{self, RoundingMode};
 
       native!(@shared $uint);
@@ -556,6 +557,73 @@ macro_rules! native {
         Some(if set { value | mask } else { value & !mask })
       }
 
+      /// The byte of `value` at `index`: its bits from `8 * index` to `8 * index + 7`. Requires
+      /// `index < BITS / 8`.
+      #[inline]
+      pub(crate) const fn byte_at(value: $uint, index: usize) -> u8 {
+        (value >> (8 * index) as u32) as u8
+      }
+
+      /// Writes the low `out.len()` bytes of `value` to `out`, least significant first, or most
+      /// significant first if `big_endian`. Requires `out.len() <= BITS / 8`.
+      pub(crate) const fn write_bytes(value: $uint, out: &mut [u8], big_endian: bool) {
+        let len = out.len();
+        let mut k = 0;
+        while k < len {
+          out[slice::index(len, k, big_endian)] = byte_at(value, k);
+          k += 1;
+        }
+      }
+
+      /// The low `BITS` bits of the integer in `bytes`, least significant byte first, or most
+      /// significant first if `big_endian`, extended beyond its bytes by copies of `fill`: zero
+      /// for an unsigned integer, and the bits of its sign for one in two's complement.
+      pub(crate) const fn read_bytes(bytes: &[u8], big_endian: bool, fill: u8) -> $uint {
+        let mut value: $uint = 0;
+        let mut k = 0;
+        while k < size_of::<$uint>() {
+          value |= (slice::byte(bytes, k, big_endian, fill) as $uint) << (8 * k) as u32;
+          k += 1;
+        }
+        value
+      }
+
+      /// The integer in `bytes`, least significant byte first, or most significant first if
+      /// `big_endian`, unsigned, as a value of `bits` bits, or `None` if it is `2^bits` or more,
+      /// whatever the number of bytes. No bytes are zero. Requires `bits <= BITS`.
+      pub(crate) const fn checked_read_bytes(
+        bytes: &[u8],
+        big_endian: bool,
+        bits: u32,
+      ) -> Option<$uint> {
+        if slice::fits_bits(bytes, big_endian, bits, false) {
+          Some(read_bytes(bytes, big_endian, 0))
+        } else {
+          None
+        }
+      }
+
+      /// The integer in `bytes`, read as [`checked_read_bytes`] reads it, modulo `2^bits`.
+      /// Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32) -> $uint {
+        zero_extend(read_bytes(bytes, big_endian, 0), bits)
+      }
+
+      /// The low `bits / 8` bytes of `value` in reverse order: the reversal of the bytes of the
+      /// native integer, shifted down by the `BITS - bits` zeros that it moves from above the
+      /// width to below it. Requires `bits` to be a multiple of 8, `bits <= BITS` and
+      /// `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn swap_bytes_bits(value: $uint, bits: u32) -> $uint {
+        // The shift below would be by `BITS` bits at zero bits, which overflows.
+        if bits == 0 {
+          0
+        } else {
+          value.swap_bytes() >> ($uint::BITS - bits)
+        }
+      }
+
       native!(@bits $uint, zero_extend);
     }
   };
@@ -570,7 +638,7 @@ macro_rules! native {
     pub(crate) mod $int {
       use core::num::ParseIntError;
 
-      use super::{DigitBuf, parse_errors};
+      use super::{DigitBuf, parse_errors, slice};
       use crate::rounding::RoundingMode;
 
       native!(@shared $int);
@@ -1121,6 +1189,64 @@ macro_rules! native {
         let mask: $int = 1 << index;
         let changed = if set { value | mask } else { value & !mask };
         Some(sign_extend(changed, bits))
+      }
+
+      /// The byte of the two's complement of `value` at `index`, that of the unsigned integer of
+      /// its bits. Requires `index < BITS / 8`.
+      #[inline]
+      pub(crate) const fn byte_at(value: $int, index: usize) -> u8 {
+        super::$uint::byte_at(value.cast_unsigned(), index)
+      }
+
+      /// Writes the low `out.len()` bytes of the two's complement of `value` to `out`, least
+      /// significant first, or most significant first if `big_endian`: those of the unsigned
+      /// integer of its bits. Requires `out.len() <= BITS / 8`.
+      #[inline]
+      pub(crate) const fn write_bytes(value: $int, out: &mut [u8], big_endian: bool) {
+        super::$uint::write_bytes(value.cast_unsigned(), out, big_endian);
+      }
+
+      /// The integer in `bytes`, least significant byte first, or most significant first if
+      /// `big_endian`, in two's complement of `8 * bytes.len()` bits, as a value of `bits` bits,
+      /// or `None` if it is outside their range, whatever the number of bytes. No bytes are zero,
+      /// and zero bits hold only zero. Requires `bits <= BITS`.
+      pub(crate) const fn checked_read_bytes(
+        bytes: &[u8],
+        big_endian: bool,
+        bits: u32,
+      ) -> Option<$int> {
+        if slice::fits_bits(bytes, big_endian, bits, true) {
+          let fill = slice::fill(bytes, big_endian, true);
+          Some(super::$uint::read_bytes(bytes, big_endian, fill).cast_signed())
+        } else {
+          None
+        }
+      }
+
+      /// The integer in `bytes`, read as [`checked_read_bytes`] reads it, reduced modulo
+      /// `2^bits` into the range of `bits` bits, or zero for zero bits. Requires `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32) -> $int {
+        let fill = slice::fill(bytes, big_endian, true);
+        sign_extend(
+          super::$uint::read_bytes(bytes, big_endian, fill).cast_signed(),
+          bits,
+        )
+      }
+
+      /// The low `bits / 8` bytes of `value` in reverse order, read in two's complement: the
+      /// reversal of the bytes of the native integer, which moves the copies of the sign from
+      /// above the width to below it, shifted down by them with the arithmetic shift, which
+      /// copies the new sign bit, the top bit of the old low byte, above the width. Requires
+      /// `bits` to be a multiple of 8, `bits <= BITS` and `value` within the range of `bits` bits.
+      #[inline]
+      pub(crate) const fn swap_bytes_bits(value: $int, bits: u32) -> $int {
+        // The shift below would be by `BITS` bits at zero bits, which overflows.
+        if bits == 0 {
+          0
+        } else {
+          value.swap_bytes() >> ($int::BITS - bits)
+        }
       }
 
       native!(@bits $int, sign_extend);
