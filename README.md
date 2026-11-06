@@ -268,15 +268,15 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   value rather than by layout.
 - The casts of the native integers, still unstable, between any widths and signs: `checked_cast`,
   `wrapping_cast`, `saturating_cast`, `strict_cast` and the `unsafe` `unchecked_cast` into a
-  `Uint`, an `Int` or a native integer, `widen` into an integer of the same sign that is at least as
-  wide and `truncate`, with its checked and saturating forms, into one that is at most as wide, the
-  widths and the signs checked at compile time, and the checked, saturating and strict casts
-  between `Uint` and `Int` of the same width. The standard conversions go by direction: `From`
-  converts a native integer into a numo integer whose width holds every value of it, as in
-  `u256::from(5u64)`, `TryFrom` converts a `usize` or an `isize` into any width and a numo integer
-  into each native integer, with the error of the native conversions, and `bool` converts both
-  ways. A literal without a suffix is an `i32`, so `u256::from(5)` fails to compile, while
-  `i256::from(5)` compiles.
+  `Uint`, an `Int` or a native integer, the checked, strict and unchecked ones also into a non-zero
+  integer, `widen` into an integer of the same sign that is at least as wide and `truncate`, with
+  its checked and saturating forms, into one that is at most as wide, the widths and the signs
+  checked at compile time, and the checked, saturating and strict casts between `Uint` and `Int`
+  of the same width. The standard conversions go by direction: `From` converts a native integer
+  into a numo integer whose width holds every value of it, as in `u256::from(5u64)`, `TryFrom`
+  converts a `usize` or an `isize` into any width and a numo integer into each native integer, with
+  the error of the native conversions, and `bool` converts both ways. A literal without a suffix is
+  an `i32`, so `u256::from(5)` fails to compile, while `i256::from(5)` compiles.
 - Traits with one implementation for every storage of a kind, for generic code, in two layers. The
   general layer requires `Clone` but not `Copy`: `FixedInteger`, with `zero()`, `min_value()`,
   `max_value()`, `is_zero`, `is_one`, the operators, `FromStr`, the formats and
@@ -312,10 +312,10 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   integers convert, and the conversions with the native `NonZero` integers go by the directions of
   the integers with the native integers, as in `NonZeroUint::<U16>::from(NonZero::<u8>::MAX)`. The
   casts take a non-zero integer as a source, into any integer, and as a target that takes no zero:
-  of `checked_cast` and `strict_cast`, and of `widen` from a non-zero integer, as the native `From`
-  converts between the `NonZero` integers. The traits `FixedNonZero`, `UnsignedNonZero`,
-  `SignedNonZero`, `NonZeroLimits`, `ConstNonZeroLimits` and `IntegerByteOrder` give them to
-  generic code.
+  of `checked_cast`, `strict_cast` and the `unsafe` `unchecked_cast`, and of `widen` from a
+  non-zero integer, as the native `From` converts between the `NonZero` integers. The traits
+  `FixedNonZero`, `UnsignedNonZero`, `SignedNonZero`, `NonZeroLimits`, `ConstNonZeroLimits` and
+  `IntegerByteOrder` give them to generic code.
 
 #### License
 

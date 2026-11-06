@@ -1050,8 +1050,9 @@ macro_rules! cast_methods {
       }
 
       /// Unchecked cast: converts the value to the integer `T`, assuming that it is in the range
-      /// of `T`, and not zero for a non-zero `T`, as the native `unchecked_cast` does, still
-      /// unstable ([#157388](https://github.com/rust-lang/rust/issues/157388)).
+      /// of `T`, as the native `unchecked_cast` does, still unstable
+      /// ([#157388](https://github.com/rust-lang/rust/issues/157388)), and not zero for a non-zero
+      /// `T`.
       ///
       /// # Safety
       ///
