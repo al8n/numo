@@ -126,13 +126,13 @@ fn is_negative<T: Native>(value: T) -> bool {
 }
 
 /// What the casts of a value into `T` give, from the bit model.
-struct Expected<T> {
+pub(super) struct Expected<T> {
   /// The value modulo `2^Bits` of `T`, read in two's complement for a signed `T`.
-  wrapped: T,
+  pub(super) wrapped: T,
   /// Whether `T` holds the value.
-  fits: bool,
+  pub(super) fits: bool,
   /// The value, or the bound of the range of `T` that it passes.
-  saturated: T,
+  pub(super) saturated: T,
 }
 
 /// The pattern of the largest value of `bits` bits, unsigned or in two's complement, if `max`, and
@@ -147,7 +147,7 @@ fn limit(bits: u32, signed: bool, max: bool) -> Vec<bool> {
 
 /// What the casts of `value` into `T` give, from the bit model: the low bits of the value, extended
 /// by its sign, at the width of `T`, which `T` holds when they extend back to the value.
-fn expected<S: Model, T: Model>(value: S) -> Expected<T> {
+pub(super) fn expected<S: Model, T: Model>(value: S) -> Expected<T> {
   let p = value.pattern();
   let wrapped = model::wrap(&p, T::WIDTH, S::SIGNED);
   // The value and the wrapped value, each extended by its sign to a width that holds both.
@@ -908,7 +908,7 @@ fn sign_casts_in_constant_contexts() {
 
 /// The errors of the native conversions for a value above the range of the target, of the kind
 /// `PosOverflow`, and below it, of the kind `NegOverflow`.
-fn errors() -> (TryFromIntError, TryFromIntError) {
+pub(super) fn errors() -> (TryFromIntError, TryFromIntError) {
   (
     u8::try_from(u16::MAX).unwrap_err(),
     u8::try_from(-1i8).unwrap_err(),
