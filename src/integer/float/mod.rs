@@ -1,14 +1,20 @@
 //! The conversions of [`Uint`] and [`Int`] with the floats: the methods of every storage, which
 //! `float_methods!` emits as inherent `const fn`s, the trait [`IntegerFloat`] that gives them to
-//! generic code, and the panic of the strict conversions.
+//! generic code, the panic of the strict conversions, and `From` into `f64` and `f32` at the widths
+//! whose every value the float holds.
 //!
 //! An integer converts to the nearest float, ties to even, as `as` converts the native integers,
-//! through the sealed `float_bits` of its storage. A float converts through its parts, its value
-//! rounded to an integer with a rounding mode, and the sealed `from_float` of the storage, which
-//! checks the range of the width and places the integer: the truncating conversions round with
-//! `Down`, as the native ones do, and the exact one judges the range with `Up`, which keeps every
-//! value of the range in it and moves every value outside it farther out, before it rejects a
-//! fraction.
+//! through the sealed `float_bits` of its storage, and by `From` where the float holds every value
+//! of its width, which the sealed marker `HoldsExactly` checks. A float converts through its
+//! parts, its value rounded to an integer with a rounding mode, and the sealed `from_float` of the
+//! storage, which checks the range of the width and places the integer: the truncating
+//! conversions round with `Down`, as the native ones do, and the exact one judges the range with
+//! `Up`, which keeps every value of the range in it and moves every value outside it farther out,
+//! before it rejects a fraction.
+
+use typenum::{IsLessOrEqual, LeEq, U24, U25, U53, U54};
+
+use sealed::HoldsExactly;
 
 use super::{Int, Uint, cast, traits::Sealed};
 use crate::{
@@ -17,6 +23,20 @@ use crate::{
   layout::Token,
   width::{FitsBits, IntRepr, UintRepr},
 };
+
+mod sealed {
+  /// Implemented only for `B1`, the result of the comparison of `Bits` with the width whose every
+  /// value a float holds exactly: the 53 bits of the significand of `f64` and the 24 of `f32` for
+  /// `Uint`, and one more for `Int`, whose largest magnitude is `2^(Bits - 1)`.
+  #[diagnostic::on_unimplemented(
+    message = "the width has more bits than the float holds exactly",
+    label = "`Bits` is above 53 for `f64` or 24 for `f32` (54 and 25 for `Int`)",
+    note = "`to_f64` and `to_f32` round any width to the nearest float"
+  )]
+  pub trait HoldsExactly {}
+
+  impl HoldsExactly for typenum::B1 {}
+}
 
 /// Panics on a float that a strict conversion cannot convert, with the message of the native
 /// `to_int_strict`, reporting the caller.
@@ -526,3 +546,32 @@ macro_rules! float_traits {
 }
 
 float_traits!(Uint: UintRepr, Int: IntRepr);
+
+/// Implements `From` of `$integer` over every storage of `$repr` into each float of the list,
+/// written `float: format, Bits, of`, at the widths of at most `Bits` bits, every value of which
+/// the float holds exactly; `of` makes the float of the bits that the storage writes. The standard
+/// library derives `TryFrom` from `From`, with the error `Infallible`; no other `TryFrom` converts
+/// between the integers and the floats.
+macro_rules! floats_from {
+  ($($integer:ident: $repr:ident; $($float:ident: $format:ident, $bits:ident, $of:ident),+;)+) => {
+    $($(
+      impl<B, R> From<$integer<B, R>> for $float
+      where
+        R: $repr,
+        B: FitsBits<R> + IsLessOrEqual<$bits>,
+        LeEq<B, $bits>: HoldsExactly,
+      {
+        /// Converts `value`, which the float holds exactly, as it holds every value of `Bits` bits.
+        #[inline]
+        fn from(value: $integer<B, R>) -> $float {
+          $of(value.repr.float_bits(FloatFormat::$format, Token::new()))
+        }
+      }
+    )+)+
+  };
+}
+
+floats_from!(
+  Uint: UintRepr; f64: F64, U53, f64_of, f32: F32, U24, f32_of;
+  Int: IntRepr; f64: F64, U54, f64_of, f32: F32, U25, f32_of;
+);

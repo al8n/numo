@@ -3,9 +3,9 @@
 //! up to 128 bits and the rounding to odd in 64 bits above them; from the floats of both formats,
 //! near the bounds of each width, in every rounding mode against the rounding functions of std,
 //! truncated against the rule of the native `to_int_checked` and saturated as `as` converts, and
-//! exactly, with the order of its errors; and the conversions in constant contexts and the panics
-//! of the strict ones. Each type checks in a function of its own, whose frame holds its values
-//! alone.
+//! exactly, with the order of its errors; `From` into the floats at the widths whose every value
+//! they hold; and the conversions in constant contexts and the panics of the strict ones. Each type
+//! checks in a function of its own, whose frame holds its values alone.
 
 use core::any::type_name;
 
@@ -481,4 +481,56 @@ fn conversions_with_the_floats_in_code_generic_over_the_width() {
   assert_eq!(nearest::<U7>(63.5), Err(FromFloatError::PosOverflow));
   assert_eq!(nearest::<U128>(-0.5), Ok(Int::<U128>::ZERO));
   assert_eq!(nearest::<U200>(-2.5), Ok(-Int::<U200>::from(2i8)));
+}
+
+/// `From` converts into `f64` a `Uint` of at most 53 bits and an `Int` of at most 54, and into
+/// `f32` those of at most 24 and 25 bits, in native integers and arrays, up to the widest of these
+/// widths: at the values of [`samples`], the float that `to_f64` or `to_f32` gives, which
+/// `exact_from_f64` or `exact_from_f32` converts back, also through `Into` and through the
+/// `TryFrom` that the standard library derives from `From`.
+#[test]
+fn integers_convert_into_floats_where_lossless() {
+  // Checks `From` of each type of `$ty` into `$float`, each in a function of its own.
+  macro_rules! into_float {
+    ($float:ident, $to:ident, $exact:ident: $($ty:ty),+ $(,)?) => {$({
+      #[inline(never)]
+      fn check() {
+        type T = $ty;
+        for x in samples::<T>() {
+          let float = $float::from(x);
+          assert_eq!(float.to_bits(), x.$to().to_bits(), "{x:?}");
+          assert_eq!(T::$exact(float), Ok(x), "{x:?}");
+          let into: $float = x.into();
+          assert_eq!(into.to_bits(), float.to_bits(), "{x:?}");
+          assert_eq!($float::try_from(x).map($float::to_bits), Ok(float.to_bits()), "{x:?}");
+        }
+      }
+      check();
+    })+};
+  }
+  into_float!(f64, to_f64, exact_from_f64:
+    Uint<U0>,
+    u7,
+    Uint<U53, u64>,
+    Uint<U53, [u8; 7]>,
+    Int<U1, i8>,
+    i7,
+    Int<U54, i64>,
+    Int<U54, [u32; 2]>,
+  );
+  into_float!(f32, to_f32, exact_from_f32:
+    Uint<U0, [u16; 0]>,
+    u7,
+    Uint<U24, u32>,
+    Uint<U24, [u8; 3]>,
+    Int<U1, [u64; 1]>,
+    i7,
+    Int<U25, i32>,
+    Int<U25, [u16; 2]>,
+  );
+  // The limits of the widest widths, each a float of its own.
+  assert_eq!(f64::from(Uint::<U53>::MAX), floats::pow2(53) - 1.0);
+  assert_eq!(f64::from(Int::<U54>::MIN), -floats::pow2(53));
+  assert_eq!(f32::from(Uint::<U24>::MAX), floats::pow2_f32(24) - 1.0);
+  assert_eq!(f32::from(Int::<U25, [u8; 4]>::MIN), -floats::pow2_f32(24));
 }
