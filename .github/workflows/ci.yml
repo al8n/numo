@@ -268,7 +268,7 @@ jobs:
         run: |
           bash ci/miri_tb.sh ${{ matrix.target }} ${{ matrix.cfg }} ${{ matrix.shard }}
 
-  # The macOS targets run on a push to main, the weekly schedule and a manual run. A pull request
+  # The macOS targets run on a push to main, the monthly schedule and a manual run. A pull request
   # skips these jobs, so it allocates no macOS runner for Miri.
   miri-tb-macos:
     name: miri-tb-${{ matrix.target }}-${{ matrix.cfg }}-${{ matrix.shard }}
@@ -345,7 +345,7 @@ jobs:
         run: |
           bash ci/miri_sb.sh ${{ matrix.target }} ${{ matrix.cfg }} ${{ matrix.shard }}
 
-  # The macOS targets run on a push to main, the weekly schedule and a manual run. A pull request
+  # The macOS targets run on a push to main, the monthly schedule and a manual run. A pull request
   # skips these jobs, so it allocates no macOS runner for Miri.
   miri-sb-macos:
     name: miri-sb-${{ matrix.target }}-${{ matrix.cfg }}-${{ matrix.shard }}
