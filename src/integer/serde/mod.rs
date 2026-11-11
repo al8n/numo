@@ -10,9 +10,11 @@
 //! another format for the method of the class, or for a string above 128 bits; from 65 to 128 bits
 //! it asks every format for a 128-bit integer, which serde_json reads exactly only when asked for
 //! one. One visitor reads every class, through [`read`]: every integer that a format gives, checked
-//! against the width with the casts, and a decimal string in the syntax of `FromStr`. Every other
-//! input gets the fixed message `expected an integer`, and a rejected value the text of the error
-//! of the casts or of `FromStr`, so that no error that numo builds names the input.
+//! against the width with the casts, a decimal string in the syntax of `FromStr`, and serde_json's
+//! number token, a map of one entry through which serde_json with `arbitrary_precision` hands over
+//! a number outside the 64-bit range. Every other input gets the fixed message
+//! `expected an integer`, and a rejected value the text of the error of the casts or of `FromStr`,
+//! so that no error that numo builds names the input.
 
 use core::{
   fmt,
@@ -23,7 +25,7 @@ use core::{
 
 use serde_core::{
   Deserialize, Deserializer, Serialize, Serializer,
-  de::{self, EnumAccess, MapAccess, SeqAccess, Visitor},
+  de::{self, DeserializeSeed, EnumAccess, MapAccess, SeqAccess, Visitor},
 };
 
 use super::{
@@ -31,12 +33,18 @@ use super::{
   cast::{CastSource, CheckedTarget, try_cast},
 };
 use crate::{
+  int::parse_errors,
   serde::{Expected, read, reject_inputs},
   width::{self, FitsBits, IntRepr, UintRepr},
 };
 
 /// What the defaults read, whose fixed message is `expected an integer`.
 const INTEGER: &str = "an integer";
+
+/// The key of the one entry of the map through which serde_json with its feature
+/// `arbitrary_precision` hands over a number that no 64-bit integer holds, whose value is the text
+/// of the number. It is private to serde_json: if it changes, such a map is rejected.
+const NUMBER_TOKEN: &str = "$serde_json::private::Number";
 
 /// A value of the right kind that the defaults reject, which prints the text of its error.
 enum Rejection {
@@ -114,9 +122,111 @@ fn cast<S: CastSource, T: CheckedTarget>(value: S) -> Result<T, Rejection> {
   try_cast(value).map_err(Rejection::Range)
 }
 
+/// The value in `T` of the text of a number that serde_json's token holds, or `None` for a text
+/// that is not an integer of JSON's grammar other than `-0`: an optional `-`, then `0`, or a digit
+/// from 1 to 9 followed by any number of digits. Without `arbitrary_precision` serde_json gives
+/// `-0` as a float, so the token refuses it too, and both builds agree. `FromStr` parses the text,
+/// except that a negative number into an unsigned type is too small, as it is when it arrives as a
+/// number, rather than an invalid digit.
+fn number_of_token<T>(text: &str) -> Option<Result<T, Rejection>>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError>,
+{
+  let digits = text.strip_prefix('-');
+  let negative = digits.is_some();
+  match digits.unwrap_or(text).as_bytes() {
+    [b'0'] if !negative => {}
+    [b'1'..=b'9', rest @ ..] if rest.iter().all(u8::is_ascii_digit) => {}
+    _ => return None,
+  }
+  Some(if negative && !T::SIGNED {
+    Err(Rejection::Parse(parse_errors::NEG_OVERFLOW))
+  } else {
+    text.parse().map_err(Rejection::Parse)
+  })
+}
+
+/// A part of serde_json's number token, its key or its value: reads a string with `read`, which
+/// gives `None` for a text that the part does not hold, and rejects such a text and every other
+/// kind of input with the fixed message of its path.
+struct TokenPart<'a, F> {
+  expected: Expected<'a>,
+  read: F,
+}
+
+impl<'de, F, V> DeserializeSeed<'de> for TokenPart<'_, F>
+where
+  F: FnOnce(&str) -> Option<V>,
+{
+  type Value = V;
+
+  fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<V, D::Error> {
+    deserializer.deserialize_str(self)
+  }
+}
+
+impl<'de, F, V> Visitor<'de> for TokenPart<'_, F>
+where
+  F: FnOnce(&str) -> Option<V>,
+{
+  type Value = V;
+
+  fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.expected.describe(f)
+  }
+
+  fn visit_str<E: de::Error>(self, text: &str) -> Result<V, E> {
+    let Self { expected, read } = self;
+    read(text).ok_or_else(|| expected.reject())
+  }
+
+  // Every other kind of input is rejected below. The narrower integers and `f32` reach these
+  // through serde's forwarding, and the other forms of a string read through `visit_str`.
+  reject_inputs! {
+    visit_bool(bool),
+    visit_i64(i64),
+    visit_i128(i128),
+    visit_u64(u64),
+    visit_u128(u128),
+    visit_f64(f64),
+    visit_char(char),
+    visit_bytes(&[u8]),
+    visit_borrowed_bytes(&'de [u8]),
+  }
+
+  fn visit_none<E: de::Error>(self) -> Result<V, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_some<D: Deserializer<'de>>(self, _: D) -> Result<V, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_unit<E: de::Error>(self) -> Result<V, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<V, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_seq<A: SeqAccess<'de>>(self, _: A) -> Result<V, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<V, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<V, A::Error> {
+    Err(self.expected.reject())
+  }
+}
+
 /// Reads an integer of type `T` at every class: every integer that a format gives, checked against
-/// the width of `T` rather than its class, so that `u7` rejects 128, which a `u8` holds, and a
-/// decimal string in the syntax of `FromStr`. Every other input gets the fixed message.
+/// the width of `T` rather than its class, so that `u7` rejects 128, which a `u8` holds, a decimal
+/// string in the syntax of `FromStr`, and serde_json's number token. Every other input gets the
+/// fixed message.
 struct IntegerVisitor<'a, T> {
   expected: Expected<'a>,
   marker: PhantomData<T>,
@@ -185,8 +295,26 @@ where
     Err(self.expected.reject())
   }
 
-  fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
-    Err(self.expected.reject())
+  // serde_json's number token: one entry, whose key is the token and whose value is the text of the
+  // number. A map without an entry, with another key or with a second entry is rejected; numo
+  // cannot tell the token from a map of that one entry.
+  fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+    let expected = self.expected;
+    let key = || TokenPart {
+      expected,
+      read: |key: &str| (key == NUMBER_TOKEN).then_some(()),
+    };
+    if map.next_key_seed(key())?.is_none() {
+      return Err(expected.reject());
+    }
+    let value = map.next_value_seed(TokenPart {
+      expected,
+      read: number_of_token::<T>,
+    })?;
+    match map.next_key_seed(key())? {
+      None => Ok(value),
+      Some(()) => Err(expected.reject()),
+    }
   }
 
   fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {

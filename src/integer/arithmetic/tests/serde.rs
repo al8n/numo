@@ -3,9 +3,10 @@
 //! class in each column through a stand-in format that records it; serde_test's tokens in both
 //! configurations; every integer and every string, checked against the width; the rejections, with
 //! the fixed message, std's texts and the errors of a format that pass through; the decimal text
-//! above 128 bits; csv's inference, a human-readable format without `deserialize_any`, serde's
-//! buffer of untagged enums, flattened structs and internally tagged enums, and JSON map keys; zero
-//! bits and one signed bit; and code generic over the storage traits or over the width alone.
+//! above 128 bits; serde_json's number token; csv's inference, a human-readable format without
+//! `deserialize_any`, serde's buffer of untagged enums, flattened structs and internally tagged
+//! enums, and JSON map keys; zero bits and one signed bit; and code generic over the storage traits
+//! or over the width alone.
 //!
 //! Every expected text of std comes from std at run time. Each width group or family of storages
 //! checks in a function of its own, and each generic check is `#[inline(never)]`, so that a frame
@@ -1029,6 +1030,89 @@ fn above_128_bits_a_number_reads_as_the_format_gives_it() {
   let min = i256::deserialize(i128::MIN.into_deserializer());
   let min: Result<i256, de::value::Error> = min;
   assert_eq!(min.unwrap(), i256::from(i128::MIN));
+}
+
+/// The key of serde_json's number token.
+const NUMBER_TOKEN: &str = "$serde_json::private::Number";
+
+/// What `T` reads from serde's deserializer of the map of `entries`, which hands the map to the
+/// visitor, with the text of its error.
+#[inline(never)]
+fn read_map<T: DeserializeOwned>(entries: &[(&'static str, &'static str)]) -> Result<T, String> {
+  let map = de::value::MapDeserializer::new(entries.iter().copied());
+  T::deserialize(map).map_err(|error: de::value::Error| error.to_string())
+}
+
+/// Asserts that `T` reads `expected`, a value or the message of its error, from the map of
+/// `entries`, each a key and a value, as a JSON object of strings and through serde's deserializer
+/// of a map, which hand the visitor the same map.
+#[inline(never)]
+fn reads_the_map<T>(entries: &[(&'static str, &'static str)], expected: Result<T, String>)
+where
+  T: DeserializeOwned + PartialEq + Debug,
+{
+  let json: Vec<String> = entries
+    .iter()
+    .map(|(key, value)| format!("\"{key}\":\"{value}\""))
+    .collect();
+  let json = format!("{{{}}}", json.join(","));
+  let from_json = serde_json::from_str::<T>(&json).map_err(|error| json_message(&error));
+  assert_eq!(from_json, expected, "{json}");
+  assert_eq!(read_map::<T>(entries), expected, "{entries:?}");
+}
+
+/// serde_json's number token, through which serde_json with `arbitrary_precision` hands over a
+/// number outside the 64-bit range, is tested without the feature: an object of one entry whose key
+/// is the token and whose value is the text of an integer of JSON's grammar reads as the integer,
+/// as JSON, through serde's deserializer of a map and through serde_test, also from 65 to 128 bits
+/// where a format gives a map to the request of a 128-bit integer. Any other text, `-0` included,
+/// another key, a second entry, no entry and a number as the value get the fixed message, and a
+/// negative integer into an unsigned type is too small, as it is as a number. The string `"-0"`
+/// still reads as zero into `Int`, and so does the number `-0` from 65 to 128 bits, as for `i128`.
+#[test]
+fn serde_json_number_token() {
+  let wide = "12345678901234567890123456789";
+  reads_the_map::<u256>(&[(NUMBER_TOKEN, wide)], Ok(wide.parse().unwrap()));
+  reads_the_map::<u256>(&[(NUMBER_TOKEN, "5")], Ok(u256::from(5u8)));
+  reads_the_map::<i256>(&[(NUMBER_TOKEN, "-5")], Ok(i256::from(-5i8)));
+  reads_the_map::<u7>(&[(NUMBER_TOKEN, "100")], Ok(u7::new(100)));
+  reads_the_map::<u7>(&[(NUMBER_TOKEN, "128")], Err(parse_error::<u8>("256")));
+  let too_small = parse_error::<i8>("-129");
+  reads_the_map::<u256>(&[(NUMBER_TOKEN, "-5")], Err(too_small.clone()));
+  reads_the_map::<u7>(&[(NUMBER_TOKEN, "-5")], Err(too_small));
+  let fixed = FIXED.to_string();
+  for text in ["-0", "1.5", "1e2", "007", "+5", "", "-", " 5", "0x5"] {
+    reads_the_map::<u256>(&[(NUMBER_TOKEN, text)], Err(fixed.clone()));
+    reads_the_map::<i256>(&[(NUMBER_TOKEN, text)], Err(fixed.clone()));
+  }
+  reads_the_map::<u256>(&[(NUMBER_TOKEN, "5"), ("a", "1")], Err(fixed.clone()));
+  let twice = [(NUMBER_TOKEN, "5"), (NUMBER_TOKEN, "5")];
+  reads_the_map::<u256>(&twice, Err(fixed.clone()));
+  reads_the_map::<u256>(&[("a", "5")], Err(fixed.clone()));
+  reads_the_map::<u256>(&[], Err(fixed));
+  let json = format!(r#"{{"{NUMBER_TOKEN}":5}}"#);
+  let error = serde_json::from_str::<u256>(&json).unwrap_err();
+  assert_eq!(json_message(&error), FIXED);
+  let map = de::value::MapDeserializer::new([(NUMBER_TOKEN, 5u64)].into_iter());
+  let error: de::value::Error = u256::deserialize(map).unwrap_err();
+  assert_eq!(error.to_string(), FIXED);
+  let read = read_map::<Uint<U100>>(&[(NUMBER_TOKEN, wide)]);
+  assert_eq!(read, Ok(wide.parse().unwrap()));
+  let tokens = [
+    Token::Map { len: Some(1) },
+    Token::Str(NUMBER_TOKEN),
+    Token::Str("123"),
+    Token::MapEnd,
+  ];
+  assert_de_tokens(&u256::from(123u8).readable(), &tokens);
+  assert_de_tokens(&u256::from(123u8).compact(), &tokens);
+  assert_de_tokens(&u7::new(123).readable(), &tokens);
+  assert_de_tokens(&Uint::<U100>::new(123).compact(), &tokens);
+  assert_eq!(serde_json::from_str::<i7>("\"-0\"").unwrap(), i7::ZERO);
+  assert_eq!(serde_json::from_str::<i256>("\"-0\"").unwrap(), i256::ZERO);
+  assert_eq!(serde_json::from_str::<i128>("-0").unwrap(), 0);
+  let zero = serde_json::from_str::<Int<U100>>("-0").unwrap();
+  assert_eq!(zero, Int::<U100>::ZERO);
 }
 
 /// A stand-in of one field of csv 1.4, which reads a field by its text: `deserialize_any` infers a
