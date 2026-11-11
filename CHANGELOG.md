@@ -93,11 +93,27 @@ FEATURES
   - `const fn` `is_multiple_of` checks a value against a step without rounding it.
 - The `serde` feature: `Decimal` is written as its text and read from a string, never from a number,
   in every format, `Scaled` likewise with the scale of its text, and `RoundingMode` as its lowercase
-  name, read leniently, without allocation. No error of reading a decimal or a `Scaled` names the
-  rejected input: every input but a string gets the fixed message
-  `expected a decimal value as a string`, which also replaces a format error that would describe
-  the input, while every other format error keeps its category. The impls use `serde_core`, so they
-  need `serde` 1.0.220 or later in the build; the feature enables no feature of any other crate.
+  name, read leniently, without allocation. No error that numo builds names the input: every input
+  but a string gets the fixed message `expected a decimal value as a string`, which also replaces a
+  format error built from numo's description of the expected input; an error that a format builds
+  without numo's description of the expected input passes through as the format wrote it, and every
+  other format error keeps its category. The impls use `serde_core`, so they need `serde` 1.0.220 or
+  later in the build; the feature enables no feature of any other crate.
+- The `serde` feature implements `Serialize` and `Deserialize` for `Uint`, `Int`, `NonZeroUint` and
+  `NonZeroInt`, at every width and in every storage, without allocation in numo. A value of up to
+  128 bits is written as a number through the method of the smallest native integer of its sign
+  that holds the width, `u8` or `i8` from zero to 8 bits up to `u128` or `i128` from 65 to 128, and
+  a wider one as its decimal text, in every format; the form depends only on the width, the sign and
+  the value. In a human-readable format, a value of up to 64 or of more than 128 bits reads from any
+  integer that the format gives and from a decimal string in the syntax of `FromStr`, through the
+  format's own description of its values, and a value of 65 to 128 bits from a 128-bit integer, as
+  `u128` reads; in other formats each class reads through its own method. As for `u128`, a field of
+  65 to 128 bits fails in an untagged enum or a flattened struct. A type above 128 bits reads a JSON
+  number outside the 64-bit range only in a build whose serde_json has `arbitrary_precision`; even
+  then, not from a `serde_json::Value` when the number is outside the 128-bit range and a 64-bit
+  float prints the same digits. Floats never read. A non-zero integer is written as its integer, and
+  zero does not read. No error that numo builds names the input; an error that a format builds
+  without numo's description of the expected input passes through as the format wrote it.
 - The `arbitrary`, `proptest` and `quickcheck` features: the `Arbitrary` trait of each crate for
   `Decimal` and `RoundingMode`, for fuzzing and property tests on a target with `std`. One generator
   serves all three: an edge value one time in eight (zero, one unit in the last place, one, `MAX`,

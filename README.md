@@ -31,8 +31,8 @@ traits do.
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, the conversions with `f64` and `f32`, truncating, saturating, rounded by a mode or exact, with `From` where lossless, and generic traits |
-| `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, `TryFrom` of the integer, the conversions with the native `NonZero` integers by direction, the casts into any integer and, checking for zero, from any integer, and generic traits |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, the conversions with `f64` and `f32`, truncating, saturating, rounded by a mode or exact, with `From` where lossless, serde, as numbers up to 128 bits and decimal strings above, and generic traits |
+| `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, `TryFrom` of the integer, the conversions with the native `NonZero` integers by direction, the casts into any integer and, checking for zero, from any integer, serde as their integers, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
 
@@ -286,6 +286,15 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   takes only an integer of the range. Their error, `FromFloatError`, reports NaN, the infinities, a
   value above the range and one below it apart, and for `exact_from_f64` a fraction. Each has an
   `f32` form.
+- With the `serde` feature, `Serialize` and `Deserialize` at every width and in every storage,
+  without allocation in numo: a value of up to 128 bits is written as a number, through the method
+  of the smallest native integer of its sign that holds the width, and a wider one as its decimal
+  text, in every format, so the form depends only on the width, the sign and the value. In a
+  human-readable format, a value of up to 64 or of more than 128 bits reads from any integer that
+  the format gives and from a decimal string, and one of 65 to 128 bits from a 128-bit integer, as
+  `u128` reads; in other formats each class reads through its own method. As for `u128`, a field of
+  65 to 128 bits fails in an untagged enum or a flattened struct. No error that numo builds names
+  the input. The non-zero integers are written and read as their integers, and zero does not read.
 - Traits with one implementation for every storage of a kind, for generic code, in two layers. The
   general layer requires `Clone` but not `Copy`: `FixedInteger`, with `zero()`, `min_value()`,
   `max_value()`, `is_zero`, `is_one`, the operators, `FromStr`, the formats and
