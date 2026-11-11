@@ -47,6 +47,10 @@ miri_groups=(
   "2 integer::tests::"
   "3 integer::"
   "3 decimal::"
+  # On a 32-bit target, `int::tests::` runs out of addresses when its process also runs these two
+  # modules, so each runs in a process of its own.
+  "4 int::tests::float::"
+  "4 int::tests::limbs::"
   "4 int::tests::"
   "3 int::half_limbs::"
   "5 int::unsigned::b64::"
