@@ -47,6 +47,8 @@ mod nonzero;
 mod cast;
 mod compare;
 mod convert;
+#[cfg(feature = "serde")]
+mod serde;
 mod text;
 mod traits;
 

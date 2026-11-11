@@ -2308,5 +2308,7 @@ mod limbs;
 mod nonzero;
 mod nonzero_casts;
 mod powers;
+#[cfg(feature = "serde")]
+mod serde;
 mod shifts;
 mod text;

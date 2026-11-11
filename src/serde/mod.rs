@@ -218,6 +218,8 @@ macro_rules! reject_inputs {
   )+};
 }
 
+pub(crate) use reject_inputs;
+
 impl<'de, T> Visitor<'de> for TextVisitor<'_, T>
 where
   T: FromStr<Err = ParseError>,
