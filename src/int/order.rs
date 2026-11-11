@@ -4,6 +4,7 @@
 use core::cmp::Ordering;
 
 /// Compares `lhs` with `rhs`, as `Ord::cmp` does.
+#[inline(always)]
 pub(crate) const fn cmp_u128(lhs: u128, rhs: u128) -> Ordering {
   if lhs < rhs {
     Ordering::Less
@@ -15,6 +16,7 @@ pub(crate) const fn cmp_u128(lhs: u128, rhs: u128) -> Ordering {
 }
 
 /// Compares `lhs` with `rhs`, as `Ord::cmp` does.
+#[inline(always)]
 pub(crate) const fn cmp_i128(lhs: i128, rhs: i128) -> Ordering {
   if lhs < rhs {
     Ordering::Less
