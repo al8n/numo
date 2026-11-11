@@ -1,5 +1,6 @@
-//! `Serialize` and `Deserialize` of the integers: the form of a value depends only on its width,
-//! its sign and its value, never on its storage.
+//! `Serialize` and `Deserialize` of the integers and the non-zero integers: the form of a value
+//! depends only on its width, its sign and its value, never on its storage, and a non-zero integer
+//! has the form of its integer, which reads zero as an error.
 //!
 //! Up to 128 bits, a value is written through the method of its class, the smallest native integer
 //! of its sign that holds the width, and above 128 bits as its decimal text, through `collect_str`,
@@ -29,13 +30,13 @@ use serde_core::{
 };
 
 use super::{
-  Int, Uint,
+  Int, NonZeroInt, NonZeroUint, Uint,
   cast::{CastSource, CheckedTarget, try_cast},
 };
 use crate::{
   int::parse_errors,
   serde::{Expected, read, reject_inputs},
-  width::{self, FitsBits, IntRepr, UintRepr},
+  width::{self, FitsBits, IntRepr, NonZeroIntRepr, NonZeroUintRepr, UintRepr},
 };
 
 /// What the defaults read, whose fixed message is `expected an integer`.
@@ -63,7 +64,8 @@ impl fmt::Display for Rejection {
   }
 }
 
-/// Writes `value` through the method of its class up to 128 bits, and as its decimal text above.
+/// Writes `value` through the method of its class up to 128 bits, and as its decimal text above. A
+/// non-zero integer lends its integer to `word` and `Display`, through `with_nonzero`.
 fn serialize_integer<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
 where
   T: CastSource + fmt::Display,
@@ -117,7 +119,8 @@ where
   })
 }
 
-/// `value` in `T`, or the error of the casts for a value outside the range of `T`.
+/// `value` in `T`, or the error of the casts for a value outside the range of `T`, and for zero
+/// into a non-zero `T`, after the range.
 fn cast<S: CastSource, T: CheckedTarget>(value: S) -> Result<T, Rejection> {
   try_cast(value).map_err(Rejection::Range)
 }
@@ -356,4 +359,37 @@ macro_rules! integer_serde {
 integer_serde! {
   Uint: UintRepr;
   Int: IntRepr;
+}
+
+/// Implements `Serialize` and `Deserialize` for [`NonZeroUint`] and [`NonZeroInt`] over every
+/// storage of their storage traits, written `Name: Repr;`, which write and read as the integer of
+/// the same value.
+macro_rules! nonzero_serde {
+  ($($name:ident: $repr:ident;)+) => {$(
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl<B: FitsBits<R::Integer>, R: $repr> Serialize for $name<B, R> {
+      /// Writes the value as the integer of the same value writes it: through the method of the
+      /// smallest native integer of its sign that holds `Bits` bits, up to 128 bits, and as its
+      /// decimal text above, in every format and every storage.
+      #[inline]
+      fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serialize_integer(self, serializer)
+      }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl<'de, B: FitsBits<R::Integer>, R: $repr> Deserialize<'de> for $name<B, R> {
+      /// Reads a value as the integer of the same width reads it, then rejects zero, after every
+      /// error of the integer, with std's error of zero for a non-zero integer.
+      #[inline]
+      fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserialize_integer(deserializer)
+      }
+    }
+  )+};
+}
+
+nonzero_serde! {
+  NonZeroUint: NonZeroUintRepr;
+  NonZeroInt: NonZeroIntRepr;
 }

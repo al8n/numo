@@ -1,18 +1,24 @@
-//! The serde of `Uint` and `Int`. Up to 128 bits, the form of each class against the native integer
-//! of the class, in JSON and postcard and in every family of storages, and the request of each
-//! class in each column through a stand-in format that records it; serde_test's tokens in both
-//! configurations; every integer and every string, checked against the width; the rejections, with
-//! the fixed message, std's texts and the errors of a format that pass through; the decimal text
-//! above 128 bits; serde_json's number token; csv's inference, a human-readable format without
-//! `deserialize_any`, serde's buffer of untagged enums, flattened structs and internally tagged
-//! enums, and JSON map keys; zero bits and one signed bit; and code generic over the storage traits
-//! or over the width alone.
+//! The serde of `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`. Up to 128 bits, the form of each
+//! class against the native integer of the class, in JSON and postcard and in every family of
+//! storages, and the request of each class in each column through a stand-in format that records
+//! it; serde_test's tokens in both configurations; every integer and every string, checked against
+//! the width; the rejections, with the fixed message, std's texts and the errors of a format that
+//! pass through; the decimal text above 128 bits; serde_json's number token; csv's inference, a
+//! human-readable format without `deserialize_any`, serde's buffer of untagged enums, flattened
+//! structs and internally tagged enums, and JSON map keys; zero bits and one signed bit; the
+//! non-zero integers, written and read as their integers with zero rejected; and code generic over
+//! the storage traits or over the width alone.
 //!
 //! Every expected text of std comes from std at run time. Each width group or family of storages
 //! checks in a function of its own, and each generic check is `#[inline(never)]`, so that a frame
 //! holds the values of one type alone.
 
-use core::{any::type_name, fmt::Display, num::ParseIntError, str::FromStr};
+use core::{
+  any::type_name,
+  fmt::Display,
+  num::{NonZero, ParseIntError},
+  str::FromStr,
+};
 use std::collections::BTreeMap;
 
 use serde_core::{
@@ -27,7 +33,10 @@ use serde_test::{
 use typenum::{U12, U15, U17, U31, U33, U192, U8192, U16384, U65536};
 
 use super::*;
-use crate::{CheckedCastFrom, IntRepr, UintRepr, i0, i1, u0};
+use crate::{
+  CheckedCastFrom, IntRepr, NonZeroInt, NonZeroIntRepr, NonZeroUint, NonZeroUintRepr, UintRepr, i0,
+  i1, u0,
+};
 
 /// The fixed message of the defaults: the error of every input that is neither an integer nor a
 /// string.
@@ -1528,6 +1537,182 @@ fn zero_bits_and_one_signed_bit() {
   assert_eq!(postcard::to_stdvec(&i1::new(-1)).unwrap(), [255]);
 }
 
+/// The values of [`samples`] but zero, as the native integer `N` of their class.
+fn nonzero_natives<N: Native>(bits: u32, signed: bool) -> Vec<N> {
+  samples(bits, signed)
+    .into_iter()
+    .filter(|&pattern| pattern != 0)
+    .map(N::of_pattern)
+    .collect()
+}
+
+/// Checks the forms of `NonZeroUint` and `NonZeroInt` of `$bits` bits, the width `$width`, whose
+/// class has the native integers `$unsigned` and `$signed`, with [`written_as_native`] in each pair
+/// of storages of `$storages`, written `unsigned, signed;`, at the values of [`nonzero_natives`].
+macro_rules! nonzero_forms_agree {
+  ($width:ty, $bits:literal, $unsigned:ident, $signed:ident; $($uint:ty, $int:ty);+ $(;)?) => {{
+    let unsigned: Vec<$unsigned> = nonzero_natives($bits, false);
+    let signed: Vec<$signed> = nonzero_natives($bits, true);
+    $(
+      written_as_native::<NonZeroUint<$width, $uint>, $unsigned>(&unsigned);
+      written_as_native::<NonZeroInt<$width, $int>, $signed>(&signed);
+    )+
+  }};
+}
+
+/// The non-zero integers of one to 64 bits, in the native `NonZero` of their storage and in an
+/// array of each type of limb.
+#[inline(never)]
+fn nonzero_forms_up_to_64_bits() {
+  nonzero_forms_agree!(U1, 1, u8, i8; NonZero<u8>, NonZero<i8>; [u16; 1], [u16; 1]);
+  nonzero_forms_agree!(U7, 7, u8, i8; NonZero<u8>, NonZero<i8>; [u64; 1], [u64; 1]);
+  nonzero_forms_agree!(U16, 16, u16, i16; NonZero<u16>, NonZero<i16>; [u8; 2], [u8; 2]);
+  nonzero_forms_agree!(U33, 33, u64, i64; NonZero<u64>, NonZero<i64>; [u32; 2], [u32; 2]);
+  nonzero_forms_agree!(U64, 64, u64, i64; NonZero<u64>, NonZero<i64>; [u128; 1], [u128; 1]);
+}
+
+/// The non-zero integers of 65 and 128 bits, in the native `NonZero` of their storage and in an
+/// array.
+#[inline(never)]
+fn nonzero_forms_of_the_128_bit_class() {
+  nonzero_forms_agree!(U65, 65, u128, i128; NonZero<u128>, NonZero<i128>; [u8; 9], [u8; 9]);
+  nonzero_forms_agree!(U128, 128, u128, i128; NonZero<u128>, NonZero<i128>; [u64; 2], [u64; 2]);
+}
+
+/// Checks that the non-zero integer `T`, above 128 bits, writes the value of each pattern of
+/// `patterns` but zero as the integer `I` of the same value writes it, and reads it back.
+#[inline(never)]
+fn nonzero_written_as_text<T, I>(patterns: &[Vec<bool>])
+where
+  T: CheckedCastFrom<I> + Serialize + DeserializeOwned + PartialEq + Debug,
+  I: Patterned + Serialize,
+{
+  let name = type_name::<T>();
+  for p in patterns {
+    let integer = I::from_pattern(p);
+    let Some(value) = T::checked_cast_from(integer) else {
+      continue;
+    };
+    let json = serde_json::to_string(&integer).unwrap();
+    let bytes = postcard::to_stdvec(&integer).unwrap();
+    assert_eq!(serde_json::to_string(&value).unwrap(), json, "{name}");
+    assert_eq!(postcard::to_stdvec(&value).unwrap(), bytes, "{name}");
+    assert_eq!(
+      serde_json::from_str::<T>(&json).unwrap(),
+      value,
+      "{json} into {name}"
+    );
+    assert_eq!(
+      postcard::from_bytes::<T>(&bytes).unwrap(),
+      value,
+      "{json} into {name}"
+    );
+  }
+}
+
+/// The non-zero integers of 129 and 256 bits in limbs of 64, 8, 32 and 128 bits.
+#[inline(never)]
+fn nonzero_texts() {
+  let patterns = text_patterns::<3>(129);
+  nonzero_written_as_text::<NonZeroUint<U129>, Uint<U129>>(&patterns);
+  nonzero_written_as_text::<NonZeroInt<U129, [u8; 17]>, Int<U129, [u8; 17]>>(&patterns);
+  let patterns = text_patterns::<4>(256);
+  nonzero_written_as_text::<NonZeroUint<U256, [u32; 8]>, Uint<U256, [u32; 8]>>(&patterns);
+  nonzero_written_as_text::<NonZeroInt<U256, [u128; 2]>, Int<U256, [u128; 2]>>(&patterns);
+}
+
+/// The text of std's error of a conversion of zero into a non-zero integer.
+fn zero_of_conversion() -> String {
+  NonZero::<u8>::try_from(0u8).unwrap_err().to_string()
+}
+
+/// Asserts that the non-zero integer `T` rejects zero on every path with std's error of zero: the
+/// number zero from serde's deserializer of each native integer and from JSON, with the text of a
+/// conversion, and the texts of zero from serde's deserializer of a string, and from JSON if
+/// `json_strings`, with the text of the parser; `"-0"` too for a signed `T`.
+#[inline(never)]
+fn rejects_zero<T: DeserializeOwned + Debug>(signed: bool, json_strings: bool) {
+  let name = type_name::<T>();
+  let number = Number::NonNegative(0);
+  let results = [
+    read_as::<T, u8>(number),
+    read_as::<T, u64>(number),
+    read_as::<T, u128>(number),
+    read_as::<T, i8>(number),
+    read_as::<T, i64>(number),
+    read_as::<T, i128>(number),
+  ];
+  for result in results.into_iter().flatten() {
+    assert_eq!(result.unwrap_err(), zero_of_conversion(), "{name}");
+  }
+  let error = serde_json::from_str::<T>("0").unwrap_err();
+  assert_eq!(json_message(&error), zero_of_conversion(), "{name}");
+  let zero_of_parser = parse_error::<NonZero<u8>>("0");
+  let texts = if signed {
+    &["0", "00", "+0", "-0"][..]
+  } else {
+    &["0", "00", "+0"][..]
+  };
+  for &text in texts {
+    let error: de::value::Error = T::deserialize(text.into_deserializer()).unwrap_err();
+    assert_eq!(error.to_string(), zero_of_parser, "{text:?} into {name}");
+    if json_strings {
+      let error = serde_json::from_str::<T>(&format!("\"{text}\"")).unwrap_err();
+      assert_eq!(json_message(&error), zero_of_parser, "{text:?} into {name}");
+    }
+  }
+}
+
+/// The non-zero integers are written as their integers, at every class and in each family of
+/// storages, and read as them, after which zero is rejected with std's error of zero on the paths
+/// of a number, of a string and of JSON, after every error of the integer: one signed bit reads -1
+/// alone, and zero bits read nothing.
+#[test]
+fn non_zero_integers_are_written_and_read_as_their_integers() {
+  nonzero_forms_up_to_64_bits();
+  nonzero_forms_of_the_128_bit_class();
+  nonzero_texts();
+  rejects_zero::<NonZeroUint<U7>>(false, true);
+  rejects_zero::<NonZeroInt<U7, [u8; 1]>>(true, true);
+  rejects_zero::<NonZeroUint<U100>>(false, false);
+  rejects_zero::<NonZeroInt<U128, [u32; 4]>>(true, false);
+  rejects_zero::<NonZeroUint<U256>>(false, true);
+  rejects_zero::<NonZeroInt<U200, [u8; 25]>>(true, true);
+  rejects_zero::<NonZeroUint<U0>>(false, true);
+  rejects_zero::<NonZeroInt<U0>>(true, true);
+  let message = |json: &str| {
+    let error = serde_json::from_str::<NonZeroUint<U7>>(json).unwrap_err();
+    json_message(&error)
+  };
+  assert_eq!(message("128"), too_large());
+  assert_eq!(message("\"128\""), parse_error::<u8>("256"));
+  assert_eq!(message("\"-0\""), parse_error::<u8>("-0"));
+  let minus_one = NonZeroInt::<U1>::new(i1::new(-1)).unwrap();
+  assert_eq!(
+    serde_json::from_str::<NonZeroInt<U1>>("-1").unwrap(),
+    minus_one
+  );
+  assert_eq!(
+    serde_json::from_str::<NonZeroInt<U1>>("\"-1\"").unwrap(),
+    minus_one
+  );
+  let message = |json: &str| {
+    let error = serde_json::from_str::<NonZeroInt<U1>>(json).unwrap_err();
+    json_message(&error)
+  };
+  assert_eq!(message("1"), too_large());
+  assert_eq!(message("-2"), too_small());
+  assert_eq!(message("\"1\""), parse_error::<u8>("256"));
+  let message = |json: &str| {
+    let error = serde_json::from_str::<NonZeroUint<U0>>(json).unwrap_err();
+    json_message(&error)
+  };
+  assert_eq!(message("1"), too_large());
+  assert_eq!(message("-1"), too_small());
+  assert_eq!(message("\"1\""), parse_error::<u8>("256"));
+  assert_eq!(message("\"-1\""), parse_error::<u8>("-1"));
+}
+
 /// The JSON text and the postcard bytes of `value`, and the values read back from them, in code
 /// that knows only the storage traits of `Uint`.
 #[inline(never)]
@@ -1558,6 +1743,51 @@ where
   (json, bytes, from_json, from_bytes)
 }
 
+/// The JSON text and the postcard bytes of `value`, and the values read back from them, in code
+/// that knows only the storage traits of `NonZeroUint`.
+#[inline(never)]
+fn forms_over_nonzero_uint_storage<B, R>(
+  value: &NonZeroUint<B, R>,
+) -> (String, Vec<u8>, NonZeroUint<B, R>, NonZeroUint<B, R>)
+where
+  B: FitsBits<R::Integer>,
+  R: NonZeroUintRepr,
+{
+  let json = serde_json::to_string(value).unwrap();
+  let bytes = postcard::to_stdvec(value).unwrap();
+  let from_json = serde_json::from_str(&json).unwrap();
+  let from_bytes = postcard::from_bytes(&bytes).unwrap();
+  (json, bytes, from_json, from_bytes)
+}
+
+/// The JSON text and the postcard bytes of `value`, and the values read back from them, in code
+/// that knows only the storage traits of `NonZeroInt`.
+#[inline(never)]
+fn forms_over_nonzero_int_storage<B, R>(
+  value: &NonZeroInt<B, R>,
+) -> (String, Vec<u8>, NonZeroInt<B, R>, NonZeroInt<B, R>)
+where
+  B: FitsBits<R::Integer>,
+  R: NonZeroIntRepr,
+{
+  let json = serde_json::to_string(value).unwrap();
+  let bytes = postcard::to_stdvec(value).unwrap();
+  let from_json = serde_json::from_str(&json).unwrap();
+  let from_bytes = postcard::from_bytes(&bytes).unwrap();
+  (json, bytes, from_json, from_bytes)
+}
+
+/// What `NonZeroUint<B>` and `NonZeroInt<B>` read from the JSON number 1, written back, or the
+/// message of the error, in code that knows only that `B` is a width.
+#[inline(never)]
+fn nonzero_ones_over_the_width<B: BitWidth>() -> [Result<String, String>; 2] {
+  let unsigned =
+    serde_json::from_str::<NonZeroUint<B>>("1").map(|one| serde_json::to_string(&one).unwrap());
+  let signed =
+    serde_json::from_str::<NonZeroInt<B>>("1").map(|one| serde_json::to_string(&one).unwrap());
+  [unsigned, signed].map(|result| result.map_err(|error| json_message(&error)))
+}
+
 /// The JSON texts of the largest `Uint<B>` and of the smallest `Int<B>`, which read back as the
 /// same values, in code that knows only that `B` is a width.
 #[inline(never)]
@@ -1586,8 +1816,9 @@ macro_rules! texts_over_the_width {
 }
 
 /// The impls need only the bounds of the storage traits, `B: FitsBits<R>` with `R: UintRepr` or
-/// `R: IntRepr`, and the default storages only `B: BitWidth`: code generic over them writes and
-/// reads what the concrete types do.
+/// `R: IntRepr`, and `B: FitsBits<R::Integer>` with `R: NonZeroUintRepr` or `R: NonZeroIntRepr`,
+/// and the default storages only `B: BitWidth`: code generic over them writes and reads what the
+/// concrete types do, and the non-zero integers of zero bits read nothing.
 #[test]
 fn code_generic_over_the_storage_traits_or_the_width() {
   let (json, bytes, from_json, from_bytes) = forms_over_uint_storage(&u7::new(100));
@@ -1608,4 +1839,54 @@ fn code_generic_over_the_storage_traits_or_the_width() {
   assert_eq!(bytes, postcard::to_stdvec(&i256::MIN.to_string()).unwrap());
   assert_eq!((from_json, from_bytes), (i256::MIN, i256::MIN));
   texts_over_the_width!(U0, U1, U7, U64, U65, U100, U128, U129, U200, U1024);
+  let value = NonZeroUint::<U7>::new(u7::new(100)).unwrap();
+  let (json, bytes, from_json, from_bytes) = forms_over_nonzero_uint_storage(&value);
+  assert_eq!((json.as_str(), bytes.as_slice()), ("100", &[100][..]));
+  assert_eq!((from_json, from_bytes), (value, value));
+  let value = NonZeroUint::<U256>::new(u256::MAX).unwrap();
+  let (json, bytes, from_json, from_bytes) = forms_over_nonzero_uint_storage(&value);
+  assert_eq!(json, format!("\"{}\"", u256::MAX));
+  assert_eq!(bytes, postcard::to_stdvec(&u256::MAX.to_string()).unwrap());
+  assert_eq!((from_json, from_bytes), (value, value));
+  let value = NonZeroInt::<U12, [u8; 2]>::new(Int::<U12, [u8; 2]>::MIN).unwrap();
+  let (json, bytes, from_json, from_bytes) = forms_over_nonzero_int_storage(&value);
+  assert_eq!(json, serde_json::to_string(&-2048i16).unwrap());
+  assert_eq!(bytes, postcard::to_stdvec(&-2048i16).unwrap());
+  assert_eq!((from_json, from_bytes), (value, value));
+  let (one, quoted) = (Ok("1".to_string()), Ok("\"1\"".to_string()));
+  let above = Err(too_large());
+  assert_eq!(
+    nonzero_ones_over_the_width::<U0>(),
+    [above.clone(), above.clone()]
+  );
+  assert_eq!(nonzero_ones_over_the_width::<U1>(), [one.clone(), above]);
+  assert_eq!(
+    nonzero_ones_over_the_width::<U7>(),
+    [one.clone(), one.clone()]
+  );
+  assert_eq!(
+    nonzero_ones_over_the_width::<U64>(),
+    [one.clone(), one.clone()]
+  );
+  assert_eq!(
+    nonzero_ones_over_the_width::<U65>(),
+    [one.clone(), one.clone()]
+  );
+  assert_eq!(
+    nonzero_ones_over_the_width::<U100>(),
+    [one.clone(), one.clone()]
+  );
+  assert_eq!(nonzero_ones_over_the_width::<U128>(), [one.clone(), one]);
+  assert_eq!(
+    nonzero_ones_over_the_width::<U129>(),
+    [quoted.clone(), quoted.clone()]
+  );
+  assert_eq!(
+    nonzero_ones_over_the_width::<U200>(),
+    [quoted.clone(), quoted.clone()]
+  );
+  assert_eq!(
+    nonzero_ones_over_the_width::<U1024>(),
+    [quoted.clone(), quoted]
+  );
 }
