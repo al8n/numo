@@ -127,6 +127,20 @@ FEATURES
   significant first, in two's complement for `Int`, up to 8192 bits; `numo::serde::ruint` writes
   the form of ruint's `Uint`, its hexadecimal text in a human-readable format and its big-endian
   bytes in another, and reads everything that ruint 1.21 reads.
+- Heap storages, with the `std` feature or the `alloc` feature: `Uint`, `Int`, `NonZeroUint` and
+  `NonZeroInt` in a `Box<[L; N]>`, for limbs `L` from `u8` to `u128`, at every width that the array
+  `[L; N]` holds, such as `Uint<U4096, Box<[u64; 64]>>`. The integer has the size of a pointer, is
+  not `Copy`, and has no constants and no `const fn`s: its API is the traits, with
+  `FixedInteger::zero`, `min_value` and `max_value` and `IntegerOne::one` for the constants. An
+  operator on two references allocates its result, a compound assignment of `Uint` or `Int`
+  computes in place, and an operator with an owned operand stores its result in the allocation of
+  that operand, the left one of two. Each operation computes in arrays on the stack before it
+  stores, so a heap storage keeps the value off the stack and not the working space. `From` moves a
+  `Box<[L; N]>` out of an integer, and into one whose width fills the array, without a copy, and
+  `ArrayInteger` reads and builds the limbs. serde writes and reads a boxed integer as the inline
+  integer of its width.
+- The `std` and `alloc` features are independent, and either one gives the heap storages: `alloc`
+  gives them to a `no_std` build. With no feature the crate is `no_std` and does not allocate.
 - The `arbitrary`, `proptest` and `quickcheck` features: the `Arbitrary` trait of each crate for
   `Decimal` and `RoundingMode`, for fuzzing and property tests on a target with `std`. One generator
   serves all three: an edge value one time in eight (zero, one unit in the last place, one, `MAX`,

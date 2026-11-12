@@ -133,9 +133,63 @@ mod traits;
 /// `u7::new(100)`, `u256::from_limbs(limbs)`, `Uint::<U7>::new(100)`,
 /// `Uint::<U200, [u64; 4]>::checked_from_limbs(limbs)` or `u7::from_str_radix("7f", 16)`.
 ///
+/// # Heap storages
+///
+/// With the `std` or the `alloc` feature, `Repr` can also be an array of limbs in a `Box`,
+/// `Box<[L; N]>` for limbs `L` from `u8` to `u128`, at every width that the array holds, such as
+/// `Uint<U4096, Box<[u64; 64]>>`. The integer has the size of a pointer, and so has its `Option`.
+/// It is not `Copy`, and has none of the constants and the `const fn`s of the inline storages: its
+/// API is the traits, and a method call needs its trait in scope. [`FixedInteger`] gives zero and
+/// the limits, through `zero`, `min_value` and `max_value`, [`IntegerOne`] gives one, and the
+/// traits of the arithmetic, the bits, the bytes, the text and the conversions, and the operators,
+/// work as for an inline storage, as do `BITS`, `BYTES` and the casts, which are inherent for every
+/// storage.
+///
+/// The limbs live in the allocation, and each result where its operation puts it. An operator on
+/// two references allocates its result, and an operator with an owned operand stores its result in
+/// the allocation of that operand, the left one of two, so `a + b` reuses the allocation of `a` and
+/// frees that of `b`. A compound assignment, as in `total += &a`,
+/// [`set_bit`](crate::IntegerBits::set_bit) and `clone_from` store in the allocation of their
+/// target, `clone` allocates, and the casts between the signs keep the allocation. `From` moves a
+/// `Box<[L; N]>` out of an integer, and into one whose width fills the array, without a copy, and
+/// [`ArrayInteger`] lends, copies and reads the limbs. The casts convert between an inline and a
+/// heap storage of any widths and signs, and the functions of the cast traits take a borrowed
+/// source, as in `u256::widen_from(&x)`, which copies the limbs and leaves `x` whole.
+///
+/// Each operation computes in arrays on the stack before it stores, as on the inline storage of the
+/// same width, so a heap storage keeps the value off the stack, and not the working space of an
+/// operation: the square root of a 65536-bit integer takes about 100 KiB of stack in an optimized
+/// build.
+///
+/// ```
+/// # #[cfg(any(feature = "std", feature = "alloc"))]
+/// # {
+/// use numo::{ArrayInteger, FixedInteger, Uint, typenum::U4096};
+///
+/// type U4096x64 = Uint<U4096, Box<[u64; 64]>>;
+///
+/// let (a, b) = (U4096x64::from(3u64), U4096x64::from(5u64));
+/// let mut total = <U4096x64 as FixedInteger>::zero();
+/// total += &a;
+/// total += &b;
+/// assert_eq!(total.to_string(), "8");
+///
+/// // The product of two references is a new allocation, and the sum reuses that of `a`.
+/// let product = &a * &b;
+/// let sum = a.clone() + &product;
+/// assert_eq!(sum.to_string(), "18");
+/// assert_eq!(<U4096x64 as FixedInteger>::max_value().as_limbs(), &[u64::MAX; 64]);
+///
+/// // The box moves out of the integer and back, without a copy.
+/// let limbs: Box<[u64; 64]> = sum.into();
+/// assert_eq!(limbs[0], 18);
+/// assert_eq!(U4096x64::from(limbs).to_string(), "18");
+/// # }
+/// ```
+///
 /// # Arithmetic
 ///
-/// Each storage has the arithmetic of the native unsigned integers at the width `Bits`, as
+/// Each inline storage has the arithmetic of the native unsigned integers at the width `Bits`, as
 /// `const fn`s: addition, subtraction, multiplication, negation, division, remainder and
 /// exponentiation in the `checked_*`, `wrapping_*`, `overflowing_*` and `strict_*` forms, the
 /// Euclidean division and remainder in the same four forms, the saturating addition, subtraction,
@@ -161,10 +215,11 @@ mod traits;
 /// `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the storage to inference, such as
 /// `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
 ///
-/// Each storage also has the bit operations of the native unsigned integers at the width `Bits`, as
-/// `const fn`s: the counts [`count_ones`](Self::count_ones), [`count_zeros`](Self::count_zeros),
-/// [`leading_zeros`](Self::leading_zeros), [`trailing_zeros`](Self::trailing_zeros),
-/// [`leading_ones`](Self::leading_ones) and [`trailing_ones`](Self::trailing_ones),
+/// Each inline storage also has the bit operations of the native unsigned integers at the width
+/// `Bits`, as `const fn`s: the counts [`count_ones`](Self::count_ones),
+/// [`count_zeros`](Self::count_zeros), [`leading_zeros`](Self::leading_zeros),
+/// [`trailing_zeros`](Self::trailing_zeros), [`leading_ones`](Self::leading_ones) and
+/// [`trailing_ones`](Self::trailing_ones),
 /// [`bit_width`](Self::bit_width), [`highest_one`](Self::highest_one) and
 /// [`lowest_one`](Self::lowest_one) and their isolation, such as
 /// [`isolate_highest_one`](Self::isolate_highest_one), [`is_power_of_two`](Self::is_power_of_two),
@@ -233,11 +288,11 @@ mod traits;
 ///
 /// # Text
 ///
-/// [`from_str_radix`](Self::from_str_radix), a `const fn` of each storage, and `FromStr`, which
-/// reads decimal digits, parse the text of the native `from_str_radix` at the width `Bits`: an
-/// optional `+`, then one or more ASCII digits and letters of either case below the radix, from 2
-/// to 36, and nothing else, so no whitespace, `_` or prefix such as `0x`. They return the error of
-/// the native integers, [`core::num::ParseIntError`], whose
+/// [`from_str_radix`](Self::from_str_radix), a `const fn` of each inline storage, and `FromStr`,
+/// which reads decimal digits, parse the text of the native `from_str_radix` at the width `Bits`:
+/// an optional `+`, then one or more ASCII digits and letters of either case below the radix, from
+/// 2 to 36, and nothing else, so no whitespace, `_` or prefix such as `0x`. They return the error
+/// of the native integers, [`core::num::ParseIntError`], whose
 /// [`kind`](core::num::ParseIntError::kind) is `Empty` for an empty string, `InvalidDigit` for a
 /// byte that is not a digit of the radix, a lone sign or `-`, which is no sign of `Uint`, and
 /// `PosOverflow` for digits above `MAX`. They read from the left, as the native parser does: a byte
@@ -478,8 +533,8 @@ mod traits;
 /// width; there is no direct `TryFrom` between the integers and the floats, only the one that the
 /// standard library derives from `From`, whose error is `Infallible`.
 ///
-/// The conversions from a float are `const fn`s of each storage. Three truncate the float toward
-/// zero, as the native methods do, still unstable
+/// The conversions from a float are `const fn`s of each inline storage. Three truncate the float
+/// toward zero, as the native methods do, still unstable
 /// ([#159913](https://github.com/rust-lang/rust/issues/159913)):
 /// [`checked_from_f64`](Self::checked_from_f64) returns `None` for NaN, an infinity and a truncated
 /// value outside the range of `Bits` bits, [`saturating_from_f64`](Self::saturating_from_f64)
@@ -656,7 +711,9 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// as for [`Uint`]: `Int<U24>` is `Int<U24, i32>` and `Int<U200>` is `Int<U200, [u64; 4]>`. The
 /// module [`aliases`](crate::aliases) names common widths, such as [`i7`](crate::i7) for
 /// `Int<U7, i8>` and [`i256`](crate::i256) for `Int<U256, [u64; 4]>`. The type has the size,
-/// alignment and ABI of `Repr`, and as for [`Uint`], each storage gives a distinct type.
+/// alignment and ABI of `Repr`, and as for [`Uint`], each storage gives a distinct type. With the
+/// `std` or the `alloc` feature, `Repr` can also be an array of limbs in a `Box`, as for `Uint`,
+/// whose section [Heap storages](Uint#heap-storages) applies to `Int` as well.
 ///
 /// As for [`Uint`], in a native integer [`new`](Self::new) and [`try_new`](Self::try_new) create a
 /// value and [`value`](Self::value) returns it, and in an array [`from_limbs`](Self::from_limbs)
@@ -713,7 +770,7 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 ///
 /// # Arithmetic
 ///
-/// Each storage has the arithmetic of the native signed integers at the width `Bits`, as
+/// Each inline storage has the arithmetic of the native signed integers at the width `Bits`, as
 /// `const fn`s: addition, subtraction, multiplication, negation, division, remainder and
 /// exponentiation in the `checked_*`, `wrapping_*`, `overflowing_*` and `strict_*` forms, the
 /// Euclidean division and remainder in the same four forms, the saturating addition, subtraction,
@@ -979,7 +1036,11 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// the size, alignment and call ABI of the native integer, and `None` is the bit pattern of zero,
 /// as for the native `NonZero`: `Option<NonZeroUint<U7>>` takes one byte. An array has no value
 /// that it cannot hold, so `Option` of an array storage adds a tag. Each storage gives a distinct
-/// type, as for [`Uint`].
+/// type, as for [`Uint`]. With the `std` or the `alloc` feature, `Repr` can also be an array of
+/// limbs in a `Box`, which is its own non-zero storage (see [Heap storages](Uint#heap-storages)):
+/// the niche of the pointer gives `Option` the size of a pointer, `new`, `get`, `TryFrom` and the
+/// casts between the signs move the pointer and do not allocate, and `|=` stores its result in an
+/// allocation of its own.
 ///
 /// In each storage, [`new`](Self::new) creates a value from the [`Uint`] of the same width and
 /// storage, returning `None` for zero, and [`get`](Self::get) returns it, as `From` does.
@@ -1039,7 +1100,7 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 ///
 /// # Arithmetic
 ///
-/// Each storage has the methods of the native non-zero integers at the width `Bits`, as
+/// Each inline storage has the methods of the native non-zero integers at the width `Bits`, as
 /// `const fn`s: [`leading_zeros`](Self::leading_zeros), [`trailing_zeros`](Self::trailing_zeros)
 /// and [`count_ones`](Self::count_ones), which returns a `core::num::NonZero<u32>`,
 /// [`highest_one`](Self::highest_one) and [`lowest_one`](Self::lowest_one) and their isolation,
@@ -1179,7 +1240,8 @@ pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
 /// The byte order, [`swap_bytes`](Self::swap_bytes), [`to_be`](Self::to_be),
 /// [`to_le`](Self::to_le), [`from_be`](Self::from_be) and [`from_le`](Self::from_le), is that of
 /// the [`Int`] of the same value at a width of whole bytes, as for [`NonZeroUint`]: a conversion of
-/// the value, not a layout, for an array storage.
+/// the value, not a layout, for an array storage. With the `std` or the `alloc` feature, `Repr` can
+/// also be an array of limbs in a `Box`, as for [`NonZeroUint`].
 ///
 /// # Arithmetic
 ///

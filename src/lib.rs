@@ -145,6 +145,11 @@
 //! [`FitsBits`] relates a width to the storages that hold it, [`FillsRepr`] to the storages that it
 //! fills, and [`Limbs<Bits, L>`](Limbs) names the array of limbs of type `L` that holds it.
 //!
+//! With the `std` or the `alloc` feature, the storage can also be an array of limbs in a `Box`,
+//! `Box<[L; N]>`, such as `Uint<U4096, Box<[u64; 64]>>`, which keeps the value off the stack. Such
+//! an integer is not `Copy`, and has the traits of the general layer below but not the constants
+//! and the `const fn`s (see [Heap storages](Uint#heap-storages)).
+//!
 //! Each type has the constants `BITS`, `ZERO`, `MIN` and `MAX`, and `ONE` from one bit for `Uint`
 //! and from two bits for `Int`. In a native integer, its `const fn` constructors are `new`, which
 //! panics if the value does not fit in `Bits` bits, and `try_new`, which returns [`TryNewError`]
@@ -356,8 +361,11 @@
 //!
 //! # `no_std`
 //!
-//! The crate is `no_std` and never allocates, except for the boxed iterator that the `quickcheck`
-//! feature returns from shrinking, as the `quickcheck` trait requires.
+//! The crate is `no_std` without the `std` feature, which is a default feature. The `std` and the
+//! `alloc` features are independent: either one gives the heap storages, and `alloc` gives them to
+//! a `no_std` build, through the `alloc` crate. The crate allocates only in the heap storages and
+//! in the boxed iterator that the `quickcheck` feature returns from shrinking, as the `quickcheck`
+//! trait requires, so with no feature it never allocates.
 //!
 //! # `serde`
 //!
@@ -483,8 +491,8 @@
 //! # }
 //! ```
 //!
-//! The three frameworks use `std`, so these features need a target that has it; the code of this
-//! crate stays `no_std`.
+//! The three frameworks use `std`, so these features need a target that has it, and none of them
+//! turns on the `std` or the `alloc` feature of this crate.
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
