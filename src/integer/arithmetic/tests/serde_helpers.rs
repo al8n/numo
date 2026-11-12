@@ -4,10 +4,11 @@
 //! string, checked against the width, reads where the defaults do not, and rejects every other
 //! input with its fixed message. `quantity` writes the QUANTITY of the unsigned integers and reads
 //! it as go-ethereum's `hexutil` decodes a number, with the message of each rule of its grammar
-//! and the range checked without forming the value. The leaf `optional` of each helper writes and
-//! reads `None` and `Some` in JSON and postcard, a missing field with and without `default`, `null`
-//! through serde's buffer and an empty csv field; and each helper reads in untagged enums and
-//! flattened structs.
+//! and the range checked without forming the value. `fixed_hex` writes two digits for each byte of
+//! the width, the pattern of the bits of a negative `Int`, and reads that pattern back, with the
+//! message of each rule. The leaf `optional` of each helper writes and reads `None` and `Some` in
+//! JSON and postcard, a missing field with and without `default`, `null` through serde's buffer and
+//! an empty csv field; and each helper reads in untagged enums and flattened structs.
 //!
 //! Every expected text of std comes from std at run time. Each width group or family of storages
 //! checks in a function of its own, and each generic check is `#[inline(never)]`, so that a frame
@@ -25,7 +26,7 @@ use serde_core::{
 };
 use serde_json::error::Category;
 use serde_test::{Token, assert_de_tokens, assert_de_tokens_error, assert_tokens};
-use typenum::{U4, U12, U15, U17, U31, U33, U192, U8192, U16384, U65536};
+use typenum::{Diff, U4, U12, U15, U17, U31, U33, U192, U8192, U16384, U65536, U262144};
 
 use super::{
   serde::{
@@ -35,9 +36,10 @@ use super::{
   *,
 };
 use crate::{
-  CheckedCastFrom, NonZeroInt, NonZeroUint,
+  CheckedCastFrom, NonZeroInt, NonZeroUint, i0, i1,
   serde::{
     decimal::{self, DecimalString},
+    fixed_hex::{self, FixedHex},
     quantity::{self, Quantity},
   },
   u0,
@@ -108,6 +110,12 @@ containers!(
   with_quantity: Quantity,
   "crate::serde::quantity::required",
   "crate::serde::quantity::optional"
+);
+
+containers!(
+  with_fixed_hex: FixedHex,
+  "crate::serde::fixed_hex::required",
+  "crate::serde::fixed_hex::optional"
 );
 
 /// An untagged enum of `C`, which serde buffers to try each variant.
@@ -1070,6 +1078,442 @@ fn quantity_in_options_and_serde_buffer() {
       result,
       Ok(with_quantity::Field {
         value: Uint::<U100>::new(255)
+      })
+    );
+  }
+}
+
+/// The fixed message of `fixed_hex`.
+const FIXED_HEX: &str = "expected a hexadecimal string";
+
+/// The message of `fixed_hex` for a text without the prefix `0x` or `0X`.
+const NO_HEX_PREFIX: &str = "hexadecimal string without the 0x prefix";
+
+/// The text that `fixed_hex` writes for the value of `bits` bits, at most 128, whose two's
+/// complement in 128 bits is `pattern`: `0x` and two digits for each byte of the width, the bits of
+/// the width zero-padded.
+fn fixed_hex_text(pattern: u128, bits: u32) -> String {
+  let digits = 2 * bits.div_ceil(8) as usize;
+  let pattern = if bits == 128 {
+    pattern
+  } else {
+    pattern & ((1 << bits) - 1)
+  };
+  if digits == 0 {
+    "0x".to_string()
+  } else {
+    format!("0x{pattern:0digits$x}")
+  }
+}
+
+/// The text that `fixed_hex` writes for the value whose bits, bit 0 first, are `pattern`: `0x` and
+/// two digits for each byte of the width, the most significant first.
+fn fixed_hex_text_of_pattern(pattern: &[bool]) -> String {
+  let digits = 2 * pattern.len().div_ceil(8);
+  let mut text = String::from("0x");
+  for k in (0..digits).rev() {
+    let digit = (0..4).fold(0, |digit, i| {
+      digit | u32::from(pattern.get(4 * k + i).copied().unwrap_or(false)) << i
+    });
+    text.push(char::from_digit(digit, 16).expect("a hexadecimal digit"));
+  }
+  text
+}
+
+/// Checks that `T` writes `value` with `fixed_hex` as the string `text`, in JSON and in postcard,
+/// and reads it back from both; and that `text` is that of `{:#0w$x}`, with `w` its length, where a
+/// formatting width holds `w`, up to `u16::MAX`, and but at zero bits, where `{:#02x}` writes a
+/// digit and the helper none.
+#[inline(never)]
+fn fixed_hex_round_trip<T>(value: T, text: &str)
+where
+  T: FixedHex + LowerHex + PartialEq + Debug,
+{
+  let name = type_name::<T>();
+  let width = text.len();
+  if (3..=usize::from(u16::MAX)).contains(&width) {
+    assert_eq!(format!("{value:#0width$x}"), text, "{name}");
+  }
+  let value = with_fixed_hex::Required(value);
+  let json = serde_json::to_string(&value).unwrap();
+  assert_eq!(json, format!("\"{text}\""), "{name}");
+  let bytes = postcard::to_stdvec(&value).unwrap();
+  assert_eq!(
+    bytes,
+    postcard::to_stdvec(text).unwrap(),
+    "{text} in {name}"
+  );
+  let from_json = serde_json::from_str::<with_fixed_hex::Required<T>>(&json).unwrap();
+  assert_eq!(from_json, value, "{text} in {name}");
+  let from_bytes = postcard::from_bytes::<with_fixed_hex::Required<T>>(&bytes).unwrap();
+  assert_eq!(from_bytes, value, "{text} in {name}");
+}
+
+/// Checks [`fixed_hex_round_trip`] at the value in `T`, of `bits` bits, at most 128, of each
+/// pattern of [`helper_samples`], read as the native integer `N` of the class of the width, whose
+/// text has the bits of the pattern; a non-zero `T` holds every value but zero.
+#[inline(never)]
+fn fixed_hex_round_trips<T, N>(bits: u32, signed: bool)
+where
+  T: CheckedCastFrom<N> + FixedHex + LowerHex + PartialEq + Debug,
+  N: Native,
+{
+  for pattern in helper_samples(bits, signed) {
+    match T::checked_cast_from(N::of_pattern(pattern)) {
+      Some(value) => fixed_hex_round_trip(value, &fixed_hex_text(pattern, bits)),
+      None => assert_eq!(pattern, 0, "{}", type_name::<T>()),
+    }
+  }
+}
+
+/// Checks [`fixed_hex_round_trips`] at the four integer types of `$bits` bits, the width `$width`,
+/// in the default storage, whose class has the native integers `$unsigned` and `$signed`.
+macro_rules! fixed_hexes {
+  ($($width:ty, $bits:literal: $unsigned:ident, $signed:ident;)+) => {$(
+    fixed_hex_round_trips::<Uint<$width>, $unsigned>($bits, false);
+    fixed_hex_round_trips::<Int<$width>, $signed>($bits, true);
+    fixed_hex_round_trips::<NonZeroUint<$width>, $unsigned>($bits, false);
+    fixed_hex_round_trips::<NonZeroInt<$width>, $signed>($bits, true);
+  )+};
+}
+
+/// The text of `fixed_hex` at the four integer types of 0, 1, 4, 7, 8, 12, 16, 64, 65, 100 and 128
+/// bits, in the default storage, and at four of them in arrays.
+#[inline(never)]
+fn fixed_hexes_up_to_128_bits() {
+  fixed_hexes! {
+    U0, 0: u8, i8;
+    U1, 1: u8, i8;
+    U4, 4: u8, i8;
+    U7, 7: u8, i8;
+    U8, 8: u8, i8;
+    U12, 12: u16, i16;
+    U16, 16: u16, i16;
+    U64, 64: u64, i64;
+    U65, 65: u128, i128;
+    U100, 100: u128, i128;
+    U128, 128: u128, i128;
+  }
+  fixed_hex_round_trips::<Uint<U12, [u8; 2]>, u16>(12, false);
+  fixed_hex_round_trips::<Int<U12, [u8; 2]>, i16>(12, true);
+  fixed_hex_round_trips::<Int<U65, [u64; 2]>, i128>(65, true);
+  fixed_hex_round_trips::<NonZeroInt<U100, [u32; 4]>, i128>(100, true);
+}
+
+/// Checks [`fixed_hex_round_trip`] at the value in `T`, above 128 bits, of each pattern of
+/// `patterns`, read as the integer `I` of the same width, whose text has the bits of the pattern; a
+/// non-zero `T` holds every value but zero.
+#[inline(never)]
+fn fixed_hex_texts<T, I>(patterns: &[Vec<bool>])
+where
+  T: CheckedCastFrom<I> + FixedHex + LowerHex + PartialEq + Debug,
+  I: Patterned,
+{
+  for p in patterns {
+    match T::checked_cast_from(I::from_pattern(p)) {
+      Some(value) => fixed_hex_round_trip(value, &fixed_hex_text_of_pattern(p)),
+      None => assert!(p.iter().all(|&bit| !bit), "{}", type_name::<T>()),
+    }
+  }
+}
+
+/// Checks [`fixed_hex_texts`] at the four integer types of `$bits` bits, the width `$width`, above
+/// 128 bits, in the default storage, at the patterns of `text_patterns` in `$words` words of 64
+/// bits.
+macro_rules! fixed_hex_texts {
+  ($($width:ty, $bits:literal, $words:literal;)+) => {$({
+    let patterns = text_patterns::<$words>($bits);
+    fixed_hex_texts::<Uint<$width>, Uint<$width>>(&patterns);
+    fixed_hex_texts::<Int<$width>, Int<$width>>(&patterns);
+    fixed_hex_texts::<NonZeroUint<$width>, Uint<$width>>(&patterns);
+    fixed_hex_texts::<NonZeroInt<$width>, Int<$width>>(&patterns);
+  })+};
+}
+
+/// The text of `fixed_hex` at the four integer types of 129, 256 and 1024 bits.
+#[inline(never)]
+fn fixed_hexes_above_128_bits() {
+  fixed_hex_texts! {
+    U129, 129, 3;
+    U256, 256, 4;
+    U1024, 1024, 16;
+  }
+}
+
+/// The text of `fixed_hex` at the four integer types of 16384 bits, in an optimized build.
+#[inline(never)]
+fn fixed_hexes_of_16384_bits() {
+  fixed_hex_texts! {
+    U16384, 16384, 256;
+  }
+}
+
+/// What `T` reads with `fixed_hex` from the JSON string `text`, or the message of the error.
+#[inline(never)]
+fn fixed_hex_from<T: FixedHex>(text: &str) -> Result<T, String> {
+  serde_json::from_str::<with_fixed_hex::Required<T>>(&format!("\"{text}\""))
+    .map(|with_fixed_hex::Required(value)| value)
+    .map_err(|error| json_message(&error))
+}
+
+/// Asserts that the non-zero `T` rejects with `fixed_hex` `zero`, its text of zero, with std's text
+/// of zero.
+#[inline(never)]
+fn fixed_hex_rejects_zero<T: FixedHex + Debug>(zero: &str) {
+  let error = fixed_hex_from::<T>(zero).unwrap_err();
+  let expected = parse_error::<NonZero<u8>>("0");
+  assert_eq!(error, expected, "{zero} into {}", type_name::<T>());
+}
+
+/// Checks [`fixed_hex_round_trip`] at the smallest value, zero, one and the largest value of each
+/// native integer `$native`, and at the smallest and the largest value of its `NonZero`, which
+/// rejects zero.
+macro_rules! native_fixed_hexes {
+  ($($native:ident),+ $(,)?) => {$(
+    for value in [$native::MIN, 0, 1, $native::MAX] {
+      fixed_hex_round_trip(value, &fixed_hex_text(value as u128, $native::BITS));
+    }
+    for value in [NonZero::<$native>::MIN, NonZero::<$native>::MAX] {
+      fixed_hex_round_trip(value, &fixed_hex_text(value.get() as u128, $native::BITS));
+    }
+    fixed_hex_rejects_zero::<NonZero<$native>>(&fixed_hex_text(0, $native::BITS));
+  )+};
+}
+
+/// The text of `fixed_hex` at the native integers and their `NonZero`.
+#[inline(never)]
+fn fixed_hexes_of_the_native_integers() {
+  native_fixed_hexes!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+}
+
+/// `fixed_hex` writes `0x` and two lowercase hexadecimal digits for each byte of the width, the
+/// `Bits` bits of the value zero-padded, as a string in JSON and in postcard, and reads it back
+/// from both: at the four integer types of 0, 1, 4, 7, 8, 12, 16, 64, 65, 100, 128, 129, 256 and
+/// 1024 bits, in an optimized build also 16384 bits, and at the native integers and their
+/// `NonZero`. A negative `Int` writes the pattern of its bits, so that `Int<U12>` writes -1 as
+/// `0x0fff`; zero bits write `0x`; and a non-zero type rejects zero.
+#[test]
+fn fixed_hex_writes_two_digits_for_each_byte_of_the_width() {
+  fixed_hexes_up_to_128_bits();
+  fixed_hexes_above_128_bits();
+  if tier().is_full() {
+    fixed_hexes_of_16384_bits();
+  }
+  fixed_hexes_of_the_native_integers();
+  fixed_hex_round_trip(Int::<U12>::new(-1), "0x0fff");
+  fixed_hex_round_trip(Int::<U12>::MIN, "0x0800");
+  fixed_hex_round_trip(Uint::<U12>::MAX, "0x0fff");
+  fixed_hex_round_trip(i1::new(-1), "0x01");
+  fixed_hex_round_trip(-1i64, &format!("0x{}", "f".repeat(16)));
+  fixed_hex_round_trip(255u16, "0x00ff");
+  fixed_hex_round_trip(u0::ZERO, "0x");
+  fixed_hex_round_trip(i0::ZERO, "0x");
+  fixed_hex_rejects_zero::<NonZeroUint<U12>>("0x0000");
+  fixed_hex_rejects_zero::<NonZeroInt<U0>>("0x");
+  fixed_hex_rejects_zero::<NonZeroInt<U256, [u8; 32]>>(&format!("0x{}", "0".repeat(64)));
+}
+
+/// `fixed_hex` at `Uint` of 262128 bits, the widest width whose text a formatting width holds, in
+/// 4096 limbs of 64 bits: zero and the largest value.
+#[inline(never)]
+fn fixed_hex_of_262128_bits() {
+  type Wide = Uint<Diff<U262144, U16>, [u64; 4096]>;
+  fixed_hex_round_trip(Wide::ZERO, &format!("0x{}", "0".repeat(65532)));
+  fixed_hex_round_trip(Wide::MAX, &format!("0x{}", "f".repeat(65532)));
+}
+
+/// `fixed_hex` at `Uint` of 262129 bits, whose first byte holds one bit, in 4096 limbs of 64 bits:
+/// zero and the largest value.
+#[inline(never)]
+fn fixed_hex_of_262129_bits() {
+  type Wide = Uint<Diff<U262144, U15>, [u64; 4096]>;
+  fixed_hex_round_trip(Wide::ZERO, &format!("0x{}", "0".repeat(65534)));
+  fixed_hex_round_trip(Wide::MAX, &format!("0x01{}", "f".repeat(65532)));
+}
+
+/// `fixed_hex` at `Uint` of 262144 bits, in 4096 limbs of 64 bits: zero and the largest value.
+#[inline(never)]
+fn fixed_hex_of_262144_bits() {
+  type Wide = Uint<U262144, [u64; 4096]>;
+  fixed_hex_round_trip(Wide::ZERO, &format!("0x{}", "0".repeat(65536)));
+  fixed_hex_round_trip(Wide::MAX, &format!("0x{}", "f".repeat(65536)));
+}
+
+/// `fixed_hex` at `Int` of 262144 bits, in 4096 limbs of 64 bits: -1 and the smallest value.
+#[inline(never)]
+fn fixed_hex_of_262144_signed_bits() {
+  type Wide = Int<U262144, [u64; 4096]>;
+  let minus_one = Wide::checked_cast_from(-1i8).unwrap();
+  fixed_hex_round_trip(minus_one, &format!("0x{}", "f".repeat(65536)));
+  fixed_hex_round_trip(Wide::MIN, &format!("0x8{}", "0".repeat(65535)));
+}
+
+/// `fixed_hex` writes the digits of the words of a value itself, so that it writes and reads every
+/// width: `Uint` of 262128 bits, the widest whose text a formatting width holds and equals, and of
+/// 262129 and 262144 bits, whose text is longer than `u16::MAX`, the limit of a formatting width,
+/// at zero and the largest value, and `Int` of 262144 bits at -1 and its smallest value.
+#[test]
+fn fixed_hex_writes_widths_beyond_a_formatting_width() {
+  fixed_hex_of_262128_bits();
+  fixed_hex_of_262129_bits();
+  fixed_hex_of_262144_bits();
+  fixed_hex_of_262144_signed_bits();
+}
+
+/// `fixed_hex` reads `0x` or `0X` and exactly two hexadecimal digits of either case for each byte
+/// of the width, as the pattern of the `Bits` bits, in two's complement for `Int`; the bits of the
+/// first byte above the width are too large for both signs; and zero bits read `0x` alone.
+#[test]
+fn fixed_hex_reads_the_pattern_of_the_bits_of_the_width() {
+  assert_eq!(
+    fixed_hex_from::<Int<U12>>("0X0FFF"),
+    Ok(Int::<U12>::new(-1))
+  );
+  assert_eq!(fixed_hex_from::<Uint<U12>>("0X0FFF"), Ok(Uint::<U12>::MAX));
+  assert_eq!(fixed_hex_from::<Int<U12>>("0x07Ff"), Ok(Int::<U12>::MAX));
+  assert_eq!(fixed_hex_from::<Int<U12>>("0x0800"), Ok(Int::<U12>::MIN));
+  let too_large = parse_error::<u8>("256");
+  for text in ["0x1fff", "0xffff", "0x1000", "0xf000"] {
+    let unsigned = fixed_hex_from::<Uint<U12>>(text).unwrap_err();
+    assert_eq!(unsigned, too_large, "{text}");
+    let signed = fixed_hex_from::<Int<U12>>(text).unwrap_err();
+    assert_eq!(signed, too_large, "{text}");
+  }
+  assert_eq!(fixed_hex_from::<i1>("0x01"), Ok(i1::new(-1)));
+  assert_eq!(fixed_hex_from::<i1>("0x02"), Err(too_large.clone()));
+  assert_eq!(fixed_hex_from::<Int<U8>>("0xff"), Ok(Int::<U8>::new(-1)));
+  assert_eq!(fixed_hex_from::<i8>("0x80"), Ok(i8::MIN));
+  assert_eq!(fixed_hex_from::<Uint<U9>>("0x01ff"), Ok(Uint::<U9>::MAX));
+  assert_eq!(fixed_hex_from::<Uint<U9>>("0x0200"), Err(too_large));
+  let none = "expected 0 hexadecimal digits".to_string();
+  assert_eq!(fixed_hex_from::<u0>("0x"), Ok(u0::ZERO));
+  assert_eq!(fixed_hex_from::<i0>("0X"), Ok(i0::ZERO));
+  assert_eq!(fixed_hex_from::<u0>("0x0"), Err(none.clone()));
+  assert_eq!(fixed_hex_from::<i0>("0x00"), Err(none));
+  assert_eq!(fixed_hex_from::<u0>(""), Err(NO_HEX_PREFIX.to_string()));
+}
+
+/// Asserts that `T`, whose width has `count` hexadecimal digits, two or more, rejects with
+/// `fixed_hex` each text that breaks a rule, with the message of the first that it breaks: one and
+/// two digits fewer or more, a text without the prefix, the empty string included, and `+`, `g` or
+/// a character outside ASCII of two bytes in place of digits, while such a character in place of
+/// one digit makes a wrong count; and every input but a string with the fixed message.
+#[inline(never)]
+fn fixed_hex_rejections<T: FixedHex + Debug>(count: usize) {
+  let name = type_name::<T>();
+  let zeros = |n: usize| "0".repeat(n);
+  let wrong_count = format!("expected {count} hexadecimal digits");
+  for n in [count - 2, count - 1, count + 1, count + 2] {
+    let text = format!("0x{}", zeros(n));
+    let error = fixed_hex_from::<T>(&text).unwrap_err();
+    assert_eq!(error, wrong_count, "{text} into {name}");
+  }
+  let non_ascii = format!("0x{}\u{665}", zeros(count - 1));
+  let error = fixed_hex_from::<T>(&non_ascii).unwrap_err();
+  assert_eq!(error, wrong_count, "{name}");
+  for text in [
+    String::new(),
+    zeros(count),
+    format!("x{}", zeros(count)),
+    format!("0{}", zeros(count)),
+  ] {
+    let error = fixed_hex_from::<T>(&text).unwrap_err();
+    assert_eq!(error, NO_HEX_PREFIX, "{text:?} into {name}");
+  }
+  let invalid = parse_error::<u8>("g");
+  for text in [
+    format!("0x+{}", zeros(count - 1)),
+    format!("0x{}g", zeros(count - 1)),
+    format!("0x{}\u{665}", zeros(count - 2)),
+  ] {
+    let error = fixed_hex_from::<T>(&text).unwrap_err();
+    assert_eq!(error, invalid, "{text:?} into {name}");
+  }
+  for json in ["5", "0", "true", "null", "[]", "{}"] {
+    let error = serde_json::from_str::<with_fixed_hex::Required<T>>(json).unwrap_err();
+    assert_eq!(json_message(&error), FIXED_HEX, "{json} into {name}");
+  }
+  for token in [Token::U8(5), Token::Bool(true), Token::Bytes(b"0x05")] {
+    let tokens = [Token::NewtypeStruct { name: "Required" }, token];
+    assert_de_tokens_error::<with_fixed_hex::Required<T>>(&tokens, FIXED_HEX);
+  }
+  let read: Result<T, de::value::Error> =
+    fixed_hex::required::deserialize(5i64.into_deserializer());
+  assert_eq!(read.unwrap_err().to_string(), FIXED_HEX, "{name}");
+  let map = de::value::MapDeserializer::new([(NUMBER_TOKEN, "5")].into_iter());
+  let read: Result<T, de::value::Error> = fixed_hex::required::deserialize(map);
+  assert_eq!(read.unwrap_err().to_string(), FIXED_HEX, "{name}");
+}
+
+/// `fixed_hex` rejects each text that breaks a rule of its grammar with the message of the first
+/// that it breaks: the prefix, the number of digits, which counts the bytes of a character outside
+/// ASCII, and then a byte that is not a hexadecimal digit, with std's text of an invalid digit.
+/// Every input but a string gets the fixed message, an integer included.
+#[test]
+fn fixed_hex_rejects_each_broken_rule_with_its_message() {
+  fixed_hex_rejections::<Uint<U12>>(4);
+  fixed_hex_rejections::<Int<U12>>(4);
+  fixed_hex_rejections::<i8>(2);
+  fixed_hex_rejections::<Int<U100, [u32; 4]>>(26);
+  fixed_hex_rejections::<u256>(64);
+  fixed_hex_rejections::<NonZero<u64>>(16);
+}
+
+/// The leaf `optional` of `fixed_hex`: `None` is JSON's `null` and postcard's `[0]`, and `Some` is
+/// postcard's `[1]` followed by the text; a missing field reads as `None` with `default` and is
+/// required without it; `null` reads as `None`, also through serde's buffer; an empty csv field is
+/// `None`; and every other input gets the fixed message. The leaf `required` reads through serde's
+/// buffer, in an untagged enum and a flattened struct.
+#[test]
+fn fixed_hex_in_options_and_serde_buffer() {
+  options_round_trip(
+    with_fixed_hex::Optional::<Int<U12>>(None),
+    with_fixed_hex::Optional(Some(Int::<U12>::new(-1))),
+    "\"0x0fff\"",
+    &postcard::to_stdvec("0x0fff").unwrap(),
+  );
+  let max = format!("\"0x{}\"", "f".repeat(64));
+  option_fields(
+    [
+      with_fixed_hex::Defaulted::<u256> { value: None },
+      with_fixed_hex::Defaulted {
+        value: Some(u256::MAX),
+      },
+    ],
+    [
+      with_fixed_hex::Present::<u256> { value: None },
+      with_fixed_hex::Present {
+        value: Some(u256::MAX),
+      },
+    ],
+    &max,
+  );
+  let read: Result<Option<i8>, de::value::Error> = fixed_hex::optional::deserialize(CsvField(""));
+  assert_eq!(read.unwrap(), None);
+  let read: Result<Option<i8>, de::value::Error> =
+    fixed_hex::optional::deserialize(CsvField("0xff"));
+  assert_eq!(read.unwrap(), Some(-1));
+  for json in ["255", "true", "[]", "{}"] {
+    let error = serde_json::from_str::<with_fixed_hex::Optional<i8>>(json).unwrap_err();
+    assert_eq!(json_message(&error), FIXED_HEX, "{json}");
+  }
+  let error = serde_json::from_str::<with_fixed_hex::Optional<i8>>("\"ff\"").unwrap_err();
+  assert_eq!(json_message(&error), NO_HEX_PREFIX);
+  for result in through_the_buffer::<with_fixed_hex::Field<Int<U12>>>(r#"{"value":"0x0fff"}"#) {
+    assert_eq!(
+      result,
+      Ok(with_fixed_hex::Field {
+        value: Int::<U12>::new(-1)
+      })
+    );
+  }
+  // -1 at 100 bits: the four bits of the first byte, then twelve bytes.
+  let json = format!(r#"{{"value":"0x0f{}"}}"#, "f".repeat(24));
+  for result in through_the_buffer::<with_fixed_hex::Field<Int<U100>>>(&json) {
+    assert_eq!(
+      result,
+      Ok(with_fixed_hex::Field {
+        value: Int::<U100>::new(-1)
       })
     );
   }

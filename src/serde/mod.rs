@@ -85,6 +85,10 @@
 //!   digits without leading zeros, read as go-ethereum's `hexutil` decodes a number. Its trait
 //!   [`Quantity`](quantity::Quantity) takes `Uint`, `NonZeroUint`, the native integers from `u8` to
 //!   `u128`, and their `NonZero`.
+//! - [`fixed_hex`]: `0x` and two lowercase hexadecimal digits for each byte of the width, the
+//!   pattern of the `Bits` bits of a negative `Int`. Its trait [`FixedHex`](fixed_hex::FixedHex)
+//!   takes `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`, the native integers from `u8` to `u128`
+//!   and from `i8` to `i128`, and their `NonZero`.
 //!
 //! `required` on an `Option` field does not compile, with a note that names `optional`, and
 //! `optional` on a field that is not an `Option` is a mismatch of types. `optional` writes `None`
@@ -146,9 +150,10 @@ use crate::{
   layout::{Layout, Storage},
 };
 
-pub(crate) use sealed::{DecimalStringCore, QuantityCore};
+pub(crate) use sealed::{DecimalStringCore, FixedHexCore, QuantityCore};
 
 pub mod decimal;
+pub mod fixed_hex;
 pub mod quantity;
 #[cfg(test)]
 mod tests;
@@ -203,6 +208,7 @@ mod sealed {
   cores! {
     DecimalStringCore: decimal::DecimalString;
     QuantityCore: quantity::Quantity;
+    FixedHexCore: fixed_hex::FixedHex;
   }
 }
 

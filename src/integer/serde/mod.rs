@@ -19,11 +19,11 @@
 //!
 //! The helper modules of `numo::serde` write and read through the same paths, each with a fixed
 //! message of its own: `decimal` writes the decimal text and reads with the visitor of the
-//! defaults, without serde_json's number token; `quantity` writes the text of `{:#x}` and reads its
-//! grammar on the bytes of a string, building the value with the casts from words that it decodes
-//! from the digits, with no buffer. The sealed trait of each helper is implemented here for every
-//! type that its paths take, and its public trait for numo's integers and the native integers that
-//! it serves.
+//! defaults, without serde_json's number token; `quantity` writes the text of `{:#x}` and
+//! `fixed_hex` the digits of the words of the casts, and both read their grammars on the bytes of a
+//! string, building the value with the casts from words that they decode from the digits, with no
+//! buffer. The sealed trait of each helper is implemented here for every type that its paths take,
+//! and its public trait for numo's integers and the native integers that it serves.
 
 use core::{
   fmt,
@@ -45,8 +45,8 @@ use crate::{
   int::parse_errors,
   layout::Token,
   serde::{
-    DecimalStringCore, Expected, QuantityCore, decimal::DecimalString, quantity::Quantity, read,
-    reject_inputs,
+    DecimalStringCore, Expected, FixedHexCore, QuantityCore, decimal::DecimalString,
+    fixed_hex::FixedHex, quantity::Quantity, read, reject_inputs,
   },
   width::{self, FitsBits, IntRepr, NonZeroIntRepr, NonZeroUintRepr, UintRepr},
 };
@@ -69,6 +69,12 @@ const QUANTITY_DIGITS: &str = "hexadecimal quantity without digits";
 /// The error of a QUANTITY whose digits start with a zero, other than `0x0`.
 const QUANTITY_LEADING_ZEROS: &str = "hexadecimal quantity with leading zero digits";
 
+/// What `fixed_hex` reads, whose fixed message is `expected a hexadecimal string`.
+const FIXED_HEX: &str = "a hexadecimal string";
+
+/// The error of a hexadecimal string of fixed width without the prefix `0x` or `0X`.
+const FIXED_HEX_PREFIX: &str = "hexadecimal string without the 0x prefix";
+
 /// The key of the one entry of the map through which serde_json with its feature
 /// `arbitrary_precision` hands over a number that no 64-bit integer holds, whose value is the text
 /// of the number. It is private to serde_json: if it changes, such a map is rejected.
@@ -83,6 +89,9 @@ enum Rejection {
   /// A string that breaks a rule of the grammar of a hexadecimal helper before its digits are
   /// read, with the message of the rule.
   Text(&'static str),
+  /// A hexadecimal string of fixed width with another number of digits than its width has, which
+  /// this one is.
+  Digits(u64),
 }
 
 impl fmt::Display for Rejection {
@@ -91,6 +100,7 @@ impl fmt::Display for Rejection {
       Self::Range(error) => fmt::Display::fmt(error, f),
       Self::Parse(error) => fmt::Display::fmt(error, f),
       Self::Text(message) => f.write_str(message),
+      Self::Digits(count) => write!(f, "expected {count} hexadecimal digits"),
     }
   }
 }
@@ -766,3 +776,115 @@ helper! {
 helper_impls!(Quantity for Uint: UintRepr);
 helper_impls!(Quantity for nonzero NonZeroUint: NonZeroUintRepr);
 helper_impls!(Quantity for natives u8, u16, u32, u64, u128);
+
+/// The lowercase hexadecimal digits, by value.
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+/// The text of a value that `fixed_hex` writes: `0x` and the lowercase hexadecimal digits of its
+/// `Bits` bits, two for each byte of the width, the most significant first, read from the words of
+/// the casts, with the bits from `Bits` up as zeros, so that a negative `Int` writes the pattern of
+/// its bits, zero-padded, and zero bits write `0x`. It writes the digits itself, through a buffer
+/// on the stack, a chunk at a time, as a formatting width cannot pad the text: `core::fmt` panics
+/// on a width above `u16::MAX`, which the text of a width above 262128 bits exceeds.
+struct FixedHexText<'a, T>(&'a T);
+
+impl<T: CastSource> fmt::Display for FixedHexText<'_, T> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let bits = u64::from(T::BITS);
+    // The digits still to write, two for each byte of the width, counted in `u64`, which holds the
+    // count of every width below `2^32` bits. Digit `k` holds bits `4k` to `4k + 3`, in word
+    // `k / 16`.
+    let mut digits = 2 * bits.div_ceil(8);
+    let mut buf = [0; 64];
+    let mut len = 0;
+    f.write_str("0x")?;
+    while digits > 0 {
+      let index = (digits - 1) / 16;
+      // The bits of the word from `Bits` up count as zeros.
+      let valid = bits.saturating_sub(64 * index);
+      let mask = if valid >= 64 {
+        u64::MAX
+      } else {
+        (1 << valid) - 1
+      };
+      let word = self.0.word(usize::try_from(index).map_err(|_| fmt::Error)?) & mask;
+      while digits > 16 * index {
+        digits -= 1;
+        buf[len] = HEX_DIGITS[((word >> (4 * (digits % 16))) & 0xf) as usize];
+        len += 1;
+        if len == buf.len() {
+          f.write_str(core::str::from_utf8(&buf).map_err(|_| fmt::Error)?)?;
+          len = 0;
+        }
+      }
+    }
+    f.write_str(core::str::from_utf8(&buf[..len]).map_err(|_| fmt::Error)?)
+  }
+}
+
+/// Writes `value` as `0x` and two lowercase hexadecimal digits for each byte of its width, the text
+/// of [`FixedHexText`], through `collect_str`.
+fn serialize_fixed_hex<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: CastSource,
+  S: Serializer,
+{
+  serializer.collect_str(&FixedHexText(value))
+}
+
+/// The value in `T` of the bytes `text` of a hexadecimal string of fixed width, or the error of the
+/// first of its rules that `text` breaks, in this order: the prefix `0x` or `0X`; exactly two
+/// digits for each byte of the width of `T`; every byte a hexadecimal digit, of either case; the
+/// bits of the first byte above the width zeros, for both signs; and, for a non-zero `T`, a value
+/// that is not zero. The digits are the pattern of the `Bits` bits of the value, which the casts
+/// read in two's complement for a signed `T`.
+fn parse_fixed_hex<T: CheckedTarget>(text: &[u8]) -> Result<T, Rejection> {
+  let digits = match text {
+    [b'0', b'x' | b'X', digits @ ..] => digits,
+    _ => return Err(Rejection::Text(FIXED_HEX_PREFIX)),
+  };
+  // The digits of the width, counted in `u64`, which holds them and every length of a text, so
+  // that no count overflows and no length is cast to `u32`.
+  let count = 2 * u64::from(T::BITS.div_ceil(8));
+  if digits.len() as u64 != count {
+    return Err(Rejection::Digits(count));
+  }
+  if !digits.iter().all(|&digit| hex_digit(digit).is_some()) {
+    return Err(Rejection::Parse(parse_errors::INVALID_DIGIT));
+  }
+  // The first byte holds the bits of the width above its last whole byte, one to eight, and zeros
+  // above them. Zero bits have no digits, and so no first byte.
+  if let [high, low, ..] = digits {
+    let first = hex_digit(*high).unwrap_or(0) << 4 | hex_digit(*low).unwrap_or(0);
+    if first >> ((T::BITS - 1) % 8 + 1) != 0 {
+      return Err(Rejection::Parse(parse_errors::POS_OVERFLOW));
+    }
+  }
+  T::from_words(|index| hex_word(digits, index)).ok_or(Rejection::Parse(parse_errors::ZERO))
+}
+
+/// Asks the format for a string, which `fixed_hex` reads with [`HexVisitor`] by the grammar of
+/// [`parse_fixed_hex`].
+fn drive_fixed_hex<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget,
+  D: Deserializer<'de>,
+{
+  deserializer.deserialize_str(HexVisitor {
+    expected,
+    read: parse_fixed_hex::<T>,
+  })
+}
+
+helper! {
+  FixedHexCore, FIXED_HEX;
+  write(CastSource) with serialize_fixed_hex, FixedHexSome;
+  read(CheckedTarget) with drive_fixed_hex, FixedHexOption;
+}
+
+helper_impls!(FixedHex for Uint: UintRepr, Int: IntRepr);
+helper_impls!(FixedHex for nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
+helper_impls!(FixedHex for natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
