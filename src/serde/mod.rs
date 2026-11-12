@@ -78,7 +78,8 @@
 //!
 //! A helper is a module with two leaves, `required` for a field of an integer and `optional` for an
 //! `Option` of it, which a field names in `#[serde(with = "...")]`. Each takes numo's integers and
-//! the native integers through a sealed trait, and writes the same form in every format:
+//! the native integers through a sealed trait, and each but `ruint`, whose form is ruint's, writes
+//! the same form in every format:
 //!
 //! - [`decimal`]: the decimal text, as a string, at every width. Its trait
 //!   [`DecimalString`](decimal::DecimalString) takes `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`,
@@ -99,6 +100,11 @@
 //!   [`BeBytes`](be_bytes::BeBytes) and [`LeBytes`](le_bytes::LeBytes) take `Uint`, `Int`,
 //!   `NonZeroUint` and `NonZeroInt` of up to 8192 bits, the native integers from `u8` to `u128` and
 //!   from `i8` to `i128`, and their `NonZero`.
+//! - [`ruint`]: the form of ruint's `Uint`, which alloy's `U256` has: a QUANTITY in a
+//!   human-readable format and the bytes of the value, most significant first, in another, read as
+//!   ruint 1.21 reads it, and more. Its trait [`RuintForm`](ruint::RuintForm) takes `Uint` and
+//!   `NonZeroUint` of up to 8192 bits, the native integers from `u8` to `u128`, and their
+//!   `NonZero`.
 //!
 //! `required` on an `Option` field does not compile, with a note that names `optional`, and
 //! `optional` on a field that is not an `Option` is a mismatch of types. `optional` writes `None`
@@ -161,7 +167,7 @@ use crate::{
 };
 
 pub(crate) use sealed::{
-  BeBytesCore, DecimalStringCore, FixedHexCore, LeBytesCore, QuantityCore, TypedCore,
+  BeBytesCore, DecimalStringCore, FixedHexCore, LeBytesCore, QuantityCore, RuintFormCore, TypedCore,
 };
 
 pub mod be_bytes;
@@ -169,6 +175,7 @@ pub mod decimal;
 pub mod fixed_hex;
 pub mod le_bytes;
 pub mod quantity;
+pub mod ruint;
 #[cfg(test)]
 mod tests;
 pub mod typed;
@@ -227,6 +234,7 @@ mod sealed {
     TypedCore: typed::Typed;
     BeBytesCore: be_bytes::BeBytes;
     LeBytesCore: le_bytes::LeBytes;
+    RuintFormCore: ruint::RuintForm;
   }
 }
 

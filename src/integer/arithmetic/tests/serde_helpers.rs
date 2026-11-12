@@ -11,10 +11,12 @@
 //! without `deserialize_any` and serde's deserializers. `be_bytes` and `le_bytes` write the bytes
 //! of a value in either order, as a JSON array and as postcard's length and bytes, against the
 //! bytes of the native integers and numo's own, and read a byte string and a sequence of bytes
-//! back, with the message of each rule and of a wrong element. The leaf `optional` of each helper
-//! writes and reads `None` and `Some` in JSON and postcard, a missing field with and without
-//! `default`, `null` through serde's buffer and an empty csv field; and each helper reads in
-//! untagged enums and flattened structs.
+//! back, with the message of each rule and of a wrong element. `ruint` writes what ruint 1.21.0
+//! writes and reads what it reads, against a list of the values that ruint 1.21.0 gives, reads
+//! more than ruint where the module says so, and writes and reads back its form at every width that
+//! it takes. The leaf `optional` of each helper writes and reads `None` and `Some` in JSON and
+//! postcard, a missing field with and without `default`, `null` through serde's buffer and an
+//! empty csv field; and each helper reads in untagged enums and flattened structs.
 //!
 //! Every expected text of std comes from std at run time. Each width group or family of storages
 //! checks in a function of its own, and each generic check is `#[inline(never)]`, so that a frame
@@ -22,7 +24,7 @@
 
 use core::{
   any::type_name,
-  fmt::{Display, LowerHex},
+  fmt::{Binary, Display, LowerHex, Octal},
   num::NonZero,
 };
 
@@ -31,7 +33,9 @@ use serde_core::{
   de::{self, DeserializeOwned, IntoDeserializer},
 };
 use serde_json::error::Category;
-use serde_test::{Token, assert_de_tokens, assert_de_tokens_error, assert_tokens};
+use serde_test::{
+  Compact, Configure, Readable, Token, assert_de_tokens, assert_de_tokens_error, assert_tokens,
+};
 use typenum::{Diff, U4, U12, U15, U17, U31, U33, U192, U8192, U16384, U65536, U262144};
 
 use super::{
@@ -49,6 +53,7 @@ use crate::{
     fixed_hex::{self, FixedHex},
     le_bytes::{self, LeBytes},
     quantity::{self, Quantity},
+    ruint::{self, RuintForm},
     typed::{self, Typed},
   },
   u0,
@@ -143,6 +148,12 @@ containers!(
   with_le_bytes: LeBytes,
   "crate::serde::le_bytes::required",
   "crate::serde::le_bytes::optional"
+);
+
+containers!(
+  with_ruint: RuintForm,
+  "crate::serde::ruint::required",
+  "crate::serde::ruint::optional"
 );
 
 /// An untagged enum of `C`, which serde buffers to try each variant.
@@ -1927,8 +1938,9 @@ fn typed_in_options_serde_buffer_and_csv() {
 /// The fixed message of `be_bytes` and `le_bytes`.
 const BYTE_ARRAY: &str = "expected an array of bytes";
 
-/// The message of the bytes helpers for bytes of another number than `count`, the bytes of the
-/// width: `expected 1 byte` for one, and `expected {count} bytes` for every other count.
+/// The message of `be_bytes`, `le_bytes` and `ruint` for bytes of another number than `count`, the
+/// bytes of the width: `expected 1 byte` for one, and `expected {count} bytes` for every other
+/// count.
 fn wrong_byte_count(count: u64) -> String {
   if count == 1 {
     "expected 1 byte".to_string()
@@ -2436,4 +2448,678 @@ fn bytes_in_options() {
   ];
   assert_tokens(&with_be_bytes::Optional(Some(258u16)), &tokens);
   assert_tokens(&with_le_bytes::Optional(Some(513u16)), &tokens);
+}
+
+/// The fixed message of `ruint`.
+const RUINT: &str = "expected an integer as a number, a string or bytes";
+
+/// What ruint 1.21.0 does with an input of its `Uint`, which `ruint` does too: ruint reads a value,
+/// or it refuses the input, which `ruint` rejects with its own message, named by the variant.
+#[derive(Clone, Copy)]
+enum Ruint {
+  /// ruint reads the value whose decimal text this is.
+  Reads(&'static str),
+  /// ruint refuses the input, which `ruint` rejects with std's text of an invalid digit.
+  InvalidDigit,
+  /// ruint refuses the input, which `ruint` rejects with std's text of a value too large.
+  TooLarge,
+  /// ruint refuses the input, which `ruint` rejects with std's text of a number too small.
+  TooSmall,
+  /// ruint refuses the input, which `ruint` rejects with its fixed message.
+  Fixed,
+  /// ruint refuses the input, which `ruint` rejects as bytes of another number than the width
+  /// has, which this one is.
+  Bytes(u64),
+  /// ruint refuses the input at zero bits, where it reads `"0x0"` alone, and `ruint` reads zero,
+  /// the value of the input in ruint's grammar.
+  ZeroBits,
+}
+
+/// A string at which `ruint` is checked, and what ruint 1.21.0 does with it as a JSON string.
+fn case(text: impl Into<String>, ruint: Ruint) -> (String, Ruint) {
+  (text.into(), ruint)
+}
+
+/// The decimal text of `2^256 - 1`, the largest value of 256 bits.
+const MAX_OF_256_BITS: &str =
+  "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+
+/// The decimal text of `2^256`.
+const POWER_256: &str =
+  "115792089237316195423570985008687907853269984665640564039457584007913129639936";
+
+/// The decimal text of `2^64 - 1`, the largest value of 64 bits.
+const MAX_OF_64_BITS: &str = "18446744073709551615";
+
+// The cases below are the values that ruint 1.21.0 gives: what it reads from each string as a JSON
+// string, and from each JSON text, into its `Uint` of the width, and what it writes for each value.
+// The variants name the messages with which `ruint` rejects what ruint refuses.
+
+/// The 45 strings at which `ruint` is checked into 256 bits, by the classes of their spelling, each
+/// with what ruint 1.21.0 does with it into its `Uint<256, 4>`: the spellings of zero, other
+/// spellings that read, refusals, `2^256 - 1` and `2^256` in decimal and with each prefix, and five
+/// more.
+fn ruint_strings_of_256_bits() -> Vec<(String, Ruint)> {
+  use Ruint::{InvalidDigit, Reads, TooLarge};
+  vec![
+    case("", Reads("0")),
+    case("0", Reads("0")),
+    case("0x", Reads("0")),
+    case("_", Reads("0")),
+    case("__", Reads("0")),
+    case("0x_", Reads("0")),
+    case("0b", Reads("0")),
+    case("0o", Reads("0")),
+    case("0X5", Reads("5")),
+    case("0xFF", Reads("255")),
+    case("0x00ff", Reads("255")),
+    case("0x_f_f", Reads("255")),
+    case("0o17", Reads("15")),
+    case("0O17", Reads("15")),
+    case("0b101", Reads("5")),
+    case("0B101", Reads("5")),
+    case("1_000", Reads("1000")),
+    case("_1_", Reads("1")),
+    case("00", Reads("0")),
+    case("007", Reads("7")),
+    case(format!("{}7", "0".repeat(100)), Reads("7")),
+    case("+5", InvalidDigit),
+    case("-5", InvalidDigit),
+    case(" 5", InvalidDigit),
+    case("5 ", InvalidDigit),
+    case("0x+5", InvalidDigit),
+    case("0xg", InvalidDigit),
+    case("ff", InvalidDigit),
+    case("0o8", InvalidDigit),
+    case("0b2", InvalidDigit),
+    case("0x0x5", InvalidDigit),
+    case("\u{665}", InvalidDigit),
+    case(MAX_OF_256_BITS, Reads(MAX_OF_256_BITS)),
+    case(POWER_256, TooLarge),
+    case(format!("0x{}", "f".repeat(64)), Reads(MAX_OF_256_BITS)),
+    case(format!("0x1{}", "0".repeat(64)), TooLarge),
+    case(format!("0o1{}", "7".repeat(85)), Reads(MAX_OF_256_BITS)),
+    case(format!("0o2{}", "0".repeat(85)), TooLarge),
+    case(format!("0b{}", "1".repeat(256)), Reads(MAX_OF_256_BITS)),
+    case(format!("0b1{}", "0".repeat(256)), TooLarge),
+    case("0x0", Reads("0")),
+    case("0xAbC", Reads("2748")),
+    case("0x_ff_", Reads("255")),
+    case(
+      "340282366920938463463374607431768211456",
+      Reads("340282366920938463463374607431768211456"),
+    ),
+    case(format!("0x00{}", "f".repeat(64)), Reads(MAX_OF_256_BITS)),
+  ]
+}
+
+/// The 17 strings at which `ruint` is checked into 12 bits, each with what ruint 1.21.0 does with
+/// it into its `Uint<12, 1>`: the spellings of zero and one, and `2^12 - 1` and `2^12` in decimal
+/// and with each prefix.
+fn ruint_strings_of_12_bits() -> Vec<(String, Ruint)> {
+  use Ruint::{Reads, TooLarge};
+  vec![
+    case("", Reads("0")),
+    case("0", Reads("0")),
+    case("0x", Reads("0")),
+    case("0x0", Reads("0")),
+    case("0x00", Reads("0")),
+    case("00", Reads("0")),
+    case("0b", Reads("0")),
+    case("1", Reads("1")),
+    case("0x1", Reads("1")),
+    case("4095", Reads("4095")),
+    case("4096", TooLarge),
+    case("0xfff", Reads("4095")),
+    case("0x1000", TooLarge),
+    case("0o7777", Reads("4095")),
+    case("0o10000", TooLarge),
+    case("0b111111111111", Reads("4095")),
+    case("0b1000000000000", TooLarge),
+  ]
+}
+
+/// The 17 strings at which `ruint` is checked into one bit, each with what ruint 1.21.0 does with
+/// it into its `Uint<1, 1>`: the spellings of zero and one, and 1 and 2 in decimal and with each
+/// prefix, which repeat two of them.
+fn ruint_strings_of_1_bit() -> Vec<(String, Ruint)> {
+  use Ruint::{Reads, TooLarge};
+  vec![
+    case("", Reads("0")),
+    case("0", Reads("0")),
+    case("0x", Reads("0")),
+    case("0x0", Reads("0")),
+    case("0x00", Reads("0")),
+    case("00", Reads("0")),
+    case("0b", Reads("0")),
+    case("1", Reads("1")),
+    case("0x1", Reads("1")),
+    case("1", Reads("1")),
+    case("2", TooLarge),
+    case("0x1", Reads("1")),
+    case("0x2", TooLarge),
+    case("0o1", Reads("1")),
+    case("0o2", TooLarge),
+    case("0b1", Reads("1")),
+    case("0b10", TooLarge),
+  ]
+}
+
+/// The 17 strings at which `ruint` is checked into zero bits, each with what ruint 1.21.0 does
+/// with it into its `Uint<0, 0>`, which reads `"0x0"` alone: the spellings of zero and one, and 0
+/// and 1 in decimal and with each prefix, which repeat four of them.
+fn ruint_strings_of_0_bits() -> Vec<(String, Ruint)> {
+  use Ruint::{Reads, TooLarge, ZeroBits};
+  vec![
+    case("", ZeroBits),
+    case("0", ZeroBits),
+    case("0x", ZeroBits),
+    case("0x0", Reads("0")),
+    case("0x00", ZeroBits),
+    case("00", ZeroBits),
+    case("0b", ZeroBits),
+    case("1", TooLarge),
+    case("0x1", TooLarge),
+    case("0", ZeroBits),
+    case("1", TooLarge),
+    case("0x0", Reads("0")),
+    case("0x1", TooLarge),
+    case("0o0", ZeroBits),
+    case("0o1", TooLarge),
+    case("0b0", ZeroBits),
+    case("0b1", TooLarge),
+  ]
+}
+
+/// The 17 strings at which `ruint` is checked into 64 bits, each with what ruint 1.21.0 does with
+/// it into its `Uint<64, 1>`: the spellings of zero and one, and `2^64 - 1` and `2^64` in decimal
+/// and with each prefix.
+fn ruint_strings_of_64_bits() -> Vec<(String, Ruint)> {
+  use Ruint::{Reads, TooLarge};
+  vec![
+    case("", Reads("0")),
+    case("0", Reads("0")),
+    case("0x", Reads("0")),
+    case("0x0", Reads("0")),
+    case("0x00", Reads("0")),
+    case("00", Reads("0")),
+    case("0b", Reads("0")),
+    case("1", Reads("1")),
+    case("0x1", Reads("1")),
+    case(MAX_OF_64_BITS, Reads(MAX_OF_64_BITS)),
+    case("18446744073709551616", TooLarge),
+    case("0xffffffffffffffff", Reads(MAX_OF_64_BITS)),
+    case("0x10000000000000000", TooLarge),
+    case("0o1777777777777777777777", Reads(MAX_OF_64_BITS)),
+    case("0o2000000000000000000000", TooLarge),
+    case(format!("0b{}", "1".repeat(64)), Reads(MAX_OF_64_BITS)),
+    case(format!("0b1{}", "0".repeat(64)), TooLarge),
+  ]
+}
+
+/// The JSON texts at which `ruint` is checked into 256 bits, each with what ruint 1.21.0 does with
+/// it into its `Uint<256, 4>`: the numbers within the 64-bit range read; and a number beyond it,
+/// which serde_json gives as a float, a negative number, a float, `true`, `null` and an array of
+/// two integers are refused.
+const RUINT_JSON_OF_256_BITS: [(&str, Ruint); 9] = [
+  ("0", Ruint::Reads("0")),
+  ("5", Ruint::Reads("5")),
+  (MAX_OF_64_BITS, Ruint::Reads(MAX_OF_64_BITS)),
+  ("18446744073709551616", Ruint::Fixed),
+  ("-5", Ruint::TooSmall),
+  ("1.5", Ruint::Fixed),
+  ("true", Ruint::Fixed),
+  ("null", Ruint::Fixed),
+  ("[0,5]", Ruint::Bytes(32)),
+];
+
+/// What `T` reads with `ruint` from the JSON text `json`, or the message of the error.
+#[inline(never)]
+fn ruint_from_json<T: RuintForm>(json: &str) -> Result<T, String> {
+  serde_json::from_str::<with_ruint::Required<T>>(json)
+    .map(|with_ruint::Required(value)| value)
+    .map_err(|error| json_message(&error))
+}
+
+/// Asserts that `T` does with `ruint`, from the JSON text `json`, what ruint 1.21.0 does into its
+/// `Uint` of the same width, `ruint`: it reads the value of the same decimal text, or rejects the
+/// input with numo's own message, which names nothing of it.
+#[inline(never)]
+fn ruint_agrees<T: RuintForm + Display>(json: &str, ruint: Ruint) {
+  let read = ruint_from_json::<T>(json).map(|value| value.to_string());
+  let expected = match ruint {
+    Ruint::Reads(value) => Ok(value.to_string()),
+    Ruint::ZeroBits => Ok("0".to_string()),
+    Ruint::InvalidDigit => Err(parse_error::<u8>("g")),
+    Ruint::TooLarge => Err(parse_error::<u8>("256")),
+    Ruint::TooSmall => Err(too_small()),
+    Ruint::Fixed => Err(RUINT.to_string()),
+    Ruint::Bytes(count) => Err(wrong_byte_count(count)),
+  };
+  assert_eq!(read, expected, "{json} into {}", type_name::<T>());
+}
+
+/// Asserts that `T` does with `ruint` what ruint 1.21.0 does with each string of `cases`, given as
+/// a JSON string, into its `Uint` of the same width.
+#[inline(never)]
+fn ruint_agrees_on_strings<T: RuintForm + Display>(cases: &[(String, Ruint)]) {
+  for (text, ruint) in cases {
+    ruint_agrees::<T>(&serde_json::to_string(text).unwrap(), *ruint);
+  }
+}
+
+/// `ruint` reads every string of the list as ruint 1.21.0 reads it into its `Uint` of the same
+/// width, at 256, 12, 1 and 0 bits and into `Uint<U64>` and `u64`, in two storages of each width,
+/// and rejects what ruint refuses with numo's own message; at zero bits, where ruint reads `"0x0"`
+/// alone, it reads every string whose value in ruint's grammar is zero.
+#[test]
+fn ruint_reads_the_strings_that_ruint_reads() {
+  let cases = ruint_strings_of_256_bits();
+  assert_eq!(cases.len(), 45);
+  ruint_agrees_on_strings::<u256>(&cases);
+  ruint_agrees_on_strings::<Uint<U256, [u8; 32]>>(&cases);
+  for (bits, cases) in [
+    (12, ruint_strings_of_12_bits()),
+    (1, ruint_strings_of_1_bit()),
+    (0, ruint_strings_of_0_bits()),
+    (64, ruint_strings_of_64_bits()),
+  ] {
+    assert_eq!(cases.len(), 17, "{bits} bits");
+  }
+  ruint_agrees_on_strings::<Uint<U12>>(&ruint_strings_of_12_bits());
+  ruint_agrees_on_strings::<Uint<U12, [u8; 2]>>(&ruint_strings_of_12_bits());
+  ruint_agrees_on_strings::<Uint<U1>>(&ruint_strings_of_1_bit());
+  ruint_agrees_on_strings::<Uint<U1, [u64; 1]>>(&ruint_strings_of_1_bit());
+  ruint_agrees_on_strings::<u0>(&ruint_strings_of_0_bits());
+  ruint_agrees_on_strings::<Uint<U0, u8>>(&ruint_strings_of_0_bits());
+  ruint_agrees_on_strings::<Uint<U64>>(&ruint_strings_of_64_bits());
+  ruint_agrees_on_strings::<Uint<U64, [u16; 4]>>(&ruint_strings_of_64_bits());
+  ruint_agrees_on_strings::<u64>(&ruint_strings_of_64_bits());
+}
+
+/// `ruint` reads the JSON numbers that ruint 1.21.0 reads into its `Uint<256, 4>`, within the
+/// 64-bit range, and rejects what ruint refuses with numo's own message: a number beyond, which
+/// serde_json gives as a float, a float, `true` and `null` with the fixed message, a negative
+/// number with std's text of a number too small, and an array of two integers as bytes of another
+/// number than 32.
+#[test]
+fn ruint_reads_the_numbers_that_ruint_reads() {
+  for (json, ruint) in RUINT_JSON_OF_256_BITS {
+    ruint_agrees::<u256>(json, ruint);
+    ruint_agrees::<Uint<U256, [u128; 2]>>(json, ruint);
+  }
+}
+
+/// Asserts that `T` writes `value` with `ruint` as ruint 1.21.0 writes the same value of its
+/// `Uint`, the JSON text `json` and the postcard bytes `bytes`, and reads both back.
+#[inline(never)]
+fn ruint_writes<T>(value: T, json: &str, bytes: &[u8])
+where
+  T: RuintForm + PartialEq + Debug,
+{
+  let name = type_name::<T>();
+  let value = with_ruint::Required(value);
+  assert_eq!(serde_json::to_string(&value).unwrap(), json, "{name}");
+  assert_eq!(
+    postcard::to_stdvec(&value).unwrap(),
+    bytes,
+    "{json} in {name}"
+  );
+  let from_json = serde_json::from_str::<with_ruint::Required<T>>(json).unwrap();
+  assert_eq!(from_json, value, "{json} into {name}");
+  let from_bytes = postcard::from_bytes::<with_ruint::Required<T>>(bytes).unwrap();
+  assert_eq!(from_bytes, value, "{json} into {name}");
+}
+
+/// `ruint` writes what ruint 1.21.0 writes for the same value of its `Uint`: 0, 255 and the
+/// largest value at 256 and at 12 bits, and 0 at zero bits, as a QUANTITY in JSON and as the bytes
+/// of the value, most significant first, after their length, in postcard; and reads both back.
+#[test]
+fn ruint_writes_what_ruint_writes() {
+  ruint_writes(
+    u256::ZERO,
+    "\"0x0\"",
+    &[
+      32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0,
+    ],
+  );
+  ruint_writes(
+    u256::from(255u8),
+    "\"0xff\"",
+    &[
+      32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 255,
+    ],
+  );
+  ruint_writes(
+    u256::MAX,
+    "\"0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"",
+    &[
+      32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    ],
+  );
+  ruint_writes(Uint::<U12>::ZERO, "\"0x0\"", &[2, 0, 0]);
+  ruint_writes(Uint::<U12>::new(255), "\"0xff\"", &[2, 0, 255]);
+  ruint_writes(Uint::<U12>::MAX, "\"0xfff\"", &[2, 15, 255]);
+  ruint_writes(u0::ZERO, "\"0x0\"", &[0]);
+}
+
+/// `ruint` reads more than ruint 1.21.0 in three places: every spelling of zero at zero bits,
+/// where ruint reads `"0x0"` alone, which the list checks; the integers that a format gives as
+/// signed, as toml gives every integer, through serde's deserializer of an `i64`; and bytes in a
+/// human-readable format: a value of CBOR that serde's buffer gives as bytes, through serde's
+/// deserializer of bytes, which is human-readable, and a JSON array of exactly the bytes of the
+/// width, `[5]` into `u8` and `[]` at zero bits. A `char` reads as the string of that character,
+/// as ruint reads it.
+#[test]
+fn ruint_reads_more_than_ruint_in_three_places() {
+  let text = |error: de::value::Error| error.to_string();
+  let read: Result<u256, _> = ruint::required::deserialize(5i64.into_deserializer()).map_err(text);
+  assert_eq!(read, Ok(u256::from(5u8)));
+  let read: Result<Uint<U12>, _> =
+    ruint::required::deserialize(4096i64.into_deserializer()).map_err(text);
+  assert_eq!(read, Err(too_large()));
+  let read: Result<u64, _> =
+    ruint::required::deserialize((-1i64).into_deserializer()).map_err(text);
+  assert_eq!(read, Err(too_small()));
+  for (bytes, expected) in [
+    (&[15, 255][..], Ok(Uint::<U12>::MAX)),
+    (&[16, 0], Err(parse_error::<u8>("256"))),
+    (&[15], Err("expected 2 bytes".to_string())),
+  ] {
+    let read: Result<Uint<U12>, _> =
+      ruint::required::deserialize(de::value::BytesDeserializer::new(bytes)).map_err(text);
+    assert_eq!(read, expected, "{bytes:?}");
+  }
+  assert_eq!(ruint_from_json::<u8>("[5]"), Ok(5));
+  assert_eq!(ruint_from_json::<u0>("[]"), Ok(u0::ZERO));
+  assert_eq!(
+    ruint_from_json::<Uint<U12>>("[15,255]"),
+    Ok(Uint::<U12>::MAX)
+  );
+  assert_eq!(ruint_from_json::<u8>("[256]"), Err(RUINT.to_string()));
+  assert_eq!(
+    ruint_from_json::<u8>("[5,6]"),
+    Err("expected 1 byte".to_string())
+  );
+  let tokens = [Token::NewtypeStruct { name: "Required" }, Token::Char('5')];
+  assert_de_tokens(&with_ruint::Required(5u8).readable(), &tokens);
+}
+
+/// `ruint` reads a decimal string through a buffer of three digits for each byte of the width,
+/// which holds the 2467 digits of the largest value of 8192 bits, read with leading zeros and `_`
+/// too; a value above, of as many digits as the largest value, of one more or of more than the
+/// buffer holds, is too large.
+#[test]
+fn ruint_reads_2467_decimal_digits_into_8192_bits() {
+  type Wide = Uint<U8192>;
+  let max = Wide::MAX.to_string();
+  assert_eq!(max.len(), 2467);
+  assert_eq!(
+    ruint_from_json::<Wide>(&format!("\"{max}\"")),
+    Ok(Wide::MAX)
+  );
+  let padded = format!("\"{}_{max}\"", "0".repeat(4000));
+  assert_eq!(ruint_from_json::<Wide>(&padded), Ok(Wide::MAX));
+  let too_large = parse_error::<u8>("256");
+  for text in [
+    "9".repeat(2467),
+    format!("1{}", "0".repeat(2467)),
+    format!("1{}", "0".repeat(3072)),
+  ] {
+    let error = ruint_from_json::<Wide>(&format!("\"{text}\"")).unwrap_err();
+    assert_eq!(error, too_large, "{} digits", text.len());
+  }
+}
+
+/// Checks that `T` writes `value` with `ruint` as the text of `{:#x}` in JSON and as `be`, its
+/// bytes, most significant first, after their length, in postcard, and reads both back; and that
+/// it reads the value from its texts in the other radixes of ruint's grammar, decimal, octal and
+/// binary, and from the hexadecimal text padded with zeros and `_`.
+#[inline(never)]
+fn ruint_round_trip<T>(value: T, be: &[u8])
+where
+  T: RuintForm + Display + LowerHex + Octal + Binary + Clone + PartialEq + Debug,
+{
+  let name = type_name::<T>();
+  let container = with_ruint::Required(value.clone());
+  let json = serde_json::to_string(&container).unwrap();
+  assert_eq!(json, format!("\"{value:#x}\""), "{name}");
+  let mut expected = postcard::to_stdvec(&be.len()).unwrap();
+  expected.extend_from_slice(be);
+  let written = postcard::to_stdvec(&container).unwrap();
+  assert_eq!(written, expected, "{json} in {name}");
+  let from_json = serde_json::from_str::<with_ruint::Required<T>>(&json).unwrap();
+  assert_eq!(from_json, container, "{json} into {name}");
+  let from_bytes = postcard::from_bytes::<with_ruint::Required<T>>(&written).unwrap();
+  assert_eq!(from_bytes, container, "{json} into {name}");
+  for text in [
+    format!("{value}"),
+    format!("0o{value:o}"),
+    format!("0b{value:b}"),
+    format!("0x_00{value:x}_"),
+  ] {
+    let read = ruint_from_json::<T>(&format!("\"{text}\""));
+    assert_eq!(read.as_ref(), Ok(&value), "{text} into {name}");
+  }
+}
+
+/// Checks [`ruint_round_trip`] at the value in `T`, of `bits` bits, at most 128, of each pattern of
+/// [`helper_samples`], read as the native integer `N` of the class of the width, whose bytes are
+/// the low bytes of the pattern in reverse order; a non-zero `T` holds every value but zero.
+#[inline(never)]
+fn ruint_round_trips<T, N>(bits: u32)
+where
+  T: CheckedCastFrom<N> + RuintForm + Display + LowerHex + Octal + Binary,
+  T: Clone + PartialEq + Debug,
+  N: Native,
+{
+  let count = bits.div_ceil(8) as usize;
+  for pattern in helper_samples(bits, false) {
+    match T::checked_cast_from(N::of_pattern(pattern)) {
+      Some(value) => {
+        let be: Vec<u8> = pattern.to_le_bytes()[..count]
+          .iter()
+          .rev()
+          .copied()
+          .collect();
+        ruint_round_trip(value, &be);
+      }
+      None => assert_eq!(pattern, 0, "{}", type_name::<T>()),
+    }
+  }
+}
+
+/// Checks [`ruint_round_trip`] at the value in `T`, above 128 bits, of each pattern of `patterns`,
+/// read as the integer `I` of the same width, whose bytes are those that its `copy_be_bytes_to`
+/// writes; a non-zero `T` holds every value but zero.
+#[inline(never)]
+fn ruint_round_trips_of_patterns<T, I>(patterns: &[Vec<bool>])
+where
+  T: CheckedCastFrom<I> + RuintForm + Display + LowerHex + Octal + Binary,
+  T: Clone + PartialEq + Debug,
+  I: Patterned + IntegerBytes,
+{
+  for p in patterns {
+    let integer = I::from_pattern(p);
+    let mut be = vec![0; I::BYTES];
+    integer.copy_be_bytes_to(&mut be);
+    match T::checked_cast_from(integer) {
+      Some(value) => ruint_round_trip(value, &be),
+      None => assert!(p.iter().all(|&bit| !bit), "{}", type_name::<T>()),
+    }
+  }
+}
+
+/// Asserts that the non-zero `T`, of `count` bytes, rejects zero with `ruint` with std's texts of
+/// zero: as a string, `0x0` and `0`, and as bytes, with the text of the parser, and as a number,
+/// with the text of a conversion.
+#[inline(never)]
+fn ruint_rejects_zero<T: RuintForm + Debug>(count: usize) {
+  let name = type_name::<T>();
+  let zero = parse_error::<NonZero<u8>>("0");
+  assert_eq!(ruint_from_json::<T>("\"0x0\"").unwrap_err(), zero, "{name}");
+  assert_eq!(ruint_from_json::<T>("\"00\"").unwrap_err(), zero, "{name}");
+  let bytes = vec![0; count];
+  let read: Result<T, de::value::Error> =
+    ruint::required::deserialize(de::value::BytesDeserializer::new(&bytes));
+  assert_eq!(read.unwrap_err().to_string(), zero, "{name}");
+  let error = ruint_from_json::<T>("0").unwrap_err();
+  assert_eq!(error, zero_of_conversion(), "{name}");
+}
+
+/// Checks [`ruint_round_trip`] at zero, one and the largest value of each unsigned native integer
+/// `$native`, whose bytes are those of its `to_be_bytes`, and at the smallest and the largest value
+/// of its `NonZero`, which rejects zero.
+macro_rules! native_ruint_forms {
+  ($($native:ident),+ $(,)?) => {$(
+    for value in [0, 1, $native::MAX] {
+      ruint_round_trip(value, &value.to_be_bytes());
+    }
+    for value in [NonZero::<$native>::MIN, NonZero::<$native>::MAX] {
+      ruint_round_trip(value, &value.get().to_be_bytes());
+    }
+    ruint_rejects_zero::<NonZero<$native>>(size_of::<$native>());
+  )+};
+}
+
+/// The form of `ruint` at `Uint` and `NonZeroUint` of 0, 1, 7, 8, 12, 64, 65 and 128 bits, in the
+/// native storage of the width and in arrays.
+#[inline(never)]
+fn ruint_forms_up_to_128_bits() {
+  ruint_round_trips::<u0, u8>(0);
+  ruint_round_trips::<Uint<U1>, u8>(1);
+  ruint_round_trips::<Uint<U7, [u8; 1]>, u8>(7);
+  ruint_round_trips::<NonZeroUint<U8>, u8>(8);
+  ruint_round_trips::<Uint<U12, [u16; 1]>, u16>(12);
+  ruint_round_trips::<Uint<U64, [u8; 8]>, u64>(64);
+  ruint_round_trips::<NonZeroUint<U65, [u32; 3]>, u128>(65);
+  ruint_round_trips::<Uint<U128>, u128>(128);
+}
+
+/// The form of `ruint` at `Uint` and `NonZeroUint` of 129, 256 and 1024 bits, in the default
+/// storage and in arrays of other limbs.
+#[inline(never)]
+fn ruint_forms_above_128_bits() {
+  let patterns = text_patterns::<3>(129);
+  ruint_round_trips_of_patterns::<Uint<U129, [u8; 17]>, Uint<U129, [u8; 17]>>(&patterns);
+  let patterns = text_patterns::<4>(256);
+  ruint_round_trips_of_patterns::<u256, u256>(&patterns);
+  ruint_round_trips_of_patterns::<NonZeroUint<U256, [u128; 2]>, Uint<U256, [u128; 2]>>(&patterns);
+  let patterns = text_patterns::<16>(1024);
+  ruint_round_trips_of_patterns::<Uint<U1024, [u16; 64]>, Uint<U1024, [u16; 64]>>(&patterns);
+}
+
+/// The form of `ruint` at the unsigned native integers and their `NonZero`.
+#[inline(never)]
+fn ruint_forms_of_the_native_integers() {
+  native_ruint_forms!(u8, u16, u32, u64, u128);
+}
+
+/// `ruint` writes ruint's form and reads it back, and reads the value from its texts in every
+/// radix of ruint's grammar: at `Uint` and `NonZeroUint` of 0, 1, 7, 8, 12, 64, 65, 128, 129, 256
+/// and 1024 bits in the default storage and in arrays of other limbs, and at the unsigned native
+/// integers and their `NonZero`, which reject zero.
+#[test]
+fn ruint_writes_ruint_form_and_reads_it_back() {
+  ruint_forms_up_to_128_bits();
+  ruint_forms_above_128_bits();
+  ruint_forms_of_the_native_integers();
+  ruint_rejects_zero::<NonZeroUint<U0>>(0);
+  ruint_rejects_zero::<NonZeroUint<U12>>(2);
+  ruint_rejects_zero::<NonZeroUint<U256, [u8; 32]>>(32);
+}
+
+/// Asserts that `T` rejects with `ruint` every input that is neither a number nor a string nor
+/// bytes with the fixed message: JSON floats, `true`, `null` and objects, serde_json's number token
+/// among them, serde_test's tokens of other kinds through both configurations, and serde's
+/// deserializers of a map and of a float.
+#[inline(never)]
+fn ruint_rejects_other_inputs<T: RuintForm + Debug>() {
+  let name = type_name::<T>();
+  let token = format!(r#"{{"{NUMBER_TOKEN}":"5"}}"#);
+  for json in ["1.5", "-0", "1e2", "true", "null", "{}", &token] {
+    let error = ruint_from_json::<T>(json).unwrap_err();
+    assert_eq!(error, RUINT, "{json} into {name}");
+  }
+  for token in [
+    Token::Bool(true),
+    Token::F64(1.5),
+    Token::Unit,
+    Token::None,
+    Token::UnitStruct { name: "Unit" },
+  ] {
+    let tokens = [Token::NewtypeStruct { name: "Required" }, token];
+    assert_de_tokens_error::<Readable<with_ruint::Required<T>>>(&tokens, RUINT);
+    assert_de_tokens_error::<Compact<with_ruint::Required<T>>>(&tokens, RUINT);
+  }
+  let map = de::value::MapDeserializer::new([(NUMBER_TOKEN, "5")].into_iter());
+  let read: Result<T, de::value::Error> = ruint::required::deserialize(map);
+  assert_eq!(read.unwrap_err().to_string(), RUINT, "{name}");
+  let read: Result<T, de::value::Error> = ruint::required::deserialize(1.5f64.into_deserializer());
+  assert_eq!(read.unwrap_err().to_string(), RUINT, "{name}");
+}
+
+/// `ruint` rejects every input that is neither a number nor a string nor bytes with its fixed
+/// message, which names nothing of the input, whether the format is human-readable or not.
+#[test]
+fn ruint_rejects_every_other_input_with_its_fixed_message() {
+  ruint_rejects_other_inputs::<u256>();
+  ruint_rejects_other_inputs::<Uint<U12, [u8; 2]>>();
+  ruint_rejects_other_inputs::<NonZeroUint<U100>>();
+  ruint_rejects_other_inputs::<u64>();
+}
+
+/// The leaf `optional` of `ruint`: `None` is JSON's `null` and postcard's `[0]`, and `Some` is
+/// ruint's form after postcard's `[1]`; a missing field reads as `None` with `default` and is
+/// required without it; `null` reads as `None`, also through serde's buffer; an empty csv field is
+/// `None`; and every other input gets the fixed message. The leaf `required` reads through serde's
+/// buffer, in an untagged enum and a flattened struct, a string, a number and a sequence of bytes.
+#[test]
+fn ruint_in_options_and_serde_buffer() {
+  options_round_trip(
+    with_ruint::Optional::<Uint<U12>>(None),
+    with_ruint::Optional(Some(Uint::<U12>::MAX)),
+    "\"0xfff\"",
+    &[2, 15, 255],
+  );
+  option_fields(
+    [
+      with_ruint::Defaulted::<u256> { value: None },
+      with_ruint::Defaulted {
+        value: Some(u256::from(255u8)),
+      },
+    ],
+    [
+      with_ruint::Present::<u256> { value: None },
+      with_ruint::Present {
+        value: Some(u256::from(255u8)),
+      },
+    ],
+    "\"0xff\"",
+  );
+  let read: Result<Option<u64>, de::value::Error> = ruint::optional::deserialize(CsvField(""));
+  assert_eq!(read.unwrap(), None);
+  let read: Result<Option<u64>, de::value::Error> = ruint::optional::deserialize(CsvField("0xff"));
+  assert_eq!(read.unwrap(), Some(255));
+  for json in ["1.5", "true", "{}"] {
+    let error = serde_json::from_str::<with_ruint::Optional<u64>>(json).unwrap_err();
+    assert_eq!(json_message(&error), RUINT, "{json}");
+  }
+  let five = with_ruint::Field {
+    value: u256::from(5u8),
+  };
+  let bytes = format!(r#"{{"value":[{}5]}}"#, "0,".repeat(31));
+  for json in [
+    r#"{"value":"0x5"}"#,
+    r#"{"value":"5"}"#,
+    r#"{"value":5}"#,
+    &bytes,
+  ] {
+    for result in through_the_buffer::<with_ruint::Field<u256>>(json) {
+      assert_eq!(result.as_ref(), Ok(&five), "{json}");
+    }
+  }
 }

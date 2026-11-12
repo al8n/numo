@@ -23,12 +23,16 @@
 //! `fixed_hex` the digits of the words of the casts, and both read their grammars on the bytes of a
 //! string, building the value with the casts from words that they decode from the digits, with no
 //! buffer; `typed` writes as the defaults do and asks every format for the class of the width,
-//! with a visitor that takes the form of the defaults alone, through their value paths; and
+//! with a visitor that takes the form of the defaults alone, through their value paths;
 //! `be_bytes` and `le_bytes` write the bytes of the words of the casts through the array of the
 //! bytes of the width, and read a byte string, or a sequence of bytes into that array, each element
-//! read by a seed of their own, building the value with the casts from the words of the bytes. The
-//! sealed trait of each helper is implemented here for every type that its paths take, and its
-//! public trait for numo's integers and the native integers that it serves.
+//! read by a seed of their own, building the value with the casts from the words of the bytes; and
+//! `ruint` writes the text of `quantity` in a human-readable format and the bytes of `be_bytes` in
+//! another, and reads, whatever the format says of itself, the integers that a format gives, the
+//! bytes as `be_bytes` reads them, and ruint's grammar, decoding the digits of a radix that is a
+//! power of two into the array of the bytes, and copying decimal digits into a buffer of the width
+//! for `FromStr`. The sealed trait of each helper is implemented here for every type that its paths
+//! take, and its public trait for numo's integers and the native integers that it serves.
 
 use core::{
   fmt,
@@ -50,9 +54,9 @@ use crate::{
   int::parse_errors,
   layout::Token,
   serde::{
-    BeBytesCore, DecimalStringCore, Expected, FixedHexCore, LeBytesCore, QuantityCore, TypedCore,
-    be_bytes::BeBytes, decimal::DecimalString, fixed_hex::FixedHex, le_bytes::LeBytes,
-    quantity::Quantity, read, reject_inputs, typed::Typed,
+    BeBytesCore, DecimalStringCore, Expected, FixedHexCore, LeBytesCore, QuantityCore,
+    RuintFormCore, TypedCore, be_bytes::BeBytes, decimal::DecimalString, fixed_hex::FixedHex,
+    le_bytes::LeBytes, quantity::Quantity, read, reject_inputs, ruint::RuintForm, typed::Typed,
   },
   width::{self, FitsBits, IntRepr, LimbArray, NonZeroIntRepr, NonZeroUintRepr, UintRepr},
 };
@@ -83,6 +87,10 @@ const FIXED_HEX_PREFIX: &str = "hexadecimal string without the 0x prefix";
 
 /// What `be_bytes` and `le_bytes` read, whose fixed message is `expected an array of bytes`.
 const BYTE_ARRAY: &str = "an array of bytes";
+
+/// What `ruint` reads, whose fixed message is
+/// `expected an integer as a number, a string or bytes`.
+const RUINT: &str = "an integer as a number, a string or bytes";
 
 /// The key of the one entry of the map through which serde_json with its feature
 /// `arbitrary_precision` hands over a number that no 64-bit integer holds, whose value is the text
@@ -1474,3 +1482,307 @@ helper_impls!(BeBytes for natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i1
 helper_impls!(LeBytes for bytes Uint: UintRepr, Int: IntRepr);
 helper_impls!(LeBytes for bytes nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
 helper_impls!(LeBytes for natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+/// The buffer of the decimal digits of a value of a type, through which `ruint` reads a decimal
+/// string: `[[u8; 3]; BYTES]`, three bytes for each byte of the width, which hold the digits of
+/// every value of the width, as a byte adds at most 2.41 decimal digits. For numo's unsigned
+/// integers `BYTES` is the length of the array that `u8: LimbArray<B>` names, which exists up to
+/// 8192 bits, and for an unsigned native integer and its `NonZero` the bytes of its size.
+trait DigitBuffer {
+  /// The buffer.
+  type Digits: AsMut<[[u8; 3]]>;
+
+  /// The buffer, of zeros.
+  fn zero_digits() -> Self::Digits;
+}
+
+/// Implements [`DigitBuffer`] for numo's unsigned integers, written `Integer, ..`, and for unsigned
+/// native integers and their `NonZero`, written `natives native, ..`.
+macro_rules! digit_buffers {
+  (natives $($native:ident),+) => {$(
+    impl DigitBuffer for $native {
+      type Digits = [[u8; 3]; size_of::<$native>()];
+
+      #[inline]
+      fn zero_digits() -> Self::Digits {
+        [[0; 3]; size_of::<$native>()]
+      }
+    }
+
+    impl DigitBuffer for NonZero<$native> {
+      type Digits = [[u8; 3]; size_of::<$native>()];
+
+      #[inline]
+      fn zero_digits() -> Self::Digits {
+        [[0; 3]; size_of::<$native>()]
+      }
+    }
+  )+};
+  ($($integer:ident),+) => {$(
+    // The bound on `u8` fixes `M` at `BYTES`, so that `Digits` has three bytes for each byte of
+    // the width.
+    impl<B, R, const M: usize> DigitBuffer for $integer<B, R>
+    where
+      u8: LimbArray<B, Array = [u8; M]>,
+    {
+      type Digits = [[u8; 3]; M];
+
+      #[inline]
+      fn zero_digits() -> [[u8; 3]; M] {
+        [[0; 3]; M]
+      }
+    }
+  )+};
+}
+
+digit_buffers!(Uint, NonZeroUint);
+digit_buffers!(natives u8, u16, u32, u64, u128);
+
+/// Writes `value` in ruint's form: in a human-readable format as a QUANTITY, the text that
+/// `quantity` writes, and in another as its bytes, most significant first, as `be_bytes` writes
+/// them.
+fn serialize_ruint<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: CastSource + fmt::LowerHex + ByteBuffer,
+  S: Serializer,
+{
+  if serializer.is_human_readable() {
+    serialize_quantity(value, serializer)
+  } else {
+    serialize_be_bytes(value, serializer)
+  }
+}
+
+/// The value in `T` of the bytes `text` of a string in ruint's grammar, or the error of the first
+/// of its rules that `text` breaks: the first two bytes `0x` or `0X`, `0o` or `0O`, and `0b` or
+/// `0B` choose the radix 16, 8 or 2, and any other text is decimal; every byte after them `_` or a
+/// digit of the radix, of either case, so that a sign, whitespace and every byte of a character
+/// outside ASCII are invalid digits; the range of `T`; and, for a non-zero `T`, a value that is not
+/// zero. `_` counts for nothing, any number of leading zeros reads, and a text without digits is
+/// zero.
+fn parse_ruint<T>(text: &[u8]) -> Result<T, Rejection>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError> + ByteBuffer + DigitBuffer,
+{
+  match text {
+    [b'0', b'x' | b'X', digits @ ..] => parse_ruint_power_of_two(digits, 4),
+    [b'0', b'o' | b'O', digits @ ..] => parse_ruint_power_of_two(digits, 3),
+    [b'0', b'b' | b'B', digits @ ..] => parse_ruint_power_of_two(digits, 1),
+    digits => parse_ruint_decimal(digits),
+  }
+}
+
+/// The value in `T` of `digits`, the digits of a string in ruint's grammar of the radix `2^bits`
+/// after its prefix, with `_` anywhere among them, or the error of the first rule that they break:
+/// every byte `_` or a digit of the radix, of either case; the range of `T`; and, for a non-zero
+/// `T`, a value that is not zero. The range is checked without forming the value, a product of the
+/// number of digits or a cast of it to `u32`. The digits after the leading zeros are then decoded
+/// once, from the last, into the array of the bytes of `T`, least significant first, where the
+/// three bits of an octal digit may straddle two bytes, and the casts read the value from the
+/// words of the bytes: decoding the digits again for every word would read the whole text once for
+/// each limb of the storage.
+fn parse_ruint_power_of_two<T>(digits: &[u8], bits: u32) -> Result<T, Rejection>
+where
+  T: CheckedTarget + ByteBuffer,
+{
+  // The value of `byte` as a digit of the radix, or `None` for `_` and every other byte.
+  let digit = |byte: u8| hex_digit(byte).filter(|&digit| digit >> bits == 0);
+  if !digits
+    .iter()
+    .all(|&byte| byte == b'_' || digit(byte).is_some())
+  {
+    return Err(Rejection::Parse(parse_errors::INVALID_DIGIT));
+  }
+  // The digits after the leading zeros, counted without `_`. With none, the value is zero, which
+  // every width holds. Otherwise the value has the bits of its first digit, one to `bits`, and
+  // `bits` for each digit after it.
+  let mut significant = digits
+    .iter()
+    .filter_map(|&byte| digit(byte))
+    .skip_while(|&digit| digit == 0);
+  let mut count = 0;
+  if let Some(first) = significant.next() {
+    let first_bits = u64::BITS - first.leading_zeros();
+    let rest = significant.count();
+    let in_range = first_bits <= T::BITS && rest as u64 <= u64::from((T::BITS - first_bits) / bits);
+    if !in_range {
+      return Err(Rejection::Parse(parse_errors::POS_OVERFLOW));
+    }
+    count = rest + 1;
+  }
+  let mut buffer = T::zero_bytes();
+  let bytes = buffer.as_mut();
+  // The bit at which the digit starts, below `Bits` for every digit after the leading zeros, as the
+  // range holds, and so in the bytes.
+  let mut start = 0usize;
+  let significant = digits
+    .iter()
+    .rev()
+    .filter_map(|&byte| digit(byte))
+    .take(count);
+  for digit in significant {
+    let (index, offset) = (start / 8, start % 8);
+    bytes[index] |= (digit << offset) as u8;
+    // The bits of the digit above the byte, which are zeros unless the value has the next byte.
+    if let Some(next) = bytes.get_mut(index + 1) {
+      *next |= (digit >> (8 - offset)) as u8;
+    }
+    start += bits as usize;
+  }
+  T::from_words(|index| word_of_bytes(bytes, false, index))
+    .ok_or(Rejection::Parse(parse_errors::ZERO))
+}
+
+/// The value in `T` of `digits`, the decimal digits of a string in ruint's grammar, with `_`
+/// anywhere among them, or the error of the first rule that they break: every byte `_` or an ASCII
+/// digit; the range of `T`; and, for a non-zero `T`, a value that is not zero. The digits after the
+/// leading zeros are copied, without `_`, into the buffer of the decimal digits of `T`, which holds
+/// the digits of every value of the width, so that a digit beyond it makes a value too large, and
+/// `FromStr` parses them, with no allocation.
+fn parse_ruint_decimal<T>(digits: &[u8]) -> Result<T, Rejection>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError> + DigitBuffer,
+{
+  if !digits
+    .iter()
+    .all(|&byte| byte == b'_' || byte.is_ascii_digit())
+  {
+    return Err(Rejection::Parse(parse_errors::INVALID_DIGIT));
+  }
+  let mut buffer = T::zero_digits();
+  let text = buffer.as_mut().as_flattened_mut();
+  let mut len = 0;
+  let significant = digits
+    .iter()
+    .filter(|byte| byte.is_ascii_digit())
+    .skip_while(|&&byte| byte == b'0');
+  for &digit in significant {
+    let Some(slot) = text.get_mut(len) else {
+      return Err(Rejection::Parse(parse_errors::POS_OVERFLOW));
+    };
+    *slot = digit;
+    len += 1;
+  }
+  if len == 0 {
+    return T::from_words(|_| 0).ok_or(Rejection::Parse(parse_errors::ZERO));
+  }
+  // The buffer holds ASCII digits alone, which are UTF-8.
+  let text = core::str::from_utf8(&text[..len])
+    .map_err(|_| Rejection::Parse(parse_errors::INVALID_DIGIT))?;
+  text.parse().map_err(Rejection::Parse)
+}
+
+/// Reads an unsigned integer of type `T` in ruint's form, whatever the format says of itself: a
+/// string in ruint's grammar, through [`parse_ruint`]; every integer that the format gives, checked
+/// against the width of `T`; and the bytes of the value, most significant first, as a byte string
+/// or a sequence of bytes, as `be_bytes` reads them. Every other input gets the fixed message.
+struct RuintVisitor<'a, T> {
+  expected: Expected<'a>,
+  marker: PhantomData<T>,
+}
+
+impl<'de, T> Visitor<'de> for RuintVisitor<'_, T>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError> + ByteBuffer + DigitBuffer,
+{
+  type Value = Result<T, Rejection>;
+
+  fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.expected.describe(f)
+  }
+
+  // The narrower integers read through these, which serde forwards them to.
+  fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+    Ok(cast(value))
+  }
+
+  fn visit_i128<E: de::Error>(self, value: i128) -> Result<Self::Value, E> {
+    Ok(cast(value))
+  }
+
+  fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+    Ok(cast(value))
+  }
+
+  fn visit_u128<E: de::Error>(self, value: u128) -> Result<Self::Value, E> {
+    Ok(cast(value))
+  }
+
+  // `visit_borrowed_str`, `visit_string`, which `serde_core` has only with `alloc`, and
+  // `visit_char` read through this, as serde forwards them and ruint reads them.
+  fn visit_str<E: de::Error>(self, text: &str) -> Result<Self::Value, E> {
+    Ok(parse_ruint(text.as_bytes()))
+  }
+
+  // `visit_borrowed_bytes` reads through this, and so does `visit_byte_buf`, which `serde_core`
+  // has only with `alloc`.
+  fn visit_bytes<E: de::Error>(self, bytes: &[u8]) -> Result<Self::Value, E> {
+    Ok(value_of_bytes(bytes, true))
+  }
+
+  fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+    read_byte_sequence(seq, self.expected, true)
+  }
+
+  // Every other kind of input is rejected below. `f32` reaches these through serde's forwarding.
+  reject_inputs! {
+    visit_bool(bool),
+    visit_f64(f64),
+  }
+
+  fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_some<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+}
+
+/// Asks the format for any value when it is human-readable and for bytes otherwise, as ruint asks,
+/// which `ruint` reads with [`RuintVisitor`] whatever the format says of itself.
+fn drive_ruint<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError> + ByteBuffer + DigitBuffer,
+  D: Deserializer<'de>,
+{
+  let visitor = RuintVisitor {
+    expected,
+    marker: PhantomData,
+  };
+  if deserializer.is_human_readable() {
+    deserializer.deserialize_any(visitor)
+  } else {
+    deserializer.deserialize_bytes(visitor)
+  }
+}
+
+helper! {
+  RuintFormCore, RUINT;
+  write(CastSource + fmt::LowerHex + ByteBuffer) with serialize_ruint, RuintSome;
+  read(CheckedTarget + FromStr<Err = ParseIntError> + ByteBuffer + DigitBuffer)
+    with drive_ruint, RuintOption;
+}
+
+helper_impls!(RuintForm for bytes Uint: UintRepr);
+helper_impls!(RuintForm for bytes nonzero NonZeroUint: NonZeroUintRepr);
+helper_impls!(RuintForm for natives u8, u16, u32, u64, u128);
