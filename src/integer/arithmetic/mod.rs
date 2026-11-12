@@ -727,33 +727,13 @@ macro_rules! uint_sign_table {
     $callback! { $args
       /// Addition with a carry: `self + rhs + carry` wrapped to the range of the type, and whether
       /// the exact sum is outside that range.
-      fn carrying_add(&self, rhs: &Self, carry: bool) -> (Self, bool) {
-        let (sum, overflow) = self.overflowing_add(rhs);
-        if carry {
-          // Adding one subtracts `MAX`, which is `-1` modulo `2^Bits`, and overflows exactly when
-          // the sum is `MAX`, which is when the subtraction does not borrow. At zero bits, which
-          // hold no one, a carry always overflows.
-          let (sum, borrow) = sum.overflowing_sub(&Self::bound(true));
-          (sum, overflow || !borrow)
-        } else {
-          (sum, overflow)
-        }
-      }
+      fn carrying_add(&self, rhs: &Self, carry: bool) -> (Self, bool)
+        = prim pair carrying_add_bits(self, rhs; carry);
 
       /// Subtraction with a borrow: `self - rhs - borrow` wrapped to the range of the type, and
       /// whether the exact difference is negative.
-      fn borrowing_sub(&self, rhs: &Self, borrow: bool) -> (Self, bool) {
-        let (difference, overflow) = self.overflowing_sub(rhs);
-        if borrow {
-          // Subtracting one adds `MAX`, which is `-1` modulo `2^Bits`, and overflows exactly when
-          // the difference is zero, which is when the addition does not carry. At zero bits, which
-          // hold no one, a borrow always overflows.
-          let (difference, carry) = difference.overflowing_add(&Self::bound(true));
-          (difference, overflow || !carry)
-        } else {
-          (difference, overflow)
-        }
-      }
+      fn borrowing_sub(&self, rhs: &Self, borrow: bool) -> (Self, bool)
+        = prim pair borrowing_sub_bits(self, rhs; borrow);
     }
   };
 }

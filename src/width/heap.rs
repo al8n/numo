@@ -614,6 +614,37 @@ macro_rules! heap_storage {
       }
 
       #[inline]
+      fn carrying_add_bits(
+        &self,
+        rhs: &Self,
+        carry: bool,
+        bits: u32,
+        token: Token,
+      ) -> (Self, bool) {
+        let (value, overflow) =
+          <[L; N] as UintCore>::carrying_add_bits(self.borrow(), rhs.borrow(), carry, bits, token);
+        (uint(value), overflow)
+      }
+
+      #[inline]
+      fn borrowing_sub_bits(
+        &self,
+        rhs: &Self,
+        borrow: bool,
+        bits: u32,
+        token: Token,
+      ) -> (Self, bool) {
+        let (value, overflow) = <[L; N] as UintCore>::borrowing_sub_bits(
+          self.borrow(),
+          rhs.borrow(),
+          borrow,
+          bits,
+          token,
+        );
+        (uint(value), overflow)
+      }
+
+      #[inline]
       fn abs_diff(&self, rhs: &Self, token: Token) -> Self {
         uint(<[L; N] as UintCore>::abs_diff(
           self.borrow(),
@@ -634,12 +665,19 @@ macro_rules! heap_storage {
         (uint(value), overflow)
       }
 
-      // The signed storage is the pointer, so the cast stores its result in the allocation that
-      // it consumes.
+      // The signed storage is the pointer, so the casts store their result in the allocation that
+      // they consume.
       #[inline]
       fn cast_signed_bits(mut self, bits: u32, token: Token) -> Self {
         let array: &mut [L; N] = self.borrow_mut();
         *array = <[L; N] as UintCore>::cast_signed_bits(*array, bits, token);
+        self
+      }
+
+      #[inline]
+      fn saturating_cast_signed_bits(mut self, bits: u32, token: Token) -> Self {
+        let array: &mut [L; N] = self.borrow_mut();
+        *array = <[L; N] as UintCore>::saturating_cast_signed_bits(*array, bits, token);
         self
       }
 
@@ -715,12 +753,19 @@ macro_rules! heap_storage {
         ))
       }
 
-      // The unsigned storage is the pointer, so the cast stores its result in the allocation that
-      // it consumes.
+      // The unsigned storage is the pointer, so the casts store their result in the allocation that
+      // they consume.
       #[inline]
       fn cast_unsigned_bits(mut self, bits: u32, token: Token) -> Self {
         let array: &mut [L; N] = self.borrow_mut();
         *array = <[L; N] as IntCore>::cast_unsigned_bits(*array, bits, token);
+        self
+      }
+
+      #[inline]
+      fn saturating_cast_unsigned_bits(mut self, bits: u32, token: Token) -> Self {
+        let array: &mut [L; N] = self.borrow_mut();
+        *array = <[L; N] as IntCore>::saturating_cast_unsigned_bits(*array, bits, token);
         self
       }
 

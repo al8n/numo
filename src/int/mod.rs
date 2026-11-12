@@ -181,6 +181,48 @@ macro_rules! native {
         value & max_of_bits(bits)
       }
 
+      /// `lhs + rhs + carry` modulo `2^bits`, and whether the sum is `2^bits` or more. Requires
+      /// `bits <= BITS` and both values below `2^bits`.
+      #[inline]
+      pub(crate) const fn carrying_add_bits(
+        lhs: $uint,
+        rhs: $uint,
+        carry: bool,
+        bits: u32,
+      ) -> ($uint, bool) {
+        let (sum, overflow) = overflowing_add_bits(lhs, rhs, bits);
+        if carry {
+          // Adding one subtracts `2^bits - 1`, which is `-1` modulo `2^bits`, and overflows exactly
+          // when the sum is `2^bits - 1`, which is when the subtraction does not borrow. At zero
+          // bits, which hold no one, a carry always overflows.
+          let (sum, borrow) = overflowing_sub_bits(sum, max_of_bits(bits), bits);
+          (sum, overflow || !borrow)
+        } else {
+          (sum, overflow)
+        }
+      }
+
+      /// `lhs - rhs - borrow` modulo `2^bits`, and whether the difference is negative. Requires
+      /// `bits <= BITS` and both values below `2^bits`.
+      #[inline]
+      pub(crate) const fn borrowing_sub_bits(
+        lhs: $uint,
+        rhs: $uint,
+        borrow: bool,
+        bits: u32,
+      ) -> ($uint, bool) {
+        let (difference, overflow) = overflowing_sub_bits(lhs, rhs, bits);
+        if borrow {
+          // Subtracting one adds `2^bits - 1`, which is `-1` modulo `2^bits`, and overflows exactly
+          // when the difference is zero, which is when the addition does not carry. At zero bits,
+          // which hold no one, a borrow always overflows.
+          let (difference, carry) = overflowing_add_bits(difference, max_of_bits(bits), bits);
+          (difference, overflow || !carry)
+        } else {
+          (difference, overflow)
+        }
+      }
+
       /// The quotient and the remainder of `lhs / rhs`, and `false`, which no unsigned quotient
       /// overflows, or `None` if `rhs` is zero. The quotient and the remainder are at most `lhs`,
       /// so `bits` does not change them; it gives every width the signature of the upper layer.
@@ -495,6 +537,20 @@ macro_rules! native {
       #[inline]
       pub(crate) const fn cast_signed_bits(value: $uint, bits: u32) -> $int {
         super::$int::sign_extend(value.cast_signed(), bits)
+      }
+
+      /// `value` as the two's complement integer of `bits` bits, or the largest one,
+      /// `2^(bits - 1) - 1`, if `value` is above it, which is when bit `bits - 1` is set; zero bits
+      /// hold only zero. Requires `bits <= BITS` and `value < 2^bits`.
+      #[inline]
+      pub(crate) const fn saturating_cast_signed_bits(value: $uint, bits: u32) -> $int {
+        if bit(value, bits.wrapping_sub(1), bits) {
+          // The largest value in two's complement has every bit below the sign bit: the complement
+          // of the sign bit alone, which is the highest one of `value`.
+          cast_signed_bits(not_bits(isolate_highest_one_bits(value, bits), bits), bits)
+        } else {
+          cast_signed_bits(value, bits)
+        }
       }
 
       /// The bit at `index` of `value`, or `false` for `index >= bits`.
@@ -1195,6 +1251,19 @@ macro_rules! native {
       #[inline]
       pub(crate) const fn cast_unsigned_bits(value: $int, bits: u32) -> $uint {
         super::$uint::zero_extend(value.cast_unsigned(), bits)
+      }
+
+      /// `value` as an unsigned integer of `bits` bits, or zero if `value` is negative, which is
+      /// when bit `bits - 1` is set. Requires `bits <= BITS` and `value` within the range of `bits`
+      /// bits.
+      #[inline]
+      pub(crate) const fn saturating_cast_unsigned_bits(value: $int, bits: u32) -> $uint {
+        if bit(value, bits.wrapping_sub(1), bits) {
+          // A negative value saturates to zero.
+          0
+        } else {
+          cast_unsigned_bits(value, bits)
+        }
       }
 
       /// The bit at `index` of `value`, or `false` for `index >= bits`, which reads no copy of

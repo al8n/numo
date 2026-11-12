@@ -423,6 +423,17 @@ mod sealed {
     /// bits of the storage and the value to have `bits` bits.
     fn overflowing_neg_bits(&self, bits: u32, token: Token) -> (Self, bool);
 
+    /// `self + rhs + carry` modulo `2^bits`, and whether the sum is `2^bits` or more: a row of its
+    /// own, so that a storage builds only the sum that it returns. Requires `bits` to be at most
+    /// the bits of the storage and both values to have `bits` bits.
+    fn carrying_add_bits(&self, rhs: &Self, carry: bool, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self - rhs - borrow` modulo `2^bits`, and whether the difference is negative: a row of its
+    /// own, as [`carrying_add_bits`](Self::carrying_add_bits) is. Requires `bits` to be at most
+    /// the bits of the storage and both values to have `bits` bits.
+    fn borrowing_sub_bits(&self, rhs: &Self, borrow: bool, bits: u32, token: Token)
+    -> (Self, bool);
+
     /// Returns `true` if the value is one.
     fn is_one(&self, token: Token) -> bool;
 
@@ -585,6 +596,12 @@ mod sealed {
     /// sign-extended from bit `bits - 1`, or zero for zero bits. Requires `bits` to be at most the
     /// bits of the storage and the value to have `bits` bits.
     fn cast_signed_bits(self, bits: u32, token: Token) -> Self::Complement;
+
+    /// The value as the signed storage of the same size, or the largest value of `bits` bits in
+    /// two's complement, `2^(bits - 1) - 1`, if the value is above it: a row of its own, so that a
+    /// storage builds no bound that it drops, and stores the result where it can. Requires `bits`
+    /// to be at most the bits of the storage and the value to have `bits` bits.
+    fn saturating_cast_signed_bits(self, bits: u32, token: Token) -> Self::Complement;
 
     /// The non-zero storage of the value, or `None` if it is zero.
     fn to_nonzero(self, token: Token) -> Option<Self::NonZeroStorage>;
@@ -976,6 +993,11 @@ mod sealed {
     /// The `bits` bits of the value, its two's complement, as the unsigned storage of the same
     /// size. Requires `bits` to be at most the bits of the storage.
     fn cast_unsigned_bits(self, bits: u32, token: Token) -> Self::Magnitude;
+
+    /// The value as the unsigned storage of the same size, or zero if the value is negative: a
+    /// row of its own, as [`UintCore::saturating_cast_signed_bits`] is. Requires `bits` to be at
+    /// most the bits of the storage and the value to have `bits` bits.
+    fn saturating_cast_unsigned_bits(self, bits: u32, token: Token) -> Self::Magnitude;
 
     /// The non-zero storage of the value, or `None` if it is zero.
     fn to_nonzero(self, token: Token) -> Option<Self::NonZeroStorage>;
@@ -1513,6 +1535,16 @@ macro_rules! array_storage {
       }
 
       #[inline]
+      fn carrying_add_bits(&self, rhs: &Self, carry: bool, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::carrying_add_bits(self, rhs, carry, bits)
+      }
+
+      #[inline]
+      fn borrowing_sub_bits(&self, rhs: &Self, borrow: bool, bits: u32, _: Token) -> (Self, bool) {
+        unsigned::$lower::borrowing_sub_bits(self, rhs, borrow, bits)
+      }
+
+      #[inline]
       fn is_one(&self, _: Token) -> bool {
         unsigned::$lower::is_one(self)
       }
@@ -1720,6 +1752,11 @@ macro_rules! array_storage {
       #[inline]
       fn cast_signed_bits(self, bits: u32, _: Token) -> Self {
         unsigned::$lower::cast_signed_bits(&self, bits)
+      }
+
+      #[inline]
+      fn saturating_cast_signed_bits(self, bits: u32, _: Token) -> Self {
+        unsigned::$lower::saturating_cast_signed_bits(&self, bits)
       }
 
       #[inline]
@@ -2183,6 +2220,11 @@ macro_rules! array_storage {
       }
 
       #[inline]
+      fn saturating_cast_unsigned_bits(self, bits: u32, _: Token) -> Self {
+        signed::$upper::saturating_cast_unsigned_bits(&self, bits)
+      }
+
+      #[inline]
       fn to_nonzero(self, _: Token) -> Option<Self> {
         if signed::$upper::is_zero(&self) {
           None
@@ -2484,6 +2526,16 @@ macro_rules! native_storage {
       }
 
       #[inline]
+      fn carrying_add_bits(&self, rhs: &Self, carry: bool, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::carrying_add_bits(*self, *rhs, carry, bits)
+      }
+
+      #[inline]
+      fn borrowing_sub_bits(&self, rhs: &Self, borrow: bool, bits: u32, _: Token) -> (Self, bool) {
+        int::$uint::borrowing_sub_bits(*self, *rhs, borrow, bits)
+      }
+
+      #[inline]
       fn is_one(&self, _: Token) -> bool {
         int::$uint::is_one(*self)
       }
@@ -2693,6 +2745,11 @@ macro_rules! native_storage {
       #[inline]
       fn cast_signed_bits(self, bits: u32, _: Token) -> $int {
         int::$uint::cast_signed_bits(self, bits)
+      }
+
+      #[inline]
+      fn saturating_cast_signed_bits(self, bits: u32, _: Token) -> $int {
+        int::$uint::saturating_cast_signed_bits(self, bits)
       }
 
       #[inline]
@@ -3147,6 +3204,11 @@ macro_rules! native_storage {
       #[inline]
       fn cast_unsigned_bits(self, bits: u32, _: Token) -> $uint {
         int::$int::cast_unsigned_bits(self, bits)
+      }
+
+      #[inline]
+      fn saturating_cast_unsigned_bits(self, bits: u32, _: Token) -> $uint {
+        int::$int::saturating_cast_unsigned_bits(self, bits)
       }
 
       #[inline]
