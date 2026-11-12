@@ -40,7 +40,7 @@ use crate::{
 
 /// The fixed message of the defaults: the error of every input that is neither an integer nor a
 /// string.
-const FIXED: &str = "expected an integer";
+pub(super) const FIXED: &str = "expected an integer";
 
 /// The text of std's error of a conversion of a number above the range of its target.
 pub(super) fn too_large() -> String {
@@ -288,7 +288,7 @@ fn up_to_128_bits_a_value_is_written_as_the_native_integer_of_its_class() {
 
 /// A stand-in format, which answers each request as its mode says.
 #[derive(Clone, Copy, Debug)]
-enum Probe {
+pub(super) enum Probe {
   /// Fails every request with the name of its method, in a human-readable format if the flag is
   /// set. The requests of the 128-bit integers keep serde's default, whose error names the integer.
   Record(bool),
@@ -375,7 +375,7 @@ impl<'de> Deserializer<'de> for Probe {
 
 /// The text of the error of `T` from `probe`.
 #[inline(never)]
-fn error_from<T: DeserializeOwned + Debug>(probe: Probe) -> String {
+pub(super) fn error_from<T: DeserializeOwned + Debug>(probe: Probe) -> String {
   T::deserialize(probe).unwrap_err().to_string()
 }
 

@@ -589,9 +589,11 @@ mod traits;
 ///   every build, and rejects it if serde_json changes the token.
 /// - A format that infers the type of a value from its text, as csv does, gives a value outside the
 ///   128-bit range as a float, so a type above 128 bits does not read such a value back from it.
-///   [`decimal`] asks for a string and reads every value.
+///   [`decimal`] asks for a string and reads every value, and so does [`typed`] above 128 bits, in
+///   the form of the defaults.
 /// - In a human-readable format the defaults need `deserialize_any`: a format without it, such as
-///   serde-json-core, reads no value of 0 to 64 bits or of more than 128 bits.
+///   serde-json-core, reads no value of 0 to 64 bits or of more than 128 bits. [`typed`] asks such
+///   a format for the type of the value.
 /// - A field of 65 to 128 bits fails in an untagged enum or a flattened struct, as a `u128` field
 ///   does, since serde's buffer holds no 128-bit integer. [`decimal`] writes a string, which reads
 ///   there.
@@ -603,7 +605,9 @@ mod traits;
 // The helper modules exist only with the feature; without it, their names link to the crate's
 // section on the feature.
 #[cfg_attr(feature = "serde", doc = "[`decimal`]: crate::serde::decimal")]
+#[cfg_attr(feature = "serde", doc = "[`typed`]: crate::serde::typed")]
 #[cfg_attr(not(feature = "serde"), doc = "[`decimal`]: crate#serde")]
+#[cfg_attr(not(feature = "serde"), doc = "[`typed`]: crate#serde")]
 ///
 /// ```
 /// # #[cfg(feature = "serde")]

@@ -6,9 +6,12 @@
 //! it as go-ethereum's `hexutil` decodes a number, with the message of each rule of its grammar
 //! and the range checked without forming the value. `fixed_hex` writes two digits for each byte of
 //! the width, the pattern of the bits of a negative `Int`, and reads that pattern back, with the
-//! message of each rule. The leaf `optional` of each helper writes and reads `None` and `Some` in
-//! JSON and postcard, a missing field with and without `default`, `null` through serde's buffer and
-//! an empty csv field; and each helper reads in untagged enums and flattened structs.
+//! message of each rule. `typed` writes the form of the defaults and reads it alone, asking every
+//! format for the class of the width, through a recording stand-in, JSON, postcard, a format
+//! without `deserialize_any` and serde's deserializers. The leaf `optional` of each helper writes
+//! and reads `None` and `Some` in JSON and postcard, a missing field with and without `default`,
+//! `null` through serde's buffer and an empty csv field; and each helper reads in untagged enums
+//! and flattened structs.
 //!
 //! Every expected text of std comes from std at run time. Each width group or family of storages
 //! checks in a function of its own, and each generic check is `#[inline(never)]`, so that a frame
@@ -21,7 +24,7 @@ use core::{
 };
 
 use serde_core::{
-  Deserialize, Serialize,
+  Deserialize, Deserializer, Serialize,
   de::{self, DeserializeOwned, IntoDeserializer},
 };
 use serde_json::error::Category;
@@ -30,8 +33,8 @@ use typenum::{Diff, U4, U12, U15, U17, U31, U33, U192, U8192, U16384, U65536, U2
 
 use super::{
   serde::{
-    CsvField, NUMBER_TOKEN, Native, json_message, parse_error, samples, text_patterns, too_large,
-    too_small, zero_of_conversion,
+    CsvField, FIXED, NUMBER_TOKEN, Native, Probe, error_from, json_message, parse_error, samples,
+    text_patterns, too_large, too_small, zero_of_conversion,
   },
   *,
 };
@@ -41,6 +44,7 @@ use crate::{
     decimal::{self, DecimalString},
     fixed_hex::{self, FixedHex},
     quantity::{self, Quantity},
+    typed::{self, Typed},
   },
   u0,
 };
@@ -116,6 +120,12 @@ containers!(
   with_fixed_hex: FixedHex,
   "crate::serde::fixed_hex::required",
   "crate::serde::fixed_hex::optional"
+);
+
+containers!(
+  with_typed: Typed,
+  "crate::serde::typed::required",
+  "crate::serde::typed::optional"
 );
 
 /// An untagged enum of `C`, which serde buffers to try each variant.
@@ -1516,5 +1526,383 @@ fn fixed_hex_in_options_and_serde_buffer() {
         value: Int::<U100>::new(-1)
       })
     );
+  }
+}
+
+/// Checks that `T` writes `value` with `typed` as the default writes it, in JSON and in postcard,
+/// and reads it back from both, by the type of its class.
+#[inline(never)]
+fn typed_round_trip<T>(value: T)
+where
+  T: Typed + Serialize + PartialEq + Debug,
+{
+  let name = type_name::<T>();
+  let json = serde_json::to_string(&value).unwrap();
+  let bytes = postcard::to_stdvec(&value).unwrap();
+  let value = with_typed::Required(value);
+  assert_eq!(serde_json::to_string(&value).unwrap(), json, "{name}");
+  assert_eq!(
+    postcard::to_stdvec(&value).unwrap(),
+    bytes,
+    "{json} in {name}"
+  );
+  let from_json = serde_json::from_str::<with_typed::Required<T>>(&json).unwrap();
+  assert_eq!(from_json, value, "{json} into {name}");
+  let from_bytes = postcard::from_bytes::<with_typed::Required<T>>(&bytes).unwrap();
+  assert_eq!(from_bytes, value, "{json} into {name}");
+}
+
+/// Checks [`typed_round_trip`] at the value in `T` of each of `natives`, which `T` holds.
+#[inline(never)]
+fn typed_round_trips<T, N>(natives: &[N])
+where
+  T: CheckedCastFrom<N> + Typed + Serialize + PartialEq + Debug,
+  N: Native,
+{
+  for &native in natives {
+    typed_round_trip(T::checked_cast_from(native).expect("a value of the width"));
+  }
+}
+
+/// Checks [`typed_round_trips`] at the four integer types of `$bits` bits, the width `$width`, in
+/// the default storage, whose class has the native integers `$unsigned` and `$signed`, at the
+/// values of [`helper_natives`], and of [`helper_nonzero_natives`] for the non-zero types.
+macro_rules! typed_forms {
+  ($($width:ty, $bits:literal: $unsigned:ident, $signed:ident;)+) => {$({
+    let unsigned: Vec<$unsigned> = helper_natives($bits, false);
+    let signed: Vec<$signed> = helper_natives($bits, true);
+    typed_round_trips::<Uint<$width>, $unsigned>(&unsigned);
+    typed_round_trips::<Int<$width>, $signed>(&signed);
+    let unsigned: Vec<$unsigned> = helper_nonzero_natives($bits, false);
+    let signed: Vec<$signed> = helper_nonzero_natives($bits, true);
+    typed_round_trips::<NonZeroUint<$width>, $unsigned>(&unsigned);
+    typed_round_trips::<NonZeroInt<$width>, $signed>(&signed);
+  })+};
+}
+
+/// The forms of `typed` at the four integer types of up to 128 bits, at the ends of each class.
+#[inline(never)]
+fn typed_forms_up_to_128_bits() {
+  typed_forms! {
+    U0, 0: u8, i8;
+    U1, 1: u8, i8;
+    U8, 8: u8, i8;
+    U9, 9: u16, i16;
+    U16, 16: u16, i16;
+    U17, 17: u32, i32;
+    U32, 32: u32, i32;
+    U33, 33: u64, i64;
+    U64, 64: u64, i64;
+    U65, 65: u128, i128;
+    U128, 128: u128, i128;
+  }
+}
+
+/// Checks [`typed_round_trip`] at the value in `T`, above 128 bits, of each pattern of `patterns`,
+/// read as the integer `I` of the same width; a non-zero `T` holds every value but zero.
+#[inline(never)]
+fn typed_texts<T, I>(patterns: &[Vec<bool>])
+where
+  T: CheckedCastFrom<I> + Typed + Serialize + PartialEq + Debug,
+  I: Patterned,
+{
+  for p in patterns {
+    match T::checked_cast_from(I::from_pattern(p)) {
+      Some(value) => typed_round_trip(value),
+      None => assert!(p.iter().all(|&bit| !bit), "{}", type_name::<T>()),
+    }
+  }
+}
+
+/// The forms of `typed` at the four integer types of 129 bits and at `Uint` and `Int` of 256 bits
+/// in arrays.
+#[inline(never)]
+fn typed_forms_above_128_bits() {
+  let patterns = text_patterns::<3>(129);
+  typed_texts::<Uint<U129>, Uint<U129>>(&patterns);
+  typed_texts::<Int<U129>, Int<U129>>(&patterns);
+  typed_texts::<NonZeroUint<U129>, Uint<U129>>(&patterns);
+  typed_texts::<NonZeroInt<U129>, Int<U129>>(&patterns);
+  let patterns = text_patterns::<4>(256);
+  typed_texts::<Uint<U256, [u8; 32]>, Uint<U256, [u8; 32]>>(&patterns);
+  typed_texts::<Int<U256, [u32; 8]>, Int<U256, [u32; 8]>>(&patterns);
+}
+
+/// What `T` reads with `typed` from `json`, or the message of the error.
+#[inline(never)]
+fn typed_from<T: Typed>(json: &str) -> Result<T, String> {
+  serde_json::from_str::<with_typed::Required<T>>(json)
+    .map(|with_typed::Required(value)| value)
+    .map_err(|error| json_message(&error))
+}
+
+/// Asserts that `T`, of 0 to 64 bits, reads with `typed` the JSON number 5 alone, as the native
+/// integer of its class does, and rejects the string `"5"` and every other value with the fixed
+/// message.
+#[inline(never)]
+fn typed_reads_numbers<T>()
+where
+  T: Typed + CheckedCastFrom<u8> + PartialEq + Debug,
+{
+  let name = type_name::<T>();
+  let five = T::checked_cast_from(5u8).unwrap();
+  assert_eq!(typed_from::<T>("5"), Ok(five), "{name}");
+  for json in ["\"5\"", "1.5", "true", "null", "[]", "{}"] {
+    assert_eq!(
+      typed_from::<T>(json).unwrap_err(),
+      FIXED,
+      "{json} into {name}"
+    );
+  }
+}
+
+/// Asserts that `T`, of 65 to 128 bits, reads with `typed` the JSON number 5, and rejects the
+/// string `"5"` with the error of its native integer `N`, which serde_json builds for the request
+/// of a 128-bit integer.
+#[inline(never)]
+fn typed_reads_128_bit_numbers<T, N>()
+where
+  T: Typed + CheckedCastFrom<u8> + PartialEq + Debug,
+  N: DeserializeOwned + Debug,
+{
+  let name = type_name::<T>();
+  let five = T::checked_cast_from(5u8).unwrap();
+  assert_eq!(typed_from::<T>("5"), Ok(five), "{name}");
+  let error = serde_json::from_str::<with_typed::Required<T>>("\"5\"").unwrap_err();
+  let native = serde_json::from_str::<N>("\"5\"").unwrap_err();
+  assert_eq!(error.to_string(), native.to_string(), "{name}");
+}
+
+/// Asserts that `T`, above 128 bits, reads with `typed` the JSON string `"5"` alone, and rejects
+/// the number 5 and every other value with the fixed message.
+#[inline(never)]
+fn typed_reads_strings<T>()
+where
+  T: Typed + CheckedCastFrom<u8> + PartialEq + Debug,
+{
+  let name = type_name::<T>();
+  let five = T::checked_cast_from(5u8).unwrap();
+  assert_eq!(typed_from::<T>("\"5\""), Ok(five), "{name}");
+  for json in ["5", "-5", "1.5", "true", "null", "[]", "{}"] {
+    assert_eq!(
+      typed_from::<T>(json).unwrap_err(),
+      FIXED,
+      "{json} into {name}"
+    );
+  }
+}
+
+/// `typed` writes what the default writes, in JSON and in postcard, at every class, in arrays of
+/// limbs too, and at the non-zero integers, and reads it back by the type of the class: in JSON a
+/// number and no string up to 128 bits, as the native integer of the class reads, and a string and
+/// no number above, where serde_json's own error of the request of a 128-bit integer passes
+/// through.
+#[test]
+fn typed_writes_the_form_of_the_defaults_and_reads_it_alone() {
+  typed_forms_up_to_128_bits();
+  typed_forms_above_128_bits();
+  typed_reads_numbers::<u7>();
+  typed_reads_numbers::<i7>();
+  typed_reads_numbers::<Uint<U16, [u8; 2]>>();
+  typed_reads_numbers::<Int<U64>>();
+  typed_reads_numbers::<NonZeroUint<U33>>();
+  typed_reads_128_bit_numbers::<Uint<U100>, u128>();
+  typed_reads_128_bit_numbers::<Int<U128, [u64; 2]>, i128>();
+  typed_reads_strings::<u256>();
+  typed_reads_strings::<Int<U129, [u8; 17]>>();
+  typed_reads_strings::<NonZeroUint<U1024>>();
+}
+
+/// Asserts that `T` asks with `typed` every format, human-readable or not, for what its native
+/// integer `N` asks a format that is not human-readable for.
+#[inline(never)]
+fn typed_asks_as_its_class<T, N>()
+where
+  T: Typed + Debug,
+  N: DeserializeOwned + Debug,
+{
+  let name = type_name::<T>();
+  let class = error_from::<N>(Probe::Record(false));
+  for readable in [true, false] {
+    let read: Result<T, de::value::Error> = typed::required::deserialize(Probe::Record(readable));
+    assert_eq!(read.unwrap_err().to_string(), class, "{name}");
+  }
+}
+
+/// What `T` reads with `typed` from a human-readable format without `deserialize_any`, which hands
+/// over 5 for the requests of the integers up to 64 bits and of a string, or the text of the
+/// error.
+#[inline(never)]
+fn typed_without_any<T: Typed>() -> Result<T, String> {
+  typed::required::deserialize(Probe::WithoutAny)
+    .map_err(|error: de::value::Error| error.to_string())
+}
+
+/// `typed` asks every format for the method of the class, whether it is human-readable or not:
+/// the method of the native integer of the class up to 128 bits and that of a string above. So in
+/// a human-readable format without `deserialize_any`, as serde-json-core, it reads 0 to 64 bits
+/// and above 128 bits, where the defaults read nothing, and fails from 65 to 128 bits as the
+/// native `u128` and `i128` do.
+#[test]
+fn typed_asks_every_format_for_the_class() {
+  typed_asks_as_its_class::<u0, u8>();
+  typed_asks_as_its_class::<i7, i8>();
+  typed_asks_as_its_class::<Uint<U9>, u16>();
+  typed_asks_as_its_class::<Int<U16>, i16>();
+  typed_asks_as_its_class::<Uint<U17>, u32>();
+  typed_asks_as_its_class::<Int<U32>, i32>();
+  typed_asks_as_its_class::<Uint<U33>, u64>();
+  typed_asks_as_its_class::<Int<U64>, i64>();
+  typed_asks_as_its_class::<Uint<U65>, u128>();
+  typed_asks_as_its_class::<Int<U128>, i128>();
+  typed_asks_as_its_class::<NonZeroUint<U7>, u8>();
+  for readable in [true, false] {
+    let read: Result<u256, de::value::Error> =
+      typed::required::deserialize(Probe::Record(readable));
+    assert_eq!(read.unwrap_err().to_string(), "deserialize_str");
+    let read: Result<Int<U129>, de::value::Error> =
+      typed::required::deserialize(Probe::Record(readable));
+    assert_eq!(read.unwrap_err().to_string(), "deserialize_str");
+  }
+  assert_eq!(typed_without_any::<u7>(), Ok(u7::new(5)));
+  assert_eq!(typed_without_any::<i7>(), Ok(i7::new(5)));
+  assert_eq!(typed_without_any::<Uint<U64>>(), Ok(Uint::<U64>::new(5)));
+  assert_eq!(typed_without_any::<Int<U64>>(), Ok(Int::<U64>::new(5)));
+  assert_eq!(typed_without_any::<u256>(), Ok(u256::from(5u8)));
+  assert_eq!(typed_without_any::<i256>(), Ok(i256::from(5i8)));
+  let without = Probe::WithoutAny;
+  assert_eq!(
+    typed_without_any::<Uint<U100>>(),
+    Err(error_from::<u128>(without))
+  );
+  assert_eq!(
+    typed_without_any::<Int<U100>>(),
+    Err(error_from::<i128>(without))
+  );
+  assert_eq!(error_from::<u7>(without), "any is unsupported");
+  assert_eq!(error_from::<u256>(without), "any is unsupported");
+}
+
+/// What `T` reads from the deserializer that `deserializer` makes with `typed` and with its
+/// default, or the texts of the errors.
+#[inline(never)]
+fn typed_and_default<T, D>(deserializer: impl Fn() -> D) -> [Result<T, String>; 2]
+where
+  T: Typed + DeserializeOwned,
+  D: Deserializer<'static, Error = de::value::Error>,
+{
+  let text = |error: de::value::Error| error.to_string();
+  [
+    typed::required::deserialize(deserializer()).map_err(text),
+    T::deserialize(deserializer()).map_err(text),
+  ]
+}
+
+/// The fixed message of the defaults and of `typed`, as the error of a reading of `T`.
+fn fixed<T>() -> Result<T, String> {
+  Err(FIXED.to_string())
+}
+
+/// serde's deserializers hand their value over for every request, through `deserialize_any`: the
+/// form that `typed` does not take gets its fixed message, and the defaults read it, a string up to
+/// 128 bits, an integer above 128 bits, and serde_json's number token at every class.
+#[test]
+fn typed_rejects_the_other_form_that_the_defaults_read() {
+  let token = || de::value::MapDeserializer::new([(NUMBER_TOKEN, "5")].into_iter());
+  assert_eq!(
+    typed_and_default::<u7, _>(|| "5".into_deserializer()),
+    [fixed(), Ok(u7::new(5))]
+  );
+  assert_eq!(typed_and_default::<u7, _>(token), [fixed(), Ok(u7::new(5))]);
+  let five = Uint::<U100>::new(5);
+  assert_eq!(
+    typed_and_default::<Uint<U100>, _>(|| "5".into_deserializer()),
+    [fixed(), Ok(five)]
+  );
+  assert_eq!(
+    typed_and_default::<Uint<U100>, _>(token),
+    [fixed(), Ok(five)]
+  );
+  let five = u256::from(5u8);
+  assert_eq!(
+    typed_and_default::<u256, _>(|| 5u64.into_deserializer()),
+    [fixed(), Ok(five)]
+  );
+  assert_eq!(typed_and_default::<u256, _>(token), [fixed(), Ok(five)]);
+}
+
+/// The leaf `optional` of `typed`: `None` is JSON's `null` and postcard's `[0]`, and `Some` is the
+/// form of the defaults after postcard's `[1]`; a missing field reads as `None` with `default` and
+/// is required without it; `null` reads as `None`, also through serde's buffer; an empty csv field
+/// is `None`; and every other input gets the fixed message. The leaf `required` reads through
+/// serde's buffer what the default reads there, and every value from csv's field, of which it asks
+/// for a string above 128 bits.
+#[test]
+fn typed_in_options_serde_buffer_and_csv() {
+  options_round_trip(
+    with_typed::Optional::<u7>(None),
+    with_typed::Optional(Some(u7::new(5))),
+    "5",
+    &[5],
+  );
+  options_round_trip(
+    with_typed::Optional::<Int<U100>>(None),
+    with_typed::Optional(Some(Int::<U100>::new(-5))),
+    "-5",
+    &postcard::to_stdvec(&-5i128).unwrap(),
+  );
+  options_round_trip(
+    with_typed::Optional::<u256>(None),
+    with_typed::Optional(Some(u256::from(5u8))),
+    "\"5\"",
+    &postcard::to_stdvec("5").unwrap(),
+  );
+  option_fields(
+    [
+      with_typed::Defaulted::<u7> { value: None },
+      with_typed::Defaulted {
+        value: Some(u7::new(5)),
+      },
+    ],
+    [
+      with_typed::Present::<u7> { value: None },
+      with_typed::Present {
+        value: Some(u7::new(5)),
+      },
+    ],
+    "5",
+  );
+  let read: Result<Option<u7>, de::value::Error> = typed::optional::deserialize(CsvField(""));
+  assert_eq!(read.unwrap(), None);
+  let read: Result<Option<u7>, de::value::Error> = typed::optional::deserialize(CsvField("5"));
+  assert_eq!(read.unwrap(), Some(u7::new(5)));
+  for json in ["\"5\"", "true", "[]", "{}"] {
+    let error = serde_json::from_str::<with_typed::Optional<u7>>(json).unwrap_err();
+    assert_eq!(json_message(&error), FIXED, "{json}");
+  }
+  for result in through_the_buffer::<with_typed::Field<u7>>(r#"{"value":5}"#) {
+    assert_eq!(result, Ok(with_typed::Field { value: u7::new(5) }));
+  }
+  for result in through_the_buffer::<with_typed::Field<u256>>(r#"{"value":"5"}"#) {
+    assert_eq!(
+      result,
+      Ok(with_typed::Field {
+        value: u256::from(5u8)
+      })
+    );
+  }
+  for result in through_the_buffer::<with_typed::Field<u7>>(r#"{"value":"5"}"#) {
+    assert!(result.is_err());
+  }
+  for result in through_the_buffer::<with_typed::Field<u256>>(r#"{"value":5}"#) {
+    assert!(result.is_err());
+  }
+  for result in through_the_buffer::<with_typed::Field<Uint<U100>>>(r#"{"value":5}"#) {
+    assert!(result.is_err());
+  }
+  for value in [u256::from(u128::MAX) + u256::from(1u8), u256::MAX] {
+    let text = value.to_string();
+    let read: Result<u256, de::value::Error> = typed::required::deserialize(CsvField(&text));
+    assert_eq!(read.unwrap(), value);
   }
 }

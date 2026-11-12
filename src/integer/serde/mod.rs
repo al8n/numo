@@ -22,8 +22,10 @@
 //! defaults, without serde_json's number token; `quantity` writes the text of `{:#x}` and
 //! `fixed_hex` the digits of the words of the casts, and both read their grammars on the bytes of a
 //! string, building the value with the casts from words that they decode from the digits, with no
-//! buffer. The sealed trait of each helper is implemented here for every type that its paths take,
-//! and its public trait for numo's integers and the native integers that it serves.
+//! buffer; and `typed` writes as the defaults do and asks every format for the class of the width,
+//! with a visitor that takes the form of the defaults alone, through their value paths. The sealed
+//! trait of each helper is implemented here for every type that its paths take, and its public
+//! trait for numo's integers and the native integers that it serves.
 
 use core::{
   fmt,
@@ -45,8 +47,8 @@ use crate::{
   int::parse_errors,
   layout::Token,
   serde::{
-    DecimalStringCore, Expected, FixedHexCore, QuantityCore, decimal::DecimalString,
-    fixed_hex::FixedHex, quantity::Quantity, read, reject_inputs,
+    DecimalStringCore, Expected, FixedHexCore, QuantityCore, TypedCore, decimal::DecimalString,
+    fixed_hex::FixedHex, quantity::Quantity, read, reject_inputs, typed::Typed,
   },
   width::{self, FitsBits, IntRepr, NonZeroIntRepr, NonZeroUintRepr, UintRepr},
 };
@@ -143,22 +145,39 @@ where
       token: true,
       marker: PhantomData,
     };
-    match (T::BITS, T::SIGNED) {
-      (65..=128, false) => deserializer.deserialize_u128(visitor),
-      (65..=128, true) => deserializer.deserialize_i128(visitor),
-      // A human-readable format gives a number or a string, as it describes its values.
-      _ if deserializer.is_human_readable() => deserializer.deserialize_any(visitor),
-      (0..=8, false) => deserializer.deserialize_u8(visitor),
-      (9..=16, false) => deserializer.deserialize_u16(visitor),
-      (17..=32, false) => deserializer.deserialize_u32(visitor),
-      (33..=64, false) => deserializer.deserialize_u64(visitor),
-      (0..=8, true) => deserializer.deserialize_i8(visitor),
-      (9..=16, true) => deserializer.deserialize_i16(visitor),
-      (17..=32, true) => deserializer.deserialize_i32(visitor),
-      (33..=64, true) => deserializer.deserialize_i64(visitor),
-      _ => deserializer.deserialize_str(visitor),
+    // A human-readable format gives a number or a string, as it describes its values. A value of 65
+    // to 128 bits is asked for as a 128-bit integer in every format, which serde_json reads exactly
+    // only when it is asked for one.
+    if !matches!(T::BITS, 65..=128) && deserializer.is_human_readable() {
+      deserializer.deserialize_any(visitor)
+    } else {
+      deserialize_class::<T, _, _>(deserializer, visitor)
     }
   })
+}
+
+/// Asks `deserializer` for the method of the class of `T`, which the defaults ask a format that is
+/// not human-readable for, and `typed` every format: the native integer of the sign of `T` that
+/// holds its width up to 128 bits, and a string above.
+fn deserialize_class<'de, T, D, V>(deserializer: D, visitor: V) -> Result<V::Value, D::Error>
+where
+  T: CheckedTarget,
+  D: Deserializer<'de>,
+  V: Visitor<'de>,
+{
+  match (T::BITS, T::SIGNED) {
+    (0..=8, false) => deserializer.deserialize_u8(visitor),
+    (9..=16, false) => deserializer.deserialize_u16(visitor),
+    (17..=32, false) => deserializer.deserialize_u32(visitor),
+    (33..=64, false) => deserializer.deserialize_u64(visitor),
+    (65..=128, false) => deserializer.deserialize_u128(visitor),
+    (0..=8, true) => deserializer.deserialize_i8(visitor),
+    (9..=16, true) => deserializer.deserialize_i16(visitor),
+    (17..=32, true) => deserializer.deserialize_i32(visitor),
+    (33..=64, true) => deserializer.deserialize_i64(visitor),
+    (65..=128, true) => deserializer.deserialize_i128(visitor),
+    _ => deserializer.deserialize_str(visitor),
+  }
 }
 
 /// `value` in `T`, or the error of the casts for a value outside the range of `T`, and for zero
@@ -888,3 +907,131 @@ helper! {
 helper_impls!(FixedHex for Uint: UintRepr, Int: IntRepr);
 helper_impls!(FixedHex for nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
 helper_impls!(FixedHex for natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+/// Reads an integer of type `T` in the form that the defaults write, alone: up to 128 bits every
+/// integer that a format gives, checked against the width of `T`, and above 128 bits a decimal
+/// string in the syntax of `FromStr`, through the value paths of the defaults. Every other input
+/// gets the fixed message: a string up to 128 bits, an integer above, and every map, so that
+/// serde_json's number token does not read.
+struct TypedVisitor<'a, T> {
+  expected: Expected<'a>,
+  marker: PhantomData<T>,
+}
+
+impl<T: CheckedTarget> TypedVisitor<'_, T> {
+  /// `value` in `T`, as the defaults read a number, up to 128 bits, and the fixed message above,
+  /// where `T` reads a string alone.
+  fn number<S: CastSource, E: de::Error>(self, value: S) -> Result<Result<T, Rejection>, E> {
+    if T::BITS <= 128 {
+      Ok(cast(value))
+    } else {
+      Err(self.expected.reject())
+    }
+  }
+}
+
+impl<'de, T> Visitor<'de> for TypedVisitor<'_, T>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError>,
+{
+  type Value = Result<T, Rejection>;
+
+  fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.expected.describe(f)
+  }
+
+  // The narrower integers read through these, which serde forwards them to.
+  fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+    self.number(value)
+  }
+
+  fn visit_i128<E: de::Error>(self, value: i128) -> Result<Self::Value, E> {
+    self.number(value)
+  }
+
+  fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+    self.number(value)
+  }
+
+  fn visit_u128<E: de::Error>(self, value: u128) -> Result<Self::Value, E> {
+    self.number(value)
+  }
+
+  // A string above 128 bits, as the defaults read it, and the fixed message up to 128 bits, where
+  // `T` reads a number alone.
+  fn visit_str<E: de::Error>(self, text: &str) -> Result<Self::Value, E> {
+    if T::BITS > 128 {
+      Ok(text.parse().map_err(Rejection::Parse))
+    } else {
+      Err(self.expected.reject())
+    }
+  }
+
+  // Every other kind of input is rejected below. `visit_borrowed_str` reads through `visit_str`,
+  // and `visit_string` and `visit_byte_buf`, which `serde_core` has only with `alloc`, read
+  // through `visit_str` and `visit_bytes`.
+  reject_inputs! {
+    visit_bool(bool),
+    visit_f32(f32),
+    visit_f64(f64),
+    visit_char(char),
+    visit_bytes(&[u8]),
+    visit_borrowed_bytes(&'de [u8]),
+  }
+
+  fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_some<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_seq<A: SeqAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+}
+
+/// Asks every format for the class of `T`, as the defaults ask a format that is not
+/// human-readable, which `typed` reads with [`TypedVisitor`].
+fn drive_typed<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError>,
+  D: Deserializer<'de>,
+{
+  deserialize_class::<T, _, _>(
+    deserializer,
+    TypedVisitor {
+      expected,
+      marker: PhantomData,
+    },
+  )
+}
+
+helper! {
+  TypedCore, INTEGER;
+  write(CastSource + fmt::Display) with serialize_integer, TypedSome;
+  read(CheckedTarget + FromStr<Err = ParseIntError>) with drive_typed, TypedOption;
+}
+
+helper_impls!(Typed for Uint: UintRepr, Int: IntRepr);
+helper_impls!(Typed for nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);

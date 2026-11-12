@@ -63,10 +63,12 @@
 //! - A format that infers the type of a value from its text, as csv does, gives a value outside the
 //!   128-bit range as a float, so the default of a type above 128 bits does not read such a value
 //!   back from it: the text of `u256::MAX` does not read back from csv. [`decimal`] asks for a
-//!   string and reads every value.
+//!   string and reads every value, and so does [`typed`] above 128 bits, in the form of the
+//!   defaults.
 //! - In a human-readable format the defaults need `deserialize_any`: a format without it, such as
 //!   serde-json-core, reads no value of 0 to 64 bits or of more than 128 bits, and none of 65 to
-//!   128 bits, as for `u128`.
+//!   128 bits, as for `u128`. [`typed`] asks such a format for the type of the value, and so
+//!   reads every value there but one of 65 to 128 bits.
 //! - serde_test's bare deserializer panics when it is asked whether it is human-readable, so a test
 //!   wraps a value of 0 to 64 or of more than 128 bits with `readable()` or `compact()`.
 //! - A numo integer takes a decimal string, so in an untagged enum of an integer and a string, the
@@ -89,6 +91,9 @@
 //!   pattern of the `Bits` bits of a negative `Int`. Its trait [`FixedHex`](fixed_hex::FixedHex)
 //!   takes `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`, the native integers from `u8` to `u128`
 //!   and from `i8` to `i128`, and their `NonZero`.
+//! - [`typed`]: the form of the defaults, read alone and by its type in every format: up to 128
+//!   bits the native integer of the class of the width, and above a decimal string. Its trait
+//!   [`Typed`](typed::Typed) takes `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`.
 //!
 //! `required` on an `Option` field does not compile, with a note that names `optional`, and
 //! `optional` on a field that is not an `Option` is a mismatch of types. `optional` writes `None`
@@ -150,13 +155,14 @@ use crate::{
   layout::{Layout, Storage},
 };
 
-pub(crate) use sealed::{DecimalStringCore, FixedHexCore, QuantityCore};
+pub(crate) use sealed::{DecimalStringCore, FixedHexCore, QuantityCore, TypedCore};
 
 pub mod decimal;
 pub mod fixed_hex;
 pub mod quantity;
 #[cfg(test)]
 mod tests;
+pub mod typed;
 
 mod sealed {
   use serde_core::{Deserializer, Serializer};
@@ -209,6 +215,7 @@ mod sealed {
     DecimalStringCore: decimal::DecimalString;
     QuantityCore: quantity::Quantity;
     FixedHexCore: fixed_hex::FixedHex;
+    TypedCore: typed::Typed;
   }
 }
 
