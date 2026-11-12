@@ -952,6 +952,13 @@ macro_rules! nonzero_traits {
           value: self.value.clone(),
         }
       }
+
+      /// Copies the value of `source` into the storage of `self`, as the `clone_from` of the
+      /// storage does.
+      #[inline]
+      fn clone_from(&mut self, source: &Self) {
+        self.value.clone_from(&source.value);
+      }
     }
 
     impl<B, R> Copy for $name<B, R> where R: Copy {}

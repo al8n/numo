@@ -543,6 +543,10 @@ pub trait ArrayInteger: Sealed + Sized {
   /// Borrows the limbs of the value, least significant first.
   fn as_limbs(&self) -> &Self::Array;
 
+  /// Returns the limbs of the value, least significant first, and consumes it.
+  #[must_use]
+  fn into_limbs(self) -> Self::Array;
+
   /// Creates an integer from the integer in `limbs`, least significant limb first, of any length,
   /// unsigned for `Uint` and in two's complement for `Int`, whose sign is the top bit of the last
   /// limb, or returns `None` if it is outside the range of `Bits` bits.
@@ -1382,6 +1386,11 @@ where
   }
 
   #[inline]
+  fn into_limbs(self) -> [L; N] {
+    self.repr
+  }
+
+  #[inline]
   fn checked_from_limbs_slice(limbs: &[L]) -> Option<Self> {
     <[L; N] as UintCore>::checked_read_limbs(limbs, B::U32, Token::new()).map(Self::wrap)
   }
@@ -1451,6 +1460,11 @@ where
   #[inline]
   fn as_limbs(&self) -> &[L; N] {
     &self.repr
+  }
+
+  #[inline]
+  fn into_limbs(self) -> [L; N] {
+    self.repr
   }
 
   #[inline]

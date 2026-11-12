@@ -1687,6 +1687,18 @@ macro_rules! array_integers {
         &self.repr
       }
 
+      #[doc = concat!(
+        "Returns the ",
+        stringify!($bits),
+        "-bit limbs of the value, least significant first, and consumes it. The bits above"
+      )]
+      /// `Bits`, if any, are zero.
+      #[must_use]
+      #[inline]
+      pub const fn into_limbs(self) -> [$limb; N] {
+        self.repr
+      }
+
       integer_query_table!(inherent_items![unsigned, $lower, &]);
     }
 
@@ -1969,6 +1981,18 @@ macro_rules! array_integers {
       #[inline]
       pub const fn as_limbs(&self) -> &[$limb; N] {
         &self.repr
+      }
+
+      #[doc = concat!(
+        "Returns the ",
+        stringify!($bits),
+        "-bit limbs of the value, least significant first, in two's complement, and consumes"
+      )]
+      /// it. The bits above `Bits`, if any, are copies of the sign bit.
+      #[must_use]
+      #[inline]
+      pub const fn into_limbs(self) -> [$limb; N] {
+        self.repr
       }
 
       integer_query_table!(inherent_items![signed, $upper, &]);
@@ -2729,6 +2753,13 @@ macro_rules! integer_traits {
       #[inline]
       fn clone(&self) -> Self {
         Self::wrap(self.repr.clone())
+      }
+
+      /// Copies the value of `source` into the storage of `self`, as the `clone_from` of the
+      /// storage does.
+      #[inline]
+      fn clone_from(&mut self, source: &Self) {
+        self.repr.clone_from(&source.repr);
       }
     }
 
