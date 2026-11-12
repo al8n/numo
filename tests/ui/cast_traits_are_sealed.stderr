@@ -41,6 +41,7 @@ help: the trait `numo::integer::cast::sealed::CastSource` is not implemented for
  6 | struct Local;
    | ^^^^^^^^^^^^
    = help: the following other types implement trait `numo::integer::cast::sealed::CastSource`:
+             &S
              NonZeroInt<B, R>
              NonZeroUint<B, R>
              Uint<B, R>
@@ -48,7 +49,6 @@ help: the trait `numo::integer::cast::sealed::CastSource` is not implemented for
              i16
              i32
              i64
-             i8
            and $N others
    = note: required for `u64` to implement `numo::integer::cast::sealed::CastPair<Local>`
 note: required by a bound in `WidenFrom`

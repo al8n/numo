@@ -19,6 +19,10 @@
 //! bounds of `widen` and `truncate` compare at compile time, and the sealed markers carry the
 //! diagnostics of a pair that fails them. The sealed traits are public in a private module, as the
 //! other sealed traits of the crate are, so that the public implementations name no private item.
+//! A reference to a source is a source of the same words and widths, so that every cast function
+//! reads a borrowed value, through any number of references. The identities of `usize`, `isize`
+//! and their `NonZero`, which are written out rather than derived from the widths, take a value or
+//! one reference.
 
 use core::num::TryFromIntError;
 
@@ -176,7 +180,8 @@ mod sealed {
 /// kind `Zero` of the native conversions. A path through a native integer, such as
 /// `u8::checked_cast_from(x)`, finds this trait while the trait of the native casts, still
 /// unstable, is not in scope; once it is stable and both are in scope, the path names this trait,
-/// as in `<u8 as CheckedCastFrom<_>>::checked_cast_from(x)`.
+/// as in `<u8 as CheckedCastFrom<_>>::checked_cast_from(x)`. A reference to a source is a source
+/// too, as in `u8::checked_cast_from(&x)`, which leaves `x` to its owner.
 ///
 /// ```
 /// use numo::{
@@ -194,9 +199,10 @@ mod sealed {
 /// // SAFETY: 100 is in the range of `u7`, so `checked_cast_from` would return `Some`.
 /// assert_eq!(unsafe { u7::unchecked_cast_from(100u64) }, u7::new(100));
 ///
-/// // Numo integers convert between any widths and signs.
+/// // Numo integers convert between any widths and signs, also from a reference.
 /// let wide = Int::<U200>::checked_cast_from(u7::MAX).unwrap();
 /// assert_eq!(wide.to_string(), "127");
+/// assert_eq!(u7::checked_cast_from(&wide), Some(u7::MAX));
 /// assert_eq!(u7::checked_cast_from(wide), Some(u7::MAX));
 /// assert_eq!(u7::checked_cast_from(-wide), None);
 ///
@@ -316,7 +322,9 @@ pub trait BoundedCastFrom<S>: CheckedCastFrom<S> {
 /// 16 bits, and as sources they widen only into themselves, as for the native `widen`; their
 /// `NonZero` do the same, and also widen into `usize` and `isize`. A non-zero integer takes only a
 /// non-zero source, as the native `From` converts between the `NonZero` integers. A pair of another
-/// width, sign or kind fails to compile; the casts of [`CheckedCastFrom`] convert it.
+/// width, sign or kind fails to compile; the casts of [`CheckedCastFrom`] convert it. A reference
+/// to a source widens as the source does, through any number of references, but the identities of
+/// `usize`, `isize` and their `NonZero` take a value or one reference.
 ///
 /// ```
 /// use core::num::NonZero;
@@ -520,6 +528,31 @@ fn ones_below(bits: u32, index: usize) -> u64 {
 
 impl<S: CastSource, T: CheckedTarget> CastPair<S> for T {}
 
+// A reference to a source reads the words and has the widths of the source, so that a cast function
+// takes a borrowed value, as in `u64::checked_cast_from(&x)`, which neither takes nor clones `x`. A
+// call of `word` on a reference resolves to the source's own method, which matches before the
+// autoref of this one.
+impl<S: CastSource> CastSource for &S {
+  const BITS: u32 = S::BITS;
+  const SIGNED: bool = S::SIGNED;
+
+  #[inline]
+  fn word(&self, index: usize) -> u64 {
+    S::word(self, index)
+  }
+}
+
+impl<S: MaxWidth> MaxWidth for &S {
+  type Sign = S::Sign;
+  type Bits = S::Bits;
+}
+
+impl<S: MinWidth> MinWidth for &S {
+  type Sign = S::Sign;
+  type Bits = S::Bits;
+  type NonZero = S::NonZero;
+}
+
 impl<S: CastSource, T: CheckedTarget> CheckedCastFrom<S> for T {
   #[inline]
   fn checked_cast_from(value: S) -> Option<Self> {
@@ -611,9 +644,9 @@ where
   }
 }
 
-/// Implements the identities of `usize` and `isize`, whose width has no fixed upper bound: the
-/// native `widen` and `truncate` take them only from themselves, which the bounds of the blanket
-/// implementations, over [`MaxWidth`], leave out.
+/// Implements the identities of `usize` and `isize`, whose width has no fixed upper bound, from a
+/// value and from a reference to one: the native `widen` and `truncate` take them only from
+/// themselves, which the bounds of the blanket implementations, over [`MaxWidth`], leave out.
 macro_rules! pointer_sized_identities {
   ($($native:ident),+) => {$(
     impl WidenFrom<$native> for $native {
@@ -637,6 +670,30 @@ macro_rules! pointer_sized_identities {
       #[inline]
       fn saturating_truncate_from(value: $native) -> $native {
         value
+      }
+    }
+
+    impl<'a> WidenFrom<&'a $native> for $native {
+      #[inline]
+      fn widen_from(value: &'a $native) -> $native {
+        *value
+      }
+    }
+
+    impl<'a> TruncateFrom<&'a $native> for $native {
+      #[inline]
+      fn truncate_from(value: &'a $native) -> $native {
+        *value
+      }
+
+      #[inline]
+      fn checked_truncate_from(value: &'a $native) -> Option<$native> {
+        Some(*value)
+      }
+
+      #[inline]
+      fn saturating_truncate_from(value: &'a $native) -> $native {
+        *value
       }
     }
   )+};
@@ -956,9 +1013,10 @@ impl MinWidth for core::num::NonZero<isize> {
 }
 
 /// Implements the identities of the native `NonZero` of `usize` and `isize`, whose width has no
-/// fixed upper bound, as `pointer_sized_identities!` does for `usize` and `isize`: `widen` into the
-/// `NonZero` itself and into its integer, which the native `From` converts it into, and `truncate`
-/// into its integer. The bounds of the blanket implementations, over [`MaxWidth`], leave them out.
+/// fixed upper bound, from a value and from a reference to one, as `pointer_sized_identities!` does
+/// for `usize` and `isize`: `widen` into the `NonZero` itself and into its integer, which the
+/// native `From` converts it into, and `truncate` into its integer. The bounds of the blanket
+/// implementations, over [`MaxWidth`], leave them out.
 macro_rules! pointer_sized_nonzero_identities {
   ($($native:ident),+) => {$(
     impl WidenFrom<core::num::NonZero<$native>> for core::num::NonZero<$native> {
@@ -988,6 +1046,37 @@ macro_rules! pointer_sized_nonzero_identities {
 
       #[inline]
       fn saturating_truncate_from(value: core::num::NonZero<$native>) -> $native {
+        value.get()
+      }
+    }
+
+    impl<'a> WidenFrom<&'a core::num::NonZero<$native>> for core::num::NonZero<$native> {
+      #[inline]
+      fn widen_from(value: &'a core::num::NonZero<$native>) -> core::num::NonZero<$native> {
+        *value
+      }
+    }
+
+    impl<'a> WidenFrom<&'a core::num::NonZero<$native>> for $native {
+      #[inline]
+      fn widen_from(value: &'a core::num::NonZero<$native>) -> $native {
+        value.get()
+      }
+    }
+
+    impl<'a> TruncateFrom<&'a core::num::NonZero<$native>> for $native {
+      #[inline]
+      fn truncate_from(value: &'a core::num::NonZero<$native>) -> $native {
+        value.get()
+      }
+
+      #[inline]
+      fn checked_truncate_from(value: &'a core::num::NonZero<$native>) -> Option<$native> {
+        Some(value.get())
+      }
+
+      #[inline]
+      fn saturating_truncate_from(value: &'a core::num::NonZero<$native>) -> $native {
         value.get()
       }
     }
