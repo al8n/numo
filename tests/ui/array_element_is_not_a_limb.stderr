@@ -1,0 +1,39 @@
+error[E0277]: `[f32; 4]` is not a storage of `Uint`
+ --> tests/ui/array_element_is_not_a_limb.rs:5:32
+  |
+5 |   let _: Uint<U64, [f32; 4]> = Default::default();
+  |                                ^^^^^^^^^^^^^^^^^^ the trait `UintRepr` is not implemented for `[f32; 4]`
+  |
+  = note: `Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`
+  = help: the following other types implement trait `UintRepr`:
+            [u128; N]
+            [u16; N]
+            [u32; N]
+            [u64; N]
+            [u8; N]
+  = note: required for `Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [f32; 4]>` to implement `Default`
+
+error[E0277]: the trait bound `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>: numo::width::sealed::BitsOf<[f32; 4]>` is not satisfied
+ --> tests/ui/array_element_is_not_a_limb.rs:5:32
+  |
+5 |   let _: Uint<U64, [f32; 4]> = Default::default();
+  |                                ^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+  |
+  = help: the trait `numo::width::sealed::BitsOf<[f32; 4]>` is not implemented for `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>`
+help: the trait `Default` is conditionally implemented for `Uint<B, R>`
+ --> src/integer/mod.rs
+  |
+  | /     impl<B, R> Default for $name<B, R>
+  | |     where
+  | |       R: $repr,
+  | |          ----- unsatisfied requirement introduced here: `[f32; 4]: UintRepr`
+  | |       B: FitsBits<R>,
+  | |__________-----------^
+  |            |
+  |            unsatisfied requirement introduced here: `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>: FitsBits<[f32; 4]>`
+...
+  |   integer_traits!(Uint, UintRepr);
+  |   ------------------------------- in this macro invocation
+  = note: required for `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>` to implement `FitsBits<[f32; 4]>`
+  = note: required for `Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [f32; 4]>` to implement `Default`
+  = note: this error originates in the macro `integer_traits` (in Nightly builds, run with -Z macro-backtrace for more info)

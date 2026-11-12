@@ -21,8 +21,8 @@ pub(crate) use sealed::{
 };
 
 use sealed::{
-  ArrayLimb, BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr,
-  LimbFor, MutableRepr, NativeBitsFit, NativeReprFilled, NonZeroRepr, ReprFilled, ReprLimb, Width,
+  BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr, LimbFor,
+  MutableRepr, NativeBitsFit, NativeReprFilled, NonZeroRepr, ReprFilled, ReprLimb, Width,
 };
 
 use crate::{
@@ -256,12 +256,6 @@ mod sealed {
       + InlineIntRepr
       + IntRepr<Unsigned = Self::Array, NonZero = Self::Array>
       + UintRepr<Signed = Self::Array, NonZero = Self::Array>;
-  }
-
-  /// A limb type of the array storages: `[L; N]` holds `N << L::BitsLog2` bits.
-  pub trait ArrayLimb {
-    /// The base-2 logarithm of the number of bits of a limb.
-    type BitsLog2;
   }
 
   /// The type of the limbs of a storage, which the slices of limbs that it reads hold: `L` for an
@@ -1070,31 +1064,6 @@ impl WholeBytes for UTerm {}
 
 impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
 
-/// `N * B` for limbs of `B` bits, the number of bits of `[L; N]`.
-type LimbBits<L, const N: usize> = Shleft<U<N>, <L as ArrayLimb>::BitsLog2>;
-
-// The bound below 2^32 is a comparison of types, because `typenum`'s `U32` and `U64` wrap: for
-// `64 * 2^58` bits, both are zero.
-impl<B, L: ArrayLimb, const N: usize> BitsOf<[L; N]> for B
-where
-  B: IsLessOrEqual<LimbBits<L, N>> + IsLess<U4294967296>,
-  Const<N>: ToUInt,
-  U<N>: Shl<L::BitsLog2>,
-  LeEq<B, LimbBits<L, N>>: BitsFit,
-  Le<B, U4294967296>: BitsBelow2Pow32,
-{
-}
-
-// `typenum`'s alias for `IsEqual::Output` is named `Eq`, as the trait of `core` is.
-impl<B, L: ArrayLimb, const N: usize> BitsFill<[L; N]> for B
-where
-  B: IsEqual<LimbBits<L, N>>,
-  Const<N>: ToUInt,
-  U<N>: Shl<L::BitsLog2>,
-  <B as IsEqual<LimbBits<L, N>>>::Output: ReprFilled,
-{
-}
-
 /// A storage of [`Uint`](crate::Uint): a native unsigned integer, `u8`, `u16`, `u32`, `u64` or
 /// `u128`, holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first.
@@ -1278,14 +1247,38 @@ pub trait InlineUintRepr: UintReprMut + Copy + InlineUintConsts {}
 /// non-zero storages are `Copy`. This trait is sealed and cannot be implemented outside this crate.
 pub trait InlineIntRepr: IntReprMut + Copy + InlineIntConsts {}
 
-/// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`],
-/// [`InlineUintRepr`], [`InlineIntRepr`], [`NonZeroUintRepr`] and [`NonZeroIntRepr`] for the arrays
-/// of each limb type, written `limb: BitsLog2, lower, upper`, where `lower` and `upper` are the
-/// modules of its limb layers.
+/// Implements [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`], [`InlineUintRepr`],
+/// [`InlineIntRepr`], [`NonZeroUintRepr`] and [`NonZeroIntRepr`] for the arrays of each limb type,
+/// and their width relations, written `limb: BitsLog2, lower, upper`, where `BitsLog2` is the
+/// base-2 logarithm of the number of bits of a limb, so that `[limb; N]` holds `N << BitsLog2`
+/// bits, and `lower` and `upper` are the modules of its limb layers.
+// Each limb type has width impls of its own. One impl over every array, bounded by a trait of the
+// limb types, would compute with the logarithm of that trait, which for an array of a type that is
+// not a limb reaches the recursive `Shl` impls of `typenum` and overflows the trait solver, instead
+// of failing with the diagnostic of the storage traits. The logarithm is written out, because rustc
+// does not match a where-clause that names it through the limb type against its normalized form.
 macro_rules! array_storage {
   ($($limb:ident: $bits_log2:ident, $lower:ident, $upper:ident);+ $(;)?) => {$(
-    impl ArrayLimb for $limb {
-      type BitsLog2 = $bits_log2;
+    // The bound below 2^32 is a comparison of types, because `typenum`'s `U32` and `U64` wrap: for
+    // `64 * 2^58` bits, both are zero.
+    impl<B, const N: usize> BitsOf<[$limb; N]> for B
+    where
+      B: IsLessOrEqual<Shleft<U<N>, $bits_log2>> + IsLess<U4294967296>,
+      Const<N>: ToUInt,
+      U<N>: Shl<$bits_log2>,
+      LeEq<B, Shleft<U<N>, $bits_log2>>: BitsFit,
+      Le<B, U4294967296>: BitsBelow2Pow32,
+    {
+    }
+
+    // `typenum`'s alias for `IsEqual::Output` is named `Eq`, as the trait of `core` is.
+    impl<B, const N: usize> BitsFill<[$limb; N]> for B
+    where
+      B: IsEqual<Shleft<U<N>, $bits_log2>>,
+      Const<N>: ToUInt,
+      U<N>: Shl<$bits_log2>,
+      <B as IsEqual<Shleft<U<N>, $bits_log2>>>::Output: ReprFilled,
+    {
     }
 
     impl<const N: usize> UintRepr for [$limb; N] {
@@ -3184,11 +3177,12 @@ pub type Limbs<Bits, L = u64> = <L as LimbArray<Bits>>::Array;
 
 /// Implements [`LimbArray`] for each limb type, written `limb: BitsLog2, mask`, where `mask` is
 /// `2^BitsLog2 - 1`: the number of limbs is `(Bits + mask) >> BitsLog2`.
-// Each limb type has an impl of its own. One impl over `ArrayLimb` would compute with `BitsLog2`,
-// which for a type that is not a limb reaches the recursive `Shl` impls of `typenum` and overflows
-// the trait solver, instead of failing with the diagnostic of this trait. The masks are written
-// out, because rustc does not match a where-clause such as `Bits: Add<Sub1<Shleft<U1, U6>>>`
-// against the normalized `Bits: Add<U63>`.
+// Each limb type has an impl of its own, as it has width impls of its own in `array_storage!`. One
+// impl over a trait of the limb types would compute with the logarithm of their bits, which for a
+// type that is not a limb reaches the recursive `Shl` impls of `typenum` and overflows the trait
+// solver, instead of failing with the diagnostic of this trait. The masks are written out, because
+// rustc does not match a where-clause such as `Bits: Add<Sub1<Shleft<U1, U6>>>` against the
+// normalized `Bits: Add<U63>`.
 macro_rules! limb_arrays {
   ($($limb:ident: $bits_log2:ident, $mask:ident);+ $(;)?) => {$(
     impl<Bits: Unsigned> LimbFor<Bits> for $limb {}
