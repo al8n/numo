@@ -1135,15 +1135,18 @@ impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
 ///
 /// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
-/// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
-/// [`UncheckedOps`](crate::UncheckedOps), the math traits [`IntegerMath`](crate::IntegerMath) and
-/// [`UnsignedMath`](crate::UnsignedMath), the bit traits [`IntegerBits`](crate::IntegerBits) and
-/// [`UnsignedBits`](crate::UnsignedBits), the operators `+`, `-`, `*`, `/`, `%`, `&`, `|` and `^`
-/// on two references, as in `&a + &b`, and `!`, `<<` and `>>` on a reference, as in `&a << 3`, for
-/// every `Repr` that implements this trait. So does [`IntegerNonZero`](crate::IntegerNonZero),
+/// [`WrappingOps`](crate::WrappingOps), [`SaturatingOps`](crate::SaturatingOps),
+/// [`StrictOps`](crate::StrictOps) and [`UncheckedOps`](crate::UncheckedOps), the math traits
+/// [`IntegerMath`](crate::IntegerMath) and [`UnsignedMath`](crate::UnsignedMath), the bit traits
+/// [`IntegerBits`](crate::IntegerBits) and [`UnsignedBits`](crate::UnsignedBits),
+/// [`UnsignedFixedInteger`](crate::UnsignedFixedInteger), the operators `+`, `-`, `*`, `/`, `%`,
+/// `&`, `|` and `^` in every form of values and references, as in `a + &b`, `!`, `<<` and `>>`,
+/// `Sum`, and from one bit `Product`, for every `Repr` that implements this trait, and where `Repr`
+/// is `Clone`, as every storage of this crate is, [`FixedInteger`](crate::FixedInteger) and, from
+/// one bit, [`IntegerOne`](crate::IntegerOne). So does [`IntegerNonZero`](crate::IntegerNonZero),
 /// whose non-zero integer is the [`NonZeroUint`](crate::NonZeroUint) over the
-/// [`NonZero`](Self::NonZero) of `Repr`: on two references, `Uint<Bits, Repr>` divides by it with
-/// `/` and `%`, which cannot panic, and combines with it by `|`. This trait is sealed and cannot be
+/// [`NonZero`](Self::NonZero) of `Repr`: `Uint<Bits, Repr>` divides by it with `/` and `%`, which
+/// cannot panic, and combines with it by `|`, in every form. This trait is sealed and cannot be
 /// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
@@ -1174,15 +1177,19 @@ pub trait UintRepr:
 ///
 /// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
-/// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
-/// [`UncheckedOps`](crate::UncheckedOps), the math traits [`IntegerMath`](crate::IntegerMath) and
-/// [`SignedMath`](crate::SignedMath), the bit traits [`IntegerBits`](crate::IntegerBits) and
-/// [`SignedBits`](crate::SignedBits), the operators `+`, `-`, `*`, `/`, `%`, `&`, `|` and `^` on
-/// two references, as in `&a + &b`, and the negation `-`, `!`, `<<` and `>>` on a reference, for
-/// every `Repr` that implements this trait. So does [`IntegerNonZero`](crate::IntegerNonZero),
-/// whose non-zero integer is the [`NonZeroInt`](crate::NonZeroInt) over the
-/// [`NonZero`](Self::NonZero) of `Repr`, with which `Int<Bits, Repr>` combines by `|` on two
-/// references. This trait is sealed and cannot be implemented outside this crate.
+/// [`WrappingOps`](crate::WrappingOps), [`SaturatingOps`](crate::SaturatingOps),
+/// [`StrictOps`](crate::StrictOps) and [`UncheckedOps`](crate::UncheckedOps), the math traits
+/// [`IntegerMath`](crate::IntegerMath) and [`SignedMath`](crate::SignedMath), the bit traits
+/// [`IntegerBits`](crate::IntegerBits) and [`SignedBits`](crate::SignedBits), the operators `+`,
+/// `-`, `*`, `/`, `%`, `&`, `|` and `^` in every form of values and references, as in `a + &b`,
+/// the negation `-`, `!`, `<<` and `>>`, `Sum`, and from two bits `Product`, for every `Repr` that
+/// implements this trait, and where `Repr` is `Clone`, as every storage of this crate is,
+/// [`FixedInteger`](crate::FixedInteger), [`SignedFixedInteger`](crate::SignedFixedInteger) and,
+/// from two bits, [`IntegerOne`](crate::IntegerOne). So does
+/// [`IntegerNonZero`](crate::IntegerNonZero), whose non-zero integer is the
+/// [`NonZeroInt`](crate::NonZeroInt) over the [`NonZero`](Self::NonZero) of `Repr`, with which
+/// `Int<Bits, Repr>` combines by `|` in every form. This trait is sealed and cannot be implemented
+/// outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
@@ -1212,7 +1219,7 @@ pub trait IntRepr:
 /// `Display` and `Debug`, and `Copy` where `Repr` is `Copy`, for every `Repr` that implements this
 /// trait, and with the width relation of its integer, `Bits: FitsBits<Repr::Integer>`,
 /// [`FixedNonZero`](crate::FixedNonZero) and [`UnsignedNonZero`](crate::UnsignedNonZero), from one
-/// bit [`NonZeroLimits`](crate::NonZeroLimits), and `|` on two references, with itself and with its
+/// bit [`NonZeroLimits`](crate::NonZeroLimits), and `|` in every form, with itself and with its
 /// integer either way. `From` converts it to its integer. This trait is sealed and cannot be
 /// implemented outside this crate.
 #[diagnostic::on_unimplemented(
@@ -1241,8 +1248,8 @@ pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
 /// Each is the [`NonZero`](IntRepr::NonZero) of a storage of `Int`, its
 /// [`Integer`](Self::Integer). `NonZeroInt<Bits, Repr>` implements the traits of
 /// [`NonZeroUintRepr`] for `NonZeroUint`, with [`SignedNonZero`](crate::SignedNonZero) for
-/// [`UnsignedNonZero`](crate::UnsignedNonZero), and the negation `-` on a reference. This trait is
-/// sealed and cannot be implemented outside this crate.
+/// [`UnsignedNonZero`](crate::UnsignedNonZero), and the negation `-` on a value and on a reference.
+/// This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `NonZeroInt`",
   note = "`NonZeroInt` stores `core::num::NonZero<i8>` to `NonZero<i128>`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
@@ -1265,51 +1272,47 @@ pub trait NonZeroIntRepr: Eq + Clone + NonZeroRepr {
 /// compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=` and `>>=`.
 ///
 /// Every storage of this crate implements it: the native unsigned integers and the arrays of
-/// limbs. With it, `Uint` also has `/=` and `%=` by a [`NonZeroUint`](crate::NonZeroUint), and the
-/// `NonZeroUint` over its [`NonZero`](UintRepr::NonZero) has `|=`. This trait is sealed and cannot
-/// be implemented outside this crate.
+/// limbs. With it, `Uint` also has `/=` and `%=` by a [`NonZeroUint`](crate::NonZeroUint), the
+/// `NonZeroUint` over its [`NonZero`](UintRepr::NonZero) has `|=`, and where the storage is
+/// `Clone`, as every storage of this crate is, `Uint` implements
+/// [`IntegerAssign`](crate::IntegerAssign). This trait is sealed and cannot be implemented outside
+/// this crate.
 pub trait UintReprMut: UintRepr + MutableRepr {}
 
 /// A storage of [`Int`](crate::Int) that holds the value in place, so that the integers have the
 /// compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=` and `>>=`.
 ///
 /// Every storage of this crate implements it: the native signed integers and the arrays of limbs.
-/// With it, the [`NonZeroInt`](crate::NonZeroInt) over its [`NonZero`](IntRepr::NonZero) has `|=`.
-/// This trait is sealed and cannot be implemented outside this crate.
+/// With it, the [`NonZeroInt`](crate::NonZeroInt) over its [`NonZero`](IntRepr::NonZero) has `|=`,
+/// and where the storage is `Clone`, as every storage of this crate is, `Int` implements
+/// [`IntegerAssign`](crate::IntegerAssign). This trait is sealed and cannot be implemented outside
+/// this crate.
 pub trait IntReprMut: IntRepr + MutableRepr {}
 
 /// A storage of [`Uint`](crate::Uint) that holds the value inline, so that the integer is `Copy`: a
 /// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`.
 ///
-/// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger) and [`ConstFixedInteger`](crate::ConstFixedInteger), with
-/// the operators `+`, `-`, `*`, `/`, `%`, `!`, `&`, `|`, `^`, `<<` and `>>` on values and `Sum`,
-/// [`UnsignedFixedInteger`](crate::UnsignedFixedInteger)
-/// and [`SaturatingOps`](crate::SaturatingOps), and from one bit it has the constant `ONE` and
-/// implements [`IntegerOne`](crate::IntegerOne) and [`ConstIntegerOne`](crate::ConstIntegerOne),
-/// with `Product`, for every `Repr` that implements this trait. The
+/// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX` and implements
+/// [`ConstFixedInteger`](crate::ConstFixedInteger), and from one bit it has the constant `ONE` and
+/// implements [`ConstIntegerOne`](crate::ConstIntegerOne), for every `Repr` that implements this
+/// trait; the traits that need no constant are those of [`UintRepr`] and [`UintReprMut`]. The
 /// [`NonZeroUint`](crate::NonZeroUint) over its [`NonZero`](UintRepr::NonZero) has, from one bit,
 /// the constants `MIN` and `MAX`, with [`ConstNonZeroLimits`](crate::ConstNonZeroLimits) where that
-/// storage is `Copy`, and the operators on values: `/` and `%` of `Uint` by it, and `|`. The
-/// default storages of [`BitWidth`] are inline, and their non-zero storages are `Copy`. This trait
-/// is sealed and cannot be implemented outside this crate.
+/// storage is `Copy`. The default storages of [`BitWidth`] are inline, and their non-zero storages
+/// are `Copy`. This trait is sealed and cannot be implemented outside this crate.
 pub trait InlineUintRepr: UintReprMut + Copy + InlineUintConsts {}
 
 /// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
 /// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`.
 ///
-/// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger) and [`ConstFixedInteger`](crate::ConstFixedInteger), with
-/// the operators `+`, `-`, `*`, `/`, `%`, `!`, `&`, `|`, `^`, `<<` and `>>` on values and `Sum`,
-/// [`SignedFixedInteger`](crate::SignedFixedInteger),
-/// with the operator `-`, and [`SaturatingOps`](crate::SaturatingOps), and from two bits it has the
-/// constant `ONE` and implements [`IntegerOne`](crate::IntegerOne) and
-/// [`ConstIntegerOne`](crate::ConstIntegerOne), with `Product`, for every `Repr` that implements
-/// this trait. The [`NonZeroInt`](crate::NonZeroInt) over its [`NonZero`](IntRepr::NonZero) has,
-/// from one bit, the constants `MIN` and `MAX`, with
-/// [`ConstNonZeroLimits`](crate::ConstNonZeroLimits) where that storage is `Copy`, and the
-/// operators `|` and `-` on values. The default storages of [`BitWidth`] are inline, and their
-/// non-zero storages are `Copy`. This trait is sealed and cannot be implemented outside this crate.
+/// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX` and implements
+/// [`ConstFixedInteger`](crate::ConstFixedInteger), and from two bits it has the constant `ONE` and
+/// implements [`ConstIntegerOne`](crate::ConstIntegerOne), for every `Repr` that implements this
+/// trait; the traits that need no constant are those of [`IntRepr`] and [`IntReprMut`]. The
+/// [`NonZeroInt`](crate::NonZeroInt) over its [`NonZero`](IntRepr::NonZero) has, from one bit, the
+/// constants `MIN` and `MAX`, with [`ConstNonZeroLimits`](crate::ConstNonZeroLimits) where that
+/// storage is `Copy`. The default storages of [`BitWidth`] are inline, and their non-zero storages
+/// are `Copy`. This trait is sealed and cannot be implemented outside this crate.
 pub trait InlineIntRepr: IntReprMut + Copy + InlineIntConsts {}
 
 /// Implements [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`], [`InlineUintRepr`],

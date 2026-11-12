@@ -3,8 +3,10 @@
 //!
 //! Zero, the limits and one reach generic code in two layers. The general layer, [`FixedInteger`]
 //! and [`IntegerOne`], requires `Clone` but not `Copy` and has them as the functions `zero`,
-//! `min_value`, `max_value` and `one`, which return the inherent constants `ZERO`, `MIN`, `MAX` and
-//! `ONE`. The const layer, [`ConstFixedInteger`] and [`ConstIntegerOne`], adds `Copy` and the
+//! `min_value`, `max_value` and `one`, which compute the values of the inherent constants `ZERO`,
+//! `MIN`, `MAX` and `ONE` without reading them, so that it needs only the storage trait and
+//! `Clone`; [`IntegerAssign`] adds the compound assignments for a storage that holds the value in
+//! place. The const layer, [`ConstFixedInteger`] and [`ConstIntegerOne`], adds `Copy` and the
 //! constants themselves, which a generic `const fn` can read. Every other item of the traits
 //! mirrors the inherent item of the same name, which a concrete type reaches without the trait,
 //! also in constant contexts. Generic code reaches the items through the traits, which have one
@@ -380,8 +382,8 @@ pub trait SignedFixedInteger: Sealed + Sized + Neg<Output = Self> {
 /// An integer that holds one: [`Uint`] of at least one bit and [`Int`] of at least two bits, over a
 /// native integer or an array of limbs.
 ///
-/// [`one`](Self::one) returns the inherent constant `ONE` and has no inherent counterpart; a
-/// concrete type reaches `ONE` without this trait, also in constant contexts, and
+/// [`one`](Self::one) returns one, the value of the inherent constant `ONE`, and has no inherent
+/// counterpart; a concrete type reaches `ONE` without this trait, also in constant contexts, and
 /// [`ConstIntegerOne`] gives it to generic code as a constant. Zero bits hold only zero, so `Uint`
 /// of zero bits has no `ONE`, rather than one that is zero, and one bit holds only -1 and 0, so
 /// `Int` of fewer than two bits has none either, and neither implements this trait or `Product`,
@@ -956,12 +958,11 @@ pub trait SignedBits: Sealed + Sized + IntegerMath {
 /// width, zero bits included, where no value exists; [`NonZeroLimits`] and [`ConstNonZeroLimits`]
 /// add the limits from one bit. Generic code reaches the items through this trait, which the bound
 /// `B: BitWidth` provides on `NonZeroUint<B>` and `NonZeroInt<B>`; a method call needs the trait in
-/// scope. The operators that a non-zero integer has, which need a storage that holds the value
-/// inline in their forms on values, are not supertraits: generic code that uses one bounds it. The
-/// text is: `FromStr`, whose error is `core::num::ParseIntError`, as for the native `NonZero`
-/// integers, and [`from_str_radix`](Self::from_str_radix), which parse as the integer does and
-/// give the error of the kind `Zero` for zero, and the radix and exponent formats, which write what
-/// the integer of the same value writes.
+/// scope. The operators that a non-zero integer has are not supertraits: generic code that uses one
+/// bounds it. The text is: `FromStr`, whose error is `core::num::ParseIntError`, as for the native
+/// `NonZero` integers, and [`from_str_radix`](Self::from_str_radix), which parse as the integer
+/// does and give the error of the kind `Zero` for zero, and the radix and exponent formats, which
+/// write what the integer of the same value writes.
 ///
 /// ```
 /// use numo::{

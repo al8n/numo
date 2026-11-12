@@ -431,6 +431,19 @@ FEATURES
     Each mirrors the inherent items for generic code; the bound `B: BitWidth` gives `Uint<B>` and
     `Int<B>` `FixedInteger`, `ConstFixedInteger` and the sign traits. The trait methods are not
     `const`; constant contexts use the inherent `const fn`s.
+  - The operators with an owned operand, `Sum`, `Product`, `SaturatingOps`, `UnsignedFixedInteger`,
+    `SignedFixedInteger`, `FixedInteger` and `IntegerOne` need only the storage trait, `UintRepr` or
+    `IntRepr`, where they needed an inline storage; `FixedInteger`, `IntegerOne` and
+    `SignedFixedInteger` also need the storage to be `Clone`. The compound assignments are no longer
+    supertraits of `FixedInteger`. They are those of the new `IntegerAssign`, which the integers
+    over a storage that holds its value in place implement and which `ConstFixedInteger` requires;
+    code bounded by `FixedInteger` or `IntegerOne` alone that assigns adds `IntegerAssign`. In code
+    generic over the storage trait, a method call of an operator trait on a value, such as
+    `x.not()`, now takes the value, as it does for a concrete integer. `into_limbs` consumes an
+    integer in an array and returns its limbs, inherent and in `ArrayInteger`. The functions of the
+    cast traits take a borrowed source, as in `u64::checked_cast_from(&x)`, and `clone_from` copies
+    into the storage. An array of a type that is not a limb, as in `Uint<U64, [f32; 4]>`, is
+    reported as not being a storage, where the compiler overflowed.
 - `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: the integers of `Bits` bits that are not
   zero, as the native `NonZero` integers are at the native widths.
   - The storage is the native `NonZero` of a native storage, `core::num::NonZero<u8>` to
@@ -473,8 +486,8 @@ FEATURES
   - `Uint / NonZeroUint` and `Uint % NonZeroUint`, with `/=` and `%=`, which cannot panic; `|` of
     two non-zero integers and of a non-zero integer and its integer either way, with `|=`; and the
     negation `-` of `NonZeroInt`, which overflows at `MIN` as the native one does. The operators
-    work on references for every storage, and on values for a storage whose integer holds the value
-    inline. `Int` has no division by a `NonZeroInt`, as `MIN / -1` overflows.
+    work on values and on references for every storage. `Int` has no division by a `NonZeroInt`, as
+    `MIN / -1` overflows.
   - `TryFrom` of the `Uint` or the `Int` of the same width and storage, which returns the error of
     the native conversions, `core::num::TryFromIntError`, of the kind `Zero` for zero, as the
     native `NonZero` integers convert from their integers.

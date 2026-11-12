@@ -1057,8 +1057,7 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// The division `Uint / NonZeroUint` and the remainder `Uint % NonZeroUint`, with `/=` and `%=`,
 /// divide by a value that is not zero, so they cannot panic, as for the native integers. `|`
 /// combines two non-zero integers, or one and its [`Uint`] either way, into a non-zero integer, and
-/// `|=` assigns it. The operators work on references for every storage, and on values for a
-/// storage whose integer holds the value inline. The traits
+/// `|=` assigns it. The operators work on values and on references for every storage. The traits
 /// [`FixedNonZero`](crate::FixedNonZero), [`UnsignedNonZero`](crate::UnsignedNonZero),
 /// [`NonZeroLimits`](crate::NonZeroLimits) and [`ConstNonZeroLimits`](crate::ConstNonZeroLimits)
 /// give generic code the methods and the limits. As for [`Uint`], a path to a method names the
