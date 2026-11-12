@@ -249,8 +249,21 @@ jobs:
       - name: Install rust-src
         if: matrix.sanitizer == 'memory' || matrix.sanitizer == 'thread'
         run: rustup component add rust-src
+      # A build that exhausts the memory of the runner stops the runner without a message, so the
+      # runner gets more swap space, and the next step keeps a record of the memory in use.
+      - name: Add swap space
+        run: |
+          free -h
+          df -h / /mnt
+          sudo fallocate -l 16G /mnt/numo-swap
+          sudo chmod 600 /mnt/numo-swap
+          sudo mkswap /mnt/numo-swap
+          sudo swapon /mnt/numo-swap
+          free -h
       - name: ${{ matrix.sanitizer }} sanitizer (Linux)
-        run: ci/sanitizer.sh ${{ matrix.sanitizer }}
+        run: |
+          (while sleep 30; do free -m | awk '/^Mem:/ { used = $3 } /^Swap:/ { print "memory in use: " used " MiB, swap in use: " $3 " MiB" }'; done) &
+          ci/sanitizer.sh ${{ matrix.sanitizer }}
 
   # valgrind
   valgrind:
