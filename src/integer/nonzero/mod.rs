@@ -333,8 +333,8 @@ macro_rules! nonzero_int_table {
     $callback! { $args
       /// Returns `true` if `self` is negative.
       // The sign bit is the leading bit of the `Bits` bits. `Int::is_negative` reaches generic code
-      // only through `SignedFixedInteger`, which needs a storage that holds the value inline, and
-      // a row compiles for every storage.
+      // only through `SignedFixedInteger`, which needs a storage that is `Clone`, and a row compiles
+      // for every storage.
       fn is_negative(&self) -> bool {
         self.integer().leading_zeros() == 0
       }

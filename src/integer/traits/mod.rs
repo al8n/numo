@@ -1263,7 +1263,8 @@ impl<B: FitsBits<R>, R: UintRepr> UnsignedFixedInteger for Uint<B, R> {
   uint_sign_table!(generic_items![]);
 }
 
-impl<B: FitsBits<R>, R: InlineIntRepr> SignedFixedInteger for Int<B, R> {
+// `overflowing_abs` returns the value itself where it is not negative, so the storage is `Clone`.
+impl<B: FitsBits<R>, R: IntRepr + Clone> SignedFixedInteger for Int<B, R> {
   type Unsigned = Uint<B, <R as IntRepr>::Unsigned>;
 
   signed_query_table!(generic_items![]);

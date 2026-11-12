@@ -8,21 +8,21 @@ error[E0277]: cannot divide `numo::Int<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, i8>`
 help: the following other types implement trait `Div<Rhs>`
  --> src/integer/arithmetic/mod.rs
   |
-  |       impl<B: FitsBits<R>, R: $inline> $op for $type<B, R> {
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `numo::Int<B, R>` implements `Div`
+  |       impl<B: FitsBits<R>, R: $repr> $op for $type<B, R> {
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `numo::Int<B, R>` implements `Div`
 ...
-  |       impl<B: FitsBits<R>, R: $inline> $op<&$type<B, R>> for $type<B, R> {
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `numo::Int<B, R>` implements `Div<&numo::Int<B, R>>`
+  |       impl<B: FitsBits<R>, R: $repr> $op<&$type<B, R>> for $type<B, R> {
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `numo::Int<B, R>` implements `Div<&numo::Int<B, R>>`
 ...
-  |       impl<B: FitsBits<R>, R: $inline> $op<$type<B, R>> for &$type<B, R> {
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&numo::Int<B, R>` implements `Div<numo::Int<B, R>>`
+  |       impl<B: FitsBits<R>, R: $repr> $op<$type<B, R>> for &$type<B, R> {
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&numo::Int<B, R>` implements `Div<numo::Int<B, R>>`
 ...
   |       impl<B: FitsBits<R>, R: $repr> $op<&$type<B, R>> for &$type<B, R> {
   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&numo::Int<B, R>` implements `Div`
 ...
   | / division_operator!(
-  | |   Int: IntRepr, InlineIntRepr, IntReprMut;
-  | |   Div div, DivAssign div_assign, strict_div
+  | |   Int: IntRepr, IntReprMut;
+  | |   Div div, DivAssign div_assign, strict_div; 0, div_by_zero, div
   | | );
   | |_- in this macro invocation
   = note: this error originates in the macro `division_operator` (in Nightly builds, run with -Z macro-backtrace for more info)
