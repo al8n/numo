@@ -34,6 +34,7 @@ pub(super) use sealed::Sealed;
 
 use super::{
   Int, NonZeroInt, NonZeroUint, TryNewError, Uint,
+  arithmetic::{signed_one, unsigned_one},
   bytes::strict_limbs_slice,
   cast::limit,
   nonzero::{Parts, Saturated, parse_signed, parse_unsigned, zero, zero_value},
@@ -42,8 +43,8 @@ use super::{
 use crate::{
   layout::Token,
   width::{
-    FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, NonZeroIntRepr,
-    NonZeroUintRepr, UintCore, UintRepr,
+    FillsRepr, FitsBits, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, IntReprMut,
+    NonZeroIntRepr, NonZeroUintRepr, UintCore, UintRepr, UintReprMut,
   },
 };
 
@@ -65,23 +66,23 @@ mod sealed {
 /// limbs.
 ///
 /// [`zero`](Self::zero), [`min_value`](Self::min_value) and [`max_value`](Self::max_value) return
-/// the inherent constants `ZERO`, `MIN` and `MAX`, and have no inherent counterparts; the other
-/// constants and methods are the inherent items of the same names, which a concrete type reaches
-/// without this trait, also in constant contexts. This trait requires `Clone` rather than `Copy`,
-/// so generic code bounded by it alone clones a value that it uses again; [`ConstFixedInteger`]
-/// adds `Copy` and the constants `ZERO`, `MIN` and `MAX`. Generic code reaches the items through
-/// this trait, which the bound `B: BitWidth` provides on `Uint<B>` and `Int<B>`; a method call
-/// needs the trait in scope, while the constants are also inherent, as in `Uint::<B>::MAX`. The
-/// supertraits give generic code the operators `+`, `-` and `*`, their compound assignments and
-/// `Sum`, which on overflow panic or wrap as `overflow-checks` decides, `/` and `%` and their
-/// compound assignments, which panic on a zero divisor and on overflow in every build, as for the
-/// native integers, the bitwise operators `!`, `&`, `|` and `^` and their compound assignments, and
-/// the shifts `<<` and `>>` and their compound assignments by a `u32`, so that a literal amount, as
-/// in `x << 3`, is a `u32` in code bounded by this trait alone; a concrete type takes every
-/// primitive integer as the amount. They also give it the text: `FromStr`, whose error is
+/// zero and the limits, the values of the inherent constants `ZERO`, `MIN` and `MAX`, and have no
+/// inherent counterparts; the other constants and methods are the inherent items of the same names,
+/// which a concrete type reaches without this trait, also in constant contexts. This trait requires
+/// `Clone` rather than `Copy`, so generic code bounded by it alone clones a value that it uses
+/// again; [`ConstFixedInteger`] adds `Copy` and the constants `ZERO`, `MIN` and `MAX`. Generic code
+/// reaches the items through this trait, which the bound `B: BitWidth` provides on `Uint<B>` and
+/// `Int<B>`; a method call needs the trait in scope, while the constants are also inherent, as in
+/// `Uint::<B>::MAX`. The supertraits give generic code the operators `+`, `-` and `*` and `Sum`,
+/// which on overflow panic or wrap as `overflow-checks` decides, `/` and `%`, which panic on a zero
+/// divisor and on overflow in every build, as for the native integers, the bitwise operators `!`,
+/// `&`, `|` and `^`, and the shifts `<<` and `>>` by a `u32`, so that a literal amount, as in
+/// `x << 3`, is a `u32` in code bounded by this trait alone; a concrete type takes every primitive
+/// integer as the amount. They also give it the text: `FromStr`, whose error is
 /// `core::num::ParseIntError`, as for the native integers, so that code bounded by
 /// `FromStr<Err = ParseIntError>` takes them alike, the radix formats `Binary`, `Octal`,
-/// `LowerHex` and `UpperHex`, and the exponent formats `LowerExp` and `UpperExp`.
+/// `LowerHex` and `UpperHex`, and the exponent formats `LowerExp` and `UpperExp`. The compound
+/// assignments are those of [`IntegerAssign`].
 /// The functions `zero`, `min_value`, `max_value` and `from_str_radix`, and
 /// [`one`](IntegerOne::one), have the names of those of `Zero`, `Bounded`, `Num` and `One` in the
 /// `num-traits` crate, so code bounded by traits of both crates names the trait in the path, as in
@@ -144,22 +145,12 @@ pub trait FixedInteger:
   + Mul<Output = Self>
   + Div<Output = Self>
   + Rem<Output = Self>
-  + AddAssign
-  + SubAssign
-  + MulAssign
-  + DivAssign
-  + RemAssign
   + Not<Output = Self>
   + BitAnd<Output = Self>
   + BitOr<Output = Self>
   + BitXor<Output = Self>
-  + BitAndAssign
-  + BitOrAssign
-  + BitXorAssign
   + Shl<u32, Output = Self>
   + Shr<u32, Output = Self>
-  + ShlAssign<u32>
-  + ShrAssign<u32>
   + Sum
   + FromStr<Err = ParseIntError>
   + Binary
@@ -200,6 +191,60 @@ pub trait FixedInteger:
   integer_query_table!(trait_items![]);
 }
 
+/// The compound assignments of an integer of a fixed number of bits: [`Uint`] and [`Int`] over a
+/// storage that holds the value in place, as a native integer and an array of limbs do.
+///
+/// The supertraits give generic code `+=`, `-=` and `*=`, which on overflow panic or wrap as
+/// `overflow-checks` decides, `/=` and `%=`, which panic on a zero divisor and on overflow in every
+/// build, `&=`, `|=` and `^=`, and `<<=` and `>>=` by a `u32`, each with a value on the right, as
+/// the operators of [`FixedInteger`] take one; a panicking assignment leaves its target unchanged,
+/// as for the native integers. The assignments with a reference on the right, as in `a += &b`, are
+/// not supertraits: every integer that implements this trait has them, and generic code that uses
+/// one bounds it, as `total` does below. [`ConstFixedInteger`] requires this trait, so the bound
+/// `B: BitWidth` provides it on `Uint<B>` and `Int<B>`.
+///
+/// ```
+/// use core::ops::AddAssign;
+///
+/// use numo::{IntegerAssign, Uint, i7, typenum::U200, u7};
+///
+/// // The sum of the values, each added by reference.
+/// fn total<T: IntegerAssign + for<'a> AddAssign<&'a T>>(values: &[T]) -> T {
+///   let mut total = T::zero();
+///   for value in values {
+///     total += value;
+///   }
+///   total
+/// }
+///
+/// // The square of the value, assigned in place.
+/// fn square<T: IntegerAssign>(mut value: T) -> T {
+///   value *= value.clone();
+///   value
+/// }
+///
+/// assert_eq!(total(&[u7::new(100), u7::new(27)]), u7::MAX);
+/// assert_eq!(total(&[i7::new(-50), i7::new(20)]), i7::new(-30));
+/// assert_eq!(square(i7::new(-7)), i7::new(49));
+/// assert_eq!(square(Uint::<U200>::from(1u64 << 40)), Uint::<U200>::from(1u128 << 80));
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait IntegerAssign:
+  FixedInteger
+  + AddAssign
+  + SubAssign
+  + MulAssign
+  + DivAssign
+  + RemAssign
+  + BitAndAssign
+  + BitOrAssign
+  + BitXorAssign
+  + ShlAssign<u32>
+  + ShrAssign<u32>
+{
+}
+
 /// An integer of a fixed number of bits whose zero and limits are constants: [`Uint`] and [`Int`]
 /// over a native integer or an array of limbs.
 ///
@@ -207,9 +252,10 @@ pub trait FixedInteger:
 /// reaches without this trait, also in constant contexts. Generic code reads them through this
 /// trait as `T::ZERO`, `T::MIN` and `T::MAX`, also in a generic `const fn`, which cannot call
 /// [`zero`](FixedInteger::zero), [`min_value`](FixedInteger::min_value) or
-/// [`max_value`](FixedInteger::max_value) because trait methods are not `const`. The supertrait
-/// `Copy` lets generic code use a value again without cloning it. The bound `B: BitWidth` provides
-/// this trait on `Uint<B>` and `Int<B>`, as it provides [`FixedInteger`].
+/// [`max_value`](FixedInteger::max_value) because trait methods are not `const`. The supertraits
+/// are [`IntegerAssign`], with the compound assignments, and `Copy`, which lets generic code use a
+/// value again without cloning it. The bound `B: BitWidth` provides this trait on `Uint<B>` and
+/// `Int<B>`, as it provides [`FixedInteger`].
 ///
 /// ```
 /// use numo::{
@@ -236,7 +282,7 @@ pub trait FixedInteger:
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait ConstFixedInteger: FixedInteger + Copy {
+pub trait ConstFixedInteger: IntegerAssign + Copy {
   /// Zero.
   const ZERO: Self;
 
@@ -1188,23 +1234,25 @@ pub trait IntegerNonZero: Sealed + Sized {
 pub type NonZeroOf<T> = <T as IntegerNonZero>::NonZero;
 
 // The constants and methods are the inherent ones, which `Self::` names first, and the functions
-// without an inherent counterpart return the inherent constants.
-impl<B: FitsBits<R>, R: InlineUintRepr> FixedInteger for Uint<B, R> {
+// without an inherent counterpart compute zero and the limits with the sealed storage methods,
+// without a constant: the sealed `zero` and `cast::limit`. The storage trait and `Clone`, the
+// supertrait, are the whole bound.
+impl<B: FitsBits<R>, R: UintRepr + Clone> FixedInteger for Uint<B, R> {
   const BITS: u32 = Self::BITS;
 
   #[inline]
   fn zero() -> Self {
-    Self::ZERO
+    Self::wrap(R::zero(Token::new()))
   }
 
   #[inline]
   fn min_value() -> Self {
-    Self::MIN
+    limit(false)
   }
 
   #[inline]
   fn max_value() -> Self {
-    Self::MAX
+    limit(true)
   }
 
   // The radix is checked here, before the storage parses, so that the panic reports the caller.
@@ -1218,22 +1266,22 @@ impl<B: FitsBits<R>, R: InlineUintRepr> FixedInteger for Uint<B, R> {
   integer_query_table!(generic_items![]);
 }
 
-impl<B: FitsBits<R>, R: InlineIntRepr> FixedInteger for Int<B, R> {
+impl<B: FitsBits<R>, R: IntRepr + Clone> FixedInteger for Int<B, R> {
   const BITS: u32 = Self::BITS;
 
   #[inline]
   fn zero() -> Self {
-    Self::ZERO
+    Self::wrap(R::zero(Token::new()))
   }
 
   #[inline]
   fn min_value() -> Self {
-    Self::MIN
+    limit(false)
   }
 
   #[inline]
   fn max_value() -> Self {
-    Self::MAX
+    limit(true)
   }
 
   // The radix is checked here, before the storage parses, so that the panic reports the caller.
@@ -1246,6 +1294,12 @@ impl<B: FitsBits<R>, R: InlineIntRepr> FixedInteger for Int<B, R> {
 
   integer_query_table!(generic_items![]);
 }
+
+// The compound assignments need a storage that holds the value in place, and `FixedInteger`, the
+// supertrait, a storage that is `Clone`.
+impl<B: FitsBits<R>, R: UintReprMut + Clone> IntegerAssign for Uint<B, R> {}
+
+impl<B: FitsBits<R>, R: IntReprMut + Clone> IntegerAssign for Int<B, R> {}
 
 impl<B: FitsBits<R>, R: InlineUintRepr> ConstFixedInteger for Uint<B, R> {
   const ZERO: Self = Self::ZERO;
@@ -1272,17 +1326,18 @@ impl<B: FitsBits<R>, R: IntRepr + Clone> SignedFixedInteger for Int<B, R> {
   signed_unchecked_table!(generic_items![]);
 }
 
-impl<B: FitsBits<R> + NonZero, R: InlineUintRepr> IntegerOne for Uint<B, R> {
+// One is the inline zero with bit 0 set, stored once, without a constant.
+impl<B: FitsBits<R> + NonZero, R: UintRepr + Clone> IntegerOne for Uint<B, R> {
   #[inline]
   fn one() -> Self {
-    Self::ONE
+    unsigned_one()
   }
 }
 
-impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: InlineIntRepr> IntegerOne for Int<B, R> {
+impl<B: FitsBits<R> + IsGreater<U1, Output = True>, R: IntRepr + Clone> IntegerOne for Int<B, R> {
   #[inline]
   fn one() -> Self {
-    Self::ONE
+    signed_one()
   }
 }
 

@@ -14,10 +14,10 @@ pub use error::{FromFloatError, TryNewError};
 pub use float::IntegerFloat;
 pub use traits::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,
-  FixedNonZero, FromLimbs, IntegerBits, IntegerMath, IntegerNonZero, IntegerOne, NativeInteger,
-  NonZeroLimits, NonZeroOf, OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger,
-  SignedMath, SignedNonZero, StrictOps, UncheckedOps, UnsignedBits, UnsignedFixedInteger,
-  UnsignedMath, UnsignedNonZero, WrappingOps,
+  FixedNonZero, FromLimbs, IntegerAssign, IntegerBits, IntegerMath, IntegerNonZero, IntegerOne,
+  NativeInteger, NonZeroLimits, NonZeroOf, OverflowingOps, SaturatingOps, SignedBits,
+  SignedFixedInteger, SignedMath, SignedNonZero, StrictOps, UncheckedOps, UnsignedBits,
+  UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WrappingOps,
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
