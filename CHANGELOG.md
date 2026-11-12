@@ -123,6 +123,10 @@ FEATURES
   negative `Int` as the pattern of its `Bits` bits; `typed` writes the default form and reads only
   that form, by the type in every format: for formats that cannot describe their values, and for
   fields that must not take the other form.
+- `numo::serde::be_bytes` and `le_bytes` write and read the bytes of a value, most or least
+  significant first, in two's complement for `Int`, up to 8192 bits; `numo::serde::ruint` writes
+  the form of ruint's `Uint`, its hexadecimal text in a human-readable format and its big-endian
+  bytes in another, and reads everything that ruint 1.21 reads.
 - The `arbitrary`, `proptest` and `quickcheck` features: the `Arbitrary` trait of each crate for
   `Decimal` and `RoundingMode`, for fuzzing and property tests on a target with `std`. One generator
   serves all three: an edge value one time in eight (zero, one unit in the last place, one, `MAX`,
