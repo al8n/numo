@@ -9,6 +9,10 @@
 //! bits write `0x`. At a width of whole bytes the form is that of Ethereum's fixed DATA, such as
 //! `bytes32` at 256 bits.
 //!
+//! [`be_bytes`](super::be_bytes) and [`le_bytes`](super::le_bytes) write the bytes of a value
+//! instead, extended by copies of the sign: -1 of `Int<U12>` is `ff ff` there, where this module
+//! writes the pattern of its 12 bits, `0x0fff`.
+//!
 //! A value is written through `collect_str` and read with `deserialize_str`, in every format, from
 //! a string alone: `0x` or `0X`, then exactly two hexadecimal digits of either case for each byte
 //! of the width, read as the pattern of the `Bits` bits, in two's complement for `Int`, so that

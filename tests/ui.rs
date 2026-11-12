@@ -5,7 +5,7 @@
 //! the test checks nothing and passes.
 //!
 //! Regenerate the snapshots with `TRYBUILD=overwrite cargo +stable test --test ui` after reviewing
-//! a change in the compiler output.
+//! a change in the compiler output. The cases in `tests/ui/serde` need `--features serde`.
 
 use std::process::Command;
 
@@ -13,7 +13,13 @@ use std::process::Command;
 #[cfg_attr(miri, ignore)]
 fn ui() {
   if stable_compiler() {
-    trybuild::TestCases::new().compile_fail("tests/ui/*.rs");
+    let cases = trybuild::TestCases::new();
+    cases.compile_fail("tests/ui/*.rs");
+    // trybuild builds the cases with the features of this test build, which it reads from the
+    // fingerprint of the build. Where it cannot read them, it builds the cases with the default
+    // features, and the serde cases fail on `numo::serde`, which needs `serde`.
+    #[cfg(feature = "serde")]
+    cases.compile_fail("tests/ui/serde/*.rs");
   }
 }
 
