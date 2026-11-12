@@ -1,0 +1,58 @@
+error[E0277]: `numo::serde::quantity` takes an unsigned integer
+ --> tests/ui/serde/quantity_of_signed.rs:4:10
+  |
+4 | #[derive(serde_full::Serialize, serde_full::Deserialize)]
+  |          ^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+...
+7 |   #[serde(with = "numo::serde::quantity::required")]
+  |                  --------------------------------- required by a bound introduced by this call
+  |
+  = help: the trait `Quantity` is not implemented for `numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>`
+  = note: a QUANTITY has no sign: it takes `Uint`, `NonZeroUint`, `u8` to `u128` and their `NonZero`
+  = note: an `Option` field takes `numo::serde::quantity::optional`
+  = help: the following other types implement trait `Quantity`:
+            NonZeroUint<B, R>
+            Uint<B, R>
+            std::num::NonZero<u128>
+            std::num::NonZero<u16>
+            std::num::NonZero<u32>
+            std::num::NonZero<u64>
+            std::num::NonZero<u8>
+            u128
+          and $N others
+note: required by a bound in `numo::serde::quantity::required::serialize`
+ --> src/serde/quantity.rs
+  |
+  |   pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+  |          --------- required by a bound in this function
+  |   where
+  |     T: Quantity,
+  |        ^^^^^^^^ required by this bound in `serialize`
+
+error[E0277]: `numo::serde::quantity` takes an unsigned integer
+ --> tests/ui/serde/quantity_of_signed.rs:7:18
+  |
+7 |   #[serde(with = "numo::serde::quantity::required")]
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+  |
+  = help: the trait `Quantity` is not implemented for `numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 4]>`
+  = note: a QUANTITY has no sign: it takes `Uint`, `NonZeroUint`, `u8` to `u128` and their `NonZero`
+  = note: an `Option` field takes `numo::serde::quantity::optional`
+  = help: the following other types implement trait `Quantity`:
+            NonZeroUint<B, R>
+            Uint<B, R>
+            std::num::NonZero<u128>
+            std::num::NonZero<u16>
+            std::num::NonZero<u32>
+            std::num::NonZero<u64>
+            std::num::NonZero<u8>
+            u128
+          and $N others
+note: required by a bound in `numo::serde::quantity::required::deserialize`
+ --> src/serde/quantity.rs
+  |
+  |   pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+  |          ----------- required by a bound in this function
+  |   where
+  |     T: Quantity,
+  |        ^^^^^^^^ required by this bound in `deserialize`
