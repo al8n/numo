@@ -89,6 +89,7 @@ impl RoundingMode {
 /// For a divisor `10^k`, `half` is what decimal implementations read from the first dropped digit
 /// and whether any later dropped digit is nonzero; the comparison works for any divisor, which
 /// `quantize` needs.
+#[inline(always)]
 pub(crate) const fn increments(
   mode: RoundingMode,
   negative: bool,

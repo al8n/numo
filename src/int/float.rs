@@ -30,7 +30,7 @@ pub enum FloatFormat {
 
 impl FloatFormat {
   /// The bits of the significand, the implicit bit included.
-  #[inline]
+  #[inline(always)]
   pub(crate) const fn precision(self) -> u32 {
     match self {
       Self::F64 => f64::MANTISSA_DIGITS,
@@ -39,7 +39,7 @@ impl FloatFormat {
   }
 
   /// The bits of the exponent.
-  #[inline]
+  #[inline(always)]
   pub(crate) const fn exponent_bits(self) -> u32 {
     match self {
       Self::F64 => 11,
@@ -66,7 +66,7 @@ pub struct FloatParts {
 impl FloatParts {
   /// Returns `true` if the value is an integer: if no bit of the significand is below the point,
   /// as for zero and for every value whose exponent is not negative.
-  #[inline]
+  #[inline(always)]
   pub(crate) const fn is_integer(&self) -> bool {
     self.exponent >= 0
       || self.significand == 0
@@ -110,13 +110,13 @@ const fn parts(bits: u64, format: FloatFormat) -> Result<FloatParts, FromFloatEr
 }
 
 /// The parts of `value`, or the error of NaN or of an infinity.
-#[inline]
+#[inline(always)]
 pub(crate) const fn float_parts_f64(value: f64) -> Result<FloatParts, FromFloatError> {
   parts(value.to_bits(), FloatFormat::F64)
 }
 
 /// The parts of `value`, or the error of NaN or of an infinity.
-#[inline]
+#[inline(always)]
 pub(crate) const fn float_parts_f32(value: f32) -> Result<FloatParts, FromFloatError> {
   parts(value.to_bits() as u64, FloatFormat::F32)
 }

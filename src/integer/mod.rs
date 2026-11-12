@@ -47,6 +47,8 @@ mod nonzero;
 mod cast;
 mod compare;
 mod convert;
+#[cfg(feature = "serde")]
+mod serde;
 mod text;
 mod traits;
 
@@ -543,6 +545,79 @@ mod traits;
 /// first, rather than its documentation. Every panic reports the caller, where the native methods
 /// sometimes report a line in `core`, except that of `pow`, which reports the line in `core` that
 /// the native `pow` reports.
+///
+/// # `serde`
+///
+/// With the `serde` feature, a value is written in a form that depends only on its width, its sign
+/// and its value, never on its storage. Up to 128 bits it is a number, written through the method
+/// of the smallest native integer of its sign that holds `Bits` bits, so that every format writes
+/// it as that native integer of the same value; above 128 bits it is its decimal text, the text of
+/// `Display`, written through `collect_str`, which numo streams with no buffer and no allocation:
+///
+/// | `Bits` | `Uint` | `Int` |
+/// |---|---|---|
+/// | 0 to 8 | `serialize_u8` | `serialize_i8` |
+/// | 9 to 16 | `serialize_u16` | `serialize_i16` |
+/// | 17 to 32 | `serialize_u32` | `serialize_i32` |
+/// | 33 to 64 | `serialize_u64` | `serialize_i64` |
+/// | 65 to 128 | `serialize_u128` | `serialize_i128` |
+/// | 129 and up | `collect_str` | `collect_str` |
+///
+/// In a human-readable format, a value of 0 to 64 bits or of more than 128 bits reads from any
+/// integer that the format gives and from a decimal string in the syntax of `FromStr`, through the
+/// format's own description of its values, `deserialize_any`; a value of 65 to 128 bits reads from
+/// a 128-bit integer, as `u128` reads, and from a string only where the format gives one to the
+/// request of a 128-bit integer. In other formats each class reads through its own method, and a
+/// value of more than 128 bits from a string. An integer is checked against `Bits`, not against the
+/// native integer of the class, so `u7` rejects 128. Every other input, a float included, gets the
+/// fixed message `expected an integer`; a number outside the range gets the text of std's
+/// [`TryFromIntError`](core::num::TryFromIntError), and a string that does not parse the text of
+/// std's [`ParseIntError`](core::num::ParseIntError). No error that numo builds names the input; an
+/// error that a format builds without numo's description of the expected input passes through as
+/// the format wrote it.
+///
+/// The defaults have these limits:
+///
+/// - A quoted value of 65 to 128 bits does not read from JSON, as for `u128`: serde_json reads
+///   digits alone when it is asked for a 128-bit integer.
+/// - A type above 128 bits reads a JSON number outside the 64-bit range only in a build whose
+///   serde_json has `arbitrary_precision`. Even then, `serde_json::Value` does not hand over a
+///   number outside the 128-bit range that a 64-bit float prints with the same digits, such as 1
+///   followed by 39 zeros. Quote such a value. With the feature, serde_json hands such a number
+///   over as a map of one entry, whose key is a token private to serde_json; numo reads a map of
+///   that one entry as the integer that its value writes, in every format and every build, and
+///   rejects it if serde_json changes the token.
+/// - A format that infers the type of a value from its text, as csv does, gives a value outside the
+///   128-bit range as a float, so a type above 128 bits does not read such a value back from it.
+/// - In a human-readable format the defaults need `deserialize_any`: a format without it, such as
+///   serde-json-core, reads no value of 0 to 64 bits or of more than 128 bits.
+/// - A field of 65 to 128 bits fails in an untagged enum or a flattened struct, as a `u128` field
+///   does, since serde's buffer holds no 128-bit integer.
+/// - serde_test's bare deserializer panics when it is asked whether it is human-readable, so a test
+///   wraps a value of 0 to 64 or of more than 128 bits with `readable()` or `compact()`. And a numo
+///   integer takes a decimal string, so in an untagged enum of an integer and a string, the JSON
+///   string `"5"` selects the integer, where a native integer leaves it to the string.
+///
+/// ```
+/// # #[cfg(feature = "serde")]
+/// # {
+/// use numo::{Int, i7, typenum::U100, u256};
+///
+/// // A number up to 128 bits, written as the native integer of the class, and a string above.
+/// assert_eq!(serde_json::to_string(&i7::new(-5)).unwrap(), "-5");
+/// assert_eq!(postcard::to_stdvec(&i7::new(-5)).unwrap(), postcard::to_stdvec(&-5i8).unwrap());
+/// assert_eq!(serde_json::to_string(&u256::from(5u8)).unwrap(), "\"5\"");
+///
+/// // JSON gives a number or a decimal string, checked against the width.
+/// assert_eq!(serde_json::from_str::<i7>("\"-5\"").unwrap(), i7::new(-5));
+/// assert!(serde_json::from_str::<i7>("64").is_err());
+/// assert_eq!(serde_json::from_str::<u256>("5").unwrap(), u256::from(5u8));
+///
+/// // From 65 to 128 bits, digits alone, as for `i128`.
+/// assert_eq!(serde_json::from_str::<Int<U100>>("-5").unwrap(), Int::<U100>::new(-5));
+/// assert!(serde_json::from_str::<Int<U100>>("\"-5\"").is_err());
+/// # }
+/// ```
 #[repr(transparent)]
 pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits` or above is zero, so the
@@ -851,6 +926,13 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// [`div_exact`](Self::div_exact) panics on a zero divisor and on `MIN / -1` with the messages of
 /// the remainder, as the unstable native method does, and [`set_bit`](Self::set_bit) on an index of
 /// `Bits` or more. Every panic reports the caller, but that of `pow`.
+///
+/// # `serde`
+///
+/// With the `serde` feature, an `Int` is written and read as a [`Uint`] of the same width is (see
+/// [`serde`](Uint#serde)), with its sign: up to 128 bits through the method of `i8` to `i128` that
+/// holds `Bits` bits, and above as its decimal text. A decimal string may start with `-`, and
+/// `"-0"` reads as zero.
 #[repr(transparent)]
 pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // Holds a value of `Bits` bits: every bit of the storage at index `Bits - 1` or above equals bit
@@ -1041,6 +1123,13 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// assert_eq!(five.widen::<NonZero<u64>>().get(), 5);
 /// # Ok::<(), core::num::TryFromIntError>(())
 /// ```
+///
+/// # `serde`
+///
+/// With the `serde` feature, a non-zero integer is written as the [`Uint`] of the same value is
+/// written, and read as it reads (see [`serde`](Uint#serde)), after which zero is rejected, after
+/// every error of the integer, with std's error of zero. Zero bits hold no value, so they read
+/// nothing.
 #[repr(transparent)]
 pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
   // `Repr` is the storage of the value itself: `core::num::NonZero<u8>` to `NonZero<u128>` for a
@@ -1153,6 +1242,12 @@ pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
 /// negation `-` of `MIN` overflow, as for [`Int`]: they repeat a native negation, which panics or
 /// returns `MIN` as `overflow-checks` decides (see [Overflow](Int#overflow)), and a panic reports
 /// the caller. No other method or operator panics.
+///
+/// # `serde`
+///
+/// With the `serde` feature, a non-zero integer is written as the [`Int`] of the same value is
+/// written, and read as it reads (see [`serde`](Int#serde)), after which zero is rejected, after
+/// every error of the integer, with std's error of zero. One bit reads only -1.
 #[repr(transparent)]
 pub struct NonZeroInt<Bits, Repr = <Bits as BitWidth>::NonZeroSigned> {
   // As for `NonZeroUint`: `Repr` is the storage of the value itself, and the value has `Bits` bits

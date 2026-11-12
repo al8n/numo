@@ -5,10 +5,10 @@
 //! branch on `is_human_readable`: a binary format writes the same text, because a coefficient read
 //! back with another number of fraction digits would be off by a power of ten.
 //!
-//! No error of reading a decimal names the rejected input: [`deserialize_text`] replaces a format
-//! error that describes it with a fixed message and passes every other one through with its
-//! category. This covers decimal values only: reading a rounding mode reports the rejected name
-//! and the accepted ones.
+//! No error of reading a decimal names the rejected input: a decimal is read through [`read`],
+//! which replaces a format error that describes the input with the fixed message of the reading
+//! path and passes every other one through with its category. This covers decimal values only:
+//! reading a rounding mode reports the rejected name and the accepted ones.
 
 use core::{
   cell::Cell,
@@ -124,60 +124,101 @@ where
   }
 }
 
-/// The message of every input that is not a string, which names nothing of the input.
-const EXPECTED: &str = "expected a decimal value as a string";
+/// What the visitors of a reading path share with [`read`]: whether the format asked for the
+/// description of the expected input, and that description.
+#[derive(Clone, Copy)]
+pub(crate) struct Expected<'a> {
+  consulted: &'a Cell<bool>,
+  description: &'static str,
+}
+
+impl Expected<'_> {
+  /// Writes the description of the expected input, for `Visitor::expecting`, and records that the
+  /// format asked for it.
+  pub(crate) fn describe(self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.consulted.set(true);
+    f.write_str(self.description)
+  }
+
+  /// The error of a wrong kind of input: the fixed message of the path, `expected` and the
+  /// description, which names nothing of the input.
+  pub(crate) fn reject<E: de::Error>(self) -> E {
+    E::custom(format_args!("expected {}", self.description))
+  }
+}
+
+/// Reads a value of type `T` through `drive`, which hands `deserializer` the visitor of a reading
+/// path, whose fixed message is `expected` followed by `description`.
+///
+/// The visitors of the path share an [`Expected`], which records whether the format asked for the
+/// description of the expected input. A format error built after that is replaced with the fixed
+/// message: serde builds that way every error that names a rejected input, with `invalid_type`,
+/// `invalid_value` or `invalid_length`. Every other format error, such as the end of the input, an
+/// I/O error, invalid UTF-8 or a missing field, passes through unchanged, with its category. A
+/// visitor rejects a wrong kind of input with the fixed message itself, and gives the error of a
+/// value that it rejects, which names no input either, as `Ok(Err(..))`.
+pub(crate) fn read<'de, T, R, D>(
+  deserializer: D,
+  description: &'static str,
+  drive: impl FnOnce(D, Expected<'_>) -> Result<Result<T, R>, D::Error>,
+) -> Result<T, D::Error>
+where
+  R: fmt::Display,
+  D: Deserializer<'de>,
+{
+  let consulted = Cell::new(false);
+  let expected = Expected {
+    consulted: &consulted,
+    description,
+  };
+  match drive(deserializer, expected) {
+    Ok(Ok(value)) => Ok(value),
+    // The error of a value leaves the format as a value, so that nothing the format does with the
+    // errors of a visitor can make it a format error, which could be replaced.
+    Ok(Err(rejected)) => Err(de::Error::custom(rejected)),
+    Err(_) if consulted.get() => Err(expected.reject()),
+    Err(error) => Err(error),
+  }
+}
+
+/// What a decimal is read from, whose fixed message is `expected a decimal value as a string`.
+const DECIMAL: &str = "a decimal value as a string";
 
 /// Reads a decimal of type `T` from a string with its `FromStr`, which every decimal type
-/// implements with `parse`, and rejects every other kind of input with [`EXPECTED`].
-///
-/// A format error whose construction consulted the visitor's description of the expected input is
-/// replaced with [`EXPECTED`] too: serde builds that way every error that names a rejected input,
-/// with `invalid_type`, `invalid_value` or `invalid_length`. Every other format error, such as the
-/// end of the input, an I/O error, invalid UTF-8 or a missing field, passes through unchanged, with
-/// its category. A string that does not parse reports its [`ParseError`], which names no input
-/// either.
+/// implements with `parse`, through [`read`]: every other kind of input gets the fixed message
+/// `expected a decimal value as a string`, and a string that does not parse reports its
+/// [`ParseError`].
 pub(crate) fn deserialize_text<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
   T: FromStr<Err = ParseError>,
   D: Deserializer<'de>,
 {
-  let consulted = Cell::new(false);
-  let visitor = TextVisitor {
-    consulted: &consulted,
-    marker: PhantomData,
-  };
-  match deserializer.deserialize_str(visitor) {
-    Ok(Ok(value)) => Ok(value),
-    // The parse error leaves the format as a value, so that nothing the format does with the
-    // errors of a visitor can make it a format error, which could be replaced.
-    Ok(Err(error)) => Err(de::Error::custom(error)),
-    Err(_) if consulted.get() => Err(de::Error::custom(EXPECTED)),
-    Err(error) => Err(error),
-  }
+  read(deserializer, DECIMAL, |deserializer, expected| {
+    deserializer.deserialize_str(TextVisitor {
+      expected,
+      marker: PhantomData,
+    })
+  })
 }
 
 /// Reads the text of a decimal of type `T` and parses it, and rejects every other kind of input
-/// with [`EXPECTED`]. `consulted` records whether the format asked for the description of the
-/// expected input.
+/// with the fixed message of its path.
 struct TextVisitor<'a, T> {
-  consulted: &'a Cell<bool>,
+  expected: Expected<'a>,
   marker: PhantomData<T>,
 }
 
-impl<T> TextVisitor<'_, T> {
-  fn reject<E: de::Error>() -> Result<Result<T, ParseError>, E> {
-    Err(E::custom(EXPECTED))
-  }
-}
-
-/// Implements the visit methods of inputs that carry a value, other than a string, as rejections.
+/// Implements the visit methods of inputs that carry a value, written `method(input)`, as
+/// rejections with the fixed message of the path, which the field `expected` of the visitor holds.
 macro_rules! reject_inputs {
   ($($method:ident($input:ty)),+ $(,)?) => {$(
-    fn $method<E: de::Error>(self, _: $input) -> Result<Self::Value, E> {
-      Self::reject()
+    fn $method<E: serde_core::de::Error>(self, _: $input) -> Result<Self::Value, E> {
+      Err(self.expected.reject())
     }
   )+};
 }
+
+pub(crate) use reject_inputs;
 
 impl<'de, T> Visitor<'de> for TextVisitor<'_, T>
 where
@@ -186,8 +227,7 @@ where
   type Value = Result<T, ParseError>;
 
   fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    self.consulted.set(true);
-    f.write_str("a decimal value as a string")
+    self.expected.describe(f)
   }
 
   fn visit_str<E>(self, text: &str) -> Result<Self::Value, E>
@@ -220,31 +260,31 @@ where
   }
 
   fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
-    Self::reject()
+    Err(self.expected.reject())
   }
 
   fn visit_some<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
-    Self::reject()
+    Err(self.expected.reject())
   }
 
   fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-    Self::reject()
+    Err(self.expected.reject())
   }
 
   fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
-    Self::reject()
+    Err(self.expected.reject())
   }
 
   fn visit_seq<A: SeqAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
-    Self::reject()
+    Err(self.expected.reject())
   }
 
   fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
-    Self::reject()
+    Err(self.expected.reject())
   }
 
   fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
-    Self::reject()
+    Err(self.expected.reject())
   }
 }
 

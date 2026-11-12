@@ -25,9 +25,9 @@ use core::num::TryFromIntError;
 use typenum::{B0, B1, IsLessOrEqual, LeEq, U8, U16, U32, U64, U128};
 
 use sealed::{
-  BoundedTarget, CastPair, CastSource, CheckedTarget, KindWidens, MaxWidth, MinWidth, SameSign,
-  TruncateBits, WidenBits,
+  BoundedTarget, CastPair, KindWidens, MaxWidth, MinWidth, SameSign, TruncateBits, WidenBits,
 };
+pub(super) use sealed::{CastSource, CheckedTarget};
 
 use super::{Int, NonZeroInt, NonZeroUint, Uint, arithmetic::overflow, convert, nonzero};
 use crate::{

@@ -359,12 +359,12 @@
 //!
 //! # `serde`
 //!
-//! The `serde` feature implements `Serialize` and `Deserialize` for [`Decimal`], [`Scaled`] and
-//! [`RoundingMode`]. The impls are written against `serde_core`, whose traits `serde` re-exports
-//! from version 1.0.220 on, so they need a build whose `serde` is 1.0.220 or later; an older
-//! `serde` defines traits of its own. The feature enables `serde_core` without its default
-//! features and nothing else, so it turns on no feature in any other crate of a build, and it
-//! needs no allocation.
+//! The `serde` feature implements `Serialize` and `Deserialize` for [`Decimal`], [`Scaled`],
+//! [`RoundingMode`] and the integers [`Uint`], [`Int`], [`NonZeroUint`] and [`NonZeroInt`]. The
+//! impls are written against `serde_core`, whose traits `serde` re-exports from version 1.0.220 on,
+//! so they need a build whose `serde` is 1.0.220 or later; an older `serde` defines traits of its
+//! own. The feature enables `serde_core` without its default features and nothing else, so it turns
+//! on no feature in any other crate of a build, and it needs no allocation.
 //!
 //! A decimal is written as a string, the text that `Display` writes, and read from a string in the
 //! syntax of [`parse`](Decimal::parse), in every format, human-readable or binary. Reading
@@ -375,12 +375,25 @@
 //! text, in the same way. A rounding mode is written as its lowercase name, such as `"halfeven"`,
 //! and read from a name of any case, with the words of a half mode optionally separated.
 //!
-//! No error of reading a decimal or a `Scaled` names the rejected input. Every input but a string,
-//! such as a number, gets the fixed message `expected a decimal value as a string`, which also
-//! replaces any error of the format that would describe the input. Every other error of the format,
-//! such as the end of the input, an I/O error or a missing field, passes through unchanged, and a
-//! string that does not parse reports its [`ParseError`]. This covers decimal values only: reading
-//! a rounding mode reports the rejected name and the accepted ones.
+//! An integer is written in a form that depends only on its width, its sign and its value, in every
+//! format and every storage: up to 128 bits as a number, through the method of the smallest native
+//! integer of its sign that holds the width, and above 128 bits as its decimal text. In a
+//! human-readable format, a value of up to 64 or of more than 128 bits reads from any integer that
+//! the format gives and from a decimal string, and one of 65 to 128 bits from a 128-bit integer, as
+//! `u128` reads; in other formats each class reads through its own method. A non-zero integer is
+//! written and read as its integer, and zero does not read. The forms, the formats and the limits
+//! are in [`serde`](Uint#serde).
+//!
+//! No error that numo builds names the rejected input. When it reads a decimal or a `Scaled`, every
+//! input but a string, such as a number, gets the fixed message
+//! `expected a decimal value as a string`, and when it reads an integer, every input but an integer
+//! or a decimal string gets `expected an integer`; the fixed message also replaces an error that
+//! the format builds from numo's description of the expected input. An error that a format builds
+//! without that description, such as ciborium's type errors, passes through as the format wrote it,
+//! and so does every other error of the format, such as the end of the input, an I/O error or a
+//! missing field. A string that does not parse as a decimal reports its [`ParseError`], and an
+//! integer that does not fit reports std's error. This covers numbers only: reading a rounding mode
+//! reports the rejected name and the accepted ones.
 //!
 //! # `arbitrary`, `proptest` and `quickcheck`
 //!
