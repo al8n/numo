@@ -1505,6 +1505,28 @@ macro_rules! array_integers {
         }
       }
 
+      /// The bound that a saturating row returns: `MAX` if `max`, and `MIN` otherwise.
+      #[inline]
+      const fn bound(max: bool) -> Self {
+        if max {
+          Self::MAX
+        } else {
+          Self::MIN
+        }
+      }
+
+      /// Wraps `repr`, the storage that a row computes from the storages of its operands.
+      #[inline]
+      const fn of(repr: [$limb; N]) -> Self {
+        Self::wrap(repr)
+      }
+
+      /// Stores `repr`, the storage that a row computes from the storage of the value.
+      #[inline]
+      const fn store(&mut self, repr: [$limb; N]) {
+        self.repr = repr;
+      }
+
       overflowing_table!(inherent_items![unsigned, $lower, &]);
       checked_table!(inherent_items![unsigned, $lower, &]);
       wrapping_table!(inherent_items![unsigned, $lower, &]);
@@ -1737,6 +1759,34 @@ macro_rules! array_integers {
           Ok(limbs) => Ok(Self::wrap(limbs)),
           Err(error) => Err(error),
         }
+      }
+
+      /// The bound that a saturating row returns: `MAX` if `max`, and `MIN` otherwise.
+      #[inline]
+      const fn bound(max: bool) -> Self {
+        if max {
+          Self::MAX
+        } else {
+          Self::MIN
+        }
+      }
+
+      /// A copy of `self`, for a row that returns its operand.
+      #[inline]
+      const fn duplicate(&self) -> Self {
+        *self
+      }
+
+      /// Wraps `repr`, the storage that a row computes from the storages of its operands.
+      #[inline]
+      const fn of(repr: [$limb; N]) -> Self {
+        Self::wrap(repr)
+      }
+
+      /// Stores `repr`, the storage that a row computes from the storage of the value.
+      #[inline]
+      const fn store(&mut self, repr: [$limb; N]) {
+        self.repr = repr;
       }
 
       overflowing_table!(inherent_items![signed, $upper, &]);
@@ -2140,6 +2190,28 @@ macro_rules! native_integers {
         }
       }
 
+      /// The bound that a saturating row returns: `MAX` if `max`, and `MIN` otherwise.
+      #[inline]
+      const fn bound(max: bool) -> Self {
+        if max {
+          Self::MAX
+        } else {
+          Self::MIN
+        }
+      }
+
+      /// Wraps `repr`, the storage that a row computes from the storages of its operands.
+      #[inline]
+      const fn of(repr: $uint) -> Self {
+        Self::wrap(repr)
+      }
+
+      /// Stores `repr`, the storage that a row computes from the storage of the value.
+      #[inline]
+      const fn store(&mut self, repr: $uint) {
+        self.repr = repr;
+      }
+
       overflowing_table!(inherent_items![$uint]);
       checked_table!(inherent_items![$uint]);
       wrapping_table!(inherent_items![$uint]);
@@ -2373,6 +2445,34 @@ macro_rules! native_integers {
           Ok(value) => Ok(Self::wrap(value)),
           Err(error) => Err(error),
         }
+      }
+
+      /// The bound that a saturating row returns: `MAX` if `max`, and `MIN` otherwise.
+      #[inline]
+      const fn bound(max: bool) -> Self {
+        if max {
+          Self::MAX
+        } else {
+          Self::MIN
+        }
+      }
+
+      /// A copy of `self`, for a row that returns its operand.
+      #[inline]
+      const fn duplicate(&self) -> Self {
+        *self
+      }
+
+      /// Wraps `repr`, the storage that a row computes from the storages of its operands.
+      #[inline]
+      const fn of(repr: $int) -> Self {
+        Self::wrap(repr)
+      }
+
+      /// Stores `repr`, the storage that a row computes from the storage of the value.
+      #[inline]
+      const fn store(&mut self, repr: $int) {
+        self.repr = repr;
       }
 
       overflowing_table!(inherent_items![$int]);

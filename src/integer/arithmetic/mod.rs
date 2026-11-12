@@ -67,7 +67,7 @@ macro_rules! overflowing_table {
       fn overflowing_div(&self, rhs: &Self) -> (Self, bool)
         = prim div_rem_bits(self, rhs; Self::BITS) as division {
           match division {
-            Some((quotient, _, overflow)) => (Self::wrap(quotient), overflow),
+            Some((quotient, _, overflow)) => (Self::of(quotient), overflow),
             None => $crate::integer::arithmetic::domain::div_by_zero(),
           }
         }
@@ -83,7 +83,7 @@ macro_rules! overflowing_table {
       fn overflowing_rem(&self, rhs: &Self) -> (Self, bool)
         = prim div_rem_bits(self, rhs; Self::BITS) as division {
           match division {
-            Some((_, remainder, overflow)) => (Self::wrap(remainder), overflow),
+            Some((_, remainder, overflow)) => (Self::of(remainder), overflow),
             None => $crate::integer::arithmetic::domain::rem_by_zero(),
           }
         }
@@ -100,7 +100,7 @@ macro_rules! overflowing_table {
       fn overflowing_div_euclid(&self, rhs: &Self) -> (Self, bool)
         = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
           match division {
-            Some((quotient, _, overflow)) => (Self::wrap(quotient), overflow),
+            Some((quotient, _, overflow)) => (Self::of(quotient), overflow),
             None => $crate::integer::arithmetic::domain::div_by_zero(),
           }
         }
@@ -116,7 +116,7 @@ macro_rules! overflowing_table {
       fn overflowing_rem_euclid(&self, rhs: &Self) -> (Self, bool)
         = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
           match division {
-            Some((_, remainder, overflow)) => (Self::wrap(remainder), overflow),
+            Some((_, remainder, overflow)) => (Self::of(remainder), overflow),
             None => $crate::integer::arithmetic::domain::rem_by_zero(),
           }
         }
@@ -200,7 +200,7 @@ macro_rules! checked_table {
       fn checked_div(&self, rhs: &Self) -> Option<Self>
         = prim div_rem_bits(self, rhs; Self::BITS) as division {
           match division {
-            Some((quotient, _, false)) => Some(Self::wrap(quotient)),
+            Some((quotient, _, false)) => Some(Self::of(quotient)),
             _ => None,
           }
         }
@@ -211,7 +211,7 @@ macro_rules! checked_table {
       fn checked_rem(&self, rhs: &Self) -> Option<Self>
         = prim div_rem_bits(self, rhs; Self::BITS) as division {
           match division {
-            Some((_, remainder, false)) => Some(Self::wrap(remainder)),
+            Some((_, remainder, false)) => Some(Self::of(remainder)),
             _ => None,
           }
         }
@@ -222,7 +222,7 @@ macro_rules! checked_table {
       fn checked_div_euclid(&self, rhs: &Self) -> Option<Self>
         = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
           match division {
-            Some((quotient, _, false)) => Some(Self::wrap(quotient)),
+            Some((quotient, _, false)) => Some(Self::of(quotient)),
             _ => None,
           }
         }
@@ -233,7 +233,7 @@ macro_rules! checked_table {
       fn checked_rem_euclid(&self, rhs: &Self) -> Option<Self>
         = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
           match division {
-            Some((_, remainder, false)) => Some(Self::wrap(remainder)),
+            Some((_, remainder, false)) => Some(Self::of(remainder)),
             _ => None,
           }
         }
@@ -272,7 +272,7 @@ macro_rules! checked_table {
       fn checked_next_multiple_of(&self, rhs: &Self) -> Option<Self>
         = prim next_multiple_of_bits(self, rhs; Self::BITS) as multiple {
           match multiple {
-            Some((multiple, false)) => Some(Self::wrap(multiple)),
+            Some((multiple, false)) => Some(Self::of(multiple)),
             _ => None,
           }
         }
@@ -283,7 +283,7 @@ macro_rules! checked_table {
       fn checked_div_exact(&self, rhs: &Self) -> Option<Self>
         = prim checked_div_exact_bits(self, rhs; Self::BITS) as quotient {
           match quotient {
-            Some(quotient) => Some(Self::wrap(quotient)),
+            Some(quotient) => Some(Self::of(quotient)),
             None => None,
           }
         }
@@ -387,6 +387,9 @@ macro_rules! wrapping_table {
 /// Passes the saturating methods of `Uint`, written `saturating_table!(Uint, ..)`, or of `Int`,
 /// written `saturating_table!(Int, ..)`, to `$callback`, after the tokens of `$args`. Both have the
 /// same documentation and signatures, and differ in the bound that an overflow saturates to.
+// The rows of `Int` read the sign of a value with `bit`, as the casts of `int_bits_table!` do, so
+// that they compile for every storage: `is_negative` reaches generic code only through
+// `SignedFixedInteger`.
 macro_rules! saturating_table {
   (Uint, $callback:ident! $args:tt) => {
     $callback! { $args
@@ -395,7 +398,7 @@ macro_rules! saturating_table {
       fn saturating_add(&self, rhs: &Self) -> Self {
         match self.overflowing_add(rhs) {
           (sum, false) => sum,
-          (_, true) => Self::MAX,
+          (_, true) => Self::bound(true),
         }
       }
 
@@ -404,7 +407,7 @@ macro_rules! saturating_table {
       fn saturating_sub(&self, rhs: &Self) -> Self {
         match self.overflowing_sub(rhs) {
           (difference, false) => difference,
-          (_, true) => Self::MIN,
+          (_, true) => Self::bound(false),
         }
       }
 
@@ -413,7 +416,7 @@ macro_rules! saturating_table {
       fn saturating_mul(&self, rhs: &Self) -> Self {
         match self.overflowing_mul(rhs) {
           (product, false) => product,
-          (_, true) => Self::MAX,
+          (_, true) => Self::bound(true),
         }
       }
 
@@ -428,7 +431,7 @@ macro_rules! saturating_table {
       fn saturating_div(&self, rhs: &Self) -> Self {
         match self.overflowing_div(rhs) {
           (quotient, false) => quotient,
-          (_, true) => Self::MAX,
+          (_, true) => Self::bound(true),
         }
       }
 
@@ -437,7 +440,7 @@ macro_rules! saturating_table {
       fn saturating_pow(&self, exp: u32) -> Self {
         match self.overflowing_pow(exp) {
           (power, false) => power,
-          (_, true) => Self::MAX,
+          (_, true) => Self::bound(true),
         }
       }
     }
@@ -451,10 +454,10 @@ macro_rules! saturating_table {
           (sum, false) => sum,
           // The sum passes `MIN` exactly when `rhs` is negative.
           (_, true) => {
-            if rhs.is_negative() {
-              Self::MIN
+            if rhs.bit(Self::BITS.wrapping_sub(1)) {
+              Self::bound(false)
             } else {
-              Self::MAX
+              Self::bound(true)
             }
           }
         }
@@ -467,10 +470,10 @@ macro_rules! saturating_table {
           (difference, false) => difference,
           // The difference passes `MAX` exactly when `rhs` is negative.
           (_, true) => {
-            if rhs.is_negative() {
-              Self::MAX
+            if rhs.bit(Self::BITS.wrapping_sub(1)) {
+              Self::bound(true)
             } else {
-              Self::MIN
+              Self::bound(false)
             }
           }
         }
@@ -483,10 +486,11 @@ macro_rules! saturating_table {
           (product, false) => product,
           // An overflowing product passes `MIN` exactly when the operands differ in sign.
           (_, true) => {
-            if self.is_negative() != rhs.is_negative() {
-              Self::MIN
+            let sign = Self::BITS.wrapping_sub(1);
+            if self.bit(sign) != rhs.bit(sign) {
+              Self::bound(false)
             } else {
-              Self::MAX
+              Self::bound(true)
             }
           }
         }
@@ -503,7 +507,7 @@ macro_rules! saturating_table {
       fn saturating_div(&self, rhs: &Self) -> Self {
         match self.overflowing_div(rhs) {
           (quotient, false) => quotient,
-          (_, true) => Self::MAX,
+          (_, true) => Self::bound(true),
         }
       }
 
@@ -515,10 +519,10 @@ macro_rules! saturating_table {
           // The power passes `MIN` exactly when it is negative: an odd power of a negative value.
           // At one bit `(-1)^0`, one, passes `MAX`, which is zero.
           (_, true) => {
-            if self.is_negative() && exp % 2 == 1 {
-              Self::MIN
+            if self.bit(Self::BITS.wrapping_sub(1)) && exp % 2 == 1 {
+              Self::bound(false)
             } else {
-              Self::MAX
+              Self::bound(true)
             }
           }
         }
@@ -707,7 +711,7 @@ macro_rules! uint_sign_table {
           // Adding one subtracts `MAX`, which is `-1` modulo `2^Bits`, and overflows exactly when
           // the sum is `MAX`, which is when the subtraction does not borrow. At zero bits, which
           // hold no one, a carry always overflows.
-          let (sum, borrow) = sum.overflowing_sub(&Self::MAX);
+          let (sum, borrow) = sum.overflowing_sub(&Self::bound(true));
           (sum, overflow || !borrow)
         } else {
           (sum, overflow)
@@ -722,7 +726,7 @@ macro_rules! uint_sign_table {
           // Subtracting one adds `MAX`, which is `-1` modulo `2^Bits`, and overflows exactly when
           // the difference is zero, which is when the addition does not carry. At zero bits, which
           // hold no one, a borrow always overflows.
-          let (difference, carry) = difference.overflowing_add(&Self::MAX);
+          let (difference, carry) = difference.overflowing_add(&Self::bound(true));
           (difference, overflow || !carry)
         } else {
           (difference, overflow)
@@ -742,7 +746,7 @@ macro_rules! int_sign_table {
       fn saturating_neg(&self) -> Self {
         match self.overflowing_neg() {
           (negated, false) => negated,
-          (_, true) => Self::MAX,
+          (_, true) => Self::bound(true),
         }
       }
 
@@ -753,7 +757,7 @@ macro_rules! int_sign_table {
         if self.is_negative() {
           self.overflowing_neg()
         } else {
-          (*self, false)
+          (self.duplicate(), false)
         }
       }
 
@@ -777,7 +781,7 @@ macro_rules! int_sign_table {
       fn saturating_abs(&self) -> Self {
         match self.overflowing_abs() {
           (abs, false) => abs,
-          (_, true) => Self::MAX,
+          (_, true) => Self::bound(true),
         }
       }
 
@@ -878,7 +882,7 @@ macro_rules! integer_math_table {
       fn div_floor(&self, rhs: &Self) -> Self
         = prim div_floor_bits(self, rhs; Self::BITS) as division {
           match division {
-            Some((quotient, false)) => Self::wrap(quotient),
+            Some((quotient, false)) => Self::of(quotient),
             Some((_, true)) => $crate::integer::arithmetic::overflow::div(),
             None => $crate::integer::arithmetic::domain::div_by_zero(),
           }
@@ -894,7 +898,7 @@ macro_rules! integer_math_table {
       fn div_ceil(&self, rhs: &Self) -> Self
         = prim div_ceil_bits(self, rhs; Self::BITS) as division {
           match division {
-            Some((quotient, false)) => Self::wrap(quotient),
+            Some((quotient, false)) => Self::of(quotient),
             Some((_, true)) => $crate::integer::arithmetic::overflow::div(),
             None => $crate::integer::arithmetic::domain::div_by_zero(),
           }
@@ -914,10 +918,10 @@ macro_rules! integer_math_table {
       fn next_multiple_of(&self, rhs: &Self) -> Self
         = prim next_multiple_of_bits(self, rhs; Self::BITS) as multiple {
           match multiple {
-            Some((multiple, false)) => Self::wrap(multiple),
+            Some((multiple, false)) => Self::of(multiple),
             Some((multiple, true)) => {
               $crate::integer::arithmetic::overflow::forward_add();
-              Self::wrap(multiple)
+              Self::of(multiple)
             }
             None => $crate::integer::arithmetic::domain::rem_by_zero(),
           }
@@ -954,7 +958,7 @@ macro_rules! integer_math_table {
       fn isqrt(&self) -> Self
         = prim checked_isqrt(self) as root {
           match root {
-            Some(root) => Self::wrap(root),
+            Some(root) => Self::of(root),
             // Every unsigned value has a square root.
             None => $crate::integer::arithmetic::domain::sqrt_of_negative(),
           }
@@ -965,7 +969,7 @@ macro_rules! integer_math_table {
       fn checked_nth_root(&self, n: u32) -> Option<Self>
         = prim checked_nth_root(self; n) as root {
           match root {
-            Some(root) => Some(Self::wrap(root)),
+            Some(root) => Some(Self::of(root)),
             None => None,
           }
         }
@@ -1081,10 +1085,10 @@ macro_rules! uint_math_table {
       fn next_power_of_two(&self) -> Self
         = prim next_power_of_two_bits(self; Self::BITS) as power {
           match power {
-            (power, false) => Self::wrap(power),
+            (power, false) => Self::of(power),
             (power, true) => {
               $crate::integer::arithmetic::overflow::forward_add();
-              Self::wrap(power)
+              Self::of(power)
             }
           }
         }
@@ -1094,7 +1098,7 @@ macro_rules! uint_math_table {
       fn checked_next_power_of_two(&self) -> Option<Self>
         = prim next_power_of_two_bits(self; Self::BITS) as power {
           match power {
-            (power, false) => Some(Self::wrap(power)),
+            (power, false) => Some(Self::of(power)),
             (_, true) => None,
           }
         }
@@ -1103,7 +1107,7 @@ macro_rules! uint_math_table {
       /// outside the range of the type.
       fn wrapping_next_power_of_two(&self) -> Self
         = prim next_power_of_two_bits(self; Self::BITS) as power {
-          Self::wrap(power.0)
+          Self::of(power.0)
         }
     }
   };
@@ -1119,7 +1123,7 @@ macro_rules! int_math_table {
       fn checked_isqrt(&self) -> Option<Self>
         = prim checked_isqrt(self) as root {
           match root {
-            Some(root) => Some(Self::wrap(root)),
+            Some(root) => Some(Self::of(root)),
             None => None,
           }
         }

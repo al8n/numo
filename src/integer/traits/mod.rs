@@ -35,6 +35,7 @@ pub(super) use sealed::Sealed;
 use super::{
   Int, NonZeroInt, NonZeroUint, TryNewError, Uint,
   bytes::strict_limbs_slice,
+  cast::limit,
   nonzero::{Parts, Saturated, parse_signed, parse_unsigned, zero, zero_value},
   text::check_radix,
 };
@@ -1258,7 +1259,7 @@ impl<B: FitsBits<R>, R: InlineIntRepr> ConstFixedInteger for Int<B, R> {
   const MAX: Self = Self::MAX;
 }
 
-impl<B: FitsBits<R>, R: InlineUintRepr> UnsignedFixedInteger for Uint<B, R> {
+impl<B: FitsBits<R>, R: UintRepr> UnsignedFixedInteger for Uint<B, R> {
   uint_sign_table!(generic_items![]);
 }
 
@@ -1462,8 +1463,89 @@ where
   }
 }
 
-// The families whose methods read no constant need only the storage trait. `SaturatingOps` reads
-// `MIN` and `MAX`, so it needs a storage that holds the value inline.
+/// The helpers of the rows of [`Uint`] and [`Int`] in the generic implementations of the traits,
+/// over every storage, which an inherent block of each storage defines as `const fn`s: those read
+/// the constants, copy the value and write the field, and the inherent items win over these in a
+/// `Self::` path.
+pub(crate) trait Rows: Sized {
+  /// The inline storage, which a row that sees raw storages computes.
+  type Inline;
+
+  /// The bound that a saturating row returns: the largest value if `max`, and the smallest
+  /// otherwise.
+  fn bound(max: bool) -> Self;
+
+  /// A clone of `self`, for a row that returns its operand.
+  fn duplicate(&self) -> Self
+  where
+    Self: Clone;
+
+  /// The integer of `repr`, the inline storage that a row computes, in a storage of its own.
+  fn of(repr: Self::Inline) -> Self;
+
+  /// Stores `repr`, the inline storage that a row computes, in the storage of `self`.
+  fn store(&mut self, repr: Self::Inline);
+}
+
+// The limits come from their words, without a constant. Only `duplicate` clones, and it alone needs
+// `Clone`, which the storage traits do not require: no generic row clones a storage unless its
+// implementation bounds `Clone`.
+impl<B: FitsBits<R>, R: UintRepr> Rows for Uint<B, R> {
+  type Inline = R::Inline;
+
+  #[inline]
+  fn bound(max: bool) -> Self {
+    limit(max)
+  }
+
+  #[inline]
+  fn duplicate(&self) -> Self
+  where
+    Self: Clone,
+  {
+    self.clone()
+  }
+
+  #[inline]
+  fn of(repr: R::Inline) -> Self {
+    Self::wrap(R::from_inline(repr, Token::new()))
+  }
+
+  #[inline]
+  fn store(&mut self, repr: R::Inline) {
+    self.repr.set_inline(repr, Token::new());
+  }
+}
+
+impl<B: FitsBits<R>, R: IntRepr> Rows for Int<B, R> {
+  type Inline = R::Inline;
+
+  #[inline]
+  fn bound(max: bool) -> Self {
+    limit(max)
+  }
+
+  #[inline]
+  fn duplicate(&self) -> Self
+  where
+    Self: Clone,
+  {
+    self.clone()
+  }
+
+  #[inline]
+  fn of(repr: R::Inline) -> Self {
+    Self::wrap(R::from_inline(repr, Token::new()))
+  }
+
+  #[inline]
+  fn store(&mut self, repr: R::Inline) {
+    self.repr.set_inline(repr, Token::new());
+  }
+}
+
+// The families need only the storage trait: the rows reach the limits and the storages through
+// `Rows`, without a constant.
 impl<B: FitsBits<R>, R: UintRepr> OverflowingOps for Uint<B, R> {
   overflowing_table!(generic_items![]);
 }
@@ -1488,11 +1570,11 @@ impl<B: FitsBits<R>, R: IntRepr> WrappingOps for Int<B, R> {
   wrapping_table!(generic_items![]);
 }
 
-impl<B: FitsBits<R>, R: InlineUintRepr> SaturatingOps for Uint<B, R> {
+impl<B: FitsBits<R>, R: UintRepr> SaturatingOps for Uint<B, R> {
   saturating_table!(Uint, generic_items![]);
 }
 
-impl<B: FitsBits<R>, R: InlineIntRepr> SaturatingOps for Int<B, R> {
+impl<B: FitsBits<R>, R: IntRepr> SaturatingOps for Int<B, R> {
   saturating_table!(Int, generic_items![]);
 }
 

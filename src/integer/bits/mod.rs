@@ -101,7 +101,7 @@ macro_rules! integer_bits_table {
       fn shl_exact(&self, rhs: u32) -> Option<Self>
         = prim shl_exact_bits(self; rhs, Self::BITS) as shifted {
           match shifted {
-            Some(shifted) => Some(Self::wrap(shifted)),
+            Some(shifted) => Some(Self::of(shifted)),
             None => None,
           }
         }
@@ -113,7 +113,7 @@ macro_rules! integer_bits_table {
       fn shr_exact(&self, rhs: u32) -> Option<Self>
         = prim shr_exact_bits(self; rhs, Self::BITS) as shifted {
           match shifted {
-            Some(shifted) => Some(Self::wrap(shifted)),
+            Some(shifted) => Some(Self::of(shifted)),
             None => None,
           }
         }
@@ -134,7 +134,7 @@ macro_rules! integer_bits_table {
       fn set_bit(&mut self, index: u32, value: bool)
         = prim with_bit(self; index, value, Self::BITS) as changed {
           match changed {
-            Some(changed) => self.repr = changed,
+            Some(changed) => self.store(changed),
             None => $crate::integer::arithmetic::domain::bit_index(),
           }
         }
