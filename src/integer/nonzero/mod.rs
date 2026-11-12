@@ -1089,20 +1089,26 @@ nonzero_traits!(NonZeroInt, Int, NonZeroIntRepr, IntCore);
 
 /// The non-zero integer of the digits of `radix` in `src`, as the integer of the same width and
 /// storage parses them, or the error of the kind `Zero` for zero, as the native
-/// `NonZero::from_str_radix` gives it after the errors of its integer. Requires
+/// `NonZero::from_str_radix` gives it after the errors of its integer. The inline storage of the
+/// integer parses the digits and is tested for zero, so that an error builds no storage. Requires
 /// `2 <= radix <= 36`.
 pub(crate) fn parse_unsigned<B: FitsBits<R::Integer>, R: NonZeroUintRepr>(
   src: &str,
   radix: u32,
 ) -> Result<NonZeroUint<B, R>, ParseIntError> {
-  let integer =
-    <R::Integer as UintCore>::from_str_radix_bits(src.as_bytes(), radix, B::U32, Token::new())?;
-  match integer.to_nonzero(Token::new()) {
-    Some(repr) => Ok(NonZeroUint {
-      value: Uint::wrap(repr),
-    }),
-    None => Err(parse_errors::ZERO),
+  let integer = <<R::Integer as UintCore>::Inline as UintCore>::from_str_radix_bits(
+    src.as_bytes(),
+    radix,
+    B::U32,
+    Token::new(),
+  )?;
+  if integer.is_zero(Token::new()) {
+    return Err(parse_errors::ZERO);
   }
+  let repr = <R::Integer as UintCore>::from_inline(integer, Token::new());
+  Ok(NonZeroUint {
+    value: Uint::wrap(repr.known_nonzero(Token::new())),
+  })
 }
 
 /// The non-zero integer of the digits of `radix` in `src`, as [`parse_unsigned`] reads them for
@@ -1111,14 +1117,19 @@ pub(crate) fn parse_signed<B: FitsBits<R::Integer>, R: NonZeroIntRepr>(
   src: &str,
   radix: u32,
 ) -> Result<NonZeroInt<B, R>, ParseIntError> {
-  let integer =
-    <R::Integer as IntCore>::from_str_radix_bits(src.as_bytes(), radix, B::U32, Token::new())?;
-  match integer.to_nonzero(Token::new()) {
-    Some(repr) => Ok(NonZeroInt {
-      value: Int::wrap(repr),
-    }),
-    None => Err(parse_errors::ZERO),
+  let integer = <<R::Integer as IntCore>::Inline as IntCore>::from_str_radix_bits(
+    src.as_bytes(),
+    radix,
+    B::U32,
+    Token::new(),
+  )?;
+  if integer.is_zero(Token::new()) {
+    return Err(parse_errors::ZERO);
   }
+  let repr = <R::Integer as IntCore>::from_inline(integer, Token::new());
+  Ok(NonZeroInt {
+    value: Int::wrap(repr.known_nonzero(Token::new())),
+  })
 }
 
 impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> FromStr for NonZeroUint<B, R> {

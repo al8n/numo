@@ -1720,60 +1720,116 @@ impl<B: FitsBits<R>, R: IntRepr> Neg for &Int<B, R> {
   }
 }
 
-/// One in the storage `R`: bit 0 alone, set in the inline zero, which `Product` starts from and
-/// `IntegerOne` returns. The width holds one, so that bit exists.
+/// One in the inline storage of `R`: bit 0 alone, set in the inline zero, which `Product` starts
+/// from. The width holds one, so that bit exists.
+#[inline]
+fn unsigned_inline_one<B: FitsBits<R>, R: UintRepr>() -> R::Inline {
+  match <R::Inline as UintCore>::zero(Token::new()).with_bit(0, true, B::U32, Token::new()) {
+    Some(one) => one,
+    None => nonzero::zero(),
+  }
+}
+
+/// One in the inline storage of `R`, as [`unsigned_inline_one`] gives it: the width has two bits
+/// or more, so that bit 0 alone is one, not -1.
+#[inline]
+fn signed_inline_one<B: FitsBits<R>, R: IntRepr>() -> R::Inline {
+  match <R::Inline as IntCore>::zero(Token::new()).with_bit(0, true, B::U32, Token::new()) {
+    Some(one) => one,
+    None => nonzero::zero(),
+  }
+}
+
+/// One in the storage `R`, which `IntegerOne` returns and `Product` gives for no item: the inline
+/// one, stored once.
 #[inline]
 pub(super) fn unsigned_one<B: FitsBits<R>, R: UintRepr>() -> Uint<B, R> {
-  match <R::Inline as UintCore>::zero(Token::new()).with_bit(0, true, B::U32, Token::new()) {
-    Some(one) => Uint::wrap(R::from_inline(one, Token::new())),
-    None => nonzero::zero(),
-  }
+  Uint::wrap(R::from_inline(unsigned_inline_one::<B, R>(), Token::new()))
 }
 
-/// One in the storage `R`, as [`unsigned_one`] gives it: the width has two bits or more, so that
-/// bit 0 alone is one, not -1.
+/// One in the storage `R`, as [`unsigned_one`] gives it.
 #[inline]
 pub(super) fn signed_one<B: FitsBits<R>, R: IntRepr>() -> Int<B, R> {
-  match <R::Inline as IntCore>::zero(Token::new()).with_bit(0, true, B::U32, Token::new()) {
-    Some(one) => Int::wrap(R::from_inline(one, Token::new())),
-    None => nonzero::zero(),
-  }
+  Int::wrap(R::from_inline(signed_inline_one::<B, R>(), Token::new()))
 }
 
-/// Implements `Sum`, which adds from zero with `+`, and `Product`, which multiplies from `$one()`
-/// with `*` for a width bounded by `$width`, for values and references, for every storage, `$repr`:
-/// zero is the sealed `zero`, and an operator with an owned left operand stores each step in the
-/// running value.
+/// Implements `Sum`, which adds from zero, and `Product`, which multiplies from one for a width
+/// bounded by `$width`, for values and references, for every storage, `$repr`, whose sealed trait
+/// is `$core`. Each computes on the inline storages that the items lend, with the sealed storage
+/// method of the operator, and repeats the overflow of a step as the operator does. A fold of
+/// values stores the result in the first item, and gives the sealed `zero`, or `$one()`, for no
+/// item; a fold of references builds the result once, from the inline zero or `$inline_one()`.
 macro_rules! folds {
-  ($type:ident: $repr:ident, $one:ident, $($width:tt)+) => {
+  // The running value `$total`, an inline storage, combined with the value that `$repr` lends by
+  // the sealed storage method `$primitive`, at `$bits` bits, after the overflow, which `$forward`
+  // repeats.
+  (@step $total:expr, $repr:expr, $bits:expr, $primitive:ident, $forward:ident) => {{
+    let (total, overflow) = $total.$primitive($repr.inline(Token::new()), $bits, Token::new());
+    if overflow {
+      overflow::$forward();
+    }
+    total
+  }};
+  ($type:ident: $repr:ident, $core:ident, $one:ident, $inline_one:ident, $($width:tt)+) => {
     impl<B: FitsBits<R>, R: $repr> Sum for $type<B, R> {
-      fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Self::wrap(R::zero(Token::new())), |sum, value| sum + value)
+      fn sum<I: Iterator<Item = Self>>(mut iter: I) -> Self {
+        let Some(mut first) = iter.next() else {
+          return Self::wrap(R::zero(Token::new()));
+        };
+        // Zero takes the value of the first item in a step that cannot overflow: the inline
+        // storage is not known to be `Copy`.
+        let zero = <R::Inline as $core>::zero(Token::new());
+        let mut total =
+          folds!(@step zero, first.repr, Self::BITS, overflowing_add_bits, forward_add);
+        for value in iter {
+          total = folds!(@step total, value.repr, Self::BITS, overflowing_add_bits, forward_add);
+        }
+        first.repr.set_inline(total, Token::new());
+        first
       }
     }
 
     impl<'a, B: FitsBits<R>, R: $repr> Sum<&'a $type<B, R>> for $type<B, R> {
       fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-        iter.fold(Self::wrap(R::zero(Token::new())), |sum, value| sum + value)
+        let mut total = <R::Inline as $core>::zero(Token::new());
+        for value in iter {
+          total = folds!(@step total, value.repr, Self::BITS, overflowing_add_bits, forward_add);
+        }
+        Self::wrap(R::from_inline(total, Token::new()))
       }
     }
 
     impl<B: FitsBits<R> + $($width)+, R: $repr> Product for $type<B, R> {
-      fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold($one(), |product, value| product * value)
+      fn product<I: Iterator<Item = Self>>(mut iter: I) -> Self {
+        let Some(mut first) = iter.next() else {
+          return $one();
+        };
+        // One takes the value of the first item, as zero does in the sum.
+        let one = $inline_one::<B, R>();
+        let mut total =
+          folds!(@step one, first.repr, Self::BITS, overflowing_mul_bits, forward_mul);
+        for value in iter {
+          total = folds!(@step total, value.repr, Self::BITS, overflowing_mul_bits, forward_mul);
+        }
+        first.repr.set_inline(total, Token::new());
+        first
       }
     }
 
     impl<'a, B: FitsBits<R> + $($width)+, R: $repr> Product<&'a $type<B, R>> for $type<B, R> {
       fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-        iter.fold($one(), |product, value| product * value)
+        let mut total = $inline_one::<B, R>();
+        for value in iter {
+          total = folds!(@step total, value.repr, Self::BITS, overflowing_mul_bits, forward_mul);
+        }
+        Self::wrap(R::from_inline(total, Token::new()))
       }
     }
   };
 }
 
-folds!(Uint: UintRepr, unsigned_one, NonZero);
-folds!(Int: IntRepr, signed_one, IsGreater<U1, Output = True>);
+folds!(Uint: UintRepr, UintCore, unsigned_one, unsigned_inline_one, NonZero);
+folds!(Int: IntRepr, IntCore, signed_one, signed_inline_one, IsGreater<U1, Output = True>);
 
 #[cfg(test)]
 mod tests;

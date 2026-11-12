@@ -21,7 +21,7 @@ use crate::{
   FromFloatError, RoundingMode,
   int::{self, float::FloatFormat},
   layout::Token,
-  width::{FitsBits, IntRepr, UintRepr},
+  width::{FitsBits, IntCore, IntRepr, UintCore, UintRepr},
 };
 
 mod sealed {
@@ -443,13 +443,14 @@ pub trait IntegerFloat: Sealed + Sized {
   fn exact_from_f32(value: f32) -> Result<Self, FromFloatError>;
 }
 
-/// Implements [`IntegerFloat`] for [`Uint`] and [`Int`], written `Integer: Repr`, with the sealed
-/// methods of the storage trait `Repr`, which neither need `Copy` nor read a constant of a value:
-/// a saturation takes zero from the storage and the bounds of the range from the casts, which build
-/// them from their bits.
+/// Implements [`IntegerFloat`] for [`Uint`] and [`Int`], written `Integer: Repr, Core`, with the
+/// sealed methods of the storage trait `Repr`, which neither need `Copy` nor read a constant of a
+/// value: a saturation takes zero from the storage and the bounds of the range from the casts,
+/// which build them from their bits, and the exact conversion rounds in the inline storage, through
+/// its sealed trait `Core`, so that a fraction builds no storage.
 // Trait methods cannot be `const`.
 macro_rules! float_traits {
-  ($($integer:ident: $repr:ident),+ $(,)?) => {$(
+  ($($integer:ident: $repr:ident, $core:ident);+ $(;)?) => {$(
     impl<B: FitsBits<R>, R: $repr> IntegerFloat for $integer<B, R> {
       #[inline]
       fn to_f64(&self) -> f64 {
@@ -513,12 +514,12 @@ macro_rules! float_traits {
 
       #[inline]
       fn exact_from_f64(value: f64) -> Result<Self, FromFloatError> {
-        float_traits!(@exact int::float::float_parts_f64(value)?)
+        float_traits!(@exact $core, int::float::float_parts_f64(value)?)
       }
 
       #[inline]
       fn exact_from_f32(value: f32) -> Result<Self, FromFloatError> {
-        float_traits!(@exact int::float::float_parts_f32(value)?)
+        float_traits!(@exact $core, int::float::float_parts_f32(value)?)
       }
     }
   )+};
@@ -532,20 +533,21 @@ macro_rules! float_traits {
       Err(_) => cast::limit(!$value.is_sign_negative()),
     }
   };
-  // The float of `$parts` if it is an integer in the range, as the inherent `exact_parts` gives it.
-  (@exact $parts:expr) => {{
+  // The float of `$parts` if it is an integer in the range, as the inherent `exact_parts` gives it,
+  // rounded in the inline storage, whose sealed trait is `$core`, and stored once it is exact.
+  (@exact $core:ident, $parts:expr) => {{
     let parts = $parts;
     // `Up` judges the range on the value itself, as the inherent `exact_parts` reads it.
-    let integer = R::from_float(parts, RoundingMode::Up, B::U32, Token::new())?;
+    let integer = <R::Inline as $core>::from_float(parts, RoundingMode::Up, B::U32, Token::new())?;
     if parts.is_integer() {
-      Ok(Self::wrap(integer))
+      Ok(Self::wrap(R::from_inline(integer, Token::new())))
     } else {
       Err(FromFloatError::Inexact)
     }
   }};
 }
 
-float_traits!(Uint: UintRepr, Int: IntRepr);
+float_traits!(Uint: UintRepr, UintCore; Int: IntRepr, IntCore);
 
 /// Implements `From` of `$integer` over every storage of `$repr` into each float of the list,
 /// written `float: format, Bits, of`, at the widths of at most `Bits` bits, every value of which
