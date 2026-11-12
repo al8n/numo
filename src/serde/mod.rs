@@ -81,12 +81,44 @@
 //! - [`decimal`]: the decimal text, as a string, at every width. Its trait
 //!   [`DecimalString`](decimal::DecimalString) takes `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`,
 //!   the native integers from `u8` to `u128` and from `i8` to `i128`, and their `NonZero`.
+//! - [`quantity`]: Ethereum's JSON-RPC QUANTITY, a string of `0x` and the lowercase hexadecimal
+//!   digits without leading zeros, read as go-ethereum's `hexutil` decodes a number. Its trait
+//!   [`Quantity`](quantity::Quantity) takes `Uint`, `NonZeroUint`, the native integers from `u8` to
+//!   `u128`, and their `NonZero`.
 //!
 //! `required` on an `Option` field does not compile, with a note that names `optional`, and
 //! `optional` on a field that is not an `Option` is a mismatch of types. `optional` writes `None`
 //! as the format writes a none, `null` in JSON, and reads `None` from a none and from a unit, which
 //! serde's buffer gives for `null`. With `#[serde(default)]`, a missing field reads as `None`;
 //! without it, the field is required.
+//!
+//! A transaction of Ethereum's JSON-RPC, with an `Option` field:
+//!
+//! ```
+//! # use serde_full as serde;
+//! use numo::u256;
+//! use serde::{Deserialize, Serialize};
+//!
+//! #[derive(Serialize, Deserialize)]
+//! # #[serde(crate = "serde")]
+//! struct Transaction {
+//!   #[serde(with = "numo::serde::quantity::required")]
+//!   value: u256,
+//!   // `default` reads a missing field as `None`; the field is always written, `null` in JSON.
+//!   #[serde(default, with = "numo::serde::quantity::optional")]
+//!   gas: Option<u256>,
+//! }
+//!
+//! let transaction = Transaction { value: u256::from(255u8), gas: None };
+//! let json = serde_json::to_string(&transaction).unwrap();
+//! assert_eq!(json, r#"{"value":"0xff","gas":null}"#);
+//! let transaction = serde_json::from_str::<Transaction>(r#"{"value":"0x5"}"#).unwrap();
+//! assert_eq!((transaction.value, transaction.gas), (u256::from(5u8), None));
+//! ```
+//!
+//! `skip_serializing_if` may be added to such a field only when every format that the type is
+//! written in names its fields, as JSON, TOML and YAML do: a positional format, such as postcard,
+//! bincode or MessagePack's arrays, reads the next field in the place of a skipped one.
 //!
 //! # `use numo::*`
 //!
@@ -114,9 +146,10 @@ use crate::{
   layout::{Layout, Storage},
 };
 
-pub(crate) use sealed::DecimalStringCore;
+pub(crate) use sealed::{DecimalStringCore, QuantityCore};
 
 pub mod decimal;
+pub mod quantity;
 #[cfg(test)]
 mod tests;
 
@@ -169,6 +202,7 @@ mod sealed {
 
   cores! {
     DecimalStringCore: decimal::DecimalString;
+    QuantityCore: quantity::Quantity;
   }
 }
 

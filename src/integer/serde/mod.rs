@@ -19,9 +19,11 @@
 //!
 //! The helper modules of `numo::serde` write and read through the same paths, each with a fixed
 //! message of its own: `decimal` writes the decimal text and reads with the visitor of the
-//! defaults, without serde_json's number token. The sealed trait of each helper is implemented here
-//! for every type that its paths take, and its public trait for numo's integers and the native
-//! integers that it serves.
+//! defaults, without serde_json's number token; `quantity` writes the text of `{:#x}` and reads its
+//! grammar on the bytes of a string, building the value with the casts from words that it decodes
+//! from the digits, with no buffer. The sealed trait of each helper is implemented here for every
+//! type that its paths take, and its public trait for numo's integers and the native integers that
+//! it serves.
 
 use core::{
   fmt,
@@ -42,7 +44,10 @@ use super::{
 use crate::{
   int::parse_errors,
   layout::Token,
-  serde::{DecimalStringCore, Expected, decimal::DecimalString, read, reject_inputs},
+  serde::{
+    DecimalStringCore, Expected, QuantityCore, decimal::DecimalString, quantity::Quantity, read,
+    reject_inputs,
+  },
   width::{self, FitsBits, IntRepr, NonZeroIntRepr, NonZeroUintRepr, UintRepr},
 };
 
@@ -52,17 +57,32 @@ const INTEGER: &str = "an integer";
 /// What `decimal` reads, whose fixed message is `expected an integer as a decimal string`.
 const DECIMAL: &str = "an integer as a decimal string";
 
+/// What `quantity` reads, whose fixed message is `expected a hexadecimal quantity as a string`.
+const QUANTITY: &str = "a hexadecimal quantity as a string";
+
+/// The error of a QUANTITY without the prefix `0x` or `0X`, the empty string included.
+const QUANTITY_PREFIX: &str = "hexadecimal quantity without the 0x prefix";
+
+/// The error of a QUANTITY of the prefix alone.
+const QUANTITY_DIGITS: &str = "hexadecimal quantity without digits";
+
+/// The error of a QUANTITY whose digits start with a zero, other than `0x0`.
+const QUANTITY_LEADING_ZEROS: &str = "hexadecimal quantity with leading zero digits";
+
 /// The key of the one entry of the map through which serde_json with its feature
 /// `arbitrary_precision` hands over a number that no 64-bit integer holds, whose value is the text
 /// of the number. It is private to serde_json: if it changes, such a map is rejected.
 const NUMBER_TOKEN: &str = "$serde_json::private::Number";
 
-/// A value of the right kind that the defaults reject, which prints the text of its error.
+/// A value of the right kind that a reading path rejects, which prints the text of its error.
 enum Rejection {
   /// A number outside the range of the target, with the error of the casts.
   Range(TryFromIntError),
-  /// A string that `FromStr` rejects, with its error.
+  /// A string that `FromStr` or the grammar of a hexadecimal helper rejects, with its error.
   Parse(ParseIntError),
+  /// A string that breaks a rule of the grammar of a hexadecimal helper before its digits are
+  /// read, with the message of the rule.
+  Text(&'static str),
 }
 
 impl fmt::Display for Rejection {
@@ -70,6 +90,7 @@ impl fmt::Display for Rejection {
     match self {
       Self::Range(error) => fmt::Display::fmt(error, f),
       Self::Parse(error) => fmt::Display::fmt(error, f),
+      Self::Text(message) => f.write_str(message),
     }
   }
 }
@@ -592,3 +613,156 @@ macro_rules! helper_impls {
 helper_impls!(DecimalString for Uint: UintRepr, Int: IntRepr);
 helper_impls!(DecimalString for nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
 helper_impls!(DecimalString for natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+/// Writes `value` as a QUANTITY, the text of `{:#x}`: `0x` and the lowercase hexadecimal digits of
+/// the value without leading zeros, `0x0` for zero, through `collect_str`.
+fn serialize_quantity<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: fmt::LowerHex,
+  S: Serializer,
+{
+  serializer.collect_str(&format_args!("{value:#x}"))
+}
+
+/// The value of `byte` as a hexadecimal digit of either case, or `None` for any other byte, among
+/// them a sign, `_`, whitespace and every byte of a character outside ASCII.
+fn hex_digit(byte: u8) -> Option<u64> {
+  match byte {
+    b'0'..=b'9' => Some(u64::from(byte - b'0')),
+    b'a'..=b'f' => Some(u64::from(byte - b'a') + 10),
+    b'A'..=b'F' => Some(u64::from(byte - b'A') + 10),
+    _ => None,
+  }
+}
+
+/// The 64-bit word at `index` of the value whose hexadecimal digits, most significant first, are
+/// `digits`, every one of which [`hex_digit`] reads: the sixteen digits of the word, counted from
+/// the end of the text, or as many of them as there are, and zero beyond the digits.
+fn hex_word(digits: &[u8], index: usize) -> u64 {
+  // The digits of the words below `index` end the text.
+  let end = digits.len().saturating_sub(index.saturating_mul(16));
+  digits[end.saturating_sub(16)..end]
+    .iter()
+    .fold(0, |word, &digit| word << 4 | hex_digit(digit).unwrap_or(0))
+}
+
+/// The value in `T` of the bytes `text` of a QUANTITY, as go-ethereum's `hexutil` decodes a number,
+/// or the error of the first of its rules that `text` breaks, in this order: the prefix `0x` or
+/// `0X`, which the empty string lacks too; at least one digit; no leading zero, unless the digits
+/// are `0`; every byte a hexadecimal digit, of either case; the range of `T`; and, for a non-zero
+/// `T`, a value that is not zero.
+fn parse_quantity<T: CheckedTarget>(text: &[u8]) -> Result<T, Rejection> {
+  let digits = match text {
+    [b'0', b'x' | b'X', digits @ ..] => digits,
+    _ => return Err(Rejection::Text(QUANTITY_PREFIX)),
+  };
+  let first = match digits {
+    [] => return Err(Rejection::Text(QUANTITY_DIGITS)),
+    [b'0', _, ..] => return Err(Rejection::Text(QUANTITY_LEADING_ZEROS)),
+    [first, ..] => *first,
+  };
+  if !digits.iter().all(|&digit| hex_digit(digit).is_some()) {
+    return Err(Rejection::Parse(parse_errors::INVALID_DIGIT));
+  }
+  // The value has the bits of its first digit, none for the digit 0, and four for each other digit.
+  // The comparison forms no product of the number of digits and casts none to `u32`, so that no
+  // length of the text can overflow it.
+  let first_bits = u64::BITS - hex_digit(first).unwrap_or(0).leading_zeros();
+  let in_range =
+    first_bits <= T::BITS && (digits.len() - 1) as u64 <= u64::from((T::BITS - first_bits) / 4);
+  if !in_range {
+    return Err(Rejection::Parse(parse_errors::POS_OVERFLOW));
+  }
+  T::from_words(|index| hex_word(digits, index)).ok_or(Rejection::Parse(parse_errors::ZERO))
+}
+
+/// Reads a string with `read`, the grammar of a hexadecimal helper, which takes the bytes of the
+/// text and gives back a value or its rejection, and rejects every other kind of input with the
+/// fixed message of its path.
+struct HexVisitor<'a, F> {
+  expected: Expected<'a>,
+  read: F,
+}
+
+impl<'de, T, F> Visitor<'de> for HexVisitor<'_, F>
+where
+  F: FnOnce(&[u8]) -> Result<T, Rejection>,
+{
+  type Value = Result<T, Rejection>;
+
+  fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.expected.describe(f)
+  }
+
+  fn visit_str<E: de::Error>(self, text: &str) -> Result<Self::Value, E> {
+    Ok((self.read)(text.as_bytes()))
+  }
+
+  // Every other kind of input is rejected below. The narrower integers and `f32` reach these
+  // through serde's forwarding, and the other forms of a string read through `visit_str`.
+  reject_inputs! {
+    visit_bool(bool),
+    visit_i64(i64),
+    visit_i128(i128),
+    visit_u64(u64),
+    visit_u128(u128),
+    visit_f64(f64),
+    visit_char(char),
+    visit_bytes(&[u8]),
+    visit_borrowed_bytes(&'de [u8]),
+  }
+
+  fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_some<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_seq<A: SeqAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+}
+
+/// Asks the format for a string, which `quantity` reads with [`HexVisitor`] by the grammar of
+/// [`parse_quantity`].
+fn drive_quantity<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget,
+  D: Deserializer<'de>,
+{
+  deserializer.deserialize_str(HexVisitor {
+    expected,
+    read: parse_quantity::<T>,
+  })
+}
+
+helper! {
+  QuantityCore, QUANTITY;
+  write(fmt::LowerHex) with serialize_quantity, QuantitySome;
+  read(CheckedTarget) with drive_quantity, QuantityOption;
+}
+
+helper_impls!(Quantity for Uint: UintRepr);
+helper_impls!(Quantity for nonzero NonZeroUint: NonZeroUintRepr);
+helper_impls!(Quantity for natives u8, u16, u32, u64, u128);
