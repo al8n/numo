@@ -16,11 +16,17 @@
 //! a number outside the 64-bit range. Every other input gets the fixed message
 //! `expected an integer`, and a rejected value the text of the error of the casts or of `FromStr`,
 //! so that no error that numo builds names the input.
+//!
+//! The helper modules of `numo::serde` write and read through the same paths, each with a fixed
+//! message of its own: `decimal` writes the decimal text and reads with the visitor of the
+//! defaults, without serde_json's number token. The sealed trait of each helper is implemented here
+//! for every type that its paths take, and its public trait for numo's integers and the native
+//! integers that it serves.
 
 use core::{
   fmt,
   marker::PhantomData,
-  num::{ParseIntError, TryFromIntError},
+  num::{NonZero, ParseIntError, TryFromIntError},
   str::FromStr,
 };
 
@@ -35,12 +41,16 @@ use super::{
 };
 use crate::{
   int::parse_errors,
-  serde::{Expected, read, reject_inputs},
+  layout::Token,
+  serde::{DecimalStringCore, Expected, decimal::DecimalString, read, reject_inputs},
   width::{self, FitsBits, IntRepr, NonZeroIntRepr, NonZeroUintRepr, UintRepr},
 };
 
 /// What the defaults read, whose fixed message is `expected an integer`.
 const INTEGER: &str = "an integer";
+
+/// What `decimal` reads, whose fixed message is `expected an integer as a decimal string`.
+const DECIMAL: &str = "an integer as a decimal string";
 
 /// The key of the one entry of the map through which serde_json with its feature
 /// `arbitrary_precision` hands over a number that no 64-bit integer holds, whose value is the text
@@ -99,6 +109,7 @@ where
   read(deserializer, INTEGER, |deserializer, expected| {
     let visitor = IntegerVisitor::<T> {
       expected,
+      token: true,
       marker: PhantomData,
     };
     match (T::BITS, T::SIGNED) {
@@ -228,10 +239,13 @@ where
 
 /// Reads an integer of type `T` at every class: every integer that a format gives, checked against
 /// the width of `T` rather than its class, so that `u7` rejects 128, which a `u8` holds, a decimal
-/// string in the syntax of `FromStr`, and serde_json's number token. Every other input gets the
-/// fixed message.
+/// string in the syntax of `FromStr`, and serde_json's number token if `token`. Every other input
+/// gets the fixed message.
 struct IntegerVisitor<'a, T> {
   expected: Expected<'a>,
+  /// Whether the visitor reads serde_json's number token, as the defaults do and `decimal` does
+  /// not.
+  token: bool,
   marker: PhantomData<T>,
 }
 
@@ -298,11 +312,14 @@ where
     Err(self.expected.reject())
   }
 
-  // serde_json's number token: one entry, whose key is the token and whose value is the text of the
-  // number. A map without an entry, with another key or with a second entry is rejected; numo
-  // cannot tell the token from a map of that one entry.
+  // serde_json's number token, where the visitor reads it: one entry, whose key is the token and
+  // whose value is the text of the number. A map without an entry, with another key or with a
+  // second entry is rejected; numo cannot tell the token from a map of that one entry.
   fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
     let expected = self.expected;
+    if !self.token {
+      return Err(expected.reject());
+    }
     let key = || TokenPart {
       expected,
       read: |key: &str| (key == NUMBER_TOKEN).then_some(()),
@@ -393,3 +410,185 @@ nonzero_serde! {
   NonZeroUint: NonZeroUintRepr;
   NonZeroInt: NonZeroIntRepr;
 }
+
+/// Writes the decimal text of `value`, the text of `Display`, through `collect_str`.
+fn serialize_decimal<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: fmt::Display,
+  S: Serializer,
+{
+  serializer.collect_str(value)
+}
+
+/// Asks the format for a string, which `decimal` reads with [`IntegerVisitor`] without serde_json's
+/// number token: a decimal string, and an integer that the format gives instead.
+fn drive_decimal<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError>,
+  D: Deserializer<'de>,
+{
+  deserializer.deserialize_str(IntegerVisitor {
+    expected,
+    token: false,
+    marker: PhantomData,
+  })
+}
+
+/// Implements the work of a helper module, written
+/// `Core, description; write(Bounds) with writer, Some; read(Bounds) with drive, Option;`: the
+/// sealed `Core` of the helper for every type with both bounds, which writes a value with `writer`
+/// and reads one through [`read`], with `description`, the fixed message of the helper, and
+/// `drive`, which hands a format the visitor of the helper and gives back a value or its rejection;
+/// `Some`, which lends a value to `writer` as the `Some` of an `Option` field; and `Option`, the
+/// visitor of an `Option` field, which shares the consultation flag of the path with the visitor
+/// of the helper.
+macro_rules! helper {
+  (
+    $core:ident, $description:ident;
+    write($($write:tt)+) with $writer:ident, $some:ident;
+    read($($read:tt)+) with $drive:ident, $option:ident;
+  ) => {
+    /// Lends a value to the writer of its helper, as the `Some` of an `Option` field.
+    struct $some<'a, T>(&'a T);
+
+    impl<T: $($write)+> Serialize for $some<'_, T> {
+      fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        $writer(self.0, serializer)
+      }
+    }
+
+    /// Reads an `Option` field of its helper: `None` from a none and from a unit, which serde's
+    /// buffer gives for `null`, and the value of a `Some` with the visitor of the helper, under the
+    /// same consultation flag. Every other input gets the fixed message of the helper.
+    struct $option<'a, T> {
+      expected: Expected<'a>,
+      marker: PhantomData<T>,
+    }
+
+    impl<'de, T: $($read)+> Visitor<'de> for $option<'_, T> {
+      type Value = Result<Option<T>, Rejection>;
+
+      fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.expected.describe(f)
+      }
+
+      fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+        Ok(Ok(None))
+      }
+
+      fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+        Ok(Ok(None))
+      }
+
+      fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        Ok($drive(deserializer, self.expected)?.map(Some))
+      }
+
+      // Every other kind of input is rejected below. The narrower integers and `f32` reach these
+      // through serde's forwarding, and the other forms of a string read through `visit_str`.
+      reject_inputs! {
+        visit_bool(bool),
+        visit_i64(i64),
+        visit_i128(i128),
+        visit_u64(u64),
+        visit_u128(u128),
+        visit_f64(f64),
+        visit_char(char),
+        visit_str(&str),
+        visit_bytes(&[u8]),
+        visit_borrowed_bytes(&'de [u8]),
+      }
+
+      fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+        Err(self.expected.reject())
+      }
+
+      fn visit_seq<A: SeqAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+        Err(self.expected.reject())
+      }
+
+      fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+        Err(self.expected.reject())
+      }
+
+      fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+        Err(self.expected.reject())
+      }
+    }
+
+    impl<T> $core for T
+    where
+      T: $($write)+ + $($read)+,
+    {
+      #[inline]
+      fn write<S: Serializer>(&self, serializer: S, _: Token) -> Result<S::Ok, S::Error> {
+        $writer(self, serializer)
+      }
+
+      #[inline]
+      fn write_option<S: Serializer>(
+        value: &Option<Self>,
+        serializer: S,
+        _: Token,
+      ) -> Result<S::Ok, S::Error> {
+        match value {
+          Some(value) => serializer.serialize_some(&$some(value)),
+          None => serializer.serialize_none(),
+        }
+      }
+
+      #[inline]
+      fn read<'de, D: Deserializer<'de>>(deserializer: D, _: Token) -> Result<Self, D::Error> {
+        read(deserializer, $description, $drive)
+      }
+
+      #[inline]
+      fn read_option<'de, D: Deserializer<'de>>(
+        deserializer: D,
+        _: Token,
+      ) -> Result<Option<Self>, D::Error> {
+        read(deserializer, $description, |deserializer, expected| {
+          deserializer.deserialize_option($option {
+            expected,
+            marker: PhantomData,
+          })
+        })
+      }
+    }
+  };
+}
+
+helper! {
+  DecimalStringCore, DECIMAL;
+  write(fmt::Display) with serialize_decimal, DecimalSome;
+  read(CheckedTarget + FromStr<Err = ParseIntError>) with drive_decimal, DecimalOption;
+}
+
+/// Implements the public trait of a helper module for numo's integers over every storage of their
+/// storage traits, written `Trait for Integer: Repr, ..`, for the non-zero integers, written
+/// `Trait for nonzero Name: Repr, ..`, and for native integers and their `NonZero`, written
+/// `Trait for natives native, ..`.
+macro_rules! helper_impls {
+  ($trait:ident for nonzero $($name:ident: $repr:ident),+) => {$(
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl<B: FitsBits<R::Integer>, R: $repr> $trait for $name<B, R> {}
+  )+};
+  ($trait:ident for natives $($native:ident),+) => {$(
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl $trait for $native {}
+
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl $trait for NonZero<$native> {}
+  )+};
+  ($trait:ident for $($integer:ident: $repr:ident),+) => {$(
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl<B: FitsBits<R>, R: $repr> $trait for $integer<B, R> {}
+  )+};
+}
+
+helper_impls!(DecimalString for Uint: UintRepr, Int: IntRepr);
+helper_impls!(DecimalString for nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
+helper_impls!(DecimalString for natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);

@@ -542,5 +542,5 @@ mod rounding;
 mod sample;
 #[cfg(feature = "serde")]
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
-mod serde;
+pub mod serde;
 mod width;

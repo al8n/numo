@@ -43,17 +43,17 @@ use crate::{
 const FIXED: &str = "expected an integer";
 
 /// The text of std's error of a conversion of a number above the range of its target.
-fn too_large() -> String {
+pub(super) fn too_large() -> String {
   u8::try_from(256u16).unwrap_err().to_string()
 }
 
 /// The text of std's error of a conversion of a number below the range of its target.
-fn too_small() -> String {
+pub(super) fn too_small() -> String {
   u8::try_from(-1i8).unwrap_err().to_string()
 }
 
 /// The text of the error of std's parser of `text` into `N`.
-fn parse_error<N: FromStr<Err = ParseIntError>>(text: &str) -> String {
+pub(super) fn parse_error<N: FromStr<Err = ParseIntError>>(text: &str) -> String {
   match text.parse::<N>() {
     Ok(_) => panic!("{text:?} parses"),
     Err(error) => error.to_string(),
@@ -61,7 +61,7 @@ fn parse_error<N: FromStr<Err = ParseIntError>>(text: &str) -> String {
 }
 
 /// The message of `error` without the position that serde_json appends to it.
-fn json_message(error: &serde_json::Error) -> String {
+pub(super) fn json_message(error: &serde_json::Error) -> String {
   let message = error.to_string();
   let position = format!(" at line {} column {}", error.line(), error.column());
   message
@@ -71,7 +71,7 @@ fn json_message(error: &serde_json::Error) -> String {
 }
 
 /// A native integer, whose own serde is the oracle of the form of its class.
-trait Native: Serialize + DeserializeOwned + Copy + Debug + PartialEq {
+pub(super) trait Native: Serialize + DeserializeOwned + Copy + Debug + PartialEq {
   /// The native integer of the low bits of `pattern`, read in two's complement for a signed one.
   fn of_pattern(pattern: u128) -> Self;
 }
@@ -114,7 +114,7 @@ fn spread<T: Clone>(samples: &[T], count: usize) -> Vec<T> {
 /// two's complement in 128 bits: the limits, the values next to them, -1, 0 and 1, where they are
 /// in range; in an optimized build every value up to 8 bits and 64 of the patterns of
 /// [`wide_patterns`] above; and in an unoptimized one 8 of the patterns above 16 bits.
-fn samples(bits: u32, signed: bool) -> Vec<u128> {
+pub(super) fn samples(bits: u32, signed: bool) -> Vec<u128> {
   let (min, max) = match (bits, signed) {
     (0, _) => (0, 0),
     (_, false) => (0, u128::MAX >> (128 - bits)),
@@ -868,7 +868,7 @@ fn every_other_input_gets_the_fixed_message() {
 /// and of the patterns of [`wide_patterns`] in `K` words of 64 bits, in an unoptimized build 8 up
 /// to 256 bits, and in an optimized one 32 up to 4096 bits and 4 above, as the text of a wide value
 /// takes time quadratic in its limbs.
-fn text_patterns<const K: usize>(bits: u32) -> Vec<Vec<bool>> {
+pub(super) fn text_patterns<const K: usize>(bits: u32) -> Vec<Vec<bool>> {
   let mut patterns = vec![
     model::pattern(bits, |_| false),
     model::pattern(bits, |i| i == 0),
@@ -1042,7 +1042,7 @@ fn above_128_bits_a_number_reads_as_the_format_gives_it() {
 }
 
 /// The key of serde_json's number token.
-const NUMBER_TOKEN: &str = "$serde_json::private::Number";
+pub(super) const NUMBER_TOKEN: &str = "$serde_json::private::Number";
 
 /// What `T` reads from serde's deserializer of the map of `entries`, which hands the map to the
 /// visitor, with the text of its error.
@@ -1128,7 +1128,7 @@ fn serde_json_number_token() {
 /// `bool`, a `u64`, an `i64`, a `u128`, an `i128`, an `f64`, and only then a string; the requests
 /// of the integers take hexadecimal digits after `0x`, which the inference does not; and an empty
 /// field is `None`.
-struct CsvField<'de>(&'de str);
+pub(super) struct CsvField<'de>(pub(super) &'de str);
 
 /// Implements the requests of the integers of a [`CsvField`], written `method: visit(native)`:
 /// hexadecimal digits after `0x`, and decimal ones otherwise.
@@ -1622,7 +1622,7 @@ fn nonzero_texts() {
 }
 
 /// The text of std's error of a conversion of zero into a non-zero integer.
-fn zero_of_conversion() -> String {
+pub(super) fn zero_of_conversion() -> String {
   NonZero::<u8>::try_from(0u8).unwrap_err().to_string()
 }
 
