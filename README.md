@@ -31,7 +31,7 @@ traits do.
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, and with the `std` or the `alloc` feature in a `Box`, updated in place, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, the conversions with `f64` and `f32`, truncating, saturating, rounded by a mode or exact, with `From` where lossless, serde, as numbers up to 128 bits and decimal strings above, with helpers for decimal strings, Ethereum quantities, fixed-width hexadecimal, reading by type, bytes in either order and ruint's form, and generic traits |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, and with the `std` or the `alloc` feature in a `Box`, updated in place, or shared in an `Rc`, an `Arc` or a `triomphe::Arc`, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, the conversions with `f64` and `f32`, truncating, saturating, rounded by a mode or exact, with `From` where lossless, serde, as numbers up to 128 bits and decimal strings above, with helpers for decimal strings, Ethereum quantities, fixed-width hexadecimal, reading by type, bytes in either order and ruint's form, and generic traits |
 | `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, or over a heap storage, whose pointer keeps `Option` free, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, `TryFrom` of the integer, the conversions with the native `NonZero` integers by direction, the casts into any integer and, checking for zero, from any integer, serde as their integers, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
@@ -46,16 +46,17 @@ cargo add numo
 
 | Feature | Description |
 |---|---|
-| `std` (default) | Links the standard library, and turns on the default features of `thiserror`; gives the heap storages |
+| `std` (default) | Links the standard library, and turns on the default features of `thiserror` and `std` of `triomphe` when that feature is on; gives the heap storages |
 | `alloc` | Gives the heap storages to a `no_std` build, through the `alloc` crate |
 | `serde` | `Serialize` and `Deserialize`, through `serde_core`; turns on no feature of another crate |
 | `arbitrary` | `Arbitrary` for fuzzing; the `arbitrary` crate uses `std` |
 | `proptest` | `Arbitrary` and strategies for property tests, with the `std` feature of `proptest` |
 | `quickcheck` | `Arbitrary` for property tests; the `quickcheck` crate uses `std` |
+| `triomphe` | `triomphe::Arc<[L; N]>` as a read-only heap storage, on a target with atomic pointers |
 
 With no feature the crate is `no_std` and does not allocate. `std` and `alloc` are independent:
-either one gives the heap storage `Box<[L; N]>`, and neither turns the other on. No feature of an
-optional dependency turns on `std` or `alloc`.
+either one gives the heap storages `Box<[L; N]>`, `Rc<[L; N]>` and `Arc<[L; N]>`, and neither turns
+the other on. No feature of an optional dependency turns on `std` or `alloc`.
 
 ## Example
 

@@ -124,7 +124,9 @@ macro_rules! integer_bits_table {
       fn bit(&self, index: u32) -> bool = prim bit(self; index, Self::BITS);
 
       /// Sets the bit at `index` of `self` if `value` is `true`, and clears it otherwise. For
-      /// `Int`, the bit at `Bits - 1` is the sign, so setting or clearing it changes the sign.
+      /// `Int`, the bit at `Bits - 1` is the sign, so setting or clearing it changes the sign. On
+      /// a shared heap storage, such as an `Rc`, it puts the changed value in a new allocation, and
+      /// the other owners of the old one keep their value.
       ///
       /// # Panics
       ///

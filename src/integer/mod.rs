@@ -149,14 +149,14 @@ mod traits;
 /// work as for an inline storage, as do `BITS`, `BYTES` and the casts, which are inherent for every
 /// storage.
 ///
-/// The limbs live in the allocation, and each result where its operation puts it. An operator on
-/// two references allocates its result, and an operator with an owned operand stores its result in
-/// the allocation of that operand, the left one of two, so `a + b` reuses the allocation of `a` and
-/// frees that of `b`. A method builds only the integers that it returns, and none when it returns
-/// `None` or an error, and one that takes its integer by value, as the casts between the signs and
-/// [`from_be`](crate::IntegerByteOrder::from_be) do, stores its result in that allocation. `Sum`
-/// and `Product` of values store their result in the allocation of the first item, and those of
-/// references allocate it. A compound assignment, as in `total += &a`,
+/// The limbs live in the allocation, and each result where its operation puts it. In a `Box`, an
+/// operator on two references allocates its result, and an operator with an owned operand stores
+/// its result in the allocation of that operand, the left one of two, so `a + b` reuses the
+/// allocation of `a` and frees that of `b`. A method builds only the integers that it returns, and
+/// none when it returns `None` or an error, and one that takes its integer by value, as the casts
+/// between the signs and [`from_be`](crate::IntegerByteOrder::from_be) do, stores its result in
+/// that allocation. `Sum` and `Product` of values store their result in the allocation of the first
+/// item, and those of references allocate it. A compound assignment, as in `total += &a`,
 /// [`set_bit`](crate::IntegerBits::set_bit) and `clone_from` store in the allocation of their
 /// target, `clone` allocates, and the casts between the signs keep the allocation. `From` moves a
 /// `Box<[L; N]>` out of an integer, and into one whose width fills the array, without a copy, and
@@ -192,6 +192,45 @@ mod traits;
 /// let limbs: Box<[u64; 64]> = sum.into();
 /// assert_eq!(limbs[0], 18);
 /// assert_eq!(U4096x64::from(limbs).to_string(), "18");
+/// # }
+/// ```
+///
+/// With the same features, `Repr` can also be such an array in an `Rc`, `Rc<[L; N]>`, and on a
+/// target with atomic pointers in an `Arc`, `Arc<[L; N]>`; with the `triomphe` feature, on such a
+/// target, in a `triomphe::Arc`, `triomphe::Arc<[L; N]>`, which holds one count and no weak
+/// count. These storages are shared and read-only: `clone` shares the value without an
+/// allocation, a value that they hold is never written, and every result is a new allocation, also
+/// that of an operator with an owned operand, whose allocation another owner may share. They have
+/// no compound assignment and no [`IntegerAssign`](crate::IntegerAssign), whose `|=` would look
+/// like a write in place. [`set_bit`](crate::IntegerBits::set_bit), which takes `&mut self` for
+/// every storage, changes the value of its target, not the allocation: it puts the changed value
+/// in a new allocation, and the other owners of the old one keep their value. An integer in an
+/// `Arc` or a `triomphe::Arc` is `Send` and `Sync`, and one in an `Rc` is neither. A large value
+/// that many owners read, such as a modulus, is read into a computation in another storage
+/// through a borrowed cast source, as in `u256::widen_from(&modulus)`, or through
+/// [`ArrayInteger::as_limbs`], without a clone. The zero of a `triomphe::Arc` is built as an array
+/// and moved into its allocation, so an unoptimized build has the array on the stack; the other
+/// heap storages build their zero in its allocation.
+///
+/// ```
+/// # #[cfg(any(feature = "std", feature = "alloc"))]
+/// # {
+/// use std::rc::Rc;
+///
+/// use numo::{ArrayInteger, IntegerBits, Uint, typenum::U256};
+///
+/// type Shared = Uint<U256, Rc<[u64; 4]>>;
+///
+/// let a = Shared::from(7u64);
+/// let b = a.clone();
+/// assert!(core::ptr::eq(a.as_limbs(), b.as_limbs()));
+///
+/// // Every result is a new allocation, and the other owner keeps its value.
+/// let sum = a + &b;
+/// assert_eq!(sum.to_string(), "14");
+/// let mut c = b.clone();
+/// c.set_bit(8, true);
+/// assert_eq!((b.to_string(), c.to_string()), ("7".into(), "263".into()));
 /// # }
 /// ```
 ///
@@ -720,8 +759,9 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// module [`aliases`](crate::aliases) names common widths, such as [`i7`](crate::i7) for
 /// `Int<U7, i8>` and [`i256`](crate::i256) for `Int<U256, [u64; 4]>`. The type has the size,
 /// alignment and ABI of `Repr`, and as for [`Uint`], each storage gives a distinct type. With the
-/// `std` or the `alloc` feature, `Repr` can also be an array of limbs in a `Box`, as for `Uint`,
-/// whose section [Heap storages](Uint#heap-storages) applies to `Int` as well.
+/// `std` or the `alloc` feature, `Repr` can also be an array of limbs in a `Box`, an `Rc` or an
+/// `Arc`, and with the `triomphe` feature in a `triomphe::Arc`, as for `Uint`, whose section
+/// [Heap storages](Uint#heap-storages) applies to `Int` as well.
 ///
 /// As for [`Uint`], in a native integer [`new`](Self::new) and [`try_new`](Self::try_new) create a
 /// value and [`value`](Self::value) returns it, and in an array [`from_limbs`](Self::from_limbs)
@@ -1045,7 +1085,8 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// as for the native `NonZero`: `Option<NonZeroUint<U7>>` takes one byte. An array has no value
 /// that it cannot hold, so `Option` of an array storage adds a tag. Each storage gives a distinct
 /// type, as for [`Uint`]. With the `std` or the `alloc` feature, `Repr` can also be an array of
-/// limbs in a `Box`, which is its own non-zero storage (see [Heap storages](Uint#heap-storages)):
+/// limbs in a `Box`, an `Rc` or an `Arc`, and with the `triomphe` feature in a `triomphe::Arc`,
+/// each its own non-zero storage (see [Heap storages](Uint#heap-storages)):
 /// the niche of the pointer gives `Option` the size of a pointer, `new`, `get`, `TryFrom` and the
 /// casts between the signs move the pointer and do not allocate, and `|=` stores its result in an
 /// allocation of its own.
@@ -1249,7 +1290,8 @@ pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
 /// [`to_le`](Self::to_le), [`from_be`](Self::from_be) and [`from_le`](Self::from_le), is that of
 /// the [`Int`] of the same value at a width of whole bytes, as for [`NonZeroUint`]: a conversion of
 /// the value, not a layout, for an array storage. With the `std` or the `alloc` feature, `Repr` can
-/// also be an array of limbs in a `Box`, as for [`NonZeroUint`].
+/// also be an array of limbs in a `Box`, an `Rc` or an `Arc`, and with the `triomphe` feature in a
+/// `triomphe::Arc`, as for [`NonZeroUint`].
 ///
 /// # Arithmetic
 ///

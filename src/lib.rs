@@ -151,9 +151,11 @@
 //! fills, and [`Limbs<Bits, L>`](Limbs) names the array of limbs of type `L` that holds it.
 //!
 //! With the `std` or the `alloc` feature, the storage can also be an array of limbs in a `Box`,
-//! `Box<[L; N]>`, such as `Uint<U4096, Box<[u64; 64]>>`, which keeps the value off the stack. Such
-//! an integer is not `Copy`, and has the traits of the general layer below but not the constants
-//! and the `const fn`s (see [Heap storages](Uint#heap-storages)).
+//! `Box<[L; N]>`, such as `Uint<U4096, Box<[u64; 64]>>`, which keeps the value off the stack, or
+//! shared and read-only in an `Rc` or, on a target with atomic pointers, an `Arc`; with the
+//! `triomphe` feature, on such a target, in a `triomphe::Arc`. Such an integer is not `Copy`, and
+//! has the traits of the general layer below but not the constants and the `const fn`s (see
+//! [Heap storages](Uint#heap-storages)).
 //!
 //! Each type has the constants `BITS`, `ZERO`, `MIN` and `MAX`, and `ONE` from one bit for `Uint`
 //! and from two bits for `Int`. In a native integer, its `const fn` constructors are `new`, which
