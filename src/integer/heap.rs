@@ -1,9 +1,12 @@
-//! The integers in a heap storage, an array of limbs `[L; N]` in a `Box`: their limbs, through
-//! [`ArrayInteger`] and [`FromLimbs`], and the conversions of the pointer into and out of an
-//! integer, which move the pointer and copy no limb.
+//! The integers in a heap storage, an array of limbs `[L; N]` in a `Box`, an `Rc` or an `Arc`:
+//! their limbs, through [`ArrayInteger`] and [`FromLimbs`], and the conversions of the pointer into
+//! and out of an integer, which move the pointer and copy no limb.
 
 use core::borrow::Borrow;
-use std::boxed::Box;
+#[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
+use std::sync::Arc;
+#[cfg(any(feature = "std", feature = "alloc"))]
+use std::{boxed::Box, rc::Rc};
 
 use super::{ArrayInteger, FromLimbs, Int, Uint, bytes::strict_limbs_slice};
 use crate::{
@@ -14,12 +17,13 @@ use crate::{
 /// Implements [`ArrayInteger`] and [`FromLimbs`] for the integers over the arrays of limbs in the
 /// heap pointer `$pointer`, with the array as `Array`, and `From` of such an integer into its
 /// pointer and of the pointer into an integer whose width fills the array, written
-/// `pointer; Integer: Core, ..`. The limbs are lent and copied out through `Borrow`, an array is
-/// put in an allocation of its own by `from_inline`, and the slices of limbs are read by the rows
-/// of the storage.
+/// `pointer, [cfg]; Integer: Core, ..`, where `cfg` is the predicate of the features and the target
+/// that give the pointer, which the docs show. The limbs are lent and copied out through `Borrow`,
+/// an array is put in an allocation of its own by `from_inline`, and the slices of limbs are read
+/// by the rows of the storage.
 macro_rules! heap_integers {
-  ($pointer:ident; $($integer:ident: $core:ident),+ $(,)?) => {$(
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  ($pointer:ident, [$cfg:meta]; $($integer:ident: $core:ident),+ $(,)?) => {$(
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<B, L, const N: usize> ArrayInteger for $integer<B, $pointer<[L; N]>>
     where
       B: FitsBits<$pointer<[L; N]>>,
@@ -103,7 +107,7 @@ macro_rules! heap_integers {
       }
     }
 
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<B, L, const N: usize> FromLimbs for $integer<B, $pointer<[L; N]>>
     where
       B: FillsRepr<$pointer<[L; N]>>,
@@ -119,7 +123,7 @@ macro_rules! heap_integers {
       }
     }
 
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<B, L, const N: usize> From<$integer<B, $pointer<[L; N]>>> for $pointer<[L; N]> {
       /// Returns the pointer that holds the limbs of `value`, least significant first, without a
       /// copy.
@@ -129,7 +133,7 @@ macro_rules! heap_integers {
       }
     }
 
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<B, L, const N: usize> From<$pointer<[L; N]>> for $integer<B, $pointer<[L; N]>>
     where
       B: FillsRepr<$pointer<[L; N]>>,
@@ -146,4 +150,14 @@ macro_rules! heap_integers {
   )+};
 }
 
-heap_integers!(Box; Uint: UintCore, Int: IntCore);
+#[cfg(any(feature = "std", feature = "alloc"))]
+heap_integers!(Box, [any(feature = "std", feature = "alloc")]; Uint: UintCore, Int: IntCore);
+#[cfg(any(feature = "std", feature = "alloc"))]
+heap_integers!(Rc, [any(feature = "std", feature = "alloc")]; Uint: UintCore, Int: IntCore);
+#[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
+heap_integers!(
+  Arc,
+  [all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr")];
+  Uint: UintCore,
+  Int: IntCore
+);
