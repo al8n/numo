@@ -1327,7 +1327,8 @@ impl<B: FitsBits<R>, R: UintRepr> UnsignedFixedInteger for Uint<B, R> {
   uint_sign_table!(generic_items![]);
 }
 
-// `overflowing_abs` returns the value itself where it is not negative, so the storage is `Clone`.
+// The absolute value of a value that is not negative is the value itself, and the wrapped one of
+// `MIN` is `MIN`, so the storage is `Clone`.
 impl<B: FitsBits<R>, R: IntRepr + Clone> SignedFixedInteger for Int<B, R> {
   type Unsigned = Uint<B, <R as IntRepr>::Unsigned>;
 
@@ -1541,8 +1542,8 @@ where
 
 /// The helpers of the rows of [`Uint`] and [`Int`] in the generic implementations of the traits,
 /// over every storage, which an inherent block of each storage defines as `const fn`s: those read
-/// the constants, copy the value and write the field, and the inherent items win over these in a
-/// `Self::` path.
+/// the constants, copy the value, write the field and test a storage for zero, and the inherent
+/// items win over these in a `Self::` path.
 pub(crate) trait Rows: Sized {
   /// The inline storage, which a row that sees raw storages computes.
   type Inline;
@@ -1561,6 +1562,9 @@ pub(crate) trait Rows: Sized {
 
   /// Stores `repr`, the inline storage that a row computes, in the storage of `self`.
   fn store(&mut self, repr: Self::Inline);
+
+  /// Returns `true` if `repr`, an inline storage that a row computes, holds zero.
+  fn holds_zero(repr: &Self::Inline) -> bool;
 }
 
 // The limits come from their words, without a constant. Only `duplicate` clones, and it alone needs
@@ -1591,6 +1595,11 @@ impl<B: FitsBits<R>, R: UintRepr> Rows for Uint<B, R> {
   fn store(&mut self, repr: R::Inline) {
     self.repr.set_inline(repr, Token::new());
   }
+
+  #[inline]
+  fn holds_zero(repr: &R::Inline) -> bool {
+    <R::Inline as UintCore>::is_zero(repr, Token::new())
+  }
 }
 
 impl<B: FitsBits<R>, R: IntRepr> Rows for Int<B, R> {
@@ -1617,6 +1626,11 @@ impl<B: FitsBits<R>, R: IntRepr> Rows for Int<B, R> {
   #[inline]
   fn store(&mut self, repr: R::Inline) {
     self.repr.set_inline(repr, Token::new());
+  }
+
+  #[inline]
+  fn holds_zero(repr: &R::Inline) -> bool {
+    <R::Inline as IntCore>::is_zero(repr, Token::new())
   }
 }
 

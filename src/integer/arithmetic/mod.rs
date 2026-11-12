@@ -406,27 +406,27 @@ macro_rules! saturating_table {
       /// Saturating addition: `self + rhs`, or the bound of the range of the type that the sum
       /// passes.
       fn saturating_add(&self, rhs: &Self) -> Self {
-        match self.overflowing_add(rhs) {
-          (sum, false) => sum,
-          (_, true) => Self::bound(true),
+        match self.checked_add(rhs) {
+          Some(sum) => sum,
+          None => Self::bound(true),
         }
       }
 
       /// Saturating subtraction: `self - rhs`, or the bound of the range of the type that the
       /// difference passes.
       fn saturating_sub(&self, rhs: &Self) -> Self {
-        match self.overflowing_sub(rhs) {
-          (difference, false) => difference,
-          (_, true) => Self::bound(false),
+        match self.checked_sub(rhs) {
+          Some(difference) => difference,
+          None => Self::bound(false),
         }
       }
 
       /// Saturating multiplication: `self * rhs`, or the bound of the range of the type that the
       /// product passes.
       fn saturating_mul(&self, rhs: &Self) -> Self {
-        match self.overflowing_mul(rhs) {
-          (product, false) => product,
-          (_, true) => Self::bound(true),
+        match self.checked_mul(rhs) {
+          Some(product) => product,
+          None => Self::bound(true),
         }
       }
 
@@ -438,19 +438,21 @@ macro_rules! saturating_table {
       ///
       /// Panics if `rhs` is zero.
       #[track_caller]
-      fn saturating_div(&self, rhs: &Self) -> Self {
-        match self.overflowing_div(rhs) {
-          (quotient, false) => quotient,
-          (_, true) => Self::bound(true),
+      fn saturating_div(&self, rhs: &Self) -> Self
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, false)) => Self::of(quotient),
+            Some((_, _, true)) => Self::bound(true),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
         }
-      }
 
       /// Saturating exponentiation: `self^exp`, or the bound of the range of the type that the
       /// power passes.
       fn saturating_pow(&self, exp: u32) -> Self {
-        match self.overflowing_pow(exp) {
-          (power, false) => power,
-          (_, true) => Self::bound(true),
+        match self.checked_pow(exp) {
+          Some(power) => power,
+          None => Self::bound(true),
         }
       }
     }
@@ -460,10 +462,10 @@ macro_rules! saturating_table {
       /// Saturating addition: `self + rhs`, or the bound of the range of the type that the sum
       /// passes.
       fn saturating_add(&self, rhs: &Self) -> Self {
-        match self.overflowing_add(rhs) {
-          (sum, false) => sum,
+        match self.checked_add(rhs) {
+          Some(sum) => sum,
           // The sum passes `MIN` exactly when `rhs` is negative.
-          (_, true) => {
+          None => {
             if rhs.bit(Self::BITS.wrapping_sub(1)) {
               Self::bound(false)
             } else {
@@ -476,10 +478,10 @@ macro_rules! saturating_table {
       /// Saturating subtraction: `self - rhs`, or the bound of the range of the type that the
       /// difference passes.
       fn saturating_sub(&self, rhs: &Self) -> Self {
-        match self.overflowing_sub(rhs) {
-          (difference, false) => difference,
+        match self.checked_sub(rhs) {
+          Some(difference) => difference,
           // The difference passes `MAX` exactly when `rhs` is negative.
-          (_, true) => {
+          None => {
             if rhs.bit(Self::BITS.wrapping_sub(1)) {
               Self::bound(true)
             } else {
@@ -492,10 +494,10 @@ macro_rules! saturating_table {
       /// Saturating multiplication: `self * rhs`, or the bound of the range of the type that the
       /// product passes.
       fn saturating_mul(&self, rhs: &Self) -> Self {
-        match self.overflowing_mul(rhs) {
-          (product, false) => product,
+        match self.checked_mul(rhs) {
+          Some(product) => product,
           // An overflowing product passes `MIN` exactly when the operands differ in sign.
-          (_, true) => {
+          None => {
             let sign = Self::BITS.wrapping_sub(1);
             if self.bit(sign) != rhs.bit(sign) {
               Self::bound(false)
@@ -514,21 +516,23 @@ macro_rules! saturating_table {
       ///
       /// Panics if `rhs` is zero.
       #[track_caller]
-      fn saturating_div(&self, rhs: &Self) -> Self {
-        match self.overflowing_div(rhs) {
-          (quotient, false) => quotient,
-          (_, true) => Self::bound(true),
+      fn saturating_div(&self, rhs: &Self) -> Self
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, false)) => Self::of(quotient),
+            Some((_, _, true)) => Self::bound(true),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
         }
-      }
 
       /// Saturating exponentiation: `self^exp`, or the bound of the range of the type that the
       /// power passes.
       fn saturating_pow(&self, exp: u32) -> Self {
-        match self.overflowing_pow(exp) {
-          (power, false) => power,
+        match self.checked_pow(exp) {
+          Some(power) => power,
           // The power passes `MIN` exactly when it is negative: an odd power of a negative value.
           // At one bit `(-1)^0`, one, passes `MAX`, which is zero.
-          (_, true) => {
+          None => {
             if self.bit(Self::BITS.wrapping_sub(1)) && exp % 2 == 1 {
               Self::bound(false)
             } else {
@@ -553,9 +557,9 @@ macro_rules! strict_table {
       /// Panics if the sum is outside the range of the type.
       #[track_caller]
       fn strict_add(&self, rhs: &Self) -> Self {
-        match self.overflowing_add(rhs) {
-          (sum, false) => sum,
-          (_, true) => $crate::integer::arithmetic::overflow::add(),
+        match self.checked_add(rhs) {
+          Some(sum) => sum,
+          None => $crate::integer::arithmetic::overflow::add(),
         }
       }
 
@@ -567,9 +571,9 @@ macro_rules! strict_table {
       /// Panics if the difference is outside the range of the type.
       #[track_caller]
       fn strict_sub(&self, rhs: &Self) -> Self {
-        match self.overflowing_sub(rhs) {
-          (difference, false) => difference,
-          (_, true) => $crate::integer::arithmetic::overflow::sub(),
+        match self.checked_sub(rhs) {
+          Some(difference) => difference,
+          None => $crate::integer::arithmetic::overflow::sub(),
         }
       }
 
@@ -581,9 +585,9 @@ macro_rules! strict_table {
       /// Panics if the product is outside the range of the type.
       #[track_caller]
       fn strict_mul(&self, rhs: &Self) -> Self {
-        match self.overflowing_mul(rhs) {
-          (product, false) => product,
-          (_, true) => $crate::integer::arithmetic::overflow::mul(),
+        match self.checked_mul(rhs) {
+          Some(product) => product,
+          None => $crate::integer::arithmetic::overflow::mul(),
         }
       }
 
@@ -596,9 +600,9 @@ macro_rules! strict_table {
       /// zero, and for `Int` if `self` is `MIN`, except at zero bits, where `MIN` is zero.
       #[track_caller]
       fn strict_neg(&self) -> Self {
-        match self.overflowing_neg() {
-          (negated, false) => negated,
-          (_, true) => $crate::integer::arithmetic::overflow::neg(),
+        match self.checked_neg() {
+          Some(negated) => negated,
+          None => $crate::integer::arithmetic::overflow::neg(),
         }
       }
 
@@ -610,12 +614,14 @@ macro_rules! strict_table {
       /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
       /// only for `Int` when `self` is `MIN` and `rhs` is -1.
       #[track_caller]
-      fn strict_div(&self, rhs: &Self) -> Self {
-        match self.overflowing_div(rhs) {
-          (quotient, false) => quotient,
-          (_, true) => $crate::integer::arithmetic::overflow::div(),
+      fn strict_div(&self, rhs: &Self) -> Self
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, false)) => Self::of(quotient),
+            Some((_, _, true)) => $crate::integer::arithmetic::overflow::div(),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
         }
-      }
 
       /// Strict remainder: `self % rhs`, which has the sign of `self` and panics on overflow
       /// whatever the `overflow-checks` setting.
@@ -625,12 +631,14 @@ macro_rules! strict_table {
       /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
       /// only for `Int` when `self` is `MIN` and `rhs` is -1.
       #[track_caller]
-      fn strict_rem(&self, rhs: &Self) -> Self {
-        match self.overflowing_rem(rhs) {
-          (remainder, false) => remainder,
-          (_, true) => $crate::integer::arithmetic::overflow::rem(),
+      fn strict_rem(&self, rhs: &Self) -> Self
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((_, remainder, false)) => Self::of(remainder),
+            Some((_, _, true)) => $crate::integer::arithmetic::overflow::rem(),
+            None => $crate::integer::arithmetic::domain::rem_by_zero(),
+          }
         }
-      }
 
       /// Strict Euclidean division: the quotient `q` of `self = q * rhs + r` with
       /// `0 <= r < |rhs|`, which panics on overflow whatever the `overflow-checks` setting.
@@ -640,12 +648,14 @@ macro_rules! strict_table {
       /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
       /// only for `Int` when `self` is `MIN` and `rhs` is -1.
       #[track_caller]
-      fn strict_div_euclid(&self, rhs: &Self) -> Self {
-        match self.overflowing_div_euclid(rhs) {
-          (quotient, false) => quotient,
-          (_, true) => $crate::integer::arithmetic::overflow::div(),
+      fn strict_div_euclid(&self, rhs: &Self) -> Self
+        = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, false)) => Self::of(quotient),
+            Some((_, _, true)) => $crate::integer::arithmetic::overflow::div(),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
         }
-      }
 
       /// Strict Euclidean remainder: the remainder `r` of `self = q * rhs + r` with
       /// `0 <= r < |rhs|`, which panics on overflow whatever the `overflow-checks` setting.
@@ -655,12 +665,14 @@ macro_rules! strict_table {
       /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
       /// only for `Int` when `self` is `MIN` and `rhs` is -1.
       #[track_caller]
-      fn strict_rem_euclid(&self, rhs: &Self) -> Self {
-        match self.overflowing_rem_euclid(rhs) {
-          (remainder, false) => remainder,
-          (_, true) => $crate::integer::arithmetic::overflow::rem(),
+      fn strict_rem_euclid(&self, rhs: &Self) -> Self
+        = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((_, remainder, false)) => Self::of(remainder),
+            Some((_, _, true)) => $crate::integer::arithmetic::overflow::rem(),
+            None => $crate::integer::arithmetic::domain::rem_by_zero(),
+          }
         }
-      }
 
       /// Strict exponentiation: `self^exp`, which panics on overflow whatever the
       /// `overflow-checks` setting.
@@ -671,9 +683,9 @@ macro_rules! strict_table {
       /// and for `Int` of one bit.
       #[track_caller]
       fn strict_pow(&self, exp: u32) -> Self {
-        match self.overflowing_pow(exp) {
-          (power, false) => power,
-          (_, true) => $crate::integer::arithmetic::overflow::pow(),
+        match self.checked_pow(exp) {
+          Some(power) => power,
+          None => $crate::integer::arithmetic::overflow::pow(),
         }
       }
 
@@ -685,9 +697,9 @@ macro_rules! strict_table {
       /// Panics if `rhs` is `Bits` or more, as every amount is at zero bits.
       #[track_caller]
       fn strict_shl(&self, rhs: u32) -> Self {
-        match self.overflowing_shl(rhs) {
-          (shifted, false) => shifted,
-          (_, true) => $crate::integer::arithmetic::overflow::shl(),
+        match self.checked_shl(rhs) {
+          Some(shifted) => shifted,
+          None => $crate::integer::arithmetic::overflow::shl(),
         }
       }
 
@@ -699,9 +711,9 @@ macro_rules! strict_table {
       /// Panics if `rhs` is `Bits` or more, as every amount is at zero bits.
       #[track_caller]
       fn strict_shr(&self, rhs: u32) -> Self {
-        match self.overflowing_shr(rhs) {
-          (shifted, false) => shifted,
-          (_, true) => $crate::integer::arithmetic::overflow::shr(),
+        match self.checked_shr(rhs) {
+          Some(shifted) => shifted,
+          None => $crate::integer::arithmetic::overflow::shr(),
         }
       }
     }
@@ -754,9 +766,9 @@ macro_rules! int_sign_table {
       /// Saturating negation: `-self`, or `MAX` if the negation is outside the range of the type,
       /// as it is for `MIN`, except at zero bits, where `MIN` is zero.
       fn saturating_neg(&self) -> Self {
-        match self.overflowing_neg() {
-          (negated, false) => negated,
-          (_, true) => Self::bound(true),
+        match self.checked_neg() {
+          Some(negated) => negated,
+          None => Self::bound(true),
         }
       }
 
@@ -774,9 +786,10 @@ macro_rules! int_sign_table {
       /// Checked absolute value: `|self|`, or `None` if it is outside the range of the type, as it
       /// is for `MIN`, except at zero bits, where `MIN` is zero.
       fn checked_abs(&self) -> Option<Self> {
-        match self.overflowing_abs() {
-          (abs, false) => Some(abs),
-          (_, true) => None,
+        if self.is_negative() {
+          self.checked_neg()
+        } else {
+          Some(self.duplicate())
         }
       }
 
@@ -789,9 +802,9 @@ macro_rules! int_sign_table {
       /// Saturating absolute value: `|self|`, or `MAX` if it is outside the range of the type, as
       /// it is for `MIN`, except at zero bits, where `MIN` is zero.
       fn saturating_abs(&self) -> Self {
-        match self.overflowing_abs() {
-          (abs, false) => abs,
-          (_, true) => Self::bound(true),
+        match self.checked_abs() {
+          Some(abs) => abs,
+          None => Self::bound(true),
         }
       }
 
@@ -804,9 +817,9 @@ macro_rules! int_sign_table {
       /// except at zero bits, where `MIN` is zero.
       #[track_caller]
       fn strict_abs(&self) -> Self {
-        match self.overflowing_abs() {
-          (abs, false) => abs,
-          (_, true) => $crate::integer::arithmetic::overflow::neg(),
+        match self.checked_abs() {
+          Some(abs) => abs,
+          None => $crate::integer::arithmetic::overflow::neg(),
         }
       }
 
@@ -815,11 +828,12 @@ macro_rules! int_sign_table {
       /// `overflow-checks` decides for the native integers (see [Overflow](crate::Int#overflow)).
       #[track_caller]
       fn abs(&self) -> Self {
-        match self.overflowing_abs() {
-          (abs, false) => abs,
-          (abs, true) => {
+        match self.checked_abs() {
+          Some(abs) => abs,
+          // Only `MIN` overflows, and its wrapped absolute value is `MIN` itself.
+          None => {
             $crate::integer::arithmetic::overflow::forward_neg();
-            abs
+            self.duplicate()
           }
         }
       }
@@ -845,15 +859,16 @@ macro_rules! integer_math_table {
       /// then panics or returns the wrapped power, as `overflow-checks` decides for the native
       /// integers (see [Overflow](crate::Uint#overflow)), and in a constant it fails to compile in
       /// every build.
-      fn pow(&self, exp: u32) -> Self {
-        match self.overflowing_pow(exp) {
-          (power, false) => power,
-          (power, true) => {
-            $crate::integer::arithmetic::overflow::forward_pow();
-            power
+      fn pow(&self, exp: u32) -> Self
+        = prim overflowing_pow_bits(self; exp, Self::BITS) as power {
+          match power {
+            (power, false) => Self::of(power),
+            (power, true) => {
+              $crate::integer::arithmetic::overflow::forward_pow();
+              Self::of(power)
+            }
           }
         }
-      }
 
       /// Euclidean division: the quotient `q` of `self = q * rhs + r` with `0 <= r < |rhs|`, which
       /// for `Uint` is the quotient rounded toward zero.
@@ -947,17 +962,21 @@ macro_rules! integer_math_table {
       /// ([#139911](https://github.com/rust-lang/rust/issues/139911)); this method follows what it
       /// does, which computes `self % rhs` first, rather than its documentation.
       #[track_caller]
-      fn div_exact(&self, rhs: &Self) -> Option<Self> {
-        match self.checked_div_exact(rhs) {
-          Some(quotient) => Some(quotient),
-          // The remainder of a zero divisor and of `MIN / -1` panics, in every build, and any other
-          // division that is not exact leaves a remainder.
-          None => {
-            let _ = self.strict_rem(rhs);
-            None
+      fn div_exact(&self, rhs: &Self) -> Option<Self>
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, remainder, false)) => {
+              if Self::holds_zero(&remainder) {
+                Some(Self::of(quotient))
+              } else {
+                None
+              }
+            }
+            // The remainder of `MIN / -1` and of a zero divisor panics, in every build.
+            Some((_, _, true)) => $crate::integer::arithmetic::overflow::rem(),
+            None => $crate::integer::arithmetic::domain::rem_by_zero(),
           }
         }
-      }
 
       /// Square root: `self` to the power one half, rounded down.
       ///

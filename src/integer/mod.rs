@@ -1594,6 +1594,12 @@ macro_rules! array_integers {
         self.repr = repr;
       }
 
+      /// Returns `true` if `repr`, a storage that a row computes, holds zero.
+      #[inline]
+      const fn holds_zero(repr: &[$limb; N]) -> bool {
+        int::unsigned::$lower::is_zero(repr)
+      }
+
       overflowing_table!(inherent_items![unsigned, $lower, &]);
       checked_table!(inherent_items![unsigned, $lower, &]);
       wrapping_table!(inherent_items![unsigned, $lower, &]);
@@ -1866,6 +1872,12 @@ macro_rules! array_integers {
       #[inline]
       const fn store(&mut self, repr: [$limb; N]) {
         self.repr = repr;
+      }
+
+      /// Returns `true` if `repr`, a storage that a row computes, holds zero.
+      #[inline]
+      const fn holds_zero(repr: &[$limb; N]) -> bool {
+        int::signed::$upper::is_zero(repr)
       }
 
       overflowing_table!(inherent_items![signed, $upper, &]);
@@ -2303,6 +2315,12 @@ macro_rules! native_integers {
         self.repr = repr;
       }
 
+      /// Returns `true` if `repr`, a storage that a row computes, holds zero.
+      #[inline]
+      const fn holds_zero(repr: &$uint) -> bool {
+        int::$uint::is_zero(*repr)
+      }
+
       overflowing_table!(inherent_items![$uint]);
       checked_table!(inherent_items![$uint]);
       wrapping_table!(inherent_items![$uint]);
@@ -2564,6 +2582,12 @@ macro_rules! native_integers {
       #[inline]
       const fn store(&mut self, repr: $int) {
         self.repr = repr;
+      }
+
+      /// Returns `true` if `repr`, a storage that a row computes, holds zero.
+      #[inline]
+      const fn holds_zero(repr: &$int) -> bool {
+        int::$int::is_zero(*repr)
       }
 
       overflowing_table!(inherent_items![$int]);
