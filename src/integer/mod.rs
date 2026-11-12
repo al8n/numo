@@ -579,24 +579,35 @@ mod traits;
 /// The defaults have these limits:
 ///
 /// - A quoted value of 65 to 128 bits does not read from JSON, as for `u128`: serde_json reads
-///   digits alone when it is asked for a 128-bit integer.
+///   digits alone when it is asked for a 128-bit integer. [`decimal`] reads it.
 /// - A type above 128 bits reads a JSON number outside the 64-bit range only in a build whose
 ///   serde_json has `arbitrary_precision`. Even then, `serde_json::Value` does not hand over a
 ///   number outside the 128-bit range that a 64-bit float prints with the same digits, such as 1
-///   followed by 39 zeros. Quote such a value. With the feature, serde_json hands such a number
-///   over as a map of one entry, whose key is a token private to serde_json; numo reads a map of
-///   that one entry as the integer that its value writes, in every format and every build, and
-///   rejects it if serde_json changes the token.
+///   followed by 39 zeros. Quote such a value, or use [`decimal`]. With the feature, serde_json
+///   hands such a number over as a map of one entry, whose key is a token private to serde_json;
+///   numo reads a map of that one entry as the integer that its value writes, in every format and
+///   every build, and rejects it if serde_json changes the token.
 /// - A format that infers the type of a value from its text, as csv does, gives a value outside the
 ///   128-bit range as a float, so a type above 128 bits does not read such a value back from it.
+///   [`decimal`] asks for a string and reads every value, and so does [`typed`] above 128 bits, in
+///   the form of the defaults.
 /// - In a human-readable format the defaults need `deserialize_any`: a format without it, such as
-///   serde-json-core, reads no value of 0 to 64 bits or of more than 128 bits.
+///   serde-json-core, reads no value of 0 to 64 bits or of more than 128 bits. [`typed`] asks such
+///   a format for the type of the value.
 /// - A field of 65 to 128 bits fails in an untagged enum or a flattened struct, as a `u128` field
-///   does, since serde's buffer holds no 128-bit integer.
+///   does, since serde's buffer holds no 128-bit integer. [`decimal`] writes a string, which reads
+///   there.
 /// - serde_test's bare deserializer panics when it is asked whether it is human-readable, so a test
 ///   wraps a value of 0 to 64 or of more than 128 bits with `readable()` or `compact()`. And a numo
 ///   integer takes a decimal string, so in an untagged enum of an integer and a string, the JSON
 ///   string `"5"` selects the integer, where a native integer leaves it to the string.
+///
+// The helper modules exist only with the feature; without it, their names link to the crate's
+// section on the feature.
+#[cfg_attr(feature = "serde", doc = "[`decimal`]: crate::serde::decimal")]
+#[cfg_attr(feature = "serde", doc = "[`typed`]: crate::serde::typed")]
+#[cfg_attr(not(feature = "serde"), doc = "[`decimal`]: crate#serde")]
+#[cfg_attr(not(feature = "serde"), doc = "[`typed`]: crate#serde")]
 ///
 /// ```
 /// # #[cfg(feature = "serde")]

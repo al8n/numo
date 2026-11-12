@@ -2310,5 +2310,7 @@ mod nonzero_casts;
 mod powers;
 #[cfg(feature = "serde")]
 mod serde;
+#[cfg(feature = "serde")]
+mod serde_helpers;
 mod shifts;
 mod text;

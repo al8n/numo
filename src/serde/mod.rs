@@ -1,14 +1,141 @@
-//! `serde` support: a decimal as its text, a [`Scaled`] as its text with its scale, and a rounding
-//! mode as its name, as strings in every format.
+//! `serde` support: the forms in which the types of this crate are written and read, and helper
+//! modules that write and read an integer in another form, for `#[serde(with = "...")]`.
 //!
-//! The traits come from `serde_core`, which `serde` 1.0.220 and later re-export. There is no
-//! branch on `is_human_readable`: a binary format writes the same text, because a coefficient read
-//! back with another number of fraction digits would be off by a power of ten.
+//! The impls are written against `serde_core`, whose traits `serde` re-exports from version
+//! 1.0.220 on, so they need a build whose `serde` is 1.0.220 or later. The feature turns on no
+//! feature of any other crate, and numo allocates nothing to write or read a value.
 //!
-//! No error of reading a decimal names the rejected input: a decimal is read through [`read`],
-//! which replaces a format error that describes the input with the fixed message of the reading
-//! path and passes every other one through with its category. This covers decimal values only:
-//! reading a rounding mode reports the rejected name and the accepted ones.
+//! # The forms of the types
+//!
+//! A decimal is written as a string, the text that `Display` writes, and read from a string in the
+//! syntax of [`parse`](Decimal::parse), in every format, human-readable or binary. Reading rejects
+//! a number, so a decimal never passes through a binary floating-point value, and the coefficient
+//! is never written alone, as read back into a type with another number of fraction digits it
+//! would be off by a power of ten. A [`Scaled`] is written as its text with its scale and read with
+//! the scale of the text, in the same way, and a [`RoundingMode`] as its lowercase name, read from
+//! a name of any case.
+//!
+//! An integer, a [`Uint`](crate::Uint) or an [`Int`](crate::Int), is written in a form that depends
+//! only on its width, its sign and its value, in every format and every storage: up to 128 bits as
+//! a number, through the method of the smallest native integer of its sign that holds the width,
+//! and above 128 bits as its decimal text. In a human-readable format, a value of up to 64 or of
+//! more than 128 bits reads from any integer that the format gives and from a decimal string, and
+//! one of 65 to 128 bits from a 128-bit integer, as `u128` reads; in other formats each class reads
+//! through its own method. A [`NonZeroUint`](crate::NonZeroUint) or a
+//! [`NonZeroInt`](crate::NonZeroInt) is written and read as its integer, and zero does not read.
+//! The table of the classes and the details are in [`serde`](crate::Uint#serde).
+//!
+//! A text is written through `collect_str`, which numo streams with no buffer and no allocation. A
+//! format that keeps serde's default `collect_str`, such as bincode, ciborium, rmp-serde or toml,
+//! collects the text in a `String` of its own.
+//!
+//! # Errors
+//!
+//! No error that numo builds names the rejected input. An input of the wrong kind gets the fixed
+//! message of its path, such as `expected an integer` for the default of an integer, and so does an
+//! error that the format builds from numo's description of the expected input. An input of the
+//! right kind that numo rejects gets the text of std's error of its path: the text of
+//! [`TryFromIntError`](core::num::TryFromIntError) for a number outside the range of an integer,
+//! that of [`ParseIntError`](core::num::ParseIntError) for a string that does not parse as one, and
+//! the [`ParseError`] of a decimal. An error that a format builds without numo's description of the
+//! expected input passes through as the format wrote it and may name the input: ciborium's type
+//! errors, toml's line of the value, and serde's buffer of untagged enums and flattened structs
+//! when it meets a 128-bit integer. So does every other error of the format, such as the end of the
+//! input, an I/O error or a missing field, with its category.
+//!
+//! # Where the defaults of the integers fall short
+//!
+//! - A field of 65 to 128 bits fails in an untagged enum, an internally tagged enum or a flattened
+//!   struct, as a `u128` field does: serde buffers the content of such a container, and its buffer
+//!   holds no 128-bit integer. For the same reason, `serde_json::to_value` of such a value outside
+//!   the 64-bit range fails. [`decimal`] writes a string, which reads there.
+//! - A quoted value of 65 to 128 bits does not read from JSON, as for `u128`: serde_json reads
+//!   digits alone when it is asked for a 128-bit integer. [`decimal`] reads it.
+//! - A type above 128 bits reads a JSON number outside the 64-bit range only in a build whose
+//!   serde_json has `arbitrary_precision`. Even then, `serde_json::Value` does not hand over a
+//!   number outside the 128-bit range that a 64-bit float prints with the same digits, such as 1
+//!   followed by 39 zeros. Quote such a value, or use [`decimal`]. With the feature, serde_json
+//!   hands such a number over as a map of one entry, whose key is a token private to serde_json;
+//!   numo reads a map of that one entry as the integer that its value writes, in every format and
+//!   every build, and rejects it if serde_json changes the token.
+//! - A JSON number above 2^53 loses its exact value in a reader whose numbers are 64-bit floats,
+//!   such as JavaScript. [`decimal`] writes a string.
+//! - A format that infers the type of a value from its text, as csv does, gives a value outside the
+//!   128-bit range as a float, so the default of a type above 128 bits does not read such a value
+//!   back from it: the text of `u256::MAX` does not read back from csv. [`decimal`] asks for a
+//!   string and reads every value, and so does [`typed`] above 128 bits, in the form of the
+//!   defaults.
+//! - In a human-readable format the defaults need `deserialize_any`: a format without it, such as
+//!   serde-json-core, reads no value of 0 to 64 bits or of more than 128 bits, and none of 65 to
+//!   128 bits, as for `u128`. [`typed`] asks such a format for the type of the value, and so
+//!   reads every value there but one of 65 to 128 bits.
+//! - serde_test's bare deserializer panics when it is asked whether it is human-readable, so a test
+//!   wraps a value of 0 to 64 or of more than 128 bits with `readable()` or `compact()`.
+//! - A numo integer takes a decimal string, so in an untagged enum of an integer and a string, the
+//!   JSON string `"5"` selects the integer, where a native integer leaves it to the string.
+//!
+//! # Helpers
+//!
+//! A helper is a module with two leaves, `required` for a field of an integer and `optional` for an
+//! `Option` of it, which a field names in `#[serde(with = "...")]`. Each takes numo's integers and
+//! the native integers through a sealed trait, and writes the same form in every format:
+//!
+//! - [`decimal`]: the decimal text, as a string, at every width. Its trait
+//!   [`DecimalString`](decimal::DecimalString) takes `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`,
+//!   the native integers from `u8` to `u128` and from `i8` to `i128`, and their `NonZero`.
+//! - [`quantity`]: Ethereum's JSON-RPC QUANTITY, a string of `0x` and the lowercase hexadecimal
+//!   digits without leading zeros, read as go-ethereum's `hexutil` decodes a number. Its trait
+//!   [`Quantity`](quantity::Quantity) takes `Uint`, `NonZeroUint`, the native integers from `u8` to
+//!   `u128`, and their `NonZero`.
+//! - [`fixed_hex`]: `0x` and two lowercase hexadecimal digits for each byte of the width, the
+//!   pattern of the `Bits` bits of a negative `Int`. Its trait [`FixedHex`](fixed_hex::FixedHex)
+//!   takes `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`, the native integers from `u8` to `u128`
+//!   and from `i8` to `i128`, and their `NonZero`.
+//! - [`typed`]: the form of the defaults, read alone and by its type in every format: up to 128
+//!   bits the native integer of the class of the width, and above a decimal string. Its trait
+//!   [`Typed`](typed::Typed) takes `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`.
+//!
+//! `required` on an `Option` field does not compile, with a note that names `optional`, and
+//! `optional` on a field that is not an `Option` is a mismatch of types. `optional` writes `None`
+//! as the format writes a none, `null` in JSON, and reads `None` from a none and from a unit, which
+//! serde's buffer gives for `null`. With `#[serde(default)]`, a missing field reads as `None`;
+//! without it, the field is required.
+//!
+//! A transaction of Ethereum's JSON-RPC, with an `Option` field:
+//!
+//! ```
+//! # use serde_full as serde;
+//! use numo::u256;
+//! use serde::{Deserialize, Serialize};
+//!
+//! #[derive(Serialize, Deserialize)]
+//! # #[serde(crate = "serde")]
+//! struct Transaction {
+//!   #[serde(with = "numo::serde::quantity::required")]
+//!   value: u256,
+//!   // `default` reads a missing field as `None`; the field is always written, `null` in JSON.
+//!   #[serde(default, with = "numo::serde::quantity::optional")]
+//!   gas: Option<u256>,
+//! }
+//!
+//! let transaction = Transaction { value: u256::from(255u8), gas: None };
+//! let json = serde_json::to_string(&transaction).unwrap();
+//! assert_eq!(json, r#"{"value":"0xff","gas":null}"#);
+//! let transaction = serde_json::from_str::<Transaction>(r#"{"value":"0x5"}"#).unwrap();
+//! assert_eq!((transaction.value, transaction.gas), (u256::from(5u8), None));
+//! ```
+//!
+//! `skip_serializing_if` may be added to such a field only when every format that the type is
+//! written in names its fields, as JSON, TOML and YAML do: a positional format, such as postcard,
+//! bincode or MessagePack's arrays, reads the next field in the place of a skipped one.
+//!
+//! # `use numo::*`
+//!
+//! A crate that imports all of numo with `use numo::*` brings this module into scope, where its
+//! name collides with the `serde` crate: `use serde::Serialize` is then ambiguous, and
+//! `use ::serde::Serialize` compiles. As features unify, such a crate breaks as soon as any crate
+//! of its build turns the `serde` feature of numo on. Import numo's items by name, or through
+//! [`aliases`](crate::aliases).
 
 use core::{
   cell::Cell,
@@ -28,8 +155,69 @@ use crate::{
   layout::{Layout, Storage},
 };
 
+pub(crate) use sealed::{DecimalStringCore, FixedHexCore, QuantityCore, TypedCore};
+
+pub mod decimal;
+pub mod fixed_hex;
+pub mod quantity;
 #[cfg(test)]
 mod tests;
+pub mod typed;
+
+mod sealed {
+  use serde_core::{Deserializer, Serializer};
+
+  use crate::layout::Token;
+
+  /// Declares the sealed supertrait of the trait of each helper module, written
+  /// `Core: helper::Trait;`. Its methods carry the work of the leaves `required` and `optional` of
+  /// the helper and take a [`Token`], which only this crate can make, so that no other crate can
+  /// implement the trait of the helper or call the methods.
+  macro_rules! cores {
+    ($($core:ident: $helper:ident::$trait:ident;)+) => {$(
+      #[doc = concat!(
+        "Seals [`",
+        stringify!($trait),
+        "`](super::",
+        stringify!($helper),
+        "::",
+        stringify!($trait),
+        ") and carries the work of the leaves of [`",
+        stringify!($helper),
+        "`](super::",
+        stringify!($helper),
+        ")."
+      )]
+      pub trait $core: Sized {
+        /// Writes the value in the form of the helper.
+        fn write<S: Serializer>(&self, serializer: S, token: Token) -> Result<S::Ok, S::Error>;
+
+        /// Writes `value`: `None`, or `Some` of the value in the form of the helper.
+        fn write_option<S: Serializer>(
+          value: &Option<Self>,
+          serializer: S,
+          token: Token,
+        ) -> Result<S::Ok, S::Error>;
+
+        /// Reads a value in the form of the helper.
+        fn read<'de, D: Deserializer<'de>>(deserializer: D, token: Token) -> Result<Self, D::Error>;
+
+        /// Reads `None`, or `Some` of a value in the form of the helper.
+        fn read_option<'de, D: Deserializer<'de>>(
+          deserializer: D,
+          token: Token,
+        ) -> Result<Option<Self>, D::Error>;
+      }
+    )+};
+  }
+
+  cores! {
+    DecimalStringCore: decimal::DecimalString;
+    QuantityCore: quantity::Quantity;
+    FixedHexCore: fixed_hex::FixedHex;
+    TypedCore: typed::Typed;
+  }
+}
 
 /// Length of a buffer that holds the text of any decimal. The widest texts are those of
 /// `Decimal<U0, U154, u512>::MAX`, `0.` and 154 digits, and `Decimal<U0, U153, i512>::MIN`, `-0.`

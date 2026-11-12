@@ -16,11 +16,21 @@
 //! a number outside the 64-bit range. Every other input gets the fixed message
 //! `expected an integer`, and a rejected value the text of the error of the casts or of `FromStr`,
 //! so that no error that numo builds names the input.
+//!
+//! The helper modules of `numo::serde` write and read through the same paths, each with a fixed
+//! message of its own: `decimal` writes the decimal text and reads with the visitor of the
+//! defaults, without serde_json's number token; `quantity` writes the text of `{:#x}` and
+//! `fixed_hex` the digits of the words of the casts, and both read their grammars on the bytes of a
+//! string, building the value with the casts from words that they decode from the digits, with no
+//! buffer; and `typed` writes as the defaults do and asks every format for the class of the width,
+//! with a visitor that takes the form of the defaults alone, through their value paths. The sealed
+//! trait of each helper is implemented here for every type that its paths take, and its public
+//! trait for numo's integers and the native integers that it serves.
 
 use core::{
   fmt,
   marker::PhantomData,
-  num::{ParseIntError, TryFromIntError},
+  num::{NonZero, ParseIntError, TryFromIntError},
   str::FromStr,
 };
 
@@ -35,24 +45,55 @@ use super::{
 };
 use crate::{
   int::parse_errors,
-  serde::{Expected, read, reject_inputs},
+  layout::Token,
+  serde::{
+    DecimalStringCore, Expected, FixedHexCore, QuantityCore, TypedCore, decimal::DecimalString,
+    fixed_hex::FixedHex, quantity::Quantity, read, reject_inputs, typed::Typed,
+  },
   width::{self, FitsBits, IntRepr, NonZeroIntRepr, NonZeroUintRepr, UintRepr},
 };
 
 /// What the defaults read, whose fixed message is `expected an integer`.
 const INTEGER: &str = "an integer";
 
+/// What `decimal` reads, whose fixed message is `expected an integer as a decimal string`.
+const DECIMAL: &str = "an integer as a decimal string";
+
+/// What `quantity` reads, whose fixed message is `expected a hexadecimal quantity as a string`.
+const QUANTITY: &str = "a hexadecimal quantity as a string";
+
+/// The error of a QUANTITY without the prefix `0x` or `0X`, the empty string included.
+const QUANTITY_PREFIX: &str = "hexadecimal quantity without the 0x prefix";
+
+/// The error of a QUANTITY of the prefix alone.
+const QUANTITY_DIGITS: &str = "hexadecimal quantity without digits";
+
+/// The error of a QUANTITY whose digits start with a zero, other than `0x0`.
+const QUANTITY_LEADING_ZEROS: &str = "hexadecimal quantity with leading zero digits";
+
+/// What `fixed_hex` reads, whose fixed message is `expected a hexadecimal string`.
+const FIXED_HEX: &str = "a hexadecimal string";
+
+/// The error of a hexadecimal string of fixed width without the prefix `0x` or `0X`.
+const FIXED_HEX_PREFIX: &str = "hexadecimal string without the 0x prefix";
+
 /// The key of the one entry of the map through which serde_json with its feature
 /// `arbitrary_precision` hands over a number that no 64-bit integer holds, whose value is the text
 /// of the number. It is private to serde_json: if it changes, such a map is rejected.
 const NUMBER_TOKEN: &str = "$serde_json::private::Number";
 
-/// A value of the right kind that the defaults reject, which prints the text of its error.
+/// A value of the right kind that a reading path rejects, which prints the text of its error.
 enum Rejection {
   /// A number outside the range of the target, with the error of the casts.
   Range(TryFromIntError),
-  /// A string that `FromStr` rejects, with its error.
+  /// A string that `FromStr` or the grammar of a hexadecimal helper rejects, with its error.
   Parse(ParseIntError),
+  /// A string that breaks a rule of the grammar of a hexadecimal helper before its digits are
+  /// read, with the message of the rule.
+  Text(&'static str),
+  /// A hexadecimal string of fixed width with another number of digits than its width has, which
+  /// this one is.
+  Digits(u64),
 }
 
 impl fmt::Display for Rejection {
@@ -60,6 +101,8 @@ impl fmt::Display for Rejection {
     match self {
       Self::Range(error) => fmt::Display::fmt(error, f),
       Self::Parse(error) => fmt::Display::fmt(error, f),
+      Self::Text(message) => f.write_str(message),
+      Self::Digits(count) => write!(f, "expected {count} hexadecimal digits"),
     }
   }
 }
@@ -99,24 +142,42 @@ where
   read(deserializer, INTEGER, |deserializer, expected| {
     let visitor = IntegerVisitor::<T> {
       expected,
+      token: true,
       marker: PhantomData,
     };
-    match (T::BITS, T::SIGNED) {
-      (65..=128, false) => deserializer.deserialize_u128(visitor),
-      (65..=128, true) => deserializer.deserialize_i128(visitor),
-      // A human-readable format gives a number or a string, as it describes its values.
-      _ if deserializer.is_human_readable() => deserializer.deserialize_any(visitor),
-      (0..=8, false) => deserializer.deserialize_u8(visitor),
-      (9..=16, false) => deserializer.deserialize_u16(visitor),
-      (17..=32, false) => deserializer.deserialize_u32(visitor),
-      (33..=64, false) => deserializer.deserialize_u64(visitor),
-      (0..=8, true) => deserializer.deserialize_i8(visitor),
-      (9..=16, true) => deserializer.deserialize_i16(visitor),
-      (17..=32, true) => deserializer.deserialize_i32(visitor),
-      (33..=64, true) => deserializer.deserialize_i64(visitor),
-      _ => deserializer.deserialize_str(visitor),
+    // A human-readable format gives a number or a string, as it describes its values. A value of 65
+    // to 128 bits is asked for as a 128-bit integer in every format, which serde_json reads exactly
+    // only when it is asked for one.
+    if !matches!(T::BITS, 65..=128) && deserializer.is_human_readable() {
+      deserializer.deserialize_any(visitor)
+    } else {
+      deserialize_class::<T, _, _>(deserializer, visitor)
     }
   })
+}
+
+/// Asks `deserializer` for the method of the class of `T`, which the defaults ask a format that is
+/// not human-readable for, and `typed` every format: the native integer of the sign of `T` that
+/// holds its width up to 128 bits, and a string above.
+fn deserialize_class<'de, T, D, V>(deserializer: D, visitor: V) -> Result<V::Value, D::Error>
+where
+  T: CheckedTarget,
+  D: Deserializer<'de>,
+  V: Visitor<'de>,
+{
+  match (T::BITS, T::SIGNED) {
+    (0..=8, false) => deserializer.deserialize_u8(visitor),
+    (9..=16, false) => deserializer.deserialize_u16(visitor),
+    (17..=32, false) => deserializer.deserialize_u32(visitor),
+    (33..=64, false) => deserializer.deserialize_u64(visitor),
+    (65..=128, false) => deserializer.deserialize_u128(visitor),
+    (0..=8, true) => deserializer.deserialize_i8(visitor),
+    (9..=16, true) => deserializer.deserialize_i16(visitor),
+    (17..=32, true) => deserializer.deserialize_i32(visitor),
+    (33..=64, true) => deserializer.deserialize_i64(visitor),
+    (65..=128, true) => deserializer.deserialize_i128(visitor),
+    _ => deserializer.deserialize_str(visitor),
+  }
 }
 
 /// `value` in `T`, or the error of the casts for a value outside the range of `T`, and for zero
@@ -228,10 +289,13 @@ where
 
 /// Reads an integer of type `T` at every class: every integer that a format gives, checked against
 /// the width of `T` rather than its class, so that `u7` rejects 128, which a `u8` holds, a decimal
-/// string in the syntax of `FromStr`, and serde_json's number token. Every other input gets the
-/// fixed message.
+/// string in the syntax of `FromStr`, and serde_json's number token if `token`. Every other input
+/// gets the fixed message.
 struct IntegerVisitor<'a, T> {
   expected: Expected<'a>,
+  /// Whether the visitor reads serde_json's number token, as the defaults do and `decimal` does
+  /// not.
+  token: bool,
   marker: PhantomData<T>,
 }
 
@@ -298,11 +362,14 @@ where
     Err(self.expected.reject())
   }
 
-  // serde_json's number token: one entry, whose key is the token and whose value is the text of the
-  // number. A map without an entry, with another key or with a second entry is rejected; numo
-  // cannot tell the token from a map of that one entry.
+  // serde_json's number token, where the visitor reads it: one entry, whose key is the token and
+  // whose value is the text of the number. A map without an entry, with another key or with a
+  // second entry is rejected; numo cannot tell the token from a map of that one entry.
   fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
     let expected = self.expected;
+    if !self.token {
+      return Err(expected.reject());
+    }
     let key = || TokenPart {
       expected,
       read: |key: &str| (key == NUMBER_TOKEN).then_some(()),
@@ -393,3 +460,578 @@ nonzero_serde! {
   NonZeroUint: NonZeroUintRepr;
   NonZeroInt: NonZeroIntRepr;
 }
+
+/// Writes the decimal text of `value`, the text of `Display`, through `collect_str`.
+fn serialize_decimal<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: fmt::Display,
+  S: Serializer,
+{
+  serializer.collect_str(value)
+}
+
+/// Asks the format for a string, which `decimal` reads with [`IntegerVisitor`] without serde_json's
+/// number token: a decimal string, and an integer that the format gives instead.
+fn drive_decimal<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError>,
+  D: Deserializer<'de>,
+{
+  deserializer.deserialize_str(IntegerVisitor {
+    expected,
+    token: false,
+    marker: PhantomData,
+  })
+}
+
+/// Implements the work of a helper module, written
+/// `Core, description; write(Bounds) with writer, Some; read(Bounds) with drive, Option;`: the
+/// sealed `Core` of the helper for every type with both bounds, which writes a value with `writer`
+/// and reads one through [`read`], with `description`, the fixed message of the helper, and
+/// `drive`, which hands a format the visitor of the helper and gives back a value or its rejection;
+/// `Some`, which lends a value to `writer` as the `Some` of an `Option` field; and `Option`, the
+/// visitor of an `Option` field, which shares the consultation flag of the path with the visitor
+/// of the helper.
+macro_rules! helper {
+  (
+    $core:ident, $description:ident;
+    write($($write:tt)+) with $writer:ident, $some:ident;
+    read($($read:tt)+) with $drive:ident, $option:ident;
+  ) => {
+    /// Lends a value to the writer of its helper, as the `Some` of an `Option` field.
+    struct $some<'a, T>(&'a T);
+
+    impl<T: $($write)+> Serialize for $some<'_, T> {
+      fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        $writer(self.0, serializer)
+      }
+    }
+
+    /// Reads an `Option` field of its helper: `None` from a none and from a unit, which serde's
+    /// buffer gives for `null`, and the value of a `Some` with the visitor of the helper, under the
+    /// same consultation flag. Every other input gets the fixed message of the helper.
+    struct $option<'a, T> {
+      expected: Expected<'a>,
+      marker: PhantomData<T>,
+    }
+
+    impl<'de, T: $($read)+> Visitor<'de> for $option<'_, T> {
+      type Value = Result<Option<T>, Rejection>;
+
+      fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.expected.describe(f)
+      }
+
+      fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+        Ok(Ok(None))
+      }
+
+      fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+        Ok(Ok(None))
+      }
+
+      fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        Ok($drive(deserializer, self.expected)?.map(Some))
+      }
+
+      // Every other kind of input is rejected below. The narrower integers and `f32` reach these
+      // through serde's forwarding, and the other forms of a string read through `visit_str`.
+      reject_inputs! {
+        visit_bool(bool),
+        visit_i64(i64),
+        visit_i128(i128),
+        visit_u64(u64),
+        visit_u128(u128),
+        visit_f64(f64),
+        visit_char(char),
+        visit_str(&str),
+        visit_bytes(&[u8]),
+        visit_borrowed_bytes(&'de [u8]),
+      }
+
+      fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+        Err(self.expected.reject())
+      }
+
+      fn visit_seq<A: SeqAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+        Err(self.expected.reject())
+      }
+
+      fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+        Err(self.expected.reject())
+      }
+
+      fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+        Err(self.expected.reject())
+      }
+    }
+
+    impl<T> $core for T
+    where
+      T: $($write)+ + $($read)+,
+    {
+      #[inline]
+      fn write<S: Serializer>(&self, serializer: S, _: Token) -> Result<S::Ok, S::Error> {
+        $writer(self, serializer)
+      }
+
+      #[inline]
+      fn write_option<S: Serializer>(
+        value: &Option<Self>,
+        serializer: S,
+        _: Token,
+      ) -> Result<S::Ok, S::Error> {
+        match value {
+          Some(value) => serializer.serialize_some(&$some(value)),
+          None => serializer.serialize_none(),
+        }
+      }
+
+      #[inline]
+      fn read<'de, D: Deserializer<'de>>(deserializer: D, _: Token) -> Result<Self, D::Error> {
+        read(deserializer, $description, $drive)
+      }
+
+      #[inline]
+      fn read_option<'de, D: Deserializer<'de>>(
+        deserializer: D,
+        _: Token,
+      ) -> Result<Option<Self>, D::Error> {
+        read(deserializer, $description, |deserializer, expected| {
+          deserializer.deserialize_option($option {
+            expected,
+            marker: PhantomData,
+          })
+        })
+      }
+    }
+  };
+}
+
+helper! {
+  DecimalStringCore, DECIMAL;
+  write(fmt::Display) with serialize_decimal, DecimalSome;
+  read(CheckedTarget + FromStr<Err = ParseIntError>) with drive_decimal, DecimalOption;
+}
+
+/// Implements the public trait of a helper module for numo's integers over every storage of their
+/// storage traits, written `Trait for Integer: Repr, ..`, for the non-zero integers, written
+/// `Trait for nonzero Name: Repr, ..`, and for native integers and their `NonZero`, written
+/// `Trait for natives native, ..`.
+macro_rules! helper_impls {
+  ($trait:ident for nonzero $($name:ident: $repr:ident),+) => {$(
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl<B: FitsBits<R::Integer>, R: $repr> $trait for $name<B, R> {}
+  )+};
+  ($trait:ident for natives $($native:ident),+) => {$(
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl $trait for $native {}
+
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl $trait for NonZero<$native> {}
+  )+};
+  ($trait:ident for $($integer:ident: $repr:ident),+) => {$(
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl<B: FitsBits<R>, R: $repr> $trait for $integer<B, R> {}
+  )+};
+}
+
+helper_impls!(DecimalString for Uint: UintRepr, Int: IntRepr);
+helper_impls!(DecimalString for nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
+helper_impls!(DecimalString for natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+/// Writes `value` as a QUANTITY, the text of `{:#x}`: `0x` and the lowercase hexadecimal digits of
+/// the value without leading zeros, `0x0` for zero, through `collect_str`.
+fn serialize_quantity<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: fmt::LowerHex,
+  S: Serializer,
+{
+  serializer.collect_str(&format_args!("{value:#x}"))
+}
+
+/// The value of `byte` as a hexadecimal digit of either case, or `None` for any other byte, among
+/// them a sign, `_`, whitespace and every byte of a character outside ASCII.
+fn hex_digit(byte: u8) -> Option<u64> {
+  match byte {
+    b'0'..=b'9' => Some(u64::from(byte - b'0')),
+    b'a'..=b'f' => Some(u64::from(byte - b'a') + 10),
+    b'A'..=b'F' => Some(u64::from(byte - b'A') + 10),
+    _ => None,
+  }
+}
+
+/// The 64-bit word at `index` of the value whose hexadecimal digits, most significant first, are
+/// `digits`, every one of which [`hex_digit`] reads: the sixteen digits of the word, counted from
+/// the end of the text, or as many of them as there are, and zero beyond the digits.
+fn hex_word(digits: &[u8], index: usize) -> u64 {
+  // The digits of the words below `index` end the text.
+  let end = digits.len().saturating_sub(index.saturating_mul(16));
+  digits[end.saturating_sub(16)..end]
+    .iter()
+    .fold(0, |word, &digit| word << 4 | hex_digit(digit).unwrap_or(0))
+}
+
+/// The value in `T` of the bytes `text` of a QUANTITY, as go-ethereum's `hexutil` decodes a number,
+/// or the error of the first of its rules that `text` breaks, in this order: the prefix `0x` or
+/// `0X`, which the empty string lacks too; at least one digit; no leading zero, unless the digits
+/// are `0`; every byte a hexadecimal digit, of either case; the range of `T`; and, for a non-zero
+/// `T`, a value that is not zero.
+fn parse_quantity<T: CheckedTarget>(text: &[u8]) -> Result<T, Rejection> {
+  let digits = match text {
+    [b'0', b'x' | b'X', digits @ ..] => digits,
+    _ => return Err(Rejection::Text(QUANTITY_PREFIX)),
+  };
+  let first = match digits {
+    [] => return Err(Rejection::Text(QUANTITY_DIGITS)),
+    [b'0', _, ..] => return Err(Rejection::Text(QUANTITY_LEADING_ZEROS)),
+    [first, ..] => *first,
+  };
+  if !digits.iter().all(|&digit| hex_digit(digit).is_some()) {
+    return Err(Rejection::Parse(parse_errors::INVALID_DIGIT));
+  }
+  // The value has the bits of its first digit, none for the digit 0, and four for each other digit.
+  // The comparison forms no product of the number of digits and casts none to `u32`, so that no
+  // length of the text can overflow it.
+  let first_bits = u64::BITS - hex_digit(first).unwrap_or(0).leading_zeros();
+  let in_range =
+    first_bits <= T::BITS && (digits.len() - 1) as u64 <= u64::from((T::BITS - first_bits) / 4);
+  if !in_range {
+    return Err(Rejection::Parse(parse_errors::POS_OVERFLOW));
+  }
+  T::from_words(|index| hex_word(digits, index)).ok_or(Rejection::Parse(parse_errors::ZERO))
+}
+
+/// Reads a string with `read`, the grammar of a hexadecimal helper, which takes the bytes of the
+/// text and gives back a value or its rejection, and rejects every other kind of input with the
+/// fixed message of its path.
+struct HexVisitor<'a, F> {
+  expected: Expected<'a>,
+  read: F,
+}
+
+impl<'de, T, F> Visitor<'de> for HexVisitor<'_, F>
+where
+  F: FnOnce(&[u8]) -> Result<T, Rejection>,
+{
+  type Value = Result<T, Rejection>;
+
+  fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.expected.describe(f)
+  }
+
+  fn visit_str<E: de::Error>(self, text: &str) -> Result<Self::Value, E> {
+    Ok((self.read)(text.as_bytes()))
+  }
+
+  // Every other kind of input is rejected below. The narrower integers and `f32` reach these
+  // through serde's forwarding, and the other forms of a string read through `visit_str`.
+  reject_inputs! {
+    visit_bool(bool),
+    visit_i64(i64),
+    visit_i128(i128),
+    visit_u64(u64),
+    visit_u128(u128),
+    visit_f64(f64),
+    visit_char(char),
+    visit_bytes(&[u8]),
+    visit_borrowed_bytes(&'de [u8]),
+  }
+
+  fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_some<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_seq<A: SeqAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+}
+
+/// Asks the format for a string, which `quantity` reads with [`HexVisitor`] by the grammar of
+/// [`parse_quantity`].
+fn drive_quantity<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget,
+  D: Deserializer<'de>,
+{
+  deserializer.deserialize_str(HexVisitor {
+    expected,
+    read: parse_quantity::<T>,
+  })
+}
+
+helper! {
+  QuantityCore, QUANTITY;
+  write(fmt::LowerHex) with serialize_quantity, QuantitySome;
+  read(CheckedTarget) with drive_quantity, QuantityOption;
+}
+
+helper_impls!(Quantity for Uint: UintRepr);
+helper_impls!(Quantity for nonzero NonZeroUint: NonZeroUintRepr);
+helper_impls!(Quantity for natives u8, u16, u32, u64, u128);
+
+/// The lowercase hexadecimal digits, by value.
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+/// The text of a value that `fixed_hex` writes: `0x` and the lowercase hexadecimal digits of its
+/// `Bits` bits, two for each byte of the width, the most significant first, read from the words of
+/// the casts, with the bits from `Bits` up as zeros, so that a negative `Int` writes the pattern of
+/// its bits, zero-padded, and zero bits write `0x`. It writes the digits itself, through a buffer
+/// on the stack, a chunk at a time, as a formatting width cannot pad the text: `core::fmt` panics
+/// on a width above `u16::MAX`, which the text of a width above 262128 bits exceeds.
+struct FixedHexText<'a, T>(&'a T);
+
+impl<T: CastSource> fmt::Display for FixedHexText<'_, T> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let bits = u64::from(T::BITS);
+    // The digits still to write, two for each byte of the width, counted in `u64`, which holds the
+    // count of every width below `2^32` bits. Digit `k` holds bits `4k` to `4k + 3`, in word
+    // `k / 16`.
+    let mut digits = 2 * bits.div_ceil(8);
+    let mut buf = [0; 64];
+    let mut len = 0;
+    f.write_str("0x")?;
+    while digits > 0 {
+      let index = (digits - 1) / 16;
+      // The bits of the word from `Bits` up count as zeros.
+      let valid = bits.saturating_sub(64 * index);
+      let mask = if valid >= 64 {
+        u64::MAX
+      } else {
+        (1 << valid) - 1
+      };
+      let word = self.0.word(usize::try_from(index).map_err(|_| fmt::Error)?) & mask;
+      while digits > 16 * index {
+        digits -= 1;
+        buf[len] = HEX_DIGITS[((word >> (4 * (digits % 16))) & 0xf) as usize];
+        len += 1;
+        if len == buf.len() {
+          f.write_str(core::str::from_utf8(&buf).map_err(|_| fmt::Error)?)?;
+          len = 0;
+        }
+      }
+    }
+    f.write_str(core::str::from_utf8(&buf[..len]).map_err(|_| fmt::Error)?)
+  }
+}
+
+/// Writes `value` as `0x` and two lowercase hexadecimal digits for each byte of its width, the text
+/// of [`FixedHexText`], through `collect_str`.
+fn serialize_fixed_hex<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: CastSource,
+  S: Serializer,
+{
+  serializer.collect_str(&FixedHexText(value))
+}
+
+/// The value in `T` of the bytes `text` of a hexadecimal string of fixed width, or the error of the
+/// first of its rules that `text` breaks, in this order: the prefix `0x` or `0X`; exactly two
+/// digits for each byte of the width of `T`; every byte a hexadecimal digit, of either case; the
+/// bits of the first byte above the width zeros, for both signs; and, for a non-zero `T`, a value
+/// that is not zero. The digits are the pattern of the `Bits` bits of the value, which the casts
+/// read in two's complement for a signed `T`.
+fn parse_fixed_hex<T: CheckedTarget>(text: &[u8]) -> Result<T, Rejection> {
+  let digits = match text {
+    [b'0', b'x' | b'X', digits @ ..] => digits,
+    _ => return Err(Rejection::Text(FIXED_HEX_PREFIX)),
+  };
+  // The digits of the width, counted in `u64`, which holds them and every length of a text, so
+  // that no count overflows and no length is cast to `u32`.
+  let count = 2 * u64::from(T::BITS.div_ceil(8));
+  if digits.len() as u64 != count {
+    return Err(Rejection::Digits(count));
+  }
+  if !digits.iter().all(|&digit| hex_digit(digit).is_some()) {
+    return Err(Rejection::Parse(parse_errors::INVALID_DIGIT));
+  }
+  // The first byte holds the bits of the width above its last whole byte, one to eight, and zeros
+  // above them. Zero bits have no digits, and so no first byte.
+  if let [high, low, ..] = digits {
+    let first = hex_digit(*high).unwrap_or(0) << 4 | hex_digit(*low).unwrap_or(0);
+    if first >> ((T::BITS - 1) % 8 + 1) != 0 {
+      return Err(Rejection::Parse(parse_errors::POS_OVERFLOW));
+    }
+  }
+  T::from_words(|index| hex_word(digits, index)).ok_or(Rejection::Parse(parse_errors::ZERO))
+}
+
+/// Asks the format for a string, which `fixed_hex` reads with [`HexVisitor`] by the grammar of
+/// [`parse_fixed_hex`].
+fn drive_fixed_hex<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget,
+  D: Deserializer<'de>,
+{
+  deserializer.deserialize_str(HexVisitor {
+    expected,
+    read: parse_fixed_hex::<T>,
+  })
+}
+
+helper! {
+  FixedHexCore, FIXED_HEX;
+  write(CastSource) with serialize_fixed_hex, FixedHexSome;
+  read(CheckedTarget) with drive_fixed_hex, FixedHexOption;
+}
+
+helper_impls!(FixedHex for Uint: UintRepr, Int: IntRepr);
+helper_impls!(FixedHex for nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
+helper_impls!(FixedHex for natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+/// Reads an integer of type `T` in the form that the defaults write, alone: up to 128 bits every
+/// integer that a format gives, checked against the width of `T`, and above 128 bits a decimal
+/// string in the syntax of `FromStr`, through the value paths of the defaults. Every other input
+/// gets the fixed message: a string up to 128 bits, an integer above, and every map, so that
+/// serde_json's number token does not read.
+struct TypedVisitor<'a, T> {
+  expected: Expected<'a>,
+  marker: PhantomData<T>,
+}
+
+impl<T: CheckedTarget> TypedVisitor<'_, T> {
+  /// `value` in `T`, as the defaults read a number, up to 128 bits, and the fixed message above,
+  /// where `T` reads a string alone.
+  fn number<S: CastSource, E: de::Error>(self, value: S) -> Result<Result<T, Rejection>, E> {
+    if T::BITS <= 128 {
+      Ok(cast(value))
+    } else {
+      Err(self.expected.reject())
+    }
+  }
+}
+
+impl<'de, T> Visitor<'de> for TypedVisitor<'_, T>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError>,
+{
+  type Value = Result<T, Rejection>;
+
+  fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.expected.describe(f)
+  }
+
+  // The narrower integers read through these, which serde forwards them to.
+  fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+    self.number(value)
+  }
+
+  fn visit_i128<E: de::Error>(self, value: i128) -> Result<Self::Value, E> {
+    self.number(value)
+  }
+
+  fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+    self.number(value)
+  }
+
+  fn visit_u128<E: de::Error>(self, value: u128) -> Result<Self::Value, E> {
+    self.number(value)
+  }
+
+  // A string above 128 bits, as the defaults read it, and the fixed message up to 128 bits, where
+  // `T` reads a number alone.
+  fn visit_str<E: de::Error>(self, text: &str) -> Result<Self::Value, E> {
+    if T::BITS > 128 {
+      Ok(text.parse().map_err(Rejection::Parse))
+    } else {
+      Err(self.expected.reject())
+    }
+  }
+
+  // Every other kind of input is rejected below. `visit_borrowed_str` reads through `visit_str`,
+  // and `visit_string` and `visit_byte_buf`, which `serde_core` has only with `alloc`, read
+  // through `visit_str` and `visit_bytes`.
+  reject_inputs! {
+    visit_bool(bool),
+    visit_f32(f32),
+    visit_f64(f64),
+    visit_char(char),
+    visit_bytes(&[u8]),
+    visit_borrowed_bytes(&'de [u8]),
+  }
+
+  fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_some<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_seq<A: SeqAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+}
+
+/// Asks every format for the class of `T`, as the defaults ask a format that is not
+/// human-readable, which `typed` reads with [`TypedVisitor`].
+fn drive_typed<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget + FromStr<Err = ParseIntError>,
+  D: Deserializer<'de>,
+{
+  deserialize_class::<T, _, _>(
+    deserializer,
+    TypedVisitor {
+      expected,
+      marker: PhantomData,
+    },
+  )
+}
+
+helper! {
+  TypedCore, INTEGER;
+  write(CastSource + fmt::Display) with serialize_integer, TypedSome;
+  read(CheckedTarget + FromStr<Err = ParseIntError>) with drive_typed, TypedOption;
+}
+
+helper_impls!(Typed for Uint: UintRepr, Int: IntRepr);
+helper_impls!(Typed for nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
