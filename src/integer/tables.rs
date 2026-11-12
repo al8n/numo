@@ -52,9 +52,10 @@
 //! derived arm of `inherent_items!` ignores their `$args`. In an inherent block `$args` is
 //! `[integer, other]`, the integer of the same width and storage and the non-zero integer of the
 //! other sign, which the rows name through `nonzero_integer!` and `nonzero_other!`, and in a trait
-//! it is `[]`, for the associated types. A row calls `self.integer()`, the rows of the integer,
-//! `Self::known`, `Self::saturated`, `Self::duplicate` and other rows: an inherent block defines
-//! these as `const fn`s, and the generic implementations reach them through the helper traits of
+//! it is `[]`, for the associated types. A row calls `self.integer()`, which lends the value,
+//! `self.into_integer()`, which takes it, the rows of the integer, `Self::known`,
+//! `Self::saturated`, `Self::duplicate` and other rows: an inherent block defines these as
+//! `const fn`s, and the generic implementations reach them through the helper traits of
 //! `integer::nonzero`.
 
 /// Passes the queries of `Uint` and `Int` to `$callback`, after the tokens of `$args`.

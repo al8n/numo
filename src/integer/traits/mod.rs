@@ -1739,13 +1739,18 @@ impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> SignedNonZero for NonZeroInt<B,
   nonzero_int_table!(generic_items![]);
 }
 
-// The limits are computed with the sealed storage methods, which need no constant.
+// The limits are computed with the sealed storage methods of the inline storage of the integer,
+// which need no constant, and stored once.
 impl<B: FitsBits<R::Integer> + NonZero, R: NonZeroUintRepr> NonZeroLimits for NonZeroUint<B, R> {
   #[inline]
   fn min_value() -> Self {
     // One, the lowest bit alone, which a width of one bit or more holds.
-    match <R::Integer as UintCore>::zero(Token::new()).with_bit(0, true, B::U32, Token::new()) {
-      Some(one) => Self::known(Uint::wrap(one)),
+    let inline = <<R::Integer as UintCore>::Inline as UintCore>::zero(Token::new());
+    match inline.with_bit(0, true, B::U32, Token::new()) {
+      Some(one) => Self::known(Uint::wrap(<R::Integer as UintCore>::from_inline(
+        one,
+        Token::new(),
+      ))),
       None => zero(),
     }
   }

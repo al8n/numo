@@ -636,8 +636,10 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
   // result establishes this, and equality, comparison, hashing, formatting and the arithmetic rely
   // on it. It is a logical invariant, not a safety invariant: no `unsafe` code may rely on it. The
   // `unchecked_*` methods assume only their caller's guarantee, which is stated through
-  // `checked_*`, so they do not rely on it either.
-  repr: Repr,
+  // `checked_*`, so they do not rely on it either. The field and `wrap` are visible to the crate,
+  // so the invariant binds the crate: only `integer` and `lend_nonzero` of the storage cores write
+  // the field.
+  pub(crate) repr: Repr,
   bits: PhantomData<Bits>,
 }
 
@@ -952,8 +954,10 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // arithmetic result establishes this, and equality, comparison, the sign queries, hashing,
   // formatting and the arithmetic rely on it. It is a logical invariant, not a safety invariant: no
   // `unsafe` code may rely on it. The `unchecked_*` methods assume only their caller's guarantee,
-  // which is stated through `checked_*`, so they do not rely on it either.
-  repr: Repr,
+  // which is stated through `checked_*`, so they do not rely on it either. As for `Uint`, the field
+  // and `wrap` are visible to the crate, so the invariant binds the crate: only `integer` and
+  // `lend_nonzero` of the storage cores write the field.
+  pub(crate) repr: Repr,
   bits: PhantomData<Bits>,
 }
 
@@ -1269,7 +1273,7 @@ pub struct NonZeroInt<Bits, Repr = <Bits as BitWidth>::NonZeroSigned> {
 impl<B, R> Uint<B, R> {
   /// Wraps `repr`. Requires it to hold a value of `Bits` bits.
   #[inline]
-  const fn wrap(repr: R) -> Self {
+  pub(crate) const fn wrap(repr: R) -> Self {
     Self {
       repr,
       bits: PhantomData,
@@ -1280,7 +1284,7 @@ impl<B, R> Uint<B, R> {
 impl<B, R> Int<B, R> {
   /// Wraps `repr`. Requires it to hold a value of `Bits` bits.
   #[inline]
-  const fn wrap(repr: R) -> Self {
+  pub(crate) const fn wrap(repr: R) -> Self {
     Self {
       repr,
       bits: PhantomData,

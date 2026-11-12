@@ -17,7 +17,7 @@ use typenum::{
 
 pub use array_size::ArraySize;
 pub(crate) use sealed::{
-  InlineIntConsts, InlineUintConsts, IntCore, IntWidth, TypenumNumber, UintCore, UintWidth,
+  InlineIntConsts, InlineUintConsts, IntCore, IntWidth, TypenumNumber, UintCore, UintWidth, View,
 };
 
 use sealed::{
@@ -26,7 +26,7 @@ use sealed::{
 };
 
 use crate::{
-  FromFloatError, RoundingMode, format,
+  FromFloatError, Int, RoundingMode, Uint, format,
   int::{
     self,
     float::{FloatFormat, FloatParts},
@@ -38,13 +38,15 @@ use crate::{
 mod array_size;
 
 mod sealed {
-  use core::{cmp::Ordering, fmt, hash::Hasher, marker::PhantomData, num::ParseIntError};
+  use core::{
+    cmp::Ordering, fmt, hash::Hasher, marker::PhantomData, num::ParseIntError, ops::Deref,
+  };
 
   use typenum::{B1, UInt, UTerm};
 
   use super::{FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, UintRepr};
   use crate::{
-    FromFloatError, RoundingMode,
+    FromFloatError, Int, RoundingMode, Uint,
     int::float::{FloatFormat, FloatParts},
     layout::Token,
   };
@@ -270,6 +272,28 @@ mod sealed {
   // generic over the limb type.
   impl<L, const N: usize> ReprLimb for [L; N] {
     type Limb = L;
+  }
+
+  /// The integer of a non-zero integer, as the storage cores give it to the rows of the non-zero
+  /// integers: lent where the non-zero storage is the storage of the integer, as for an array, and
+  /// a copy of it for a native `NonZero`. It dereferences to the integer.
+  pub enum View<'a, T> {
+    /// The integer itself, lent.
+    Lent(&'a T),
+    /// A copy of the integer.
+    Owned(T),
+  }
+
+  impl<T> Deref for View<'_, T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+      match self {
+        Self::Lent(integer) => integer,
+        Self::Owned(integer) => integer,
+      }
+    }
   }
 
   /// Seals [`UintRepr`](super::UintRepr) and gives the trait implementations of
@@ -571,6 +595,13 @@ mod sealed {
       f: impl FnOnce(&Self) -> T,
       token: Token,
     ) -> T;
+
+    /// The integer of `nonzero`, the value of a non-zero integer: the integer itself where the
+    /// non-zero storage is this storage, as an array lends it, and a copy for a native integer.
+    fn lend_nonzero<B>(
+      nonzero: &Uint<B, Self::NonZeroStorage>,
+      token: Token,
+    ) -> View<'_, Uint<B, Self>>;
 
     /// The non-zero storage of a value that is not zero, as every non-zero result of the
     /// arithmetic is. A zero is a bug of this crate: it panics in a native integer, whose non-zero
@@ -955,6 +986,13 @@ mod sealed {
       f: impl FnOnce(&Self) -> T,
       token: Token,
     ) -> T;
+
+    /// The integer of `nonzero`, the value of a non-zero integer, as for
+    /// [`UintCore::lend_nonzero`].
+    fn lend_nonzero<B>(
+      nonzero: &Int<B, Self::NonZeroStorage>,
+      token: Token,
+    ) -> View<'_, Int<B, Self>>;
 
     /// The non-zero storage of a value that is not zero, as for
     /// [`UintCore::known_nonzero`].
@@ -1690,6 +1728,11 @@ macro_rules! array_storage {
       }
 
       #[inline]
+      fn lend_nonzero<B>(nonzero: &Uint<B, Self>, _: Token) -> View<'_, Uint<B, Self>> {
+        View::Lent(nonzero)
+      }
+
+      #[inline]
       fn known_nonzero(self, _: Token) -> Self {
         debug_assert!(!unsigned::$lower::is_zero(&self), "a non-zero result is zero");
         self
@@ -2142,6 +2185,11 @@ macro_rules! array_storage {
       #[inline]
       fn with_nonzero<T>(nonzero: &Self, f: impl FnOnce(&Self) -> T, _: Token) -> T {
         f(nonzero)
+      }
+
+      #[inline]
+      fn lend_nonzero<B>(nonzero: &Int<B, Self>, _: Token) -> View<'_, Int<B, Self>> {
+        View::Lent(nonzero)
       }
 
       #[inline]
@@ -2653,6 +2701,14 @@ macro_rules! native_storage {
       }
 
       #[inline]
+      fn lend_nonzero<B>(
+        nonzero: &Uint<B, core::num::NonZero<$uint>>,
+        _: Token,
+      ) -> View<'_, Uint<B, Self>> {
+        View::Owned(Uint::wrap(nonzero.repr.get()))
+      }
+
+      #[inline]
       fn known_nonzero(self, _: Token) -> core::num::NonZero<$uint> {
         int::$uint::known_nonzero(self)
       }
@@ -3096,6 +3152,14 @@ macro_rules! native_storage {
         _: Token,
       ) -> T {
         f(&nonzero.get())
+      }
+
+      #[inline]
+      fn lend_nonzero<B>(
+        nonzero: &Int<B, core::num::NonZero<$int>>,
+        _: Token,
+      ) -> View<'_, Int<B, Self>> {
+        View::Owned(Int::wrap(nonzero.repr.get()))
       }
 
       #[inline]
