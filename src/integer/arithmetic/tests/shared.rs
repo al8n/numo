@@ -1,10 +1,11 @@
 //! The checks that every heap storage of `Uint`, `Int`, `NonZeroUint` and `NonZeroInt` shares,
 //! generic over the pointer through [`Heap`], with the oracle its inline twin, the array that it
-//! holds; and the shared storages `Rc<[L; N]>` and `Arc<[L; N]>`, against their twins: every row of
-//! the storage cores, the rows that never allocate keeping the pointer and the others giving a
-//! value of its own to a new allocation; values that every owner keeps; each way of building one;
-//! every trait and operator but the compound assignments, which a shared storage does not have;
-//! the non-zero integers; the layout and the auto traits; and serde.
+//! holds; and the shared storages `Rc<[L; N]>`, `Arc<[L; N]>` and `triomphe::Arc<[L; N]>`, against
+//! their twins: every row of the storage cores, the rows that never allocate keeping the pointer
+//! and the others giving a value of its own to a new allocation; values that every owner keeps;
+//! each way of building one; every trait and operator but the compound assignments, which a shared
+//! storage does not have; the non-zero integers; the layout and the auto traits; serde; and the
+//! zero of `triomphe::Arc`, which is moved into its allocation.
 
 use core::{
   cmp::Ordering,
@@ -19,6 +20,8 @@ use std::sync::Arc;
 
 #[cfg(feature = "serde")]
 use serde_core::{Serialize, de::DeserializeOwned};
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+use triomphe::Arc as TriompheArc;
 use typenum::{U20, U300};
 
 use super::*;
@@ -32,9 +35,9 @@ use crate::{
   width::{ArrayLimb, ArrayRepr, IntCore, ReprLimb, UintCore, View},
 };
 
-/// A heap storage of the array `[L; N]`, as the checks build and read it: `Box`, `Rc` and `Arc`.
-/// The supertraits are the storage traits of the pointer, whose associated storages are the pointer
-/// itself, as those of the array are the array.
+/// A heap storage of the array `[L; N]`, as the checks build and read it: `Box`, `Rc`, `Arc` and
+/// `triomphe::Arc`. The supertraits are the storage traits of the pointer, whose associated
+/// storages are the pointer itself, as those of the array are the array.
 pub(super) trait Heap<L, const N: usize>:
   Clone
   + Debug
@@ -94,6 +97,8 @@ heap!(Box, true);
 heap!(Rc, false);
 #[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
 heap!(Arc, false);
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+heap!(TriompheArc, false);
 
 /// A result of a row of a heap storage, as the result of the row of its array: each storage in it
 /// replaced by the array that it holds.
@@ -1475,6 +1480,7 @@ macro_rules! uint_results {
     results
   }};
 }
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub(super) use uint_results;
 
 /// The results of every trait and operator of `Int` but the compound assignments on `$a` and `$b`,
@@ -1494,6 +1500,7 @@ macro_rules! int_results {
     results
   }};
 }
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub(super) use int_results;
 
 /// Emits a function that checks `$integer` of `B` bits in the heap storage `P` of `[L; N]`, which
@@ -1535,6 +1542,7 @@ macro_rules! traits_agree {
     }
   };
 }
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub(super) use traits_agree;
 
 traits_agree!(uint_traits_agree, Uint, false, uint_results);
@@ -1783,6 +1791,7 @@ macro_rules! unsigned_nonzero {
     unsigned_nonzero_methods($a, $b)
   };
 }
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub(super) use unsigned_nonzero;
 
 /// The results of the methods of `SignedNonZero` on `$a`.
@@ -1791,6 +1800,7 @@ macro_rules! signed_nonzero {
     signed_nonzero_methods($a)
   };
 }
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub(super) use signed_nonzero;
 
 nonzero_agree!(
@@ -2129,5 +2139,51 @@ mod arc {
     send_and_sync::<Int<U20, Arc<[u8; 3]>>>();
     send_and_sync::<NonZeroUint<U256, Arc<[u64; 4]>>>();
     send_and_sync::<NonZeroInt<U20, Arc<[u8; 3]>>>();
+  }
+}
+
+/// `triomphe::Arc<[L; N]>`.
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+mod triomphe_arc {
+  use typenum::U65536;
+
+  use super::*;
+
+  shared_tests!(TriompheArc);
+
+  /// The integers and the non-zero integers in a `triomphe::Arc` are `Send` and `Sync`, as the
+  /// pointer is.
+  #[test]
+  fn integers_are_send_and_sync() {
+    send_and_sync::<Uint<U256, TriompheArc<[u64; 4]>>>();
+    send_and_sync::<Int<U20, TriompheArc<[u8; 3]>>>();
+    send_and_sync::<NonZeroUint<U256, TriompheArc<[u64; 4]>>>();
+    send_and_sync::<NonZeroInt<U20, TriompheArc<[u8; 3]>>>();
+  }
+
+  /// Checks that zero of `B` bits in `N` 64-bit limbs in a `triomphe::Arc`, through
+  /// `FixedInteger::zero` and `Default`, has zero limbs, in both signs. The function is
+  /// `#[inline(never)]`, so that its frame holds the values of this width alone.
+  #[inline(never)]
+  fn zero_of<B: FitsBits<TriompheArc<[u64; N]>>, const N: usize>() {
+    let uint = <Uint<B, TriompheArc<[u64; N]>> as FixedInteger>::zero();
+    assert_eq!(uint.as_limbs(), &[0; N]);
+    assert_eq!(Uint::<B, TriompheArc<[u64; N]>>::default(), uint);
+    let int = <Int<B, TriompheArc<[u64; N]>> as FixedInteger>::zero();
+    assert_eq!(int.as_limbs(), &[0; N]);
+    assert_eq!(Int::<B, TriompheArc<[u64; N]>>::default(), int);
+  }
+
+  /// The zero of a `triomphe::Arc`, the one zero of a heap storage that is built as an array and
+  /// moved into its allocation, is zero in no limbs, at 256 and 4096 bits and, in an optimized
+  /// build, at 65536 bits, each width in a frame of its own.
+  #[test]
+  fn zero_is_moved_into_its_allocation() {
+    zero_of::<U0, 0>();
+    zero_of::<U256, 4>();
+    zero_of::<U4096, 64>();
+    if tier().is_full() {
+      zero_of::<U65536, 1024>();
+    }
   }
 }

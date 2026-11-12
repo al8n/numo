@@ -110,12 +110,17 @@ jobs:
           rustup target add ${{ matrix.target }}
           case "${{ matrix.target }}" in
             # A bare-metal target has no `std`, so it builds without the default `std` feature,
-            # and with `alloc` it builds the heap storages.
+            # and with `alloc` it builds the heap storages. `triomphe` needs atomic pointers, which
+            # `thumbv6m-none-eabi` does not have.
             *-none-*)
               cargo build --target ${{ matrix.target }} --no-default-features
               cargo build --target ${{ matrix.target }} --no-default-features --features serde
               cargo build --target ${{ matrix.target }} --no-default-features --features alloc
               cargo build --target ${{ matrix.target }} --no-default-features --features alloc,serde
+              if [ "${{ matrix.target }}" = thumbv7em-none-eabihf ]; then
+                cargo build --target ${{ matrix.target }} --no-default-features --features triomphe
+                cargo build --target ${{ matrix.target }} --no-default-features --features alloc,triomphe
+              fi
               ;;
             *)
               cargo build --target ${{ matrix.target }}
@@ -151,7 +156,8 @@ jobs:
         path: ~/.cargo
         key: ${{ runner.os }}-coverage-dotcargo
     # A tier turns on its own feature, the feature of an optional dependency turns on no tier of
-    # this crate, and a build without `std` has no `std` feature of any crate on. `cargo tree`
+    # this crate, a build without `std` has no `std` feature of any crate on, and `std` forwards to
+    # `triomphe` only where `triomphe` is on. `cargo tree`
     # lists the packages of a build of the target, this crate first, each with the features that it
     # has on, without the dev-dependencies, the build scripts and the proc macros of the host, and a
     # feature is matched as a whole item of a list.
@@ -172,20 +178,30 @@ jobs:
             exit 1
           fi
         done
-        for feature in serde arbitrary proptest quickcheck; do
+        for feature in serde arbitrary proptest quickcheck triomphe; do
           lines=$(packages "$feature")
           if listing 'std|alloc' <<<"${lines%%$'\n'*}"; then
             echo "::error::the feature $feature turns on a tier of this crate"
             exit 1
           fi
         done
-        for features in '' alloc serde alloc,serde; do
+        for features in '' alloc serde alloc,serde triomphe alloc,serde,triomphe; do
           lines=$(packages "$features")
           if listing std <<<"$lines"; then
             echo "::error::a build with the features '$features' has a std feature on"
             exit 1
           fi
         done
+        lines=$(packages std,triomphe)
+        if ! grep -E '^triomphe v' <<<"$lines" | listing std; then
+          echo "::error::--features std,triomphe does not turn on std of triomphe"
+          exit 1
+        fi
+        lines=$(packages std)
+        if grep -E '^triomphe v' <<<"$lines"; then
+          echo "::error::--features std turns on triomphe"
+          exit 1
+        fi
     - name: Run build
       run: cargo hack build --feature-powerset --depth 2
   
@@ -219,13 +235,13 @@ jobs:
         key: ${{ runner.os }}-coverage-dotcargo
     - name: Run test
       run: cargo hack test --each-feature
-    - name: Run the arithmetic tests without overflow checks and the Full tier of the integer serde tests
-      run: cargo test --release --lib --features serde integer::arithmetic
+    - name: Run the arithmetic tests without overflow checks and the Full tier of the integer serde and triomphe tests
+      run: cargo test --release --lib --features serde,triomphe integer::arithmetic
     # A process of its own, with the features of the step before, so that nothing is built again:
     # the tests of the integers and those of the decimals each capture panics with a hook that they
     # install, and a panic that fell while the other hook was being installed would not be captured.
     - name: Run the decimal operators without overflow checks
-      run: cargo test --release --lib --features serde decimal::tests::operators
+      run: cargo test --release --lib --features serde,triomphe decimal::tests::operators
   
   sanitizer:
     name: sanitizer-${{ matrix.sanitizer }}

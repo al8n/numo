@@ -17,7 +17,7 @@ harness = false
 [features]
 default = ["std"]
 alloc = []
-std = ["thiserror/default"]
+std = ["thiserror/default", "triomphe?/std"]
 
 # Only `serde_core`, without default features: turns on no feature of any other crate in a build.
 serde = ["dep:serde_core"]
@@ -29,6 +29,9 @@ proptest = ["dep:proptest"]
 # `quickcheck` without its default features, `regex` and `use_logging`: generation and shrinking
 # for property tests on a hosted target. Its trait makes shrinking return a boxed iterator.
 quickcheck = ["dep:quickcheck"]
+# `triomphe` without its default features: its `Arc` as a heap storage, on a target with atomic
+# pointers. `std` gives it its own `std` feature.
+triomphe = ["dep:triomphe"]
 
 [dependencies]
 derive_more = { version = "2", default-features = false, features = ["is_variant", "display"] }
@@ -39,6 +42,7 @@ arbitrary = { version = "1", optional = true }
 proptest = { version = "1", default-features = false, features = ["std"], optional = true }
 quickcheck = { version = "1", default-features = false, optional = true }
 serde_core = { version = "1", default-features = false, optional = true }
+triomphe = { version = "0.1", default-features = false, optional = true }
 
 
 [dev-dependencies]

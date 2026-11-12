@@ -1,12 +1,15 @@
-//! The integers in a heap storage, an array of limbs `[L; N]` in a `Box`, an `Rc` or an `Arc`:
-//! their limbs, through [`ArrayInteger`] and [`FromLimbs`], and the conversions of the pointer into
-//! and out of an integer, which move the pointer and copy no limb.
+//! The integers in a heap storage, an array of limbs `[L; N]` in a `Box`, an `Rc`, an `Arc` or a
+//! `triomphe::Arc`: their limbs, through [`ArrayInteger`] and [`FromLimbs`], and the conversions of
+//! the pointer into and out of an integer, which move the pointer and copy no limb.
 
 use core::borrow::Borrow;
 #[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
 use std::sync::Arc;
 #[cfg(any(feature = "std", feature = "alloc"))]
 use std::{boxed::Box, rc::Rc};
+
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+use triomphe::Arc as TriompheArc;
 
 use super::{ArrayInteger, FromLimbs, Int, Uint, bytes::strict_limbs_slice};
 use crate::{
@@ -158,6 +161,13 @@ heap_integers!(Rc, [any(feature = "std", feature = "alloc")]; Uint: UintCore, In
 heap_integers!(
   Arc,
   [all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr")];
+  Uint: UintCore,
+  Int: IntCore
+);
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+heap_integers!(
+  TriompheArc,
+  [all(feature = "triomphe", target_has_atomic = "ptr")];
   Uint: UintCore,
   Int: IntCore
 );

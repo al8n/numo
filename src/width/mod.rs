@@ -16,7 +16,11 @@ use typenum::{
 };
 
 pub use array_size::ArraySize;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
 pub(crate) use heap::{ArrayLimb, ArrayRepr};
 pub(crate) use sealed::{
   InlineIntConsts, InlineUintConsts, IntCore, IntWidth, ReprLimb, TypenumNumber, UintCore,
@@ -39,7 +43,11 @@ use crate::{
 };
 
 mod array_size;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
 mod heap;
 
 mod sealed {
@@ -1160,7 +1168,8 @@ impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
 /// `u128`, holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first. With
 /// the `std` or the `alloc` feature, such an array in a `Box`, an `Rc` or an `Arc`, as in
-/// `Box<[L; N]>`, holds it in its allocation (see [Heap storages](crate::Uint#heap-storages)).
+/// `Box<[L; N]>`, holds it in its allocation, and so does such an array in a `triomphe::Arc` with
+/// the `triomphe` feature (see [Heap storages](crate::Uint#heap-storages)).
 ///
 /// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
@@ -1179,7 +1188,7 @@ impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
 /// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
-  note = "`Uint` stores an unsigned native integer, `u8` to `u128`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature"
+  note = "`Uint` stores an unsigned native integer, `u8` to `u128`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature, or in a `triomphe::Arc`, with the `triomphe` feature"
 )]
 pub trait UintRepr:
   Eq + UintCore<Complement = <Self as UintRepr>::Signed, NonZeroStorage = <Self as UintRepr>::NonZero>
@@ -1203,8 +1212,8 @@ pub trait UintRepr:
 /// holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first, in
 /// two's complement. With the `std` or the `alloc` feature, such an array in a `Box`, an `Rc` or
-/// an `Arc`, as in `Box<[L; N]>`, holds it in its allocation (see
-/// [Heap storages](crate::Uint#heap-storages)).
+/// an `Arc`, as in `Box<[L; N]>`, holds it in its allocation, and so does such an array in a
+/// `triomphe::Arc` with the `triomphe` feature (see [Heap storages](crate::Uint#heap-storages)).
 ///
 /// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
@@ -1223,7 +1232,7 @@ pub trait UintRepr:
 /// outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
-  note = "`Int` stores a signed native integer, `i8` to `i128`, an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature"
+  note = "`Int` stores a signed native integer, `i8` to `i128`, an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature, or in a `triomphe::Arc`, with the `triomphe` feature"
 )]
 pub trait IntRepr:
   Eq + IntCore<Magnitude = <Self as IntRepr>::Unsigned, NonZeroStorage = <Self as IntRepr>::NonZero>
@@ -1244,7 +1253,8 @@ pub trait IntRepr:
 /// `NonZero<u32>`, `NonZero<u64>` or `NonZero<u128>`, which holds a value that is not zero, or an
 /// array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, which holds it in `N` limbs,
 /// least significant first, as for [`Uint`](crate::Uint), and with the `std` or the `alloc`
-/// feature such an array in a `Box`, an `Rc` or an `Arc`.
+/// feature such an array in a `Box`, an `Rc` or an `Arc`, or with the `triomphe` feature in a
+/// `triomphe::Arc`.
 ///
 /// Each is the [`NonZero`](UintRepr::NonZero) of a storage of `Uint`, its
 /// [`Integer`](Self::Integer). `NonZeroUint<Bits, Repr>` implements `Clone`, `Eq`, `Ord`, `Hash`,
@@ -1256,7 +1266,7 @@ pub trait IntRepr:
 /// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `NonZeroUint`",
-  note = "`NonZeroUint` stores `core::num::NonZero<u8>` to `NonZero<u128>`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature"
+  note = "`NonZeroUint` stores `core::num::NonZero<u8>` to `NonZero<u128>`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature, or in a `triomphe::Arc`, with the `triomphe` feature"
 )]
 pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
   /// The storage of the integer that may be zero: `u8` for `core::num::NonZero<u8>`, and so on,
@@ -1276,7 +1286,8 @@ pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
 /// `NonZero<i32>`, `NonZero<i64>` or `NonZero<i128>`, which holds a value that is not zero, or an
 /// array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, which holds it in `N` limbs,
 /// least significant first, in two's complement, as for [`Int`](crate::Int), and with the `std` or
-/// the `alloc` feature such an array in a `Box`, an `Rc` or an `Arc`.
+/// the `alloc` feature such an array in a `Box`, an `Rc` or an `Arc`, or with the `triomphe`
+/// feature in a `triomphe::Arc`.
 ///
 /// Each is the [`NonZero`](IntRepr::NonZero) of a storage of `Int`, its
 /// [`Integer`](Self::Integer). `NonZeroInt<Bits, Repr>` implements the traits of
@@ -1285,7 +1296,7 @@ pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
 /// This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `NonZeroInt`",
-  note = "`NonZeroInt` stores `core::num::NonZero<i8>` to `NonZero<i128>`, an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature"
+  note = "`NonZeroInt` stores `core::num::NonZero<i8>` to `NonZero<i128>`, an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature, or in a `triomphe::Arc`, with the `triomphe` feature"
 )]
 pub trait NonZeroIntRepr: Eq + Clone + NonZeroRepr {
   /// The storage of the integer that may be zero: `i8` for `core::num::NonZero<i8>`, and so on,
@@ -1305,18 +1316,18 @@ pub trait NonZeroIntRepr: Eq + Clone + NonZeroRepr {
 /// compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=` and `>>=`.
 ///
 /// The native unsigned integers, the arrays of limbs and the boxes of them implement it, and the
-/// shared heap storages, an `Rc` or an `Arc` of an array, do not. With it, `Uint` also has `/=` and
-/// `%=` by a [`NonZeroUint`](crate::NonZeroUint), the `NonZeroUint` over its
-/// [`NonZero`](UintRepr::NonZero) has `|=`, and where the storage is `Clone`, as every storage of
-/// this crate is, `Uint` implements [`IntegerAssign`](crate::IntegerAssign). This trait is sealed
-/// and cannot be implemented outside this crate.
+/// shared heap storages, an `Rc`, an `Arc` or a `triomphe::Arc` of an array, do not. With it,
+/// `Uint` also has `/=` and `%=` by a [`NonZeroUint`](crate::NonZeroUint), the `NonZeroUint` over
+/// its [`NonZero`](UintRepr::NonZero) has `|=`, and where the storage is `Clone`, as every storage
+/// of this crate is, `Uint` implements [`IntegerAssign`](crate::IntegerAssign). This trait is
+/// sealed and cannot be implemented outside this crate.
 pub trait UintReprMut: UintRepr + MutableRepr {}
 
 /// A storage of [`Int`](crate::Int) that holds the value in place, so that the integers have the
 /// compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=` and `>>=`.
 ///
 /// The native signed integers, the arrays of limbs and the boxes of them implement it, and the
-/// shared heap storages, an `Rc` or an `Arc` of an array, do not. With it, the
+/// shared heap storages, an `Rc`, an `Arc` or a `triomphe::Arc` of an array, do not. With it, the
 /// [`NonZeroInt`](crate::NonZeroInt) over its [`NonZero`](IntRepr::NonZero) has `|=`, and where
 /// the storage is `Clone`, as every storage of this crate is, `Int` implements
 /// [`IntegerAssign`](crate::IntegerAssign). This trait is sealed and cannot be implemented outside

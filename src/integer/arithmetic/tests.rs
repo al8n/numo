@@ -2381,7 +2381,11 @@ mod powers;
 mod serde;
 #[cfg(feature = "serde")]
 mod serde_helpers;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
 mod shared;
 mod shifts;
 mod text;

@@ -1,6 +1,7 @@
 //! The heap storages of [`Uint`](crate::Uint) and [`Int`](crate::Int) and of their non-zero
 //! integers: an array of limbs `[L; N]` in a `Box` or an `Rc`, and on a target with atomic
-//! pointers in an `Arc`, with the `std` or the `alloc` feature.
+//! pointers in an `Arc`, with the `std` or the `alloc` feature; and on such a target in a
+//! `triomphe::Arc`, with the `triomphe` feature.
 //!
 //! The array is the inline storage of the pointer, `Inline`, whose rows compute every value. Each
 //! row of a heap storage lends the arrays of its operands to the row of the same name of the
@@ -30,6 +31,8 @@ use crate::{
   int::float::{FloatFormat, FloatParts},
   layout::Token,
 };
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+use triomphe::Arc as TriompheArc;
 
 /// A limb type of an array storage, `u8`, `u16`, `u32`, `u64` or `u128`, whose zero builds the zero
 /// of a heap storage in its allocation.
@@ -112,6 +115,15 @@ fn arc_zero<L: ArrayLimb, const N: usize>() -> Arc<[L; N]> {
     Ok(zero) => zero,
     Err(_) => length(),
   }
+}
+
+/// The zero of `N` limbs in a `triomphe::Arc`, which has no conversion of a slice into an array:
+/// the zeroed array is moved into its allocation, in one allocation of the count and the limbs. An
+/// optimized build zeroes the limbs in the allocation; an unoptimized one builds the array on the
+/// stack first.
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+fn triomphe_zero<L: ArrayLimb, const N: usize>() -> TriompheArc<[L; N]> {
+  TriompheArc::new([L::ZERO; N])
 }
 
 /// Panics on a slice of limbs whose length is not that of its array: a bug of this crate, as the
@@ -861,4 +873,11 @@ heap_storage!(
     any(feature = "std", feature = "alloc"),
     target_has_atomic = "ptr"
   )]
+);
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+heap_storage!(
+  TriompheArc,
+  triomphe_zero,
+  shared,
+  [all(feature = "triomphe", target_has_atomic = "ptr")]
 );

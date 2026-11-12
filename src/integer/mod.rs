@@ -47,7 +47,11 @@ mod nonzero;
 mod cast;
 mod compare;
 mod convert;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
 mod heap;
 #[cfg(feature = "serde")]
 mod serde;

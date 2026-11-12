@@ -6,7 +6,7 @@ error[E0277]: `String` is not a storage of `NonZeroUint`
   |   |
   |   required by a bound introduced by this call
   |
-  = note: `NonZeroUint` stores `core::num::NonZero<u8>` to `NonZero<u128>`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature
+  = note: `NonZeroUint` stores `core::num::NonZero<u8>` to `NonZero<u128>`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature, or in a `triomphe::Arc`, with the `triomphe` feature
   = help: the following other types implement trait `NonZeroUintRepr`:
             Arc<[L; N]>
             Box<[L; N]>
