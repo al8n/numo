@@ -114,6 +114,15 @@ FEATURES
   float prints the same digits. Floats never read. A non-zero integer is written as its integer, and
   zero does not read. No error that numo builds names the input; an error that a format builds
   without numo's description of the expected input passes through as the format wrote it.
+- The public module `numo::serde`, with helpers for `#[serde(with = "...")]`, each a module with the
+  leaves `required`, for a field of the type, and `optional`, for an `Option` of it, which take
+  numo's integers and the native integers through a sealed trait: `decimal` writes and reads the
+  decimal text at every width; `quantity` Ethereum's JSON-RPC QUANTITY, `0x` and the lowercase
+  hexadecimal digits without leading zeros, for unsigned integers, read as go-ethereum's `hexutil`
+  decodes a number; `fixed_hex` `0x` and two hexadecimal digits for each byte of the width, a
+  negative `Int` as the pattern of its `Bits` bits; `typed` writes the default form and reads only
+  that form, by the type in every format: for formats that cannot describe their values, and for
+  fields that must not take the other form.
 - The `arbitrary`, `proptest` and `quickcheck` features: the `Arbitrary` trait of each crate for
   `Decimal` and `RoundingMode`, for fuzzing and property tests on a target with `std`. One generator
   serves all three: an edge value one time in eight (zero, one unit in the last place, one, `MAX`,
