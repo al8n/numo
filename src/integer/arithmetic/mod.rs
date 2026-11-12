@@ -34,7 +34,9 @@ use crate::{
 };
 
 /// Passes the overflowing methods of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
-// The inherent `unchecked_*` methods rely on the shape of these rows, as `checked_table!` explains.
+// The rows of `checked_table!` and the inherent `unchecked_*` methods make the calls of these
+// rows, so that `unchecked_*` returns the value of `wrapping_*`; the safety of `unchecked_*` rests
+// on the flags of those calls, as `checked_table!` explains.
 macro_rules! overflowing_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -146,55 +148,58 @@ macro_rules! overflowing_table {
 }
 
 /// Passes the checked methods of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
-// The safety argument of the inherent `unchecked_*` methods, in `integer`, relies on the shape of
-// these rows and of those of `overflowing_table!`: `checked_*` matches on the flag of
-// `overflowing_*`, which is `prim pair overflowing_*_bits(..)` and so passes `Self::BITS`.
-// `unchecked_*` passes the flag of the same `overflowing_*_bits` call to `assert_unchecked`, or at
-// the full width of a native integer calls the native `unchecked_*`, whose precondition is then
-// that flag: either way it assumes exactly what `checked_*` tests. This holds for the addition,
-// the subtraction, the multiplication, the negation and the shifts: `checked_shl` and
-// `checked_shr` match on the flag of `prim pair overflowing_shl_bits(self; rhs)` and
-// `prim pair overflowing_shr_bits(self; rhs)`, which pass `rhs` and then `Self::BITS`, and whose
-// flag is `rhs >= Bits`, set for every amount at zero bits. A change to either shape requires
-// revisiting those unsafe blocks.
+// The unsafe blocks of the inherent `unchecked_*` methods, in `integer`, rely on the shape of
+// these rows. `checked_add`, `checked_sub`, `checked_mul`, `checked_neg`, `checked_shl` and
+// `checked_shr` call `overflowing_*_bits` of the storage on the operands, with the amount of a
+// shift and then `Self::BITS`, and return `None` exactly when its flag is set; for the shifts the
+// flag is `rhs >= Bits`, set for every amount at zero bits. `unchecked_*` makes the same call on
+// the same storage and passes that flag to `assert_unchecked`, or at the full width of a native
+// integer calls the native `unchecked_*`, whose precondition is then that flag: either way it
+// assumes exactly what `checked_*` tests. `checked_div_exact` returns `Some` exactly when
+// `checked_div_exact_bits` does, and `unchecked_div_exact` unwraps that value. A change to the
+// call or to the flag of one of these rows requires revisiting those unsafe blocks.
 macro_rules! checked_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
       /// Checked addition: `self + rhs`, or `None` if the sum is outside the range of the type.
-      fn checked_add(&self, rhs: &Self) -> Option<Self> {
-        match self.overflowing_add(rhs) {
-          (sum, false) => Some(sum),
-          (_, true) => None,
+      fn checked_add(&self, rhs: &Self) -> Option<Self>
+        = prim overflowing_add_bits(self, rhs; Self::BITS) as sum {
+          match sum {
+            (sum, false) => Some(Self::of(sum)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked subtraction: `self - rhs`, or `None` if the difference is outside the range of
       /// the type.
-      fn checked_sub(&self, rhs: &Self) -> Option<Self> {
-        match self.overflowing_sub(rhs) {
-          (difference, false) => Some(difference),
-          (_, true) => None,
+      fn checked_sub(&self, rhs: &Self) -> Option<Self>
+        = prim overflowing_sub_bits(self, rhs; Self::BITS) as difference {
+          match difference {
+            (difference, false) => Some(Self::of(difference)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked multiplication: `self * rhs`, or `None` if the product is outside the range of
       /// the type.
-      fn checked_mul(&self, rhs: &Self) -> Option<Self> {
-        match self.overflowing_mul(rhs) {
-          (product, false) => Some(product),
-          (_, true) => None,
+      fn checked_mul(&self, rhs: &Self) -> Option<Self>
+        = prim overflowing_mul_bits(self, rhs; Self::BITS) as product {
+          match product {
+            (product, false) => Some(Self::of(product)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked negation: `-self`, or `None` if it is outside the range of the type: for `Uint`
       /// unless `self` is zero, and for `Int` if `self` is `MIN`, except at zero bits, where `MIN`
       /// is zero.
-      fn checked_neg(&self) -> Option<Self> {
-        match self.overflowing_neg() {
-          (negated, false) => Some(negated),
-          (_, true) => None,
+      fn checked_neg(&self) -> Option<Self>
+        = prim overflowing_neg_bits(self; Self::BITS) as negated {
+          match negated {
+            (negated, false) => Some(Self::of(negated)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked division: `self / rhs` rounded toward zero, or `None` if `rhs` is zero or the
       /// quotient is outside the range of the type, as it is only for `Int` when `self` is `MIN`
@@ -242,31 +247,34 @@ macro_rules! checked_table {
 
       /// Checked exponentiation: `self^exp`, or `None` if the power is outside the range of the
       /// type, as `self^0`, one, is at zero bits and for `Int` of one bit.
-      fn checked_pow(&self, exp: u32) -> Option<Self> {
-        match self.overflowing_pow(exp) {
-          (power, false) => Some(power),
-          (_, true) => None,
+      fn checked_pow(&self, exp: u32) -> Option<Self>
+        = prim overflowing_pow_bits(self; exp, Self::BITS) as power {
+          match power {
+            (power, false) => Some(Self::of(power)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked shift left: `self << rhs`, or `None` if `rhs` is `Bits` or more, as every amount
       /// is at zero bits. The bits shifted out at the top are lost, as for the native method;
       /// [`shl_exact`](crate::IntegerBits::shl_exact) returns `None` for them instead.
-      fn checked_shl(&self, rhs: u32) -> Option<Self> {
-        match self.overflowing_shl(rhs) {
-          (shifted, false) => Some(shifted),
-          (_, true) => None,
+      fn checked_shl(&self, rhs: u32) -> Option<Self>
+        = prim overflowing_shl_bits(self; rhs, Self::BITS) as shifted {
+          match shifted {
+            (shifted, false) => Some(Self::of(shifted)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked shift right: `self >> rhs`, arithmetic for `Int`, or `None` if `rhs` is `Bits`
       /// or more, as every amount is at zero bits.
-      fn checked_shr(&self, rhs: u32) -> Option<Self> {
-        match self.overflowing_shr(rhs) {
-          (shifted, false) => Some(shifted),
-          (_, true) => None,
+      fn checked_shr(&self, rhs: u32) -> Option<Self>
+        = prim overflowing_shr_bits(self; rhs, Self::BITS) as shifted {
+          match shifted {
+            (shifted, false) => Some(Self::of(shifted)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked next multiple: for a positive `rhs`, the smallest multiple of `rhs` at least
       /// `self`, and for a negative `rhs`, which only `Int` has, the largest multiple of `rhs` at
