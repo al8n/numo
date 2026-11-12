@@ -3,14 +3,21 @@
 //! the same name on its array, with the pointers of the rows that never allocate; the layout and
 //! the auto traits of the boxed integers; and each way of building one.
 
-use core::{cmp::Ordering, fmt, hash::Hasher, ops::Shl};
+use core::{
+  cmp::Ordering,
+  fmt,
+  hash::{Hash, Hasher},
+  ops::Shl,
+};
 
-use typenum::{U20, U300};
+use typenum::{U20, U300, U65536};
 
 use super::*;
 use crate::{
-  ArrayInteger, BoundedCastFrom, ByteArray, CheckedCastFrom, FillsRepr, FromByteArray,
-  FromFloatError, FromLimbs, IntegerBytes, IntegerFloat, NonZeroInt, NonZeroUint, WidenFrom,
+  ArrayInteger, BoundedCastFrom, ByteArray, CheckedCastFrom, FillsRepr, FixedNonZero,
+  FromByteArray, FromFloatError, FromLimbs, IntRepr, IntegerBytes, IntegerFloat, NonZeroInt,
+  NonZeroIntRepr, NonZeroLimits, NonZeroUint, NonZeroUintRepr, SignedNonZero, UintRepr,
+  UnsignedNonZero, WidenFrom,
   bigint::floats,
   int::float::{FloatFormat, FloatParts, float_parts_f64},
   layout::Token,
@@ -974,4 +981,1374 @@ fn construction_of_boxed_integers() {
     U::from_le_bytes(bytes).to_be_bytes(),
     u256::from_le_bytes(bytes).to_be_bytes()
   );
+}
+
+/// The limbs of `value`, which compare an integer in a box with its inline twin.
+fn limbs<T: ArrayInteger>(value: T) -> T::Array {
+  value.into_limbs()
+}
+
+/// The limbs of the integer of a pair, and its flag.
+fn flagged<T: ArrayInteger>((value, flag): (T, bool)) -> (T::Array, bool) {
+  (value.into_limbs(), flag)
+}
+
+/// The results of the families of overflowing, checked, wrapping, saturating and strict arithmetic
+/// on `a` and `b`, and on `a` with the exponent and the amount `n`, as the limbs of the integers
+/// that they return, each where it does not panic: a division where `b` is not zero, and a strict
+/// method where the checked one returns a value.
+#[inline(never)]
+fn arithmetic_families<T>(a: &T, b: &T, n: u32) -> Vec<String>
+where
+  T: FixedInteger
+    + OverflowingOps
+    + CheckedOps
+    + WrappingOps
+    + SaturatingOps
+    + StrictOps
+    + ArrayInteger<Array: Debug>,
+{
+  let divides = !b.is_zero();
+  vec![
+    format!(
+      "{:?}",
+      [
+        flagged(a.overflowing_add(b)),
+        flagged(a.overflowing_sub(b)),
+        flagged(a.overflowing_mul(b)),
+        flagged(a.overflowing_neg()),
+        flagged(a.overflowing_pow(n)),
+        flagged(a.overflowing_shl(n)),
+        flagged(a.overflowing_shr(n)),
+      ]
+    ),
+    format!(
+      "{:?}",
+      divides.then(|| [
+        flagged(a.overflowing_div(b)),
+        flagged(a.overflowing_rem(b)),
+        flagged(a.overflowing_div_euclid(b)),
+        flagged(a.overflowing_rem_euclid(b)),
+      ])
+    ),
+    format!(
+      "{:?}",
+      [
+        a.checked_add(b).map(limbs),
+        a.checked_sub(b).map(limbs),
+        a.checked_mul(b).map(limbs),
+        a.checked_neg().map(limbs),
+        a.checked_div(b).map(limbs),
+        a.checked_rem(b).map(limbs),
+        a.checked_div_euclid(b).map(limbs),
+        a.checked_rem_euclid(b).map(limbs),
+        a.checked_pow(n).map(limbs),
+        a.checked_shl(n).map(limbs),
+        a.checked_shr(n).map(limbs),
+        a.checked_next_multiple_of(b).map(limbs),
+        a.checked_div_exact(b).map(limbs),
+      ]
+    ),
+    format!(
+      "{:?}",
+      [
+        limbs(a.wrapping_add(b)),
+        limbs(a.wrapping_sub(b)),
+        limbs(a.wrapping_mul(b)),
+        limbs(a.wrapping_neg()),
+        limbs(a.wrapping_pow(n)),
+        limbs(a.wrapping_shl(n)),
+        limbs(a.wrapping_shr(n)),
+        limbs(a.saturating_add(b)),
+        limbs(a.saturating_sub(b)),
+        limbs(a.saturating_mul(b)),
+        limbs(a.saturating_pow(n)),
+      ]
+    ),
+    format!(
+      "{:?}",
+      divides.then(|| [
+        limbs(a.wrapping_div(b)),
+        limbs(a.wrapping_rem(b)),
+        limbs(a.wrapping_div_euclid(b)),
+        limbs(a.wrapping_rem_euclid(b)),
+        limbs(a.saturating_div(b)),
+      ])
+    ),
+    format!(
+      "{:?}",
+      [
+        a.checked_add(b).map(|_| limbs(a.strict_add(b))),
+        a.checked_sub(b).map(|_| limbs(a.strict_sub(b))),
+        a.checked_mul(b).map(|_| limbs(a.strict_mul(b))),
+        a.checked_neg().map(|_| limbs(a.strict_neg())),
+        a.checked_div(b).map(|_| limbs(a.strict_div(b))),
+        a.checked_rem(b).map(|_| limbs(a.strict_rem(b))),
+        a.checked_div_euclid(b)
+          .map(|_| limbs(a.strict_div_euclid(b))),
+        a.checked_rem_euclid(b)
+          .map(|_| limbs(a.strict_rem_euclid(b))),
+        a.checked_pow(n).map(|_| limbs(a.strict_pow(n))),
+        a.checked_shl(n).map(|_| limbs(a.strict_shl(n))),
+        a.checked_shr(n).map(|_| limbs(a.strict_shr(n))),
+      ]
+    ),
+  ]
+}
+
+/// The results of the functions of `IntegerMath` on `a` and `b`, and on `a` with the exponent and
+/// the degree `n`, as the limbs of the integers that they return, each where it does not panic,
+/// which the checked method of the same operation decides.
+#[inline(never)]
+fn math<T>(a: &T, b: &T, n: u32) -> Vec<String>
+where
+  T: CheckedOps + IntegerMath<Magnitude: ArrayInteger<Array: Debug>> + ArrayInteger<Array: Debug>,
+{
+  vec![
+    format!("{:?}", a.checked_pow(n).map(|_| limbs(a.pow(n)))),
+    format!(
+      "{:?}",
+      [
+        a.checked_div_euclid(b).map(|_| limbs(a.div_euclid(b))),
+        a.checked_rem_euclid(b).map(|_| limbs(a.rem_euclid(b))),
+        a.checked_div(b).map(|_| limbs(a.div_floor(b))),
+        a.checked_div(b).map(|_| limbs(a.div_ceil(b))),
+        a.checked_next_multiple_of(b)
+          .map(|_| limbs(a.next_multiple_of(b))),
+        a.checked_nth_root(2).map(|_| limbs(a.isqrt())),
+        a.checked_nth_root(n).map(limbs),
+        a.checked_nth_root(n).map(|_| limbs(a.nth_root(n))),
+        Some(limbs(a.midpoint(b))),
+      ]
+    ),
+    format!("{:?}", a.checked_div(b).map(|_| a.div_exact(b).map(limbs))),
+    format!(
+      "{:?}",
+      (
+        a.checked_ilog(b),
+        a.checked_ilog2(),
+        a.checked_ilog10(),
+        a.checked_ilog(b).map(|_| a.ilog(b)),
+        a.checked_ilog2().map(|_| (a.ilog2(), a.ilog10())),
+      )
+    ),
+    format!("{:?}", limbs(a.abs_diff(b))),
+  ]
+}
+
+/// The results of the bit operations of `IntegerBits` on `a` with the amount and the index `n`, as
+/// the limbs of the integers that they return, with `set_bit` where `n` is a bit of the width.
+#[inline(never)]
+fn bit_operations<T>(a: &T, n: u32) -> Vec<String>
+where
+  T: FixedInteger + IntegerBits + ArrayInteger<Array: Debug>,
+{
+  let set = (n < T::BITS).then(|| {
+    let (mut set, mut clear) = (a.clone(), a.clone());
+    set.set_bit(n, true);
+    clear.set_bit(n, false);
+    (limbs(set), limbs(clear))
+  });
+  vec![
+    format!(
+      "{:?}",
+      (
+        a.count_ones(),
+        a.count_zeros(),
+        a.leading_zeros(),
+        a.trailing_zeros(),
+        a.leading_ones(),
+        a.trailing_ones(),
+        a.highest_one(),
+        a.lowest_one(),
+        a.bit(n),
+      )
+    ),
+    format!(
+      "{:?}",
+      [
+        limbs(a.isolate_highest_one()),
+        limbs(a.isolate_lowest_one()),
+        limbs(a.reverse_bits()),
+        limbs(a.rotate_left(n)),
+        limbs(a.rotate_right(n)),
+        limbs(a.unbounded_shl(n)),
+        limbs(a.unbounded_shr(n)),
+      ]
+    ),
+    format!(
+      "{:?}",
+      (a.shl_exact(n).map(limbs), a.shr_exact(n).map(limbs), set)
+    ),
+  ]
+}
+
+/// The results of the methods of `Uint` alone, of `UnsignedFixedInteger`, `UnsignedMath` and
+/// `UnsignedBits`, on `a` and `b`, as the limbs of the integers that they return, each where it does
+/// not panic.
+#[inline(never)]
+fn unsigned_methods<T>(a: &T, b: &T) -> Vec<String>
+where
+  T: FixedInteger
+    + UnsignedFixedInteger
+    + UnsignedMath
+    + UnsignedBits<Signed: ArrayInteger<Array: Debug>>
+    + ArrayInteger<Array: Debug>,
+{
+  vec![
+    format!(
+      "{:?}",
+      [
+        flagged(a.carrying_add(b, false)),
+        flagged(a.carrying_add(b, true)),
+        flagged(a.borrowing_sub(b, false)),
+        flagged(a.borrowing_sub(b, true)),
+      ]
+    ),
+    format!(
+      "{:?}",
+      (
+        a.is_multiple_of(b),
+        a.is_power_of_two(),
+        a.bit_width(),
+        a.checked_next_power_of_two().map(limbs),
+        limbs(a.wrapping_next_power_of_two()),
+        a.checked_next_power_of_two()
+          .map(|_| limbs(a.next_power_of_two())),
+      )
+    ),
+    format!(
+      "{:?}",
+      (
+        limbs(a.clone().cast_signed()),
+        a.clone().checked_cast_signed().map(limbs),
+        limbs(a.clone().saturating_cast_signed()),
+        a.clone()
+          .checked_cast_signed()
+          .map(|_| limbs(a.clone().strict_cast_signed())),
+      )
+    ),
+  ]
+}
+
+/// The results of the methods of `Int` alone, of `SignedFixedInteger`, `SignedMath` and
+/// `SignedBits`, and of the negation, on `a`, as the limbs of the integers that they return, each
+/// where it does not panic.
+#[inline(never)]
+fn signed_methods<T>(a: &T) -> Vec<String>
+where
+  T: FixedInteger
+    + SignedFixedInteger<Unsigned: ArrayInteger<Array: Debug>>
+    + SignedMath
+    + SignedBits<Magnitude: ArrayInteger<Array: Debug>>
+    + CheckedOps
+    + ArrayInteger<Array: Debug>,
+{
+  vec![
+    format!(
+      "{:?}",
+      (
+        flagged(a.overflowing_abs()),
+        a.checked_abs().map(limbs),
+        limbs(a.wrapping_abs()),
+        limbs(a.saturating_abs()),
+        limbs(a.saturating_neg()),
+        limbs(a.signum()),
+      )
+    ),
+    format!(
+      "{:?}",
+      (
+        limbs(a.unsigned_abs()),
+        a.is_negative(),
+        a.is_positive(),
+        a.checked_isqrt().map(limbs),
+        a.checked_abs()
+          .map(|_| (limbs(a.strict_abs()), limbs(a.abs()))),
+        a.checked_neg().map(|_| limbs(-a.clone())),
+      )
+    ),
+    format!(
+      "{:?}",
+      (
+        limbs(a.clone().cast_unsigned()),
+        a.clone().checked_cast_unsigned().map(limbs),
+        limbs(a.clone().saturating_cast_unsigned()),
+        a.clone()
+          .checked_cast_unsigned()
+          .map(|_| limbs(a.clone().strict_cast_unsigned())),
+      )
+    ),
+  ]
+}
+
+/// The text of `a` in each format of `FixedInteger`, with flags, and the limbs of the integers
+/// that `FromStr` and `from_str_radix` read from its decimal and hexadecimal text.
+#[inline(never)]
+fn text<T: FixedInteger + ArrayInteger<Array: Debug>>(a: &T) -> Vec<String> {
+  let decimal = a.to_string();
+  let hex = format!("{a:x}");
+  vec![
+    format!("{a} {a:+} {a:_>40} {a:?} {a:b} {a:o} {a:x} {a:X} {a:#x} {a:#010b}"),
+    format!("{a:e} {a:E} {a:.3e} {a:+.1E} {a:>30e}"),
+    format!("{:?}", decimal.parse::<T>().map(limbs)),
+    format!("{:?}", T::from_str_radix(&hex, 16).map(limbs)),
+    format!("{:?}", T::from_str_radix(&decimal, 10).map(limbs)),
+  ]
+}
+
+/// The bytes of `a` through `IntegerBytes`: each byte, and the bytes copied to buffers of each
+/// length up to two more than the width needs, in both orders.
+#[inline(never)]
+fn bytes<T: IntegerBytes>(a: &T) -> Vec<String> {
+  let mut results = vec![format!(
+    "{:?}",
+    (0..T::BYTES)
+      .map(|index| a.byte(index))
+      .collect::<Vec<u8>>()
+  )];
+  for len in 0..=T::BYTES + 2 {
+    let (mut little, mut big) = (vec![0xa5; len], vec![0xa5; len]);
+    let written = (
+      a.checked_copy_le_bytes_to(&mut little),
+      a.checked_copy_be_bytes_to(&mut big),
+    );
+    results.push(format!("{written:?} {little:?} {big:?}"));
+  }
+  results
+}
+
+/// Emits a function that gives the results of the casts of `$integer<B, R>` from a borrowed value
+/// into the native integers and into inline integers of other widths and signs, of the conversions
+/// to the floats, of `TryFrom` into the native integers, of the comparisons with the native
+/// integers both ways and with a second value, and the words that its hash writes.
+macro_rules! conversions {
+  ($name:ident, $integer:ident, $repr:ident) => {
+    #[inline(never)]
+    fn $name<B: FitsBits<R>, R: $repr + Clone>(
+      a: &$integer<B, R>,
+      b: &$integer<B, R>,
+    ) -> Vec<String> {
+      let mut hash = Written::default();
+      a.hash(&mut hash);
+      vec![
+        format!(
+          "{:?}",
+          (
+            u8::checked_cast_from(a),
+            i16::wrapping_cast_from(a),
+            u64::saturating_cast_from(a),
+            i128::checked_cast_from(a),
+            u128::wrapping_cast_from(a),
+          )
+        ),
+        format!(
+          "{:?}",
+          (
+            Uint::<U100, [u32; 4]>::checked_cast_from(a),
+            Int::<U300, [u64; 5]>::wrapping_cast_from(a),
+            Int::<U7, i8>::saturating_cast_from(a),
+          )
+        ),
+        format!("{:?}", (a.to_f64().to_bits(), a.to_f32().to_bits())),
+        format!("{:?}", (u8::try_from(a.clone()), i128::try_from(a.clone()))),
+        format!(
+          "{:?}",
+          (
+            a.partial_cmp(&0u8),
+            a.partial_cmp(&-1i32),
+            a.partial_cmp(&u128::MAX),
+            i64::MIN.partial_cmp(a),
+            *a == 1u64,
+            u16::MAX == *a,
+          )
+        ),
+        format!("{:?}", (a.cmp(b), a == b, hash.0)),
+      ]
+    }
+  };
+}
+
+conversions!(uint_conversions, Uint, UintRepr);
+conversions!(int_conversions, Int, IntRepr);
+
+/// The limbs of the results of the binary operator `$op` and of its assignment `$assign` on the
+/// references `$a` and `$b`, with values and with references in each of the four forms, and the
+/// assignments with a value and with a reference, where `$a.$checked($b)` returns a value: the
+/// operators panic or wrap on overflow as `overflow-checks` decides.
+macro_rules! forms {
+  ($a:expr, $b:expr, $checked:ident, $op:tt, $assign:tt) => {{
+    let (a, b) = ($a, $b);
+    let forms = a.$checked(b).map(|_| {
+      let (mut by_value, mut by_reference) = (a.clone(), a.clone());
+      by_value $assign b.clone();
+      by_reference $assign b;
+      [
+        limbs(a.clone() $op b.clone()),
+        limbs(a.clone() $op b),
+        limbs(a $op b.clone()),
+        limbs(a $op b),
+        limbs(by_value),
+        limbs(by_reference),
+      ]
+    });
+    format!("{forms:?}")
+  }};
+}
+
+/// Emits a function that gives the results of the operators of `$integer<B, R>` on `a` and `b`, and
+/// on `a` with the amount `n`, in the forms of [`forms!`], of the shifts, `!` and `Sum` of values
+/// and of references, as the limbs of the integers, each where the checked method of the
+/// operation returns a value.
+macro_rules! operators {
+  ($name:ident, $integer:ident, $repr_mut:ident) => {
+    #[inline(never)]
+    fn $name<B, R>(a: &$integer<B, R>, b: &$integer<B, R>, n: u32) -> Vec<String>
+    where
+      B: FitsBits<R>,
+      R: $repr_mut + Clone,
+      $integer<B, R>: ArrayInteger<Array: Debug>,
+    {
+      let (mut and, mut or, mut xor) = (a.clone(), a.clone(), a.clone());
+      and &= b;
+      or |= b.clone();
+      xor ^= b;
+      let shifts = |shl: bool| {
+        let mut target = a.clone();
+        if shl {
+          a.checked_shl(n).map(|_| {
+            target <<= n;
+            [limbs(a.clone() << n), limbs(a << n), limbs(target)]
+          })
+        } else {
+          a.checked_shr(n).map(|_| {
+            target >>= n;
+            [limbs(a.clone() >> n), limbs(a >> n), limbs(target)]
+          })
+        }
+      };
+      vec![
+        forms!(a, b, checked_add, +, +=),
+        forms!(a, b, checked_sub, -, -=),
+        forms!(a, b, checked_mul, *, *=),
+        forms!(a, b, checked_div, /, /=),
+        forms!(a, b, checked_rem, %, %=),
+        format!(
+          "{:?}",
+          [
+            limbs(a.clone() & b.clone()),
+            limbs(a.clone() | b),
+            limbs(a ^ b.clone()),
+            limbs(a & b),
+            limbs(and),
+            limbs(or),
+            limbs(xor),
+            limbs(!a.clone()),
+            limbs(!a),
+          ]
+        ),
+        format!("{:?}", (shifts(true), shifts(false))),
+        format!(
+          "{:?}",
+          a.checked_add(b).map(|_| [
+            limbs([a.clone(), b.clone()].into_iter().sum::<$integer<B, R>>()),
+            limbs([a, b].into_iter().sum::<$integer<B, R>>()),
+          ])
+        ),
+      ]
+    }
+  };
+}
+
+operators!(uint_operators, Uint, UintReprMut);
+operators!(int_operators, Int, IntReprMut);
+
+/// The ten compound assignments of `IntegerAssign` on a clone of `a` by a clone of `b`, and by `n`
+/// for the shifts, as the limbs of the targets, each where the checked method of the operation
+/// returns a value.
+#[inline(never)]
+fn assignments<T>(a: &T, b: &T, n: u32) -> Vec<String>
+where
+  T: IntegerAssign + CheckedOps + ArrayInteger<Array: Debug>,
+{
+  let assign = |op: fn(&mut T, T)| {
+    let mut target = a.clone();
+    op(&mut target, b.clone());
+    limbs(target)
+  };
+  let shift = |op: fn(&mut T, u32)| {
+    let mut target = a.clone();
+    op(&mut target, n);
+    limbs(target)
+  };
+  vec![format!(
+    "{:?}",
+    [
+      a.checked_add(b).map(|_| assign(|t, b| *t += b)),
+      a.checked_sub(b).map(|_| assign(|t, b| *t -= b)),
+      a.checked_mul(b).map(|_| assign(|t, b| *t *= b)),
+      a.checked_div(b).map(|_| assign(|t, b| *t /= b)),
+      a.checked_rem(b).map(|_| assign(|t, b| *t %= b)),
+      Some(assign(|t, b| *t &= b)),
+      Some(assign(|t, b| *t |= b)),
+      Some(assign(|t, b| *t ^= b)),
+      a.checked_shl(n).map(|_| shift(|t, n| *t <<= n)),
+      a.checked_shr(n).map(|_| shift(|t, n| *t >>= n)),
+    ]
+  )]
+}
+
+/// The limbs of one through `IntegerOne`, and of `Product` of `a` and `b`, of values and of
+/// references, where the checked product returns a value.
+#[inline(never)]
+fn products<T>(a: &T, b: &T) -> Vec<String>
+where
+  T: IntegerOne + CheckedOps + for<'x> Product<&'x T> + ArrayInteger<Array: Debug>,
+{
+  vec![format!(
+    "{:?}",
+    (
+      limbs(T::one()),
+      a.checked_mul(b).map(|_| [
+        limbs([a.clone(), b.clone()].into_iter().product::<T>()),
+        limbs([a, b].into_iter().product::<T>()),
+      ])
+    )
+  )]
+}
+
+/// The results of every trait and operator of `Uint` on `$a` and `$b`, with the amount `$n`, as
+/// the functions above give them.
+macro_rules! uint_results {
+  ($a:expr, $b:expr, $n:expr) => {{
+    let (a, b, n) = ($a, $b, $n);
+    let mut results = arithmetic_families(a, b, n);
+    results.extend(math(a, b, n));
+    results.extend(bit_operations(a, n));
+    results.extend(unsigned_methods(a, b));
+    results.extend(text(a));
+    results.extend(bytes(a));
+    results.extend(uint_conversions(a, b));
+    results.extend(uint_operators(a, b, n));
+    results.extend(assignments(a, b, n));
+    results
+  }};
+}
+
+/// The results of every trait and operator of `Int` on `$a` and `$b`, with the amount `$n`, as
+/// the functions above give them.
+macro_rules! int_results {
+  ($a:expr, $b:expr, $n:expr) => {{
+    let (a, b, n) = ($a, $b, $n);
+    let mut results = arithmetic_families(a, b, n);
+    results.extend(math(a, b, n));
+    results.extend(bit_operations(a, n));
+    results.extend(signed_methods(a));
+    results.extend(text(a));
+    results.extend(bytes(a));
+    results.extend(int_conversions(a, b));
+    results.extend(int_operators(a, b, n));
+    results.extend(assignments(a, b, n));
+    results
+  }};
+}
+
+/// Emits a function that checks `$integer` of `B` bits in `Box<[L; N]>` against its twin in
+/// `[L; N]`, read in two's complement if `$signed`, through every trait and operator that
+/// `$results!` gives, at the pairs of [`row_pairs`] of the values of [`row_patterns`] in `K` words,
+/// each pair with the next of the amounts of [`row_amounts`]. The function is `#[inline(never)]`,
+/// so that its frame holds the values of this storage alone.
+macro_rules! traits_agree {
+  ($name:ident, $integer:ident, $signed:literal, $results:ident) => {
+    #[inline(never)]
+    fn $name<B, L, const N: usize, const K: usize>()
+    where
+      B: FitsBits<[L; N]>,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr,
+    {
+      let bits = B::U32;
+      let values: Vec<[L; N]> = row_patterns::<K>(bits, $signed)
+        .iter()
+        .map(|pattern| bigint::limbs_of_pattern(pattern, $signed))
+        .collect();
+      let amounts = row_amounts(bits);
+      for (k, (x, y)) in row_pairs(&values).into_iter().enumerate() {
+        let n = amounts[k % amounts.len()];
+        let twin = |array| <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+        let boxed = |array| <$integer<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(array);
+        let (a, b) = (twin(x).expect("in range"), twin(y).expect("in range"));
+        let (c, d) = (boxed(x).expect("in range"), boxed(y).expect("in range"));
+        assert_eq!(
+          $results!(&c, &d, n),
+          $results!(&a, &b, n),
+          "{x:?} and {y:?} at {bits} bits with {n}"
+        );
+      }
+    }
+  };
+}
+
+traits_agree!(uint_traits_agree, Uint, false, uint_results);
+traits_agree!(int_traits_agree, Int, true, int_results);
+
+/// Checks one and `Product` of `Uint` and `Int` of `B` bits in `Box<[L; N]>` against their twins
+/// in `[L; N]`, at the pairs of [`row_pairs`] of the values of [`row_patterns`] in `K` words; `B`
+/// has two bits or more, which `Int` needs for one.
+#[inline(never)]
+fn products_agree<B, L, const N: usize, const K: usize>()
+where
+  B: FitsBits<[L; N]> + NonZero + IsGreater<U1, Output = True>,
+  L: ArrayLimb + bigint::Limb + Debug,
+  [L; N]: ArrayRepr,
+{
+  for signed in [false, true] {
+    let values: Vec<[L; N]> = row_patterns::<K>(B::U32, signed)
+      .iter()
+      .map(|pattern| bigint::limbs_of_pattern(pattern, signed))
+      .collect();
+    for (x, y) in row_pairs(&values) {
+      if signed {
+        let twin = |array| <Int<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+        let boxed = |array| <Int<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(array);
+        let (a, b) = (twin(x).expect("in range"), twin(y).expect("in range"));
+        let (c, d) = (boxed(x).expect("in range"), boxed(y).expect("in range"));
+        assert_eq!(products(&c, &d), products(&a, &b), "{x:?} and {y:?}");
+      } else {
+        let twin = |array| <Uint<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+        let boxed = |array| <Uint<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(array);
+        let (a, b) = (twin(x).expect("in range"), twin(y).expect("in range"));
+        let (c, d) = (boxed(x).expect("in range"), boxed(y).expect("in range"));
+        assert_eq!(products(&c, &d), products(&a, &b), "{x:?} and {y:?}");
+      }
+    }
+  }
+}
+
+/// Every trait and operator of `Uint` and `Int` in `Box<[L; N]>` gives what it gives on the inline
+/// twin in `[L; N]`, compared through the limbs of the results: the families of the overflowing,
+/// checked, wrapping, saturating and strict arithmetic, the math and bit traits, the methods of
+/// each sign, the text, the bytes, the casts and the conversions with the native integers and the
+/// floats, the comparisons with the native integers, `Ord`, `Hash` through one hasher, the
+/// operators in their four forms, the compound assignments, `IntegerAssign`, `Sum`, `Product` and
+/// `IntegerOne`, in the storages of [`box_rows_agree_with_the_array_rows`]; fewer under Miri. The
+/// `unchecked_*` methods are left out: they are `unsafe`.
+#[test]
+fn boxed_integers_agree_with_inline_integers() {
+  uint_traits_agree::<U0, u64, 0, 1>();
+  int_traits_agree::<U0, u64, 0, 1>();
+  uint_traits_agree::<U65, u64, 2, 2>();
+  int_traits_agree::<U65, u64, 2, 2>();
+  products_agree::<U65, u64, 2, 2>();
+  uint_traits_agree::<U20, u8, 3, 1>();
+  int_traits_agree::<U20, u8, 3, 1>();
+  products_agree::<U20, u8, 3, 1>();
+  if tier().is_miri() {
+    return;
+  }
+  uint_traits_agree::<U1, u64, 1, 1>();
+  int_traits_agree::<U1, u64, 1, 1>();
+  uint_traits_agree::<U63, u64, 1, 1>();
+  int_traits_agree::<U63, u64, 1, 1>();
+  products_agree::<U63, u64, 1, 1>();
+  uint_traits_agree::<U64, u64, 1, 1>();
+  int_traits_agree::<U64, u64, 1, 1>();
+  uint_traits_agree::<U128, u64, 2, 2>();
+  int_traits_agree::<U128, u64, 2, 2>();
+  uint_traits_agree::<U200, u64, 4, 4>();
+  int_traits_agree::<U200, u64, 4, 4>();
+  products_agree::<U200, u64, 4, 4>();
+  uint_traits_agree::<U256, u64, 4, 4>();
+  int_traits_agree::<U256, u64, 4, 4>();
+  uint_traits_agree::<U24, u16, 2, 1>();
+  int_traits_agree::<U24, u16, 2, 1>();
+  uint_traits_agree::<U65, u32, 3, 2>();
+  int_traits_agree::<U65, u32, 3, 2>();
+  products_agree::<U65, u32, 3, 2>();
+  uint_traits_agree::<U129, u128, 2, 4>();
+  int_traits_agree::<U129, u128, 2, 4>();
+  products_agree::<U129, u128, 2, 4>();
+  uint_traits_agree::<U256, u128, 2, 4>();
+  int_traits_agree::<U256, u128, 2, 4>();
+  uint_traits_agree::<U200, u8, 25, 4>();
+  int_traits_agree::<U200, u8, 25, 4>();
+  if tier().is_full() {
+    uint_traits_agree::<U1024, u64, 16, 16>();
+    int_traits_agree::<U1024, u64, 16, 16>();
+    products_agree::<U1024, u64, 16, 16>();
+  }
+}
+
+/// The address of the limbs of `value`, which an operation that stores in its allocation keeps.
+fn place<T: ArrayInteger>(value: &T) -> *const T::Array {
+  value.as_limbs()
+}
+
+/// Asserts that `$target $op $rhs`, a compound assignment or a call that writes its target, keeps
+/// the allocation of `$target`.
+macro_rules! keeps {
+  ($target:ident $op:tt $rhs:expr) => {{
+    let before = place(&$target);
+    $target $op $rhs;
+    assert_eq!(place(&$target), before, "{}", stringify!($target $op $rhs));
+  }};
+}
+
+/// Asserts that `$expr` stores its result in the allocation of `$operand`, which it consumes.
+macro_rules! stored_in {
+  ($operand:ident, $expr:expr) => {{
+    let before = place(&$operand);
+    let result = $expr;
+    assert_eq!(place(&result), before, "{}", stringify!($expr));
+  }};
+}
+
+/// Each compound assignment of a boxed integer, with a value and with a reference, and by a
+/// non-zero divisor, `set_bit` and `clone_from` store in the allocation of their target; each
+/// operator with an owned operand stores its result in the allocation of that operand, the left
+/// one when both are owned, and `&a / nz` and `&a % nz` in that of the divisor; the casts between
+/// the signs, the non-zero `new`, `get`, `TryFrom`, `cast_signed` and `cast_unsigned`, and `From`
+/// into and out of the pointer keep it; and an assignment that panics, on a zero divisor or on
+/// overflow with overflow checks, leaves the value of its target.
+#[test]
+fn boxed_operations_keep_their_allocation() {
+  type U = Uint<U256, Box<[u64; 4]>>;
+  type I = Int<U200, Box<[u64; 4]>>;
+  type Nz = NonZeroUint<U256, Box<[u64; 4]>>;
+  let (seven, three) = (U::from(7u64), U::from(3u64));
+  let divisor = Nz::new(U::from(3u64)).expect("not zero");
+  let mut a = U::from(1_000_000u64);
+  keeps!(a += seven.clone());
+  keeps!(a += &seven);
+  keeps!(a -= seven.clone());
+  keeps!(a -= &seven);
+  keeps!(a *= three.clone());
+  keeps!(a *= &three);
+  keeps!(a /= three.clone());
+  keeps!(a /= &three);
+  keeps!(a %= U::from(1_000u64));
+  keeps!(a %= &seven);
+  keeps!(a &= seven.clone());
+  keeps!(a |= &three);
+  keeps!(a ^= seven.clone());
+  keeps!(a <<= 9u32);
+  keeps!(a >>= 2i64);
+  keeps!(a /= divisor.clone());
+  keeps!(a /= &divisor);
+  keeps!(a %= divisor.clone());
+  keeps!(a %= &divisor);
+  let before = place(&a);
+  a.set_bit(100, true);
+  a.clone_from(&seven);
+  assert_eq!((place(&a), a.to_limbs()), (before, [7, 0, 0, 0]));
+  let mut b = I::from(-1_000_000i64);
+  keeps!(b -= I::from(5i64));
+  keeps!(b *= &I::from(-3i64));
+  keeps!(b /= I::from(7i64));
+  keeps!(b %= &I::from(1_000i64));
+  keeps!(b <<= 3u8);
+
+  let fresh = || (U::from(1_000_000u64), U::from(7u64));
+  let (x, y) = fresh();
+  stored_in!(x, x + y);
+  let (x, y) = fresh();
+  stored_in!(x, x - &y);
+  let (x, y) = fresh();
+  stored_in!(y, &x * y);
+  let (x, y) = fresh();
+  stored_in!(x, x / y);
+  let (x, y) = fresh();
+  stored_in!(y, &x % y);
+  let (x, y) = fresh();
+  stored_in!(x, x & y);
+  let (x, y) = fresh();
+  stored_in!(y, &x | y);
+  let (x, y) = fresh();
+  stored_in!(x, x ^ &y);
+  let (x, _) = fresh();
+  stored_in!(x, !x);
+  let (x, _) = fresh();
+  stored_in!(x, x << 3u32);
+  let (x, _) = fresh();
+  stored_in!(x, x >> 3u32);
+  let (x, _) = fresh();
+  stored_in!(x, x / divisor.clone());
+  let (x, _) = fresh();
+  stored_in!(x, x % &divisor);
+  let x = I::from(-1_000_000i64);
+  stored_in!(x, -x);
+  let integer = U::from(3u64);
+  let before = place(&integer);
+  let nonzero = Nz::new(integer).expect("not zero");
+  let (x, _) = fresh();
+  assert_eq!(place(&(&x / nonzero)), before, "&a / nz");
+  let integer = U::from(3u64);
+  let before = place(&integer);
+  let nonzero = Nz::new(integer).expect("not zero");
+  assert_eq!(place(&(&x % nonzero)), before, "&a % nz");
+
+  // The casts and the conversions with the non-zero integers move the pointer.
+  let (x, _) = fresh();
+  let before = place(&x);
+  let signed = x.cast_signed();
+  assert_eq!(place(&signed), before);
+  let unsigned = signed.cast_unsigned();
+  assert_eq!(place(&unsigned), before);
+  let nonzero = Nz::try_from(unsigned).expect("not zero");
+  let signed = nonzero.cast_signed();
+  let unsigned = signed.cast_unsigned().get();
+  assert_eq!(place(&unsigned), before);
+  let nonzero = Nz::new(unsigned).expect("not zero");
+  assert_eq!(place(&nonzero.get()), before);
+  let pointer = Box::new([1, 2, 3, 4]);
+  let before: *const [u64; 4] = &*pointer;
+  let integer = U::from(pointer);
+  assert_eq!(place(&integer), before);
+  let pointer = Box::<[u64; 4]>::from(integer);
+  assert_eq!(&*pointer as *const [u64; 4], before);
+
+  // A panicking assignment leaves its target.
+  let checks = overflow_checks();
+  let mut target = U::from(1_000u64);
+  assert!(panic_of(|| target /= U::from(0u64)).is_some());
+  assert!(panic_of(|| target %= &U::from(0u64)).is_some());
+  let panic = panic_of(|| target += <U as FixedInteger>::max_value());
+  assert_eq!(panic.is_some(), checks);
+  let expected = if checks { 1_000u64 } else { 999 };
+  assert_eq!(target.to_limbs(), [expected, 0, 0, 0]);
+  let mut target = <I as FixedInteger>::min_value();
+  let panic = panic_of(|| target -= &I::from(1i64));
+  assert_eq!(panic.is_some(), checks);
+  let expected = if checks {
+    <I as FixedInteger>::min_value()
+  } else {
+    <I as FixedInteger>::max_value()
+  };
+  assert_eq!(target, expected);
+}
+
+/// The operators with an owned operand and the compound assignments of a boxed integer overflow as
+/// those of its inline twin: with overflow checks they panic with the messages of the native
+/// integers and report the line of the caller, a panicking assignment leaving its target, and
+/// without them they wrap; `/` and `%` panic on a zero divisor in every build.
+#[test]
+fn boxed_overflow_follows_the_checks() {
+  type U = Uint<U256, Box<[u64; 4]>>;
+  type I = Int<U200, Box<[u64; 4]>>;
+  let add = "attempt to add with overflow".to_string();
+  let sub = "attempt to subtract with overflow".to_string();
+  let mul = "attempt to multiply with overflow".to_string();
+  let neg = "attempt to negate with overflow".to_string();
+  let div = "attempt to divide by zero".to_string();
+  let rem = "attempt to calculate the remainder with a divisor of zero".to_string();
+  let (m, o, z) = (U::max_value(), U::from(1u64), U::from(0u64));
+  let two = U::from(2u64);
+  overflows_here!(m.clone() + o.clone(), add, z.clone());
+  overflows_here!(m.clone() + &o, add, z.clone());
+  overflows_here!(&m + o.clone(), add, z.clone());
+  overflows_here!(z.clone() - o.clone(), sub, m.clone());
+  overflows_here!(&z - o.clone(), sub, m.clone());
+  overflows_here!(m.clone() * two.clone(), mul, m.clone() - &o);
+  overflows_here!(&m * two.clone(), mul, m.clone() - &o);
+  panics_here!(m.clone() / z.clone(), div);
+  panics_here!(&m / z.clone(), div);
+  panics_here!(m.clone() % &z, rem);
+  let (min, minus_one) = (I::min_value(), I::from(-1i64));
+  overflows_here!(-min.clone(), neg, min.clone());
+  overflows_here!(min.clone() - &I::from(1i64), sub, I::max_value());
+  overflows_here!(min.clone() * minus_one.clone(), mul, min.clone());
+
+  let checks = overflow_checks();
+  // `$target $op $rhs` panics with `$message` and reports the line of the invocation with overflow
+  // checks, and leaves `$target`, and without them it stores `$wrapped`.
+  macro_rules! assigns_here {
+    ($target:ident $op:tt $rhs:expr, $message:expr, $wrapped:expr) => {{
+      let before = $target.clone();
+      match panic_of(|| $target $op $rhs) {
+        Some(panic) => {
+          assert!(checks, "{} panics without overflow checks", stringify!($op));
+          assert_eq!(panic, ($message.clone(), file!().to_string(), line!()));
+          assert_eq!($target, before);
+        }
+        None => {
+          assert!(!checks, "{} returns with overflow checks", stringify!($op));
+          assert_eq!($target, $wrapped);
+        }
+      }
+    }};
+  }
+  let mut t = m.clone();
+  assigns_here!(t += o.clone(), add, z.clone());
+  let mut t = z.clone();
+  assigns_here!(t -= &o, sub, m.clone());
+  let mut t = m.clone();
+  assigns_here!(t *= &two, mul, m.clone() - &o);
+  let mut t = min.clone();
+  assigns_here!(t *= minus_one.clone(), mul, min.clone());
+  let mut t = U::from(1u128 << 64);
+  panics_here!(t /= z.clone(), div);
+  panics_here!(t %= &z, rem);
+  assert_eq!(t.to_limbs(), [0, 1, 0, 0]);
+}
+
+/// The results of the methods of `FixedNonZero` on `a` and `b`, and on `a` with the exponent and
+/// the amount `n`, as the limbs of the integers of the non-zero integers that they return, with the
+/// formats, the parsing and the order.
+#[inline(never)]
+fn nonzero_methods<T>(a: &T, b: &T, n: u32) -> Vec<String>
+where
+  T: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
+{
+  let value = |x: T| limbs(x.get());
+  vec![
+    format!(
+      "{:?}",
+      [
+        value(a.saturating_mul(b)),
+        value(a.saturating_pow(n)),
+        value(a.isolate_highest_one()),
+        value(a.isolate_lowest_one()),
+        value(a.reverse_bits()),
+        value(a.rotate_left(n)),
+        value(a.rotate_right(n)),
+      ]
+    ),
+    format!(
+      "{:?}",
+      (a.checked_mul(b).map(value), a.checked_pow(n).map(value))
+    ),
+    format!(
+      "{:?}",
+      (
+        a.leading_zeros(),
+        a.trailing_zeros(),
+        a.count_ones(),
+        a.highest_one(),
+        a.lowest_one(),
+      )
+    ),
+    format!("{a} {a:+} {a:x} {a:#b} {a:o} {a:X} {a:e} {a:E} {a:?}"),
+    format!(
+      "{:?}",
+      (
+        a.to_string().parse::<T>().map(value),
+        T::from_str_radix(&format!("{a:x}"), 16).map(value),
+        a.cmp(b),
+        a == b,
+      )
+    ),
+  ]
+}
+
+/// The results of the methods of `UnsignedNonZero` on `a` and `b`, as the limbs of the integers of
+/// the non-zero integers that they return.
+#[inline(never)]
+fn unsigned_nonzero_methods<T>(a: &T, b: &T) -> Vec<String>
+where
+  T: UnsignedNonZero<
+      Integer: ArrayInteger<Array: Debug>,
+      Signed: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
+    >,
+{
+  let value = |x: T| limbs(x.get());
+  let integer = b.clone().get();
+  vec![
+    format!(
+      "{:?}",
+      (
+        a.checked_add(&integer).map(value),
+        value(a.saturating_add(&integer)),
+        a.checked_next_power_of_two().map(value),
+        limbs(a.clone().cast_signed().get()),
+      )
+    ),
+    format!(
+      "{:?}",
+      (a.ilog2(), a.ilog10(), a.is_power_of_two(), a.bit_width())
+    ),
+    format!(
+      "{:?}",
+      [value(a.midpoint(b)), value(a.isqrt()), value(a.div_ceil(b))]
+    ),
+  ]
+}
+
+/// The results of the methods of `SignedNonZero` on `a`, as the limbs of the integers of the
+/// non-zero integers that they return, each where it does not panic.
+#[inline(never)]
+fn signed_nonzero_methods<T>(a: &T) -> Vec<String>
+where
+  T: SignedNonZero<
+      Integer: ArrayInteger<Array: Debug>,
+      Unsigned: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
+    >,
+{
+  let value = |x: T| limbs(x.get());
+  let pair = |(x, flag): (T, bool)| (limbs(x.get()), flag);
+  vec![
+    format!(
+      "{:?}",
+      (
+        a.is_negative(),
+        a.is_positive(),
+        pair(a.overflowing_neg()),
+        a.checked_neg().map(value),
+        value(a.wrapping_neg()),
+        value(a.saturating_neg()),
+      )
+    ),
+    format!(
+      "{:?}",
+      (
+        pair(a.overflowing_abs()),
+        a.checked_abs().map(value),
+        value(a.wrapping_abs()),
+        value(a.saturating_abs()),
+        a.checked_abs().map(|_| value(a.abs())),
+      )
+    ),
+    format!(
+      "{:?}",
+      (
+        limbs(a.unsigned_abs().get()),
+        limbs(a.clone().cast_unsigned().get())
+      )
+    ),
+  ]
+}
+
+/// Emits a function that checks `$nonzero` of `B` bits in `Box<[L; N]>` against its twin in
+/// `[L; N]`, read in two's complement if `$signed`, through its traits, `$sign` giving the methods
+/// of its sign: at the pairs of [`row_pairs`] of the values of [`row_patterns`] in `K` words that
+/// are not zero, each pair with the next of the amounts of [`row_amounts`], `TryFrom` of the
+/// integer, which rejects zero, and the limits of `NonZeroLimits`. The function is
+/// `#[inline(never)]`, so that its frame holds the values of this storage alone.
+macro_rules! nonzero_agree {
+  ($name:ident, $nonzero:ident, $integer:ident, $signed:literal, $sign:ident) => {
+    #[inline(never)]
+    fn $name<B, L, const N: usize, const K: usize>()
+    where
+      B: FitsBits<[L; N]> + NonZero,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr
+        + NonZeroUintRepr<Integer = [L; N], Signed = [L; N]>
+        + NonZeroIntRepr<Integer = [L; N], Unsigned = [L; N]>,
+    {
+      let bits = B::U32;
+      let values: Vec<[L; N]> = row_patterns::<K>(bits, $signed)
+        .iter()
+        .map(|pattern| bigint::limbs_of_pattern(pattern, $signed))
+        .collect();
+      let amounts = row_amounts(bits);
+      let twin = |array| <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+      let boxed = |array| <$integer<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(array);
+      for &x in &values {
+        let twin_value = $nonzero::<B, [L; N]>::try_from(twin(x).expect("in range"));
+        let boxed_value = $nonzero::<B, Box<[L; N]>>::try_from(boxed(x).expect("in range"));
+        assert_eq!(
+          boxed_value.map(|value| limbs(value.get())),
+          twin_value.map(|value| limbs(value.get())),
+          "{x:?}"
+        );
+      }
+      let nonzero = |array| twin(array).and_then(<$nonzero<B, [L; N]> as FixedNonZero>::new);
+      let boxed_nonzero =
+        |array| boxed(array).and_then(<$nonzero<B, Box<[L; N]>> as FixedNonZero>::new);
+      for (k, (x, y)) in row_pairs(&values).into_iter().enumerate() {
+        let n = amounts[k % amounts.len()];
+        let (Some(a), Some(b)) = (nonzero(x), nonzero(y)) else {
+          continue;
+        };
+        let (c, d) = (
+          boxed_nonzero(x).expect("not zero"),
+          boxed_nonzero(y).expect("not zero"),
+        );
+        let mut results = nonzero_methods(&c, &d, n);
+        results.extend($sign!(&c, &d));
+        let mut twin_results = nonzero_methods(&a, &b, n);
+        twin_results.extend($sign!(&a, &b));
+        assert_eq!(
+          results, twin_results,
+          "{x:?} and {y:?} at {bits} bits with {n}"
+        );
+      }
+      assert_eq!(
+        limbs(<$nonzero<B, Box<[L; N]>> as NonZeroLimits>::min_value().get()),
+        limbs(<$nonzero<B, [L; N]> as NonZeroLimits>::min_value().get())
+      );
+      assert_eq!(
+        limbs(<$nonzero<B, Box<[L; N]>> as NonZeroLimits>::max_value().get()),
+        limbs(<$nonzero<B, [L; N]> as NonZeroLimits>::max_value().get())
+      );
+    }
+  };
+}
+
+/// The results of the methods of `UnsignedNonZero` on `$a` and `$b`.
+macro_rules! unsigned_nonzero {
+  ($a:expr, $b:expr) => {
+    unsigned_nonzero_methods($a, $b)
+  };
+}
+
+/// The results of the methods of `SignedNonZero` on `$a`.
+macro_rules! signed_nonzero {
+  ($a:expr, $b:expr) => {
+    signed_nonzero_methods($a)
+  };
+}
+
+nonzero_agree!(
+  nonzero_uint_agree,
+  NonZeroUint,
+  Uint,
+  false,
+  unsigned_nonzero
+);
+nonzero_agree!(nonzero_int_agree, NonZeroInt, Int, true, signed_nonzero);
+
+/// The non-zero integers over a box give what their twins over the array give: through their
+/// traits, `TryFrom` of the integer and the limits, in storages of `[u64; N]` and of bytes, fewer
+/// under Miri; and the operators, the division and the remainder of the integer by a non-zero
+/// integer and `|` in every form, with the assignments, and the negation, at 256 and 200 bits; and
+/// `Option` of a non-zero integer has the size of a pointer.
+#[test]
+fn boxed_nonzero_integers() {
+  nonzero_uint_agree::<U65, u64, 2, 2>();
+  nonzero_int_agree::<U65, u64, 2, 2>();
+  nonzero_uint_agree::<U20, u8, 3, 1>();
+  nonzero_int_agree::<U20, u8, 3, 1>();
+  if !tier().is_miri() {
+    nonzero_uint_agree::<U1, u64, 1, 1>();
+    nonzero_int_agree::<U1, u64, 1, 1>();
+    nonzero_uint_agree::<U200, u64, 4, 4>();
+    nonzero_int_agree::<U200, u64, 4, 4>();
+    nonzero_uint_agree::<U129, u128, 2, 4>();
+    nonzero_int_agree::<U129, u128, 2, 4>();
+  }
+
+  type U = Uint<U256, Box<[u64; 4]>>;
+  type Nz = NonZeroUint<U256, Box<[u64; 4]>>;
+  type Twin = NonZeroUint<U256, [u64; 4]>;
+  let (x, twin_x) = (U::from(1_000_003u64), u256::from(1_000_003u64));
+  let a = Nz::new(U::from(7u64)).expect("not zero");
+  let b = Nz::new(U::from(0x10u64)).expect("not zero");
+  let (twin_a, twin_b) = (Twin::new(u256::from(7u64)), Twin::new(u256::from(0x10u64)));
+  let (twin_a, twin_b) = (twin_a.expect("not zero"), twin_b.expect("not zero"));
+  let mut quotient = x.clone();
+  quotient /= a.clone();
+  quotient /= &a;
+  let mut remainder = x.clone();
+  remainder %= &b;
+  remainder %= a.clone();
+  let mut or = a.clone();
+  or |= b.clone();
+  or |= &x;
+  assert_eq!(
+    [
+      limbs(x.clone() / a.clone()),
+      limbs(x.clone() / &a),
+      limbs(&x / a.clone()),
+      limbs(&x / &a),
+      limbs(x.clone() % b.clone()),
+      limbs(&x % &b),
+      limbs(quotient),
+      limbs(remainder),
+    ],
+    [
+      (twin_x / twin_a).to_limbs(),
+      (twin_x / twin_a).to_limbs(),
+      (twin_x / twin_a).to_limbs(),
+      (twin_x / twin_a).to_limbs(),
+      (twin_x % twin_b).to_limbs(),
+      (twin_x % twin_b).to_limbs(),
+      (twin_x / twin_a / twin_a).to_limbs(),
+      (twin_x % twin_b % twin_a).to_limbs(),
+    ]
+  );
+  assert_eq!(
+    [
+      limbs((a.clone() | b.clone()).get()),
+      limbs((&a | &b).get()),
+      limbs((a.clone() | &x).get()),
+      limbs((&x | a.clone()).get()),
+      limbs(or.get()),
+    ],
+    [
+      (twin_a | twin_b).get().to_limbs(),
+      (twin_a | twin_b).get().to_limbs(),
+      (twin_a | twin_x).get().to_limbs(),
+      (twin_x | twin_a).get().to_limbs(),
+      (twin_a | twin_b | twin_x).get().to_limbs(),
+    ]
+  );
+  type I = Int<U200, Box<[u64; 4]>>;
+  let minus_seven = NonZeroInt::<U200, Box<[u64; 4]>>::new(I::from(-7i64)).expect("not zero");
+  assert_eq!(limbs((-&minus_seven).get()), I::from(7i64).into_limbs());
+  assert_eq!(limbs((-minus_seven).get()), I::from(7i64).into_limbs());
+  assert_eq!(size_of::<Option<Nz>>(), size_of::<usize>());
+  assert_eq!(
+    size_of::<Option<NonZeroInt<U200, Box<[u64; 4]>>>>(),
+    size_of::<usize>()
+  );
+}
+
+/// The sum of `values`, in code generic over the storage trait alone, through `Sum` of references.
+fn total<B: FitsBits<R>, R: UintRepr>(values: &[Uint<B, R>]) -> Uint<B, R> {
+  values.iter().sum()
+}
+
+/// The difference of `a` and `b`, in code generic over the storage trait alone, through `-` on
+/// references.
+fn difference<B: FitsBits<R>, R: IntRepr>(a: &Int<B, R>, b: &Int<B, R>) -> Int<B, R> {
+  a - b
+}
+
+/// `value` plus `other` and shifted left by one place, in place, in code generic over the storage
+/// trait of the storages that hold the value in place.
+fn shifted_sum<B: FitsBits<R>, R: UintReprMut>(value: &mut Uint<B, R>, other: &Uint<B, R>) {
+  *value += other;
+  *value <<= 1u32;
+}
+
+/// The square of `value`, assigned in place, through `IntegerAssign`.
+fn squared<T: IntegerAssign>(mut value: T) -> T {
+  value *= value.clone();
+  value
+}
+
+/// The low limb of `value`, through `ArrayInteger` with 64-bit limbs.
+fn low_limb<T: ArrayInteger<Array = [u64; N]>, const N: usize>(value: &T) -> u64 {
+  value.as_limbs()[0]
+}
+
+/// Code generic over `R: UintRepr`, `R: IntRepr`, `R: UintReprMut`, `T: IntegerAssign` and
+/// `T: ArrayInteger<Array = [u64; N]>` takes an integer in an array and one in a box alike, and
+/// gives the same value for each.
+#[test]
+fn generic_code_takes_arrays_and_boxes() {
+  type U = Uint<U256, Box<[u64; 4]>>;
+  type I = Int<U200, Box<[u64; 4]>>;
+  let arrays = [u256::from(100u64), u256::from(27u64)];
+  let boxes = [U::from(100u64), U::from(27u64)];
+  assert_eq!(total(&boxes).into_limbs(), total(&arrays).to_limbs());
+  let signed = (I::from(-5i64), I::from(12i64));
+  let twins = (Int::<U200>::from(-5i64), Int::<U200>::from(12i64));
+  assert_eq!(
+    difference(&signed.0, &signed.1).into_limbs(),
+    difference(&twins.0, &twins.1).to_limbs()
+  );
+  let (mut array, mut boxed) = (arrays[0], boxes[0].clone());
+  shifted_sum(&mut array, &arrays[1]);
+  shifted_sum(&mut boxed, &boxes[1]);
+  assert_eq!(boxed.to_limbs(), array.to_limbs());
+  assert_eq!(
+    squared(boxes[1].clone()).into_limbs(),
+    squared(arrays[1]).to_limbs()
+  );
+  assert_eq!(low_limb(&boxes[0]), low_limb(&arrays[0]));
+  assert_eq!(low_limb(&signed.0), low_limb(&twins.0));
+}
+
+/// The limbs of a value of `N` 64-bit limbs in a box: words from `seed` in the low quarter of the
+/// limbs and zeros above, so that the sum and the product of two such values stay in the width.
+fn wide_limbs<const N: usize>(seed: u64) -> Box<[u64; N]> {
+  let limbs: Box<[u64]> = (0..N)
+    .map(|i| {
+      if i < N / 4 {
+        seed.rotate_left(7 * i as u32) ^ i as u64
+      } else {
+        0
+      }
+    })
+    .collect();
+  limbs.try_into().expect("N limbs")
+}
+
+/// A boxed integer of `B` bits in `N` 64-bit limbs and its inline twin.
+type WidePair<B, const N: usize> = (Uint<B, Box<[u64; N]>>, Uint<B, [u64; N]>);
+
+/// The [`WidePair`] of the limbs `limbs`.
+fn wide_pair<B, const N: usize>(limbs: &[u64; N]) -> WidePair<B, N>
+where
+  B: FitsBits<[u64; N]>,
+{
+  let boxed = <Uint<B, Box<[u64; N]>> as ArrayInteger>::checked_from_limbs(*limbs);
+  let twin = <Uint<B, [u64; N]> as ArrayInteger>::checked_from_limbs(*limbs);
+  (boxed.expect("in range"), twin.expect("in range"))
+}
+
+/// `a + b` on two boxes and on two twins, each operation in a frame of its own.
+#[inline(never)]
+fn wide_sum<B: FitsBits<[u64; N]>, const N: usize>(a: &[u64; N], b: &[u64; N]) {
+  let ((x, twin_x), (y, twin_y)) = (wide_pair::<B, N>(a), wide_pair::<B, N>(b));
+  assert_eq!((x + &y).into_limbs(), (twin_x + twin_y).into_limbs());
+}
+
+/// `a * b` on two borrowed boxes and on two twins.
+#[inline(never)]
+fn wide_product<B: FitsBits<[u64; N]>, const N: usize>(a: &[u64; N], b: &[u64; N]) {
+  let ((x, twin_x), (y, twin_y)) = (wide_pair::<B, N>(a), wide_pair::<B, N>(b));
+  assert_eq!((&x * &y).into_limbs(), (twin_x * twin_y).into_limbs());
+}
+
+/// `a / b` on two boxes and on two twins.
+#[inline(never)]
+fn wide_quotient<B: FitsBits<[u64; N]>, const N: usize>(a: &[u64; N], b: &[u64; N]) {
+  let ((x, twin_x), (y, twin_y)) = (wide_pair::<B, N>(a), wide_pair::<B, N>(b));
+  assert_eq!((x / y).into_limbs(), (twin_x / twin_y).into_limbs());
+}
+
+/// `a << 7` on a box and on its twin.
+#[inline(never)]
+fn wide_shift<B: FitsBits<[u64; N]>, const N: usize>(a: &[u64; N]) {
+  let (x, twin_x) = wide_pair::<B, N>(a);
+  assert_eq!((x << 7u32).into_limbs(), (twin_x << 7u32).into_limbs());
+}
+
+/// The decimal text of a box and of its twin, and the box read back from it.
+#[inline(never)]
+fn wide_text<B: FitsBits<[u64; N]>, const N: usize>(a: &[u64; N]) {
+  let (x, twin_x) = wide_pair::<B, N>(a);
+  let text = x.to_string();
+  assert_eq!(text, twin_x.to_string());
+  let parsed = text.parse::<Uint<B, Box<[u64; N]>>>();
+  assert_eq!(parsed.map(ArrayInteger::into_limbs), Ok(*a));
+}
+
+/// The sum of `a`, `b` and `a` again, of references to boxes and to twins.
+#[inline(never)]
+fn wide_total<B: FitsBits<[u64; N]>, const N: usize>(a: &[u64; N], b: &[u64; N]) {
+  let ((x, twin_x), (y, twin_y)) = (wide_pair::<B, N>(a), wide_pair::<B, N>(b));
+  let sum: Uint<B, Box<[u64; N]>> = [&x, &y, &x].into_iter().sum();
+  let twin_sum: Uint<B, [u64; N]> = [twin_x, twin_y, twin_x].iter().sum();
+  assert_eq!(sum.into_limbs(), twin_sum.into_limbs());
+}
+
+/// Checks the wide operations of `B` bits in `N` 64-bit limbs, each in a function of its own.
+fn wide_operations<B: FitsBits<[u64; N]>, const N: usize>() {
+  let (a, b) = (
+    wide_limbs::<N>(0x9e37_79b9_7f4a_7c15),
+    wide_limbs::<N>(0x5851_f42d_4c95_7f2d),
+  );
+  wide_sum::<B, N>(&a, &b);
+  wide_product::<B, N>(&a, &b);
+  wide_quotient::<B, N>(&a, &b);
+  wide_shift::<B, N>(&a);
+  wide_text::<B, N>(&a);
+  wide_total::<B, N>(&a, &b);
+}
+
+/// At 4096 bits, and in an optimized build also at 65536, addition, multiplication, division, a
+/// shift, the text and back, and `Sum` of boxed integers give what the inline twins give, each
+/// operation in a frame of its own. Not under Miri, which would take minutes at 4096 bits.
+#[test]
+fn wide_boxed_integers() {
+  if tier().is_miri() {
+    return;
+  }
+  wide_operations::<U4096, 64>();
+  if tier().is_full() {
+    wide_operations::<U65536, 1024>();
+  }
 }
