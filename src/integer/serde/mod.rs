@@ -22,10 +22,13 @@
 //! defaults, without serde_json's number token; `quantity` writes the text of `{:#x}` and
 //! `fixed_hex` the digits of the words of the casts, and both read their grammars on the bytes of a
 //! string, building the value with the casts from words that they decode from the digits, with no
-//! buffer; and `typed` writes as the defaults do and asks every format for the class of the width,
-//! with a visitor that takes the form of the defaults alone, through their value paths. The sealed
-//! trait of each helper is implemented here for every type that its paths take, and its public
-//! trait for numo's integers and the native integers that it serves.
+//! buffer; `typed` writes as the defaults do and asks every format for the class of the width,
+//! with a visitor that takes the form of the defaults alone, through their value paths; and
+//! `be_bytes` and `le_bytes` write the bytes of the words of the casts through the array of the
+//! bytes of the width, and read a byte string, or a sequence of bytes into that array, each element
+//! read by a seed of their own, building the value with the casts from the words of the bytes. The
+//! sealed trait of each helper is implemented here for every type that its paths take, and its
+//! public trait for numo's integers and the native integers that it serves.
 
 use core::{
   fmt,
@@ -36,7 +39,7 @@ use core::{
 
 use serde_core::{
   Deserialize, Deserializer, Serialize, Serializer,
-  de::{self, DeserializeSeed, EnumAccess, MapAccess, SeqAccess, Visitor},
+  de::{self, DeserializeSeed, EnumAccess, IgnoredAny, MapAccess, SeqAccess, Visitor},
 };
 
 use super::{
@@ -47,10 +50,11 @@ use crate::{
   int::parse_errors,
   layout::Token,
   serde::{
-    DecimalStringCore, Expected, FixedHexCore, QuantityCore, TypedCore, decimal::DecimalString,
-    fixed_hex::FixedHex, quantity::Quantity, read, reject_inputs, typed::Typed,
+    BeBytesCore, DecimalStringCore, Expected, FixedHexCore, LeBytesCore, QuantityCore, TypedCore,
+    be_bytes::BeBytes, decimal::DecimalString, fixed_hex::FixedHex, le_bytes::LeBytes,
+    quantity::Quantity, read, reject_inputs, typed::Typed,
   },
-  width::{self, FitsBits, IntRepr, NonZeroIntRepr, NonZeroUintRepr, UintRepr},
+  width::{self, FitsBits, IntRepr, LimbArray, NonZeroIntRepr, NonZeroUintRepr, UintRepr},
 };
 
 /// What the defaults read, whose fixed message is `expected an integer`.
@@ -77,6 +81,9 @@ const FIXED_HEX: &str = "a hexadecimal string";
 /// The error of a hexadecimal string of fixed width without the prefix `0x` or `0X`.
 const FIXED_HEX_PREFIX: &str = "hexadecimal string without the 0x prefix";
 
+/// What `be_bytes` and `le_bytes` read, whose fixed message is `expected an array of bytes`.
+const BYTE_ARRAY: &str = "an array of bytes";
+
 /// The key of the one entry of the map through which serde_json with its feature
 /// `arbitrary_precision` hands over a number that no 64-bit integer holds, whose value is the text
 /// of the number. It is private to serde_json: if it changes, such a map is rejected.
@@ -94,6 +101,9 @@ enum Rejection {
   /// A hexadecimal string of fixed width with another number of digits than its width has, which
   /// this one is.
   Digits(u64),
+  /// A byte string or a sequence of bytes of another length than the width has, which this one
+  /// is.
+  Bytes(u64),
 }
 
 impl fmt::Display for Rejection {
@@ -103,6 +113,8 @@ impl fmt::Display for Rejection {
       Self::Parse(error) => fmt::Display::fmt(error, f),
       Self::Text(message) => f.write_str(message),
       Self::Digits(count) => write!(f, "expected {count} hexadecimal digits"),
+      Self::Bytes(1) => f.write_str("expected 1 byte"),
+      Self::Bytes(count) => write!(f, "expected {count} bytes"),
     }
   }
 }
@@ -620,8 +632,28 @@ helper! {
 /// Implements the public trait of a helper module for numo's integers over every storage of their
 /// storage traits, written `Trait for Integer: Repr, ..`, for the non-zero integers, written
 /// `Trait for nonzero Name: Repr, ..`, and for native integers and their `NonZero`, written
-/// `Trait for natives native, ..`.
+/// `Trait for natives native, ..`; and for the widths of numo's integers and of the non-zero
+/// integers that have an array of bytes, up to 8192 bits, written
+/// `Trait for bytes Integer: Repr, ..` and `Trait for bytes nonzero Name: Repr, ..`.
 macro_rules! helper_impls {
+  ($trait:ident for bytes nonzero $($name:ident: $repr:ident),+) => {$(
+    // The bound on `u8` names the array of the bytes of the width, as `ByteBuffer` needs it.
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl<B: FitsBits<R::Integer>, R: $repr, const M: usize> $trait for $name<B, R>
+    where
+      u8: LimbArray<B, Array = [u8; M]>,
+    {
+    }
+  )+};
+  ($trait:ident for bytes $($integer:ident: $repr:ident),+) => {$(
+    // The bound on `u8` names the array of the bytes of the width, as `ByteBuffer` needs it.
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl<B: FitsBits<R>, R: $repr, const M: usize> $trait for $integer<B, R>
+    where
+      u8: LimbArray<B, Array = [u8; M]>,
+    {
+    }
+  )+};
   ($trait:ident for nonzero $($name:ident: $repr:ident),+) => {$(
     #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
     impl<B: FitsBits<R::Integer>, R: $repr> $trait for $name<B, R> {}
@@ -1035,3 +1067,410 @@ helper! {
 
 helper_impls!(Typed for Uint: UintRepr, Int: IntRepr);
 helper_impls!(Typed for nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
+
+/// The array of the bytes of a value of a type, `[u8; BYTES]`, through which the bytes helpers
+/// write a value and read a sequence of bytes: for numo's integers the array of the width that
+/// `u8: LimbArray<B>` names, as for `ByteArray`, which exists up to 8192 bits, and for a native
+/// integer and its `NonZero` the array of its size.
+trait ByteBuffer {
+  /// The array.
+  type Bytes: AsMut<[u8]>;
+
+  /// The array, of zeros.
+  fn zero_bytes() -> Self::Bytes;
+}
+
+/// Implements [`ByteBuffer`] for numo's integers, written `Integer, ..`, and for native integers
+/// and their `NonZero`, written `natives native, ..`.
+macro_rules! byte_buffers {
+  (natives $($native:ident),+) => {$(
+    impl ByteBuffer for $native {
+      type Bytes = [u8; size_of::<$native>()];
+
+      #[inline]
+      fn zero_bytes() -> Self::Bytes {
+        [0; size_of::<$native>()]
+      }
+    }
+
+    impl ByteBuffer for NonZero<$native> {
+      type Bytes = [u8; size_of::<$native>()];
+
+      #[inline]
+      fn zero_bytes() -> Self::Bytes {
+        [0; size_of::<$native>()]
+      }
+    }
+  )+};
+  ($($integer:ident),+) => {$(
+    // The bound on `u8` fixes `M` at `BYTES`, so that `Bytes` is the array of the width.
+    impl<B, R, const M: usize> ByteBuffer for $integer<B, R>
+    where
+      u8: LimbArray<B, Array = [u8; M]>,
+    {
+      type Bytes = [u8; M];
+
+      #[inline]
+      fn zero_bytes() -> [u8; M] {
+        [0; M]
+      }
+    }
+  )+};
+}
+
+byte_buffers!(Uint, Int, NonZeroUint, NonZeroInt);
+byte_buffers!(natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+/// Writes the bytes of `value`, most significant first if `big_endian`, through `serialize_bytes`
+/// of its array of bytes: the byte at `i` from the least significant, its bits from `8 * i` to
+/// `8 * i + 7`, is that of the word of the casts at `i / 8`, so that a negative `Int` writes its
+/// two's complement extended by copies of the sign, as `to_be_bytes` and `to_le_bytes` give it, and
+/// zero bits write no bytes.
+fn serialize_bytes_of<T, S>(value: &T, big_endian: bool, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: CastSource + ByteBuffer,
+  S: Serializer,
+{
+  let mut buffer = T::zero_bytes();
+  let bytes = buffer.as_mut();
+  let count = bytes.len();
+  for (position, byte) in bytes.iter_mut().enumerate() {
+    let i = if big_endian {
+      count - 1 - position
+    } else {
+      position
+    };
+    *byte = (value.word(i / 8) >> (8 * (i % 8))) as u8;
+  }
+  serializer.serialize_bytes(bytes)
+}
+
+/// Writes the bytes of `value`, most significant first, through `serialize_bytes`.
+fn serialize_be_bytes<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: CastSource + ByteBuffer,
+  S: Serializer,
+{
+  serialize_bytes_of(value, true, serializer)
+}
+
+/// Writes the bytes of `value`, least significant first, through `serialize_bytes`.
+fn serialize_le_bytes<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+  T: CastSource + ByteBuffer,
+  S: Serializer,
+{
+  serialize_bytes_of(value, false, serializer)
+}
+
+/// The number of bytes of a value of `T`, `ceil(Bits / 8)`, counted in `u64` from the `u32` of its
+/// bits, so that the count overflows nothing and no length is cast to `u32`.
+fn byte_count<T: CheckedTarget>() -> u64 {
+  u64::from(T::BITS.div_ceil(8))
+}
+
+/// The 64-bit word at `index` of the value whose bytes are `bytes`, most significant first if
+/// `big_endian`: its bytes from `8 * index` to `8 * index + 7`, counted from the least significant,
+/// and zero beyond the bytes.
+fn word_of_bytes(bytes: &[u8], big_endian: bool, index: usize) -> u64 {
+  // The byte at `at` from the least significant, if there is one.
+  let byte = |at: usize| {
+    let at = if big_endian {
+      bytes.len().checked_sub(at)?.checked_sub(1)?
+    } else {
+      at
+    };
+    bytes.get(at).copied()
+  };
+  let start = index.saturating_mul(8);
+  (0..8).rev().fold(0, |word, k| {
+    word << 8 | u64::from(byte(start.saturating_add(k)).unwrap_or(0))
+  })
+}
+
+/// The rejection of `top`, the most significant byte of the bytes of a value of `T`, which has at
+/// least one bit, or `None` if its bits above the width of `T` are zeros for an unsigned `T` and
+/// copies of the sign for a signed one, as in the bytes of every value of the width: too large, or
+/// too small for the bytes of a negative value below the range of a signed `T`.
+fn top_byte_rejection<T: CheckedTarget>(top: u8) -> Option<Rejection> {
+  // The bits of the width in the most significant byte, one to eight.
+  let bits = (T::BITS - 1) % 8 + 1;
+  let in_range = if T::SIGNED {
+    // The byte with its bits from `bits - 1` up replaced by copies of that bit.
+    let shift = 8 - bits;
+    (top as i8) << shift >> shift == top as i8
+  } else {
+    u32::from(top) >> bits == 0
+  };
+  if in_range {
+    None
+  } else {
+    let negative = T::SIGNED && (top as i8) < 0;
+    Some(Rejection::Parse(parse_errors::overflow(negative)))
+  }
+}
+
+/// The value in `T` of `bytes`, most significant first if `big_endian`, or the error of the first
+/// of its rules that they break, in this order: exactly as many bytes as the width of `T` has; the
+/// bits of the most significant byte above the width zeros for an unsigned `T` and copies of the
+/// sign for a signed one, a rule that zero bits, which have no bytes, do not have; and, for a
+/// non-zero `T`, a value that is not zero. The casts read the bytes as words, in two's complement
+/// for a signed `T`.
+fn value_of_bytes<T: CheckedTarget>(bytes: &[u8], big_endian: bool) -> Result<T, Rejection> {
+  let count = byte_count::<T>();
+  if bytes.len() as u64 != count {
+    return Err(Rejection::Bytes(count));
+  }
+  let top = if big_endian {
+    bytes.first()
+  } else {
+    bytes.last()
+  };
+  if let Some(rejection) = top.and_then(|&top| top_byte_rejection::<T>(top)) {
+    return Err(rejection);
+  }
+  T::from_words(|index| word_of_bytes(bytes, big_endian, index))
+    .ok_or(Rejection::Parse(parse_errors::ZERO))
+}
+
+/// An element of a sequence of bytes, read with `deserialize_u8`: every integer that the format
+/// gives from 0 to 255, as toml gives `i64` and serde_json `u64`. Every other input, an integer
+/// outside that range included, gets the fixed message of its path at once, which names nothing of
+/// the input, where the error of serde's own `u8` would.
+struct ByteSeed<'a> {
+  expected: Expected<'a>,
+}
+
+impl ByteSeed<'_> {
+  /// `value` as a byte, or the fixed message of the path for a value outside 0 to 255.
+  fn byte<V, E: de::Error>(self, value: V) -> Result<u8, E>
+  where
+    u8: TryFrom<V>,
+  {
+    u8::try_from(value).map_err(|_| self.expected.reject())
+  }
+}
+
+impl<'de> DeserializeSeed<'de> for ByteSeed<'_> {
+  type Value = u8;
+
+  fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<u8, D::Error> {
+    deserializer.deserialize_u8(self)
+  }
+}
+
+impl<'de> Visitor<'de> for ByteSeed<'_> {
+  type Value = u8;
+
+  fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.expected.describe(f)
+  }
+
+  // The narrower integers read through these, which serde forwards them to.
+  fn visit_i64<E: de::Error>(self, value: i64) -> Result<u8, E> {
+    self.byte(value)
+  }
+
+  fn visit_i128<E: de::Error>(self, value: i128) -> Result<u8, E> {
+    self.byte(value)
+  }
+
+  fn visit_u64<E: de::Error>(self, value: u64) -> Result<u8, E> {
+    self.byte(value)
+  }
+
+  fn visit_u128<E: de::Error>(self, value: u128) -> Result<u8, E> {
+    self.byte(value)
+  }
+
+  // Every other kind of input is rejected below. `f32` reaches these through serde's forwarding,
+  // and the other forms of a string read through `visit_str`.
+  reject_inputs! {
+    visit_bool(bool),
+    visit_f64(f64),
+    visit_char(char),
+    visit_str(&str),
+    visit_bytes(&[u8]),
+    visit_borrowed_bytes(&'de [u8]),
+  }
+
+  fn visit_none<E: de::Error>(self) -> Result<u8, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_some<D: Deserializer<'de>>(self, _: D) -> Result<u8, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_unit<E: de::Error>(self) -> Result<u8, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<u8, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_seq<A: SeqAccess<'de>>(self, _: A) -> Result<u8, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<u8, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<u8, A::Error> {
+    Err(self.expected.reject())
+  }
+}
+
+/// Reads the bytes of a value of `T` from `seq`, most significant first if `big_endian`, into the
+/// array of the bytes of `T`: exactly as many elements as `T` has bytes, each read by
+/// [`ByteSeed`]. A sequence of another length is rejected with its length, as a value, once it has
+/// ended: the surplus of a long one is read to its end with `IgnoredAny`, so that the length is
+/// reported whatever the surplus holds, and the format finds no input left over in its place.
+fn read_byte_sequence<'de, T, A>(
+  mut seq: A,
+  expected: Expected<'_>,
+  big_endian: bool,
+) -> Result<Result<T, Rejection>, A::Error>
+where
+  T: CheckedTarget + ByteBuffer,
+  A: SeqAccess<'de>,
+{
+  let mut buffer = T::zero_bytes();
+  let bytes = buffer.as_mut();
+  for byte in bytes.iter_mut() {
+    match seq.next_element_seed(ByteSeed { expected })? {
+      Some(element) => *byte = element,
+      None => return Ok(Err(Rejection::Bytes(byte_count::<T>()))),
+    }
+  }
+  let mut surplus = false;
+  while seq.next_element::<IgnoredAny>()?.is_some() {
+    surplus = true;
+  }
+  if surplus {
+    return Ok(Err(Rejection::Bytes(byte_count::<T>())));
+  }
+  Ok(value_of_bytes(bytes, big_endian))
+}
+
+/// Reads the bytes of a value of `T`, most significant first if `big_endian`: a byte string of
+/// exactly as many bytes as the width of `T` has, borrowed or owned, or a sequence of as many
+/// integers from 0 to 255, through [`read_byte_sequence`]. Every other input gets the fixed message
+/// of its path.
+struct BytesVisitor<'a, T> {
+  expected: Expected<'a>,
+  big_endian: bool,
+  marker: PhantomData<T>,
+}
+
+impl<'de, T> Visitor<'de> for BytesVisitor<'_, T>
+where
+  T: CheckedTarget + ByteBuffer,
+{
+  type Value = Result<T, Rejection>;
+
+  fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.expected.describe(f)
+  }
+
+  // `visit_borrowed_bytes` reads through this, and so does `visit_byte_buf`, which `serde_core`
+  // has only with `alloc`.
+  fn visit_bytes<E: de::Error>(self, bytes: &[u8]) -> Result<Self::Value, E> {
+    Ok(value_of_bytes(bytes, self.big_endian))
+  }
+
+  fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+    read_byte_sequence(seq, self.expected, self.big_endian)
+  }
+
+  // Every other kind of input is rejected below. The narrower integers and `f32` reach these
+  // through serde's forwarding, and the other forms of a string read through `visit_str`.
+  reject_inputs! {
+    visit_bool(bool),
+    visit_i64(i64),
+    visit_i128(i128),
+    visit_u64(u64),
+    visit_u128(u128),
+    visit_f64(f64),
+    visit_char(char),
+    visit_str(&str),
+  }
+
+  fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_some<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_newtype_struct<D: Deserializer<'de>>(self, _: D) -> Result<Self::Value, D::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_map<A: MapAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+
+  fn visit_enum<A: EnumAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
+    Err(self.expected.reject())
+  }
+}
+
+/// Asks the format for bytes, which `be_bytes` reads with [`BytesVisitor`], most significant first.
+fn drive_be_bytes<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget + ByteBuffer,
+  D: Deserializer<'de>,
+{
+  deserializer.deserialize_bytes(BytesVisitor {
+    expected,
+    big_endian: true,
+    marker: PhantomData,
+  })
+}
+
+/// Asks the format for bytes, which `le_bytes` reads with [`BytesVisitor`], least significant
+/// first.
+fn drive_le_bytes<'de, T, D>(
+  deserializer: D,
+  expected: Expected<'_>,
+) -> Result<Result<T, Rejection>, D::Error>
+where
+  T: CheckedTarget + ByteBuffer,
+  D: Deserializer<'de>,
+{
+  deserializer.deserialize_bytes(BytesVisitor {
+    expected,
+    big_endian: false,
+    marker: PhantomData,
+  })
+}
+
+helper! {
+  BeBytesCore, BYTE_ARRAY;
+  write(CastSource + ByteBuffer) with serialize_be_bytes, BeBytesSome;
+  read(CheckedTarget + ByteBuffer) with drive_be_bytes, BeBytesOption;
+}
+
+helper! {
+  LeBytesCore, BYTE_ARRAY;
+  write(CastSource + ByteBuffer) with serialize_le_bytes, LeBytesSome;
+  read(CheckedTarget + ByteBuffer) with drive_le_bytes, LeBytesOption;
+}
+
+helper_impls!(BeBytes for bytes Uint: UintRepr, Int: IntRepr);
+helper_impls!(BeBytes for bytes nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
+helper_impls!(BeBytes for natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+helper_impls!(LeBytes for bytes Uint: UintRepr, Int: IntRepr);
+helper_impls!(LeBytes for bytes nonzero NonZeroUint: NonZeroUintRepr, NonZeroInt: NonZeroIntRepr);
+helper_impls!(LeBytes for natives u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);

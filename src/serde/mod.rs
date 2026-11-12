@@ -94,6 +94,11 @@
 //! - [`typed`]: the form of the defaults, read alone and by its type in every format: up to 128
 //!   bits the native integer of the class of the width, and above a decimal string. Its trait
 //!   [`Typed`](typed::Typed) takes `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`.
+//! - [`be_bytes`] and [`le_bytes`]: the bytes of the value, most or least significant first, in
+//!   two's complement extended by copies of the sign for `Int`, as serde's bytes. Their traits
+//!   [`BeBytes`](be_bytes::BeBytes) and [`LeBytes`](le_bytes::LeBytes) take `Uint`, `Int`,
+//!   `NonZeroUint` and `NonZeroInt` of up to 8192 bits, the native integers from `u8` to `u128` and
+//!   from `i8` to `i128`, and their `NonZero`.
 //!
 //! `required` on an `Option` field does not compile, with a note that names `optional`, and
 //! `optional` on a field that is not an `Option` is a mismatch of types. `optional` writes `None`
@@ -155,10 +160,14 @@ use crate::{
   layout::{Layout, Storage},
 };
 
-pub(crate) use sealed::{DecimalStringCore, FixedHexCore, QuantityCore, TypedCore};
+pub(crate) use sealed::{
+  BeBytesCore, DecimalStringCore, FixedHexCore, LeBytesCore, QuantityCore, TypedCore,
+};
 
+pub mod be_bytes;
 pub mod decimal;
 pub mod fixed_hex;
+pub mod le_bytes;
 pub mod quantity;
 #[cfg(test)]
 mod tests;
@@ -216,6 +225,8 @@ mod sealed {
     QuantityCore: quantity::Quantity;
     FixedHexCore: fixed_hex::FixedHex;
     TypedCore: typed::Typed;
+    BeBytesCore: be_bytes::BeBytes;
+    LeBytesCore: le_bytes::LeBytes;
   }
 }
 

@@ -8,10 +8,13 @@
 //! the width, the pattern of the bits of a negative `Int`, and reads that pattern back, with the
 //! message of each rule. `typed` writes the form of the defaults and reads it alone, asking every
 //! format for the class of the width, through a recording stand-in, JSON, postcard, a format
-//! without `deserialize_any` and serde's deserializers. The leaf `optional` of each helper writes
-//! and reads `None` and `Some` in JSON and postcard, a missing field with and without `default`,
-//! `null` through serde's buffer and an empty csv field; and each helper reads in untagged enums
-//! and flattened structs.
+//! without `deserialize_any` and serde's deserializers. `be_bytes` and `le_bytes` write the bytes
+//! of a value in either order, as a JSON array and as postcard's length and bytes, against the
+//! bytes of the native integers and numo's own, and read a byte string and a sequence of bytes
+//! back, with the message of each rule and of a wrong element. The leaf `optional` of each helper
+//! writes and reads `None` and `Some` in JSON and postcard, a missing field with and without
+//! `default`, `null` through serde's buffer and an empty csv field; and each helper reads in
+//! untagged enums and flattened structs.
 //!
 //! Every expected text of std comes from std at run time. Each width group or family of storages
 //! checks in a function of its own, and each generic check is `#[inline(never)]`, so that a frame
@@ -39,10 +42,12 @@ use super::{
   *,
 };
 use crate::{
-  CheckedCastFrom, NonZeroInt, NonZeroUint, i0, i1,
+  CheckedCastFrom, IntegerBytes, NonZeroInt, NonZeroUint, i0, i1,
   serde::{
+    be_bytes::{self, BeBytes},
     decimal::{self, DecimalString},
     fixed_hex::{self, FixedHex},
+    le_bytes::{self, LeBytes},
     quantity::{self, Quantity},
     typed::{self, Typed},
   },
@@ -126,6 +131,18 @@ containers!(
   with_typed: Typed,
   "crate::serde::typed::required",
   "crate::serde::typed::optional"
+);
+
+containers!(
+  with_be_bytes: BeBytes,
+  "crate::serde::be_bytes::required",
+  "crate::serde::be_bytes::optional"
+);
+
+containers!(
+  with_le_bytes: LeBytes,
+  "crate::serde::le_bytes::required",
+  "crate::serde::le_bytes::optional"
 );
 
 /// An untagged enum of `C`, which serde buffers to try each variant.
@@ -1905,4 +1922,518 @@ fn typed_in_options_serde_buffer_and_csv() {
     let read: Result<u256, de::value::Error> = typed::required::deserialize(CsvField(&text));
     assert_eq!(read.unwrap(), value);
   }
+}
+
+/// The fixed message of `be_bytes` and `le_bytes`.
+const BYTE_ARRAY: &str = "expected an array of bytes";
+
+/// The message of the bytes helpers for bytes of another number than `count`, the bytes of the
+/// width: `expected 1 byte` for one, and `expected {count} bytes` for every other count.
+fn wrong_byte_count(count: u64) -> String {
+  if count == 1 {
+    "expected 1 byte".to_string()
+  } else {
+    format!("expected {count} bytes")
+  }
+}
+
+/// Checks that the container `C` writes its value as `bytes`, serde's bytes: in JSON an array of
+/// numbers and in postcard the length and the bytes; and reads it back from both, from JSON as a
+/// sequence and from postcard as a byte string.
+#[inline(never)]
+fn written_as_bytes<C>(container: C, bytes: &[u8])
+where
+  C: Serialize + DeserializeOwned + PartialEq + Debug,
+{
+  let name = type_name::<C>();
+  let json = serde_json::to_string(&container).unwrap();
+  assert_eq!(json, serde_json::to_string(bytes).unwrap(), "{name}");
+  let mut expected = postcard::to_stdvec(&bytes.len()).unwrap();
+  expected.extend_from_slice(bytes);
+  let written = postcard::to_stdvec(&container).unwrap();
+  assert_eq!(written, expected, "{json} in {name}");
+  let from_json = serde_json::from_str::<C>(&json).unwrap();
+  assert_eq!(from_json, container, "{json} into {name}");
+  let from_bytes = postcard::from_bytes::<C>(&written).unwrap();
+  assert_eq!(from_bytes, container, "{json} into {name}");
+}
+
+/// Checks [`written_as_bytes`] at `value` with `le_bytes`, whose bytes are `le`, least significant
+/// first, and with `be_bytes`, whose bytes are those of `le` in reverse order.
+#[inline(never)]
+fn bytes_round_trip<T>(value: T, le: &[u8])
+where
+  T: BeBytes + LeBytes + Clone + PartialEq + Debug,
+{
+  let be: Vec<u8> = le.iter().rev().copied().collect();
+  written_as_bytes(with_be_bytes::Required(value.clone()), &be);
+  written_as_bytes(with_le_bytes::Required(value), le);
+}
+
+/// Checks [`bytes_round_trip`] at the value in `T`, of `bits` bits, at most 128, of each pattern of
+/// [`helper_samples`], read as the native integer `N` of the class of the width, whose bytes are
+/// the low bytes of the pattern, those that `to_le_bytes` gives of a native integer of 128 bits; a
+/// non-zero `T` holds every value but zero.
+#[inline(never)]
+fn bytes_round_trips<T, N>(bits: u32, signed: bool)
+where
+  T: CheckedCastFrom<N> + BeBytes + LeBytes + Clone + PartialEq + Debug,
+  N: Native,
+{
+  let count = bits.div_ceil(8) as usize;
+  for pattern in helper_samples(bits, signed) {
+    match T::checked_cast_from(N::of_pattern(pattern)) {
+      Some(value) => bytes_round_trip(value, &pattern.to_le_bytes()[..count]),
+      None => assert_eq!(pattern, 0, "{}", type_name::<T>()),
+    }
+  }
+}
+
+/// Checks [`bytes_round_trips`] at the four integer types of `$bits` bits, the width `$width`, in
+/// the default storage, whose class has the native integers `$unsigned` and `$signed`.
+macro_rules! bytes_forms {
+  ($($width:ty, $bits:literal: $unsigned:ident, $signed:ident;)+) => {$(
+    bytes_round_trips::<Uint<$width>, $unsigned>($bits, false);
+    bytes_round_trips::<Int<$width>, $signed>($bits, true);
+    bytes_round_trips::<NonZeroUint<$width>, $unsigned>($bits, false);
+    bytes_round_trips::<NonZeroInt<$width>, $signed>($bits, true);
+  )+};
+}
+
+/// The bytes of `be_bytes` and `le_bytes` at the four integer types of 0, 1, 7, 8, 12, 16, 64, 65,
+/// 100 and 128 bits, in the default storage, and at four of them in arrays.
+#[inline(never)]
+fn bytes_up_to_128_bits() {
+  bytes_forms! {
+    U0, 0: u8, i8;
+    U1, 1: u8, i8;
+    U7, 7: u8, i8;
+    U8, 8: u8, i8;
+    U12, 12: u16, i16;
+    U16, 16: u16, i16;
+    U64, 64: u64, i64;
+    U65, 65: u128, i128;
+    U100, 100: u128, i128;
+    U128, 128: u128, i128;
+  }
+  bytes_round_trips::<Uint<U12, [u8; 2]>, u16>(12, false);
+  bytes_round_trips::<Int<U12, [u16; 1]>, i16>(12, true);
+  bytes_round_trips::<Int<U65, [u64; 2]>, i128>(65, true);
+  bytes_round_trips::<NonZeroInt<U100, [u32; 4]>, i128>(100, true);
+}
+
+/// Checks [`bytes_round_trip`] at the value in `T`, above 128 bits, of each pattern of `patterns`,
+/// read as the integer `I` of the same width, whose bytes are those that its `copy_le_bytes_to`
+/// writes; a non-zero `T` holds every value but zero.
+#[inline(never)]
+fn bytes_of_patterns<T, I>(patterns: &[Vec<bool>])
+where
+  T: CheckedCastFrom<I> + BeBytes + LeBytes + Clone + PartialEq + Debug,
+  I: Patterned + IntegerBytes,
+{
+  for p in patterns {
+    let integer = I::from_pattern(p);
+    let mut le = vec![0; I::BYTES];
+    integer.copy_le_bytes_to(&mut le);
+    match T::checked_cast_from(integer) {
+      Some(value) => bytes_round_trip(value, &le),
+      None => assert!(p.iter().all(|&bit| !bit), "{}", type_name::<T>()),
+    }
+  }
+}
+
+/// Checks [`bytes_of_patterns`] at the four integer types of `$bits` bits, the width `$width`,
+/// above 128 bits, in the default storage, at the patterns of `text_patterns` in `$words` words of
+/// 64 bits.
+macro_rules! bytes_of_patterns {
+  ($($width:ty, $bits:literal, $words:literal;)+) => {$({
+    let patterns = text_patterns::<$words>($bits);
+    bytes_of_patterns::<Uint<$width>, Uint<$width>>(&patterns);
+    bytes_of_patterns::<Int<$width>, Int<$width>>(&patterns);
+    bytes_of_patterns::<NonZeroUint<$width>, Uint<$width>>(&patterns);
+    bytes_of_patterns::<NonZeroInt<$width>, Int<$width>>(&patterns);
+  })+};
+}
+
+/// The bytes of `be_bytes` and `le_bytes` at the four integer types of 129, 200, 256 and 1024 bits,
+/// and at 200 and 256 bits in arrays of other limbs.
+#[inline(never)]
+fn bytes_above_128_bits() {
+  bytes_of_patterns! {
+    U129, 129, 3;
+    U200, 200, 4;
+    U256, 256, 4;
+    U1024, 1024, 16;
+  }
+  let patterns = text_patterns::<4>(200);
+  bytes_of_patterns::<Uint<U200, [u8; 25]>, Uint<U200, [u8; 25]>>(&patterns);
+  bytes_of_patterns::<Int<U200, [u32; 7]>, Int<U200, [u32; 7]>>(&patterns);
+  let patterns = text_patterns::<4>(256);
+  bytes_of_patterns::<Uint<U256, [u128; 2]>, Uint<U256, [u128; 2]>>(&patterns);
+  bytes_of_patterns::<NonZeroInt<U256, [u16; 16]>, Int<U256, [u16; 16]>>(&patterns);
+}
+
+/// The bytes of `be_bytes` and `le_bytes` at the four integer types of 8192 bits, the widest that
+/// they take, in an optimized build.
+#[inline(never)]
+fn bytes_of_8192_bits() {
+  bytes_of_patterns! {
+    U8192, 8192, 128;
+  }
+}
+
+/// What `T` reads with `be_bytes` and with `le_bytes` from the JSON text `json`, or the message of
+/// each error.
+#[inline(never)]
+fn bytes_from_json<T: BeBytes + LeBytes>(json: &str) -> [Result<T, String>; 2] {
+  let message = |error: serde_json::Error| json_message(&error);
+  [
+    serde_json::from_str::<with_be_bytes::Required<T>>(json)
+      .map(|with_be_bytes::Required(value)| value)
+      .map_err(message),
+    serde_json::from_str::<with_le_bytes::Required<T>>(json)
+      .map(|with_le_bytes::Required(value)| value)
+      .map_err(message),
+  ]
+}
+
+/// What `T` reads from `be`, its bytes most significant first, with `be_bytes`, and from the same
+/// bytes in reverse order with `le_bytes`, each from a JSON array and from serde's deserializer of
+/// a byte string, or the message of each error.
+#[inline(never)]
+fn bytes_read<T: BeBytes + LeBytes>(be: &[u8]) -> [Result<T, String>; 4] {
+  let le: Vec<u8> = be.iter().rev().copied().collect();
+  let message = |error: serde_json::Error| json_message(&error);
+  let text = |error: de::value::Error| error.to_string();
+  [
+    serde_json::from_str::<with_be_bytes::Required<T>>(&serde_json::to_string(be).unwrap())
+      .map(|with_be_bytes::Required(value)| value)
+      .map_err(message),
+    serde_json::from_str::<with_le_bytes::Required<T>>(&serde_json::to_string(&le).unwrap())
+      .map(|with_le_bytes::Required(value)| value)
+      .map_err(message),
+    be_bytes::required::deserialize(de::value::BytesDeserializer::new(be)).map_err(text),
+    le_bytes::required::deserialize(de::value::BytesDeserializer::new(&le)).map_err(text),
+  ]
+}
+
+/// What `T` reads from `be` as [`bytes_read`] reads it, alike in every way, or the message of the
+/// error.
+#[inline(never)]
+fn bytes_value<T>(be: &[u8]) -> Result<T, String>
+where
+  T: BeBytes + LeBytes + PartialEq + Debug,
+{
+  let [first, rest @ ..] = bytes_read::<T>(be);
+  for result in rest {
+    assert_eq!(result, first, "{be:?} into {}", type_name::<T>());
+  }
+  first
+}
+
+/// Checks [`bytes_round_trip`] at the smallest value, zero, one and the largest value of each
+/// native integer `$native`, whose bytes are those of its `to_le_bytes`, and at the smallest and
+/// the largest value of its `NonZero`, which rejects zero.
+macro_rules! native_bytes {
+  ($($native:ident),+ $(,)?) => {$(
+    for value in [$native::MIN, 0, 1, $native::MAX] {
+      bytes_round_trip(value, &value.to_le_bytes());
+    }
+    for value in [NonZero::<$native>::MIN, NonZero::<$native>::MAX] {
+      bytes_round_trip(value, &value.get().to_le_bytes());
+    }
+    let zero = bytes_value::<NonZero<$native>>(&[0; size_of::<$native>()]);
+    assert_eq!(zero, Err(parse_error::<NonZero<u8>>("0")));
+  )+};
+}
+
+/// The bytes of `be_bytes` and `le_bytes` at the native integers and their `NonZero`.
+#[inline(never)]
+fn bytes_of_the_native_integers() {
+  native_bytes!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+}
+
+/// `be_bytes` and `le_bytes` write the bytes of a value, most and least significant first, as
+/// serde's bytes, a JSON array and in postcard the length and the bytes, and read them back from
+/// both: at the four integer types of 0, 1, 7, 8, 12, 16, 64, 65, 100, 128, 129, 200, 256 and 1024
+/// bits, in an optimized build also 8192 bits, against the bytes of the native integers and numo's
+/// own, and at the native integers and their `NonZero`. A negative `Int` writes its two's
+/// complement extended by copies of the sign, zero bits write no bytes, and a non-zero type
+/// rejects zero.
+#[test]
+fn bytes_write_the_bytes_of_the_value_in_either_order() {
+  bytes_up_to_128_bits();
+  bytes_above_128_bits();
+  if tier().is_full() {
+    bytes_of_8192_bits();
+  }
+  bytes_of_the_native_integers();
+  bytes_round_trip(Int::<U12>::new(-1), &[255, 255]);
+  bytes_round_trip(Int::<U12>::MIN, &[0, 248]);
+  bytes_round_trip(Uint::<U12>::MAX, &[255, 15]);
+  bytes_round_trip(i1::new(-1), &[255]);
+  bytes_round_trip(u0::ZERO, &[]);
+  bytes_round_trip(i0::ZERO, &[]);
+  let zero = parse_error::<NonZero<u8>>("0");
+  assert_eq!(bytes_value::<NonZeroUint<U12>>(&[0, 0]).unwrap_err(), zero);
+  assert_eq!(bytes_value::<NonZeroInt<U0>>(&[]).unwrap_err(), zero);
+  assert_eq!(
+    bytes_value::<NonZeroUint<U0, [u8; 0]>>(&[]).unwrap_err(),
+    zero
+  );
+  let zeros = [0; 32];
+  assert_eq!(
+    bytes_value::<NonZeroInt<U256, [u8; 32]>>(&zeros).unwrap_err(),
+    zero
+  );
+}
+
+/// `be_bytes` and `le_bytes` read the bytes of the width alone: the bits of the most significant
+/// byte above the width are too large for `Uint`, and for `Int` too large or, for the bytes of a
+/// negative value, too small, unless they copy the sign; at a width of whole bytes every byte
+/// reads; and zero bits read no bytes alone. Both read a byte string, a JSON array, serde_test's
+/// bytes and sequence, and a sequence of the integers that toml gives.
+#[test]
+fn bytes_read_the_bits_of_the_width_alone() {
+  let too_large = parse_error::<u8>("256");
+  let too_small = parse_error::<i8>("-129");
+  assert_eq!(bytes_value::<Uint<U12>>(&[15, 255]), Ok(Uint::<U12>::MAX));
+  assert_eq!(bytes_value::<Int<U12>>(&[15, 255]).unwrap_err(), too_large);
+  assert_eq!(
+    bytes_value::<Int<U12>>(&[255, 255]),
+    Ok(Int::<U12>::new(-1))
+  );
+  assert_eq!(
+    bytes_value::<Uint<U12>>(&[255, 255]).unwrap_err(),
+    too_large
+  );
+  assert_eq!(bytes_value::<Uint<U12>>(&[16, 0]).unwrap_err(), too_large);
+  assert_eq!(bytes_value::<Int<U12>>(&[7, 255]), Ok(Int::<U12>::MAX));
+  assert_eq!(bytes_value::<Int<U12>>(&[8, 0]).unwrap_err(), too_large);
+  assert_eq!(bytes_value::<Int<U12>>(&[248, 0]), Ok(Int::<U12>::MIN));
+  assert_eq!(bytes_value::<Int<U12>>(&[247, 255]).unwrap_err(), too_small);
+  let read = bytes_value::<Int<U12, [u8; 2]>>(&[128, 0]);
+  assert_eq!(read.unwrap_err(), too_small);
+  assert_eq!(bytes_value::<i1>(&[255]), Ok(i1::new(-1)));
+  assert_eq!(bytes_value::<i1>(&[0]), Ok(i1::new(0)));
+  assert_eq!(bytes_value::<i1>(&[1]).unwrap_err(), too_large);
+  assert_eq!(bytes_value::<i1>(&[254]).unwrap_err(), too_small);
+  assert_eq!(
+    bytes_value::<Uint<U1, [u16; 1]>>(&[1]),
+    Ok(Uint::<U1, [u16; 1]>::MAX)
+  );
+  let read = bytes_value::<Uint<U1, [u16; 1]>>(&[2]);
+  assert_eq!(read.unwrap_err(), too_large);
+  // 65 bits have nine bytes, of which the most significant holds one bit of the width.
+  let power = Uint::<U65, [u16; 5]>::checked_cast_from(1u128 << 64).unwrap();
+  assert_eq!(bytes_value(&[1, 0, 0, 0, 0, 0, 0, 0, 0]), Ok(power));
+  let read = bytes_value::<Uint<U65, [u16; 5]>>(&[2, 0, 0, 0, 0, 0, 0, 0, 0]);
+  assert_eq!(read.unwrap_err(), too_large);
+  assert_eq!(
+    bytes_value::<Int<U65>>(&[255, 0, 0, 0, 0, 0, 0, 0, 0]),
+    Ok(Int::<U65>::MIN)
+  );
+  let read = bytes_value::<Int<U65>>(&[254, 255, 255, 255, 255, 255, 255, 255, 255]);
+  assert_eq!(read.unwrap_err(), too_small);
+  assert_eq!(bytes_value::<i8>(&[128]), Ok(i8::MIN));
+  assert_eq!(bytes_value::<u8>(&[255]), Ok(u8::MAX));
+  assert_eq!(
+    bytes_value::<Int<U16, [u8; 2]>>(&[128, 0]),
+    Ok(Int::<U16, [u8; 2]>::MIN)
+  );
+  assert_eq!(bytes_value::<u0>(&[]), Ok(u0::ZERO));
+  assert_eq!(bytes_value::<i0>(&[]), Ok(i0::ZERO));
+  let none = "expected 0 bytes";
+  assert_eq!(bytes_value::<u0>(&[0]).unwrap_err(), none);
+  assert_eq!(bytes_value::<i0>(&[0, 0]).unwrap_err(), none);
+  let max = Uint::<U12>::MAX;
+  let tokens = [
+    Token::NewtypeStruct { name: "Required" },
+    Token::Bytes(&[15, 255]),
+  ];
+  assert_tokens(&with_be_bytes::Required(max), &tokens);
+  let tokens = [
+    Token::NewtypeStruct { name: "Required" },
+    Token::Seq { len: Some(2) },
+    Token::U8(255),
+    Token::U8(15),
+    Token::SeqEnd,
+  ];
+  assert_de_tokens(&with_le_bytes::Required(max), &tokens);
+  let read: Result<Uint<U12>, de::value::Error> =
+    be_bytes::required::deserialize(de::value::SeqDeserializer::new([15i64, 255].into_iter()));
+  assert_eq!(read.unwrap(), max);
+}
+
+/// Asserts that `T`, whose width has `count` bytes, one or more, rejects with `be_bytes` and
+/// `le_bytes` a byte string and a JSON array of one byte fewer or more with the message of
+/// [`wrong_byte_count`], and so a JSON array of two elements more that are not bytes, which is
+/// read to its end; a JSON array whose first element is not an integer from 0 to 255 with the
+/// fixed message, at once; and every other JSON value, every token of serde_test of another kind,
+/// and serde's deserializers of a string, an integer and a map, with the fixed message.
+#[inline(never)]
+fn bytes_rejections<T>(count: usize)
+where
+  T: BeBytes + LeBytes + PartialEq + Debug,
+{
+  let name = type_name::<T>();
+  let wrong_count = wrong_byte_count(count as u64);
+  for n in [count - 1, count + 1] {
+    for result in bytes_read::<T>(&vec![0; n]) {
+      assert_eq!(result, Err(wrong_count.clone()), "{n} bytes into {name}");
+    }
+  }
+  let long = format!(r#"[{}"a",{{"b":[1.5]}}]"#, "0,".repeat(count));
+  for result in bytes_from_json::<T>(&long) {
+    assert_eq!(result, Err(wrong_count.clone()), "{long} into {name}");
+  }
+  for element in ["256", "-1", "\"a\"", "1.5", "true", "null", "[0]", "{}"] {
+    let json = format!("[{element}{}]", ",0".repeat(count - 1));
+    for result in bytes_from_json::<T>(&json) {
+      assert_eq!(result, Err(BYTE_ARRAY.to_string()), "{json} into {name}");
+    }
+  }
+  for json in ["5", "0", "-1", "1.5", "true", "null", "{}"] {
+    for result in bytes_from_json::<T>(json) {
+      assert_eq!(result, Err(BYTE_ARRAY.to_string()), "{json} into {name}");
+    }
+  }
+  for token in [
+    Token::U8(5),
+    Token::I64(-1),
+    Token::Bool(true),
+    Token::Char('a'),
+    Token::Str("a"),
+    Token::Unit,
+    Token::None,
+  ] {
+    let tokens = [Token::NewtypeStruct { name: "Required" }, token];
+    assert_de_tokens_error::<with_be_bytes::Required<T>>(&tokens, BYTE_ARRAY);
+    assert_de_tokens_error::<with_le_bytes::Required<T>>(&tokens, BYTE_ARRAY);
+  }
+  let tokens = [
+    Token::NewtypeStruct { name: "Required" },
+    Token::Seq { len: Some(0) },
+    Token::SeqEnd,
+  ];
+  assert_de_tokens_error::<with_be_bytes::Required<T>>(&tokens, &wrong_count);
+  let text = |error: de::value::Error| error.to_string();
+  let map = || de::value::MapDeserializer::new([(NUMBER_TOKEN, "5")].into_iter());
+  for read in [
+    be_bytes::required::deserialize::<T, _>(map()).map_err(text),
+    le_bytes::required::deserialize::<T, _>(map()).map_err(text),
+    be_bytes::required::deserialize::<T, _>("a".into_deserializer()).map_err(text),
+    le_bytes::required::deserialize::<T, _>(5u8.into_deserializer()).map_err(text),
+  ] {
+    assert_eq!(read, Err(BYTE_ARRAY.to_string()), "{name}");
+  }
+}
+
+/// `be_bytes` and `le_bytes` reject bytes of another number than the width has with
+/// `expected n bytes`, or `expected 1 byte` at a width of one byte, also a sequence too long whose
+/// surplus is not bytes; an element of a sequence that is not an integer from 0 to 255 with the
+/// fixed message, which names nothing of it; and every input but bytes and a sequence with the
+/// fixed message.
+#[test]
+fn bytes_reject_each_broken_rule_with_its_message() {
+  bytes_rejections::<Uint<U12>>(2);
+  bytes_rejections::<Int<U12>>(2);
+  bytes_rejections::<i8>(1);
+  bytes_rejections::<NonZeroUint<U7>>(1);
+  bytes_rejections::<Int<U100, [u32; 4]>>(13);
+  bytes_rejections::<u256>(32);
+  bytes_rejections::<NonZero<u64>>(8);
+}
+
+/// serde_json gives a string as its bytes when it reads the value directly, so the JSON string of
+/// two ASCII characters reads into a type of two bytes, while through serde's buffer, in an
+/// untagged enum or a flattened struct, it stays a string, which `be_bytes` and `le_bytes` reject;
+/// a JSON array reads there.
+#[test]
+fn bytes_read_a_json_string_directly_alone() {
+  assert_eq!(
+    bytes_from_json::<Uint<U16>>("\"ab\""),
+    [Ok(Uint::<U16>::new(24930)), Ok(Uint::<U16>::new(25185))]
+  );
+  for result in through_the_buffer::<with_be_bytes::Field<Uint<U16>>>(r#"{"value":"ab"}"#) {
+    assert!(result.is_err());
+  }
+  for result in through_the_buffer::<with_le_bytes::Field<Uint<U16>>>(r#"{"value":"ab"}"#) {
+    assert!(result.is_err());
+  }
+  for result in through_the_buffer::<with_be_bytes::Field<Int<U12>>>(r#"{"value":[255,255]}"#) {
+    assert_eq!(
+      result,
+      Ok(with_be_bytes::Field {
+        value: Int::<U12>::new(-1)
+      })
+    );
+  }
+  for result in through_the_buffer::<with_le_bytes::Field<Uint<U12>>>(r#"{"value":[255,15]}"#) {
+    assert_eq!(
+      result,
+      Ok(with_le_bytes::Field {
+        value: Uint::<U12>::MAX
+      })
+    );
+  }
+}
+
+/// The leaves `optional` of `be_bytes` and `le_bytes`: `None` is JSON's `null` and postcard's
+/// `[0]`, and `Some` is postcard's `[1]` followed by the length and the bytes; a missing field
+/// reads as `None` with `default` and is required without it; `null` reads as `None`, also through
+/// serde's buffer; an empty csv field is `None`; and every other input gets the fixed message.
+#[test]
+fn bytes_in_options() {
+  options_round_trip(
+    with_be_bytes::Optional::<Int<U12>>(None),
+    with_be_bytes::Optional(Some(Int::<U12>::new(-1))),
+    "[255,255]",
+    &[2, 255, 255],
+  );
+  options_round_trip(
+    with_le_bytes::Optional::<Uint<U12>>(None),
+    with_le_bytes::Optional(Some(Uint::<U12>::MAX)),
+    "[255,15]",
+    &[2, 255, 15],
+  );
+  option_fields(
+    [
+      with_be_bytes::Defaulted::<u16> { value: None },
+      with_be_bytes::Defaulted { value: Some(258) },
+    ],
+    [
+      with_be_bytes::Present::<u16> { value: None },
+      with_be_bytes::Present { value: Some(258) },
+    ],
+    "[1,2]",
+  );
+  option_fields(
+    [
+      with_le_bytes::Defaulted::<u16> { value: None },
+      with_le_bytes::Defaulted { value: Some(513) },
+    ],
+    [
+      with_le_bytes::Present::<u16> { value: None },
+      with_le_bytes::Present { value: Some(513) },
+    ],
+    "[1,2]",
+  );
+  let read: Result<Option<u256>, de::value::Error> = be_bytes::optional::deserialize(CsvField(""));
+  assert_eq!(read.unwrap(), None);
+  let read: Result<Option<u256>, de::value::Error> = le_bytes::optional::deserialize(CsvField(""));
+  assert_eq!(read.unwrap(), None);
+  for json in ["5", "true", "{}"] {
+    let error = serde_json::from_str::<with_be_bytes::Optional<u16>>(json).unwrap_err();
+    assert_eq!(json_message(&error), BYTE_ARRAY, "{json}");
+    let error = serde_json::from_str::<with_le_bytes::Optional<u16>>(json).unwrap_err();
+    assert_eq!(json_message(&error), BYTE_ARRAY, "{json}");
+  }
+  let tokens = [
+    Token::NewtypeStruct { name: "Optional" },
+    Token::Some,
+    Token::Bytes(&[1, 2]),
+  ];
+  assert_tokens(&with_be_bytes::Optional(Some(258u16)), &tokens);
+  assert_tokens(&with_le_bytes::Optional(Some(513u16)), &tokens);
 }
