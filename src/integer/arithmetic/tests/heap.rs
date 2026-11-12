@@ -1,7 +1,10 @@
 //! The heap storage `Box<[L; N]>` of `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`, against its
 //! inline twin, the array that it holds: every row of the storage cores on a box against the row of
 //! the same name on its array, with the pointers of the rows that never allocate; the layout and
-//! the auto traits of the boxed integers; and each way of building one.
+//! the auto traits of the boxed integers; each way of building one; every trait and operator,
+//! compared through the limbs of the results; the allocations that the operations keep; the
+//! overflow of the operators and of the assignments; the non-zero integers; code generic over the
+//! storage traits; the widths of 4096 and 65536 bits; and serde.
 
 use core::{
   cmp::Ordering,
@@ -10,6 +13,8 @@ use core::{
   ops::Shl,
 };
 
+#[cfg(feature = "serde")]
+use serde_core::{Serialize, de::DeserializeOwned};
 use typenum::{U20, U300, U65536};
 
 use super::*;
@@ -2351,4 +2356,84 @@ fn wide_boxed_integers() {
   if tier().is_full() {
     wide_operations::<U65536, 1024>();
   }
+}
+
+/// Asserts that `boxed` writes in JSON and in postcard what `twin`, its inline twin, writes, and
+/// that each form reads back into the value of `boxed`.
+#[cfg(feature = "serde")]
+#[inline(never)]
+fn serde_agrees<T, U>(boxed: &T, twin: &U)
+where
+  T: Serialize + DeserializeOwned + Debug + PartialEq,
+  U: Serialize,
+{
+  let json = serde_json::to_string(boxed).expect("JSON");
+  assert_eq!(json, serde_json::to_string(twin).expect("JSON"));
+  assert_eq!(serde_json::from_str::<T>(&json).expect(&json), *boxed);
+  let bytes = postcard::to_stdvec(boxed).expect("postcard");
+  assert_eq!(bytes, postcard::to_stdvec(twin).expect("postcard"));
+  assert_eq!(
+    postcard::from_bytes::<T>(&bytes).expect("postcard"),
+    *boxed,
+    "{json}"
+  );
+}
+
+/// Emits a function that checks the serde of `$integer` of `B` bits in `Box<[L; N]>`, read in two's
+/// complement if `$signed`, and of its non-zero integer `$nonzero`, against their twins in
+/// `[L; N]` with [`serde_agrees`], at the values of the patterns of [`row_patterns`] in `K` words.
+/// The function is `#[inline(never)]`, so that its frame holds the values of this storage alone.
+#[cfg(feature = "serde")]
+macro_rules! serde_of {
+  ($name:ident, $integer:ident, $nonzero:ident, $signed:literal) => {
+    #[inline(never)]
+    fn $name<B, L, const N: usize, const K: usize>()
+    where
+      B: FitsBits<[L; N]>,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr
+        + NonZeroUintRepr<Integer = [L; N], Signed = [L; N]>
+        + NonZeroIntRepr<Integer = [L; N], Unsigned = [L; N]>,
+    {
+      for pattern in row_patterns::<K>(B::U32, $signed) {
+        let limbs: [L; N] = bigint::limbs_of_pattern(&pattern, $signed);
+        let twin = <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(limbs);
+        let boxed = <$integer<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(limbs);
+        let (twin, boxed) = (twin.expect("in range"), boxed.expect("in range"));
+        serde_agrees(&boxed, &twin);
+        let twin = <$nonzero<B, [L; N]> as FixedNonZero>::new(twin);
+        let boxed = <$nonzero<B, Box<[L; N]>> as FixedNonZero>::new(boxed);
+        if let (Some(twin), Some(boxed)) = (twin, boxed) {
+          serde_agrees(&boxed, &twin);
+        }
+      }
+    }
+  };
+}
+
+#[cfg(feature = "serde")]
+serde_of!(uint_serde, Uint, NonZeroUint, false);
+#[cfg(feature = "serde")]
+serde_of!(int_serde, Int, NonZeroInt, true);
+
+/// A boxed integer writes in JSON and in postcard what its inline twin writes, and reads back from
+/// both, at 7, 64, 100, 128, 200 and 4096 bits and at zero bits, in both signs, and so do the
+/// non-zero integers.
+#[cfg(feature = "serde")]
+#[test]
+fn boxed_integers_serde_as_inline_integers() {
+  uint_serde::<U0, u64, 0, 1>();
+  int_serde::<U0, u64, 0, 1>();
+  uint_serde::<U7, u8, 1, 1>();
+  int_serde::<U7, u8, 1, 1>();
+  uint_serde::<U64, u64, 1, 1>();
+  int_serde::<U64, u64, 1, 1>();
+  uint_serde::<U100, u64, 2, 2>();
+  int_serde::<U100, u64, 2, 2>();
+  uint_serde::<U128, u64, 2, 2>();
+  int_serde::<U128, u64, 2, 2>();
+  uint_serde::<U200, u64, 4, 4>();
+  int_serde::<U200, u64, 4, 4>();
+  uint_serde::<U4096, u64, 64, 64>();
+  int_serde::<U4096, u64, 64, 64>();
 }
