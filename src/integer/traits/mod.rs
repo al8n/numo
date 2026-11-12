@@ -529,7 +529,7 @@ pub trait NativeInteger: ConstFixedInteger {
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait ArrayInteger: Sealed + Sized {
-  /// The array of limbs, `Repr`.
+  /// The array of limbs: `Repr`, or the array of a heap storage.
   type Array;
 
   /// The type of a limb, `L` of the array `[L; N]`.

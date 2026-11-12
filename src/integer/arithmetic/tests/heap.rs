@@ -1,15 +1,16 @@
 //! The heap storage `Box<[L; N]>` of `Uint`, `Int`, `NonZeroUint` and `NonZeroInt`, against its
 //! inline twin, the array that it holds: every row of the storage cores on a box against the row of
-//! the same name on its array, with the pointers of the rows that never allocate; and the layout
-//! and the auto traits of the boxed integers.
+//! the same name on its array, with the pointers of the rows that never allocate; the layout and
+//! the auto traits of the boxed integers; and each way of building one.
 
 use core::{cmp::Ordering, fmt, hash::Hasher, ops::Shl};
 
-use typenum::U20;
+use typenum::{U20, U300};
 
 use super::*;
 use crate::{
-  NonZeroInt, NonZeroUint,
+  ArrayInteger, BoundedCastFrom, ByteArray, CheckedCastFrom, FillsRepr, FromByteArray,
+  FromFloatError, FromLimbs, IntegerBytes, IntegerFloat, NonZeroInt, NonZeroUint, WidenFrom,
   bigint::floats,
   int::float::{FloatFormat, FloatParts, float_parts_f64},
   layout::Token,
@@ -634,4 +635,343 @@ fn boxed_integers_have_the_layout_of_a_pointer() {
   send_and_sync::<Int<U20, Box<[u8; 3]>>>();
   send_and_sync::<NonZeroUint<U256, Box<[u64; 4]>>>();
   send_and_sync::<NonZeroInt<U20, Box<[u8; 3]>>>();
+}
+
+/// The results of the conversions of an integer from a slice, as the limbs of the integers: the
+/// checked, the wrapping, the overflowing and the saturating conversion, and the strict one where
+/// the checked one returns a value.
+type Reads<A> = (Option<A>, A, (A, bool), A, Option<A>);
+
+/// The [`Reads`] of `T` from the limbs of `slice`, through `ArrayInteger`.
+fn limb_reads<T: ArrayInteger>(slice: &[T::Limb]) -> Reads<T::Array> {
+  let checked = T::checked_from_limbs_slice(slice).map(T::into_limbs);
+  let strict = checked
+    .as_ref()
+    .map(|_| T::strict_from_limbs_slice(slice).into_limbs());
+  let (wrapped, overflow) = T::overflowing_from_limbs_slice(slice);
+  (
+    checked,
+    T::wrapping_from_limbs_slice(slice).into_limbs(),
+    (wrapped.into_limbs(), overflow),
+    T::saturating_from_limbs_slice(slice).into_limbs(),
+    strict,
+  )
+}
+
+/// The [`Reads`] of `T` from `bytes`, least significant first, and from them in reverse order,
+/// most significant first, through `IntegerBytes`.
+fn byte_reads<T: IntegerBytes + ArrayInteger>(bytes: &[u8]) -> [Reads<T::Array>; 2] {
+  let reversed: Vec<u8> = bytes.iter().rev().copied().collect();
+  let little = T::checked_from_le_slice(bytes).map(T::into_limbs);
+  let little_strict = little
+    .as_ref()
+    .map(|_| T::strict_from_le_slice(bytes).into_limbs());
+  let (little_wrapped, little_overflow) = T::overflowing_from_le_slice(bytes);
+  let big = T::checked_from_be_slice(&reversed).map(T::into_limbs);
+  let big_strict = big
+    .as_ref()
+    .map(|_| T::strict_from_be_slice(&reversed).into_limbs());
+  let (big_wrapped, big_overflow) = T::overflowing_from_be_slice(&reversed);
+  [
+    (
+      little,
+      T::wrapping_from_le_slice(bytes).into_limbs(),
+      (little_wrapped.into_limbs(), little_overflow),
+      T::saturating_from_le_slice(bytes).into_limbs(),
+      little_strict,
+    ),
+    (
+      big,
+      T::wrapping_from_be_slice(&reversed).into_limbs(),
+      (big_wrapped.into_limbs(), big_overflow),
+      T::saturating_from_be_slice(&reversed).into_limbs(),
+      big_strict,
+    ),
+  ]
+}
+
+/// The results of the conversions of an integer from a float, as the limbs of the integers: the
+/// checked and the saturating conversion, the strict one where the checked one returns a value,
+/// the exact one, the checked one from the nearest `f32`, and the one rounded with each rounding
+/// mode.
+type FloatReads<A> = (
+  Option<A>,
+  A,
+  Option<A>,
+  Result<A, FromFloatError>,
+  Option<A>,
+  Vec<Result<A, FromFloatError>>,
+);
+
+/// The [`FloatReads`] of `T` from `value`, through `IntegerFloat`.
+fn float_reads<T: IntegerFloat + ArrayInteger>(value: f64) -> FloatReads<T::Array> {
+  let checked = T::checked_from_f64(value).map(T::into_limbs);
+  let strict = checked
+    .as_ref()
+    .map(|_| T::strict_from_f64(value).into_limbs());
+  let rounded = bigint::MODES
+    .iter()
+    .map(|&mode| T::round_from_f64(value, mode).map(T::into_limbs))
+    .collect();
+  (
+    checked,
+    T::saturating_from_f64(value).into_limbs(),
+    strict,
+    T::exact_from_f64(value).map(T::into_limbs),
+    T::checked_from_f32(value as f32).map(T::into_limbs),
+    rounded,
+  )
+}
+
+/// The floats at which the conversions from the floats are checked at `bits` bits: zero of both
+/// signs, a few halves and integers, `2^(bits - 1)` and `2^bits` and their negations, the largest
+/// float, an infinity and NaN.
+fn float_values(bits: u32) -> Vec<f64> {
+  let mut values = vec![0.0, -0.0, 0.5, -1.5, 2.5, 7.0, -1e19, 1e30, f64::MAX];
+  for exponent in [bits.saturating_sub(1), bits] {
+    let power = floats::pow2(exponent as i32);
+    values.extend([power, -power]);
+  }
+  values.extend([f64::INFINITY, f64::NAN]);
+  values
+}
+
+/// Emits a function that checks the construction of `$integer` of `B` bits in `Box<[L; N]>`, read
+/// in two's complement if `$signed`, against its twin in `[L; N]`, through `ArrayInteger`, which
+/// compares the limbs of the two: zero through `Default` and `FixedInteger::zero`, and the limits
+/// through `FixedInteger`; at the patterns of [`row_patterns`] in `K` words, the limbs through
+/// `ArrayInteger::checked_from_limbs`, the slices of limbs and of bytes cut from them through
+/// `ArrayInteger` and `IntegerBytes`, the decimal and hexadecimal texts of the twin through
+/// `FromStr` and `FixedInteger::from_str_radix`, the casts from the twin into a box and from a
+/// borrowed box into the twin and into the native integers, and the conversions to the floats;
+/// limbs above the width, which `checked_from_limbs` refuses; and the casts and `TryFrom` of the
+/// native integers and the conversions from the floats of [`float_values`]. The function is
+/// `#[inline(never)]`, so that its frame holds the values of this storage alone.
+macro_rules! construction {
+  ($name:ident, $integer:ident, $signed:literal) => {
+    #[inline(never)]
+    fn $name<B, L, const N: usize, const K: usize>()
+    where
+      B: FitsBits<[L; N]>,
+      L: ArrayLimb + bigint::Limb + Debug + Ord + Shl<u32, Output = L>,
+      [L; N]: ArrayRepr,
+    {
+      let bits = B::U32;
+      let zero = $integer::<B, [L; N]>::ZERO.into_limbs();
+      assert_eq!($integer::<B, Box<[L; N]>>::default().into_limbs(), zero);
+      assert_eq!(
+        <$integer<B, Box<[L; N]>> as FixedInteger>::zero().into_limbs(),
+        zero
+      );
+      assert_eq!(
+        <$integer<B, Box<[L; N]>> as FixedInteger>::min_value().into_limbs(),
+        $integer::<B, [L; N]>::MIN.into_limbs()
+      );
+      assert_eq!(
+        <$integer<B, Box<[L; N]>> as FixedInteger>::max_value().into_limbs(),
+        $integer::<B, [L; N]>::MAX.into_limbs()
+      );
+      for pattern in row_patterns::<K>(bits, $signed) {
+        let limbs: [L; N] = bigint::limbs_of_pattern(&pattern, $signed);
+        let twin = <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(limbs);
+        let twin = twin.expect("a value of the width");
+        let boxed = <$integer<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(limbs);
+        let boxed = boxed.expect("a value of the width");
+        assert_eq!((*boxed.as_limbs(), boxed.to_limbs()), (limbs, limbs));
+        for slice in bigint::limb_slices::<L>(&pattern, $signed, N) {
+          assert_eq!(
+            limb_reads::<$integer<B, Box<[L; N]>>>(&slice),
+            limb_reads::<$integer<B, [L; N]>>(&slice),
+            "{slice:?} into {bits} bits"
+          );
+        }
+        for bytes in bigint::byte_slices(&pattern, $signed) {
+          assert_eq!(
+            byte_reads::<$integer<B, Box<[L; N]>>>(&bytes),
+            byte_reads::<$integer<B, [L; N]>>(&bytes),
+            "{bytes:?} into {bits} bits"
+          );
+        }
+        let text = twin.to_string();
+        let parsed = text.parse::<$integer<B, Box<[L; N]>>>();
+        assert_eq!(parsed.map(ArrayInteger::into_limbs), Ok(limbs), "{text}");
+        let hex = format!("{twin:x}");
+        assert_eq!(
+          <$integer<B, Box<[L; N]>> as FixedInteger>::from_str_radix(&hex, 16)
+            .map(ArrayInteger::into_limbs),
+          <$integer<B, [L; N]> as FixedInteger>::from_str_radix(&hex, 16)
+            .map(ArrayInteger::into_limbs),
+          "{hex}"
+        );
+        let cast = $integer::<B, Box<[L; N]>>::checked_cast_from(twin);
+        assert_eq!(cast.map(ArrayInteger::into_limbs), Some(limbs));
+        let cast = $integer::<B, [L; N]>::checked_cast_from(&boxed);
+        assert_eq!(cast.map(ArrayInteger::into_limbs), Some(limbs));
+        assert_eq!(u64::checked_cast_from(&boxed), u64::checked_cast_from(twin));
+        assert_eq!(
+          i8::saturating_cast_from(&boxed),
+          i8::saturating_cast_from(twin)
+        );
+        assert_eq!(
+          u128::wrapping_cast_from(&boxed),
+          u128::wrapping_cast_from(twin)
+        );
+        assert_eq!(boxed.to_f64().to_bits(), twin.to_f64().to_bits());
+        assert_eq!(boxed.to_f32().to_bits(), twin.to_f32().to_bits());
+      }
+      // Limbs with the bit at the width set hold a value outside the width, unless the width fills
+      // them; for `Int`, a value whose sign is not copied above the width.
+      let storage_bits = <L as bigint::Limb>::BITS * N as u32;
+      if bits < storage_bits {
+        let above = model::pattern(storage_bits, |i| i == bits);
+        let limbs: [L; N] = bigint::limbs_of_pattern(&above, false);
+        let boxed = <$integer<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(limbs);
+        assert!(boxed.is_none(), "{limbs:?} into {bits} bits");
+      }
+      for value in [0, 1, u64::MAX.into(), u128::MAX] {
+        let boxed = $integer::<B, Box<[L; N]>>::checked_cast_from(value);
+        let twin = $integer::<B, [L; N]>::checked_cast_from(value);
+        assert_eq!(
+          boxed.map(ArrayInteger::into_limbs),
+          twin.map(ArrayInteger::into_limbs)
+        );
+        let boxed = $integer::<B, Box<[L; N]>>::wrapping_cast_from(value).into_limbs();
+        assert_eq!(
+          boxed,
+          $integer::<B, [L; N]>::wrapping_cast_from(value).into_limbs()
+        );
+      }
+      for value in [i128::MIN, -1, 0, i128::MAX] {
+        let boxed = $integer::<B, Box<[L; N]>>::saturating_cast_from(value).into_limbs();
+        assert_eq!(
+          boxed,
+          $integer::<B, [L; N]>::saturating_cast_from(value).into_limbs()
+        );
+      }
+      assert_eq!(
+        $integer::<B, Box<[L; N]>>::try_from(usize::MAX).map(ArrayInteger::into_limbs),
+        $integer::<B, [L; N]>::try_from(usize::MAX).map(ArrayInteger::into_limbs)
+      );
+      assert_eq!(
+        $integer::<B, Box<[L; N]>>::try_from(isize::MIN).map(ArrayInteger::into_limbs),
+        $integer::<B, [L; N]>::try_from(isize::MIN).map(ArrayInteger::into_limbs)
+      );
+      for value in float_values(bits) {
+        assert_eq!(
+          float_reads::<$integer<B, Box<[L; N]>>>(value),
+          float_reads::<$integer<B, [L; N]>>(value),
+          "{value:e} into {bits} bits"
+        );
+      }
+    }
+  };
+}
+
+construction!(uint_construction, Uint, false);
+construction!(int_construction, Int, true);
+
+/// Checks `FromLimbs` and `From` of the pointer into `Uint` and `Int` of `B` bits in `Box<[L; N]>`,
+/// a width that fills the array, at the patterns of [`row_patterns`] in `K` words: each gives the
+/// limbs that it takes. The function is `#[inline(never)]`, so that its frame holds the values of
+/// this storage alone.
+#[inline(never)]
+fn filled_construction<B, L, const N: usize, const K: usize>()
+where
+  B: FillsRepr<[L; N]>,
+  L: ArrayLimb + bigint::Limb + Debug,
+  [L; N]: ArrayRepr,
+{
+  for signed in [false, true] {
+    for pattern in row_patterns::<K>(B::U32, signed) {
+      let limbs: [L; N] = bigint::limbs_of_pattern(&pattern, signed);
+      let uint = <Uint<B, Box<[L; N]>> as FromLimbs>::from_limbs(limbs);
+      assert_eq!(uint.into_limbs(), limbs);
+      let int = <Int<B, Box<[L; N]>> as FromLimbs>::from_limbs(limbs);
+      assert_eq!(int.into_limbs(), limbs);
+      let uint = Uint::<B, Box<[L; N]>>::from(Box::new(limbs));
+      assert_eq!(*Box::<[L; N]>::from(uint), limbs);
+      let int = Int::<B, Box<[L; N]>>::from(Box::new(limbs));
+      assert_eq!(*Box::<[L; N]>::from(int), limbs);
+    }
+  }
+}
+
+/// Each way of building a boxed integer gives the limbs of its inline twin: zero, the limits, the
+/// limbs, the slices of limbs and of bytes, the text, the casts from an inline integer, also
+/// borrowed and into a native integer, the native integers and the floats, in the storages of
+/// [`box_rows_agree_with_the_array_rows`], fewer under Miri; `FromLimbs` and `From` of the pointer
+/// at widths that fill the array; and, at 256 bits in four 64-bit limbs, `From` of the native
+/// integers, `widen` both ways, `IntegerOne`, and the arrays of bytes.
+#[test]
+fn construction_of_boxed_integers() {
+  uint_construction::<U0, u64, 0, 1>();
+  int_construction::<U0, u64, 0, 1>();
+  uint_construction::<U65, u64, 2, 2>();
+  int_construction::<U65, u64, 2, 2>();
+  uint_construction::<U20, u8, 3, 1>();
+  int_construction::<U20, u8, 3, 1>();
+  filled_construction::<U0, u64, 0, 1>();
+  filled_construction::<U256, u64, 4, 4>();
+  if !tier().is_miri() {
+    uint_construction::<U1, u64, 1, 1>();
+    int_construction::<U1, u64, 1, 1>();
+    uint_construction::<U200, u64, 4, 4>();
+    int_construction::<U200, u64, 4, 4>();
+    uint_construction::<U24, u16, 2, 1>();
+    int_construction::<U24, u16, 2, 1>();
+    uint_construction::<U129, u128, 2, 4>();
+    int_construction::<U129, u128, 2, 4>();
+    filled_construction::<U64, u64, 1, 1>();
+    filled_construction::<U24, u8, 3, 1>();
+    filled_construction::<U256, u128, 2, 4>();
+    filled_construction::<U200, u8, 25, 4>();
+  }
+
+  type U = Uint<U256, Box<[u64; 4]>>;
+  type I = Int<U256, Box<[u64; 4]>>;
+  assert_eq!(
+    U::from(u64::MAX).into_limbs(),
+    u256::from(u64::MAX).into_limbs()
+  );
+  assert_eq!(U::from(true).into_limbs(), u256::ONE.into_limbs());
+  assert_eq!(
+    I::from(i64::MIN).into_limbs(),
+    i256::from(i64::MIN).into_limbs()
+  );
+  assert_eq!(
+    I::from(u128::MAX).into_limbs(),
+    i256::from(u128::MAX).into_limbs()
+  );
+  assert_eq!(
+    <U as IntegerOne>::one().into_limbs(),
+    u256::ONE.into_limbs()
+  );
+  assert_eq!(
+    <I as IntegerOne>::one().into_limbs(),
+    i256::ONE.into_limbs()
+  );
+  let widened: U = u7::new(100).widen();
+  assert_eq!(widened.into_limbs(), [100, 0, 0, 0]);
+  let widened: I = i7::new(-50).widen();
+  assert_eq!(widened.into_limbs(), i256::from(-50i8).into_limbs());
+  let boxed = U::from(u64::MAX);
+  let wide = Uint::<U300, [u64; 5]>::widen_from(&boxed);
+  assert_eq!(wide.to_limbs(), [u64::MAX, 0, 0, 0, 0]);
+  assert_eq!(
+    boxed.widen::<Uint<U300, Box<[u64; 5]>>>().into_limbs(),
+    wide.to_limbs()
+  );
+  let bytes: [u8; 32] = core::array::from_fn(|i| i as u8 * 7);
+  assert_eq!(
+    <U as FromByteArray>::from_le_bytes(bytes).into_limbs(),
+    u256::from_le_bytes(bytes).into_limbs()
+  );
+  assert_eq!(
+    <I as FromByteArray>::from_be_bytes(bytes).into_limbs(),
+    i256::from_be_bytes(bytes).into_limbs()
+  );
+  assert_eq!(
+    U::from_le_bytes(bytes).to_be_bytes(),
+    u256::from_le_bytes(bytes).to_be_bytes()
+  );
 }

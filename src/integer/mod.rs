@@ -47,6 +47,8 @@ mod nonzero;
 mod cast;
 mod compare;
 mod convert;
+#[cfg(any(feature = "std", feature = "alloc"))]
+mod heap;
 #[cfg(feature = "serde")]
 mod serde;
 mod text;

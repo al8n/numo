@@ -16,7 +16,7 @@ use typenum::{
 };
 
 pub use array_size::ArraySize;
-#[cfg(all(test, any(feature = "std", feature = "alloc")))]
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use heap::{ArrayLimb, ArrayRepr};
 pub(crate) use sealed::{
   InlineIntConsts, InlineUintConsts, IntCore, IntWidth, TypenumNumber, UintCore, UintWidth, View,
