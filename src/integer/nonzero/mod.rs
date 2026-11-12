@@ -15,7 +15,8 @@
 //! to its caller, as the native `NonZero::new_unchecked` does.
 //!
 //! The tables pass their rows to the callbacks of `tables`, as those of `arithmetic` and `bits` do,
-//! and every row is derived. A row calls `self.integer()`, the rows of the integer, `Self::known`,
+//! and every row is derived. A row calls `self.integer()`, which lends the value,
+//! `self.into_integer()`, which takes it, the rows of the integer, `Self::known`,
 //! `Self::saturated`, `Self::duplicate` and other rows, which an inherent block of each storage
 //! defines as `const fn`s and the generic implementations of the traits reach through [`Parts`] and
 //! [`Saturated`]. The integer of a row and the non-zero integer of the other sign are named through
@@ -40,7 +41,7 @@ use crate::{
   width::{
     FitsBits, InlineIntConsts, InlineIntRepr, InlineUintConsts, InlineUintRepr, IntCore, IntRepr,
     IntReprMut, IntWidth, NonZeroIntRepr, NonZeroUintRepr, UintCore, UintRepr, UintReprMut,
-    UintWidth, WholeBytes,
+    UintWidth, View, WholeBytes,
   },
 };
 
@@ -321,7 +322,7 @@ macro_rules! nonzero_uint_table {
       /// The bits of `self` read as the `NonZeroInt` of the same width in a storage of the same
       /// size, its two's complement, as `as` casts a native integer: `MAX` becomes -1.
       fn cast_signed(self) -> nonzero_other!($args, Signed) {
-        <nonzero_other!($args, Signed)>::known(self.integer().cast_signed())
+        <nonzero_other!($args, Signed)>::known(self.into_integer().cast_signed())
       }
     }
   };
@@ -333,8 +334,8 @@ macro_rules! nonzero_int_table {
     $callback! { $args
       /// Returns `true` if `self` is negative.
       // The sign bit is the leading bit of the `Bits` bits. `Int::is_negative` reaches generic code
-      // only through `SignedFixedInteger`, which needs a storage that holds the value inline, and
-      // a row compiles for every storage.
+      // only through `SignedFixedInteger`, which needs a storage that is `Clone`, and a row compiles
+      // for every storage.
       fn is_negative(&self) -> bool {
         self.integer().leading_zeros() == 0
       }
@@ -424,13 +425,13 @@ macro_rules! nonzero_int_table {
       /// The absolute value, `|self|`, as the `NonZeroUint` of the same width in a storage of the
       /// same size, which also holds the absolute value of `MIN`.
       fn unsigned_abs(&self) -> nonzero_other!($args, Unsigned) {
-        <nonzero_other!($args, Unsigned)>::known(self.wrapping_abs().integer().cast_unsigned())
+        <nonzero_other!($args, Unsigned)>::known(self.wrapping_abs().into_integer().cast_unsigned())
       }
 
       /// The `Bits` bits of `self`, its two's complement, as the `NonZeroUint` of the same width in
       /// a storage of the same size, as `as` casts a native integer: -1 becomes `MAX`.
       fn cast_unsigned(self) -> nonzero_other!($args, Unsigned) {
-        <nonzero_other!($args, Unsigned)>::known(self.integer().cast_unsigned())
+        <nonzero_other!($args, Unsigned)>::known(self.into_integer().cast_unsigned())
       }
     }
   };
@@ -638,6 +639,12 @@ macro_rules! array_nonzero {
         &self.value
       }
 
+      /// The value, as the integer, which takes the array.
+      #[inline]
+      const fn into_integer(self) -> Uint<B, [$limb; N]> {
+        self.value
+      }
+
       /// The non-zero integer of `value`, which is not zero, as every non-zero result of the rows
       /// is; a debug assertion checks it.
       #[inline]
@@ -708,6 +715,12 @@ macro_rules! array_nonzero {
       #[inline]
       const fn integer(&self) -> &Int<B, [$limb; N]> {
         &self.value
+      }
+
+      /// The value, as the integer, which takes the array.
+      #[inline]
+      const fn into_integer(self) -> Int<B, [$limb; N]> {
+        self.value
       }
 
       /// The non-zero integer of `value`, which is not zero, as every non-zero result of the rows
@@ -804,6 +817,12 @@ macro_rules! native_nonzero {
         Uint::wrap(self.value.repr.get())
       }
 
+      /// The value, as the integer, taken by value.
+      #[inline]
+      const fn into_integer(self) -> Uint<B, $uint> {
+        Uint::wrap(self.value.repr.get())
+      }
+
       /// The non-zero integer of `value`, which is not zero, as every non-zero result of the rows
       /// is; the native `NonZero` panics otherwise.
       #[inline]
@@ -868,6 +887,12 @@ macro_rules! native_nonzero {
         Int::wrap(self.value.repr.get())
       }
 
+      /// The value, as the integer, taken by value.
+      #[inline]
+      const fn into_integer(self) -> Int<B, $int> {
+        Int::wrap(self.value.repr.get())
+      }
+
       /// The non-zero integer of `value`, which is not zero, as every non-zero result of the rows
       /// is; the native `NonZero` panics otherwise.
       #[inline]
@@ -926,6 +951,13 @@ macro_rules! nonzero_traits {
         Self {
           value: self.value.clone(),
         }
+      }
+
+      /// Copies the value of `source` into the storage of `self`, as the `clone_from` of the
+      /// storage does.
+      #[inline]
+      fn clone_from(&mut self, source: &Self) {
+        self.value.clone_from(&source.value);
       }
     }
 
@@ -1164,47 +1196,77 @@ nonzero_formats!(
   exp UpperExp: true;
 );
 
+/// The quotient and the remainder of the integer in `dividend` by the non-zero integer in
+/// `divisor`, at `bits` bits, computed on the inline storages that they lend: the divisor is not
+/// zero, and no unsigned quotient overflows.
+#[inline]
+fn div_rem_nonzero<R: UintRepr>(
+  dividend: &R,
+  divisor: &R::NonZero,
+  bits: u32,
+) -> (R::Inline, R::Inline) {
+  let division = R::with_nonzero(
+    divisor,
+    |divisor| {
+      dividend
+        .inline(Token::new())
+        .div_rem_bits(divisor.inline(Token::new()), bits, Token::new())
+    },
+    Token::new(),
+  );
+  match division {
+    Some((quotient, remainder, _)) => (quotient, remainder),
+    None => zero(),
+  }
+}
+
 /// Implements the division `$op` of [`Uint`], `/` or `%`, by the [`NonZeroUint`] of the same width
 /// over the non-zero storage of its storage, in the four forms of values and references, and its
 /// compound assignment `$assign` for a value and a reference, with the element `$part` of the
 /// quotient and the remainder. The divisor is not zero and an unsigned quotient cannot overflow,
-/// so nothing panics, and as for the native integers the methods are not `#[track_caller]`. The
-/// form on two references divides the storage by the divisor that the non-zero storage lends, for
-/// every storage; the forms with an owned operand, for a storage that holds the value inline, pass
-/// references to it; and the compound assignments, for a storage that holds the value in place,
-/// store the result.
+/// so nothing panics, and as for the native integers the methods are not `#[track_caller]`. Every
+/// form divides the inline storage that the dividend lends by that of the divisor, for every
+/// storage: the form on two references makes a storage of the result, the forms with an owned
+/// operand store it in that operand, the dividend when both are owned, and the compound
+/// assignments, for a storage that holds the value in place, store it in their target.
 macro_rules! nonzero_division {
   ($op:ident $method:ident, $assign:ident $assign_method:ident, $part:tt) => {
-    impl<B: FitsBits<R>, R: InlineUintRepr> $op<NonZeroUint<B, <R as UintRepr>::NonZero>>
+    impl<B: FitsBits<R>, R: UintRepr> $op<NonZeroUint<B, <R as UintRepr>::NonZero>> for Uint<B, R> {
+      type Output = Self;
+
+      #[inline]
+      fn $method(mut self, rhs: NonZeroUint<B, <R as UintRepr>::NonZero>) -> Self {
+        let part = div_rem_nonzero(&self.repr, &rhs.value.repr, B::U32).$part;
+        self.repr.set_inline(part, Token::new());
+        self
+      }
+    }
+
+    impl<B: FitsBits<R>, R: UintRepr> $op<&NonZeroUint<B, <R as UintRepr>::NonZero>>
       for Uint<B, R>
     {
       type Output = Self;
 
       #[inline]
-      fn $method(self, rhs: NonZeroUint<B, <R as UintRepr>::NonZero>) -> Self {
-        $op::$method(&self, &rhs)
+      fn $method(mut self, rhs: &NonZeroUint<B, <R as UintRepr>::NonZero>) -> Self {
+        let part = div_rem_nonzero(&self.repr, &rhs.value.repr, B::U32).$part;
+        self.repr.set_inline(part, Token::new());
+        self
       }
     }
 
-    impl<B: FitsBits<R>, R: InlineUintRepr> $op<&NonZeroUint<B, <R as UintRepr>::NonZero>>
-      for Uint<B, R>
-    {
-      type Output = Self;
-
-      #[inline]
-      fn $method(self, rhs: &NonZeroUint<B, <R as UintRepr>::NonZero>) -> Self {
-        $op::$method(&self, rhs)
-      }
-    }
-
-    impl<B: FitsBits<R>, R: InlineUintRepr> $op<NonZeroUint<B, <R as UintRepr>::NonZero>>
+    // The divisor's storage, as the integer of the same storage, holds the result.
+    impl<B: FitsBits<R>, R: UintRepr> $op<NonZeroUint<B, <R as UintRepr>::NonZero>>
       for &Uint<B, R>
     {
       type Output = Uint<B, R>;
 
       #[inline]
       fn $method(self, rhs: NonZeroUint<B, <R as UintRepr>::NonZero>) -> Uint<B, R> {
-        $op::$method(self, &rhs)
+        let part = div_rem_nonzero(&self.repr, &rhs.value.repr, B::U32).$part;
+        let mut repr = R::from_nonzero(rhs.value.repr, Token::new());
+        repr.set_inline(part, Token::new());
+        Uint::wrap(repr)
       }
     }
 
@@ -1215,15 +1277,8 @@ macro_rules! nonzero_division {
 
       #[inline]
       fn $method(self, rhs: &NonZeroUint<B, <R as UintRepr>::NonZero>) -> Uint<B, R> {
-        let division = R::with_nonzero(
-          &rhs.value.repr,
-          |divisor| self.repr.div_rem_bits(divisor, B::U32, Token::new()),
-          Token::new(),
-        );
-        match division {
-          Some(parts) => Uint::wrap(parts.$part),
-          None => zero(),
-        }
+        let part = div_rem_nonzero(&self.repr, &rhs.value.repr, B::U32).$part;
+        Uint::wrap(R::from_inline(part, Token::new()))
       }
     }
 
@@ -1241,8 +1296,8 @@ macro_rules! nonzero_division {
     {
       #[inline]
       fn $assign_method(&mut self, rhs: &NonZeroUint<B, <R as UintRepr>::NonZero>) {
-        let result = $op::$method(&*self, rhs);
-        *self = result;
+        let part = div_rem_nonzero(&self.repr, &rhs.value.repr, B::U32).$part;
+        self.repr.set_inline(part, Token::new());
       }
     }
   };
@@ -1254,17 +1309,20 @@ nonzero_division!(Rem rem, RemAssign rem_assign, 1);
 /// Implements `|` of the non-zero integer `$name` with itself, with its integer `$integer` and of
 /// the integer with it, in the four forms of values and references each, with the non-zero
 /// integer as the result, and `|=` of `$name` by both, for a value and a reference. The storages of
-/// `$repr` are the non-zero ones, of `$core` the sealed trait of their integer, and of `$integer`,
-/// `$inline` and `$repr_mut` the integer's own. A value that is not zero has a one, which `|`
-/// keeps, so nothing panics, and as for the native integers the methods are not `#[track_caller]`.
-/// The forms on two references combine the storages that the non-zero storages lend, for every
-/// storage; the forms with an owned operand, for a storage whose integer holds the value inline,
-/// pass references; and the compound assignments, for a storage whose integer holds the value in
-/// place, store the result. Each impl is keyed on the storage of its `Self` type.
+/// `$repr` are the non-zero ones, of `$core` the sealed trait of their integer, and of `$integer`
+/// and `$repr_mut` the integer's own. A value that is not zero has a one, which `|` keeps, so
+/// nothing panics, and as for the native integers the methods are not `#[track_caller]`. The forms
+/// on two references combine the storages that the non-zero storages lend, for every storage. The
+/// forms with an owned operand, for every storage too, take the storage of that operand, the left
+/// one when both are owned, as the storage of the integer, with `from_nonzero` for a non-zero one,
+/// store the result in it, and turn it into the non-zero storage of the result with
+/// `known_nonzero`; when both are owned, they pass the right one by reference. The compound
+/// assignments, for a storage whose integer holds the value in place, store the result of the form
+/// on two references. Each impl is keyed on the storage of its `Self` type.
 macro_rules! nonzero_bitor {
   (
     $name:ident, $repr:ident, $core:ident;
-    $integer:ident: $integer_repr:ident, $inline:ident, $repr_mut:ident
+    $integer:ident: $integer_repr:ident, $repr_mut:ident
   ) => {
     impl<B: FitsBits<R::Integer>, R: $repr> BitOr<&$name<B, R>> for &$name<B, R> {
       type Output = $name<B, R>;
@@ -1288,39 +1346,56 @@ macro_rules! nonzero_bitor {
       }
     }
 
-    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$name<B, R>> for $name<B, R>
-    where
-      R::Integer: $inline,
-    {
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$name<B, R>> for $name<B, R> {
       type Output = Self;
 
       #[inline]
       fn bitor(self, rhs: Self) -> Self {
-        BitOr::bitor(&self, &rhs)
+        BitOr::bitor(self, &rhs)
       }
     }
 
-    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<&$name<B, R>> for $name<B, R>
-    where
-      R::Integer: $inline,
-    {
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<&$name<B, R>> for $name<B, R> {
       type Output = Self;
 
       #[inline]
       fn bitor(self, rhs: &Self) -> Self {
-        BitOr::bitor(&self, rhs)
+        let mut repr = <R::Integer as $core>::from_nonzero(self.value.repr, Token::new());
+        let or = <R::Integer as $core>::with_nonzero(
+          &rhs.value.repr,
+          |rhs| {
+            repr
+              .inline(Token::new())
+              .or(rhs.inline(Token::new()), Token::new())
+          },
+          Token::new(),
+        );
+        repr.set_inline(or, Token::new());
+        $name {
+          value: $integer::wrap(repr.known_nonzero(Token::new())),
+        }
       }
     }
 
-    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$name<B, R>> for &$name<B, R>
-    where
-      R::Integer: $inline,
-    {
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$name<B, R>> for &$name<B, R> {
       type Output = $name<B, R>;
 
       #[inline]
       fn bitor(self, rhs: $name<B, R>) -> $name<B, R> {
-        BitOr::bitor(self, &rhs)
+        let mut repr = <R::Integer as $core>::from_nonzero(rhs.value.repr, Token::new());
+        let or = <R::Integer as $core>::with_nonzero(
+          &self.value.repr,
+          |lhs| {
+            lhs
+              .inline(Token::new())
+              .or(repr.inline(Token::new()), Token::new())
+          },
+          Token::new(),
+        );
+        repr.set_inline(or, Token::new());
+        $name {
+          value: $integer::wrap(repr.known_nonzero(Token::new())),
+        }
       }
     }
 
@@ -1340,39 +1415,49 @@ macro_rules! nonzero_bitor {
       }
     }
 
-    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$integer<B, R::Integer>> for $name<B, R>
-    where
-      R::Integer: $inline,
-    {
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$integer<B, R::Integer>> for $name<B, R> {
       type Output = Self;
 
       #[inline]
       fn bitor(self, rhs: $integer<B, R::Integer>) -> Self {
-        BitOr::bitor(&self, &rhs)
+        BitOr::bitor(self, &rhs)
       }
     }
 
-    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<&$integer<B, R::Integer>> for $name<B, R>
-    where
-      R::Integer: $inline,
-    {
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<&$integer<B, R::Integer>> for $name<B, R> {
       type Output = Self;
 
       #[inline]
       fn bitor(self, rhs: &$integer<B, R::Integer>) -> Self {
-        BitOr::bitor(&self, rhs)
+        let mut repr = <R::Integer as $core>::from_nonzero(self.value.repr, Token::new());
+        let or = repr
+          .inline(Token::new())
+          .or(rhs.repr.inline(Token::new()), Token::new());
+        repr.set_inline(or, Token::new());
+        $name {
+          value: $integer::wrap(repr.known_nonzero(Token::new())),
+        }
       }
     }
 
-    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$integer<B, R::Integer>> for &$name<B, R>
-    where
-      R::Integer: $inline,
-    {
+    impl<B: FitsBits<R::Integer>, R: $repr> BitOr<$integer<B, R::Integer>> for &$name<B, R> {
       type Output = $name<B, R>;
 
       #[inline]
-      fn bitor(self, rhs: $integer<B, R::Integer>) -> $name<B, R> {
-        BitOr::bitor(self, &rhs)
+      fn bitor(self, mut rhs: $integer<B, R::Integer>) -> $name<B, R> {
+        let or = <R::Integer as $core>::with_nonzero(
+          &self.value.repr,
+          |lhs| {
+            lhs
+              .inline(Token::new())
+              .or(rhs.repr.inline(Token::new()), Token::new())
+          },
+          Token::new(),
+        );
+        rhs.repr.set_inline(or, Token::new());
+        $name {
+          value: $integer::wrap(rhs.repr.known_nonzero(Token::new())),
+        }
       }
     }
 
@@ -1397,36 +1482,8 @@ macro_rules! nonzero_bitor {
       }
     }
 
-    impl<B: FitsBits<R>, R: $inline> BitOr<$name<B, <R as $integer_repr>::NonZero>>
+    impl<B: FitsBits<R>, R: $integer_repr> BitOr<$name<B, <R as $integer_repr>::NonZero>>
       for $integer<B, R>
-    {
-      type Output = $name<B, <R as $integer_repr>::NonZero>;
-
-      #[inline]
-      fn bitor(
-        self,
-        rhs: $name<B, <R as $integer_repr>::NonZero>,
-      ) -> $name<B, <R as $integer_repr>::NonZero> {
-        BitOr::bitor(&self, &rhs)
-      }
-    }
-
-    impl<B: FitsBits<R>, R: $inline> BitOr<&$name<B, <R as $integer_repr>::NonZero>>
-      for $integer<B, R>
-    {
-      type Output = $name<B, <R as $integer_repr>::NonZero>;
-
-      #[inline]
-      fn bitor(
-        self,
-        rhs: &$name<B, <R as $integer_repr>::NonZero>,
-      ) -> $name<B, <R as $integer_repr>::NonZero> {
-        BitOr::bitor(&self, rhs)
-      }
-    }
-
-    impl<B: FitsBits<R>, R: $inline> BitOr<$name<B, <R as $integer_repr>::NonZero>>
-      for &$integer<B, R>
     {
       type Output = $name<B, <R as $integer_repr>::NonZero>;
 
@@ -1436,6 +1493,55 @@ macro_rules! nonzero_bitor {
         rhs: $name<B, <R as $integer_repr>::NonZero>,
       ) -> $name<B, <R as $integer_repr>::NonZero> {
         BitOr::bitor(self, &rhs)
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $integer_repr> BitOr<&$name<B, <R as $integer_repr>::NonZero>>
+      for $integer<B, R>
+    {
+      type Output = $name<B, <R as $integer_repr>::NonZero>;
+
+      #[inline]
+      fn bitor(
+        mut self,
+        rhs: &$name<B, <R as $integer_repr>::NonZero>,
+      ) -> $name<B, <R as $integer_repr>::NonZero> {
+        let or = R::with_nonzero(
+          &rhs.value.repr,
+          |rhs| {
+            self
+              .repr
+              .inline(Token::new())
+              .or(rhs.inline(Token::new()), Token::new())
+          },
+          Token::new(),
+        );
+        self.repr.set_inline(or, Token::new());
+        $name {
+          value: $integer::wrap(self.repr.known_nonzero(Token::new())),
+        }
+      }
+    }
+
+    impl<B: FitsBits<R>, R: $integer_repr> BitOr<$name<B, <R as $integer_repr>::NonZero>>
+      for &$integer<B, R>
+    {
+      type Output = $name<B, <R as $integer_repr>::NonZero>;
+
+      #[inline]
+      fn bitor(
+        self,
+        rhs: $name<B, <R as $integer_repr>::NonZero>,
+      ) -> $name<B, <R as $integer_repr>::NonZero> {
+        let mut repr = R::from_nonzero(rhs.value.repr, Token::new());
+        let or = self
+          .repr
+          .inline(Token::new())
+          .or(repr.inline(Token::new()), Token::new());
+        repr.set_inline(or, Token::new());
+        $name {
+          value: $integer::wrap(repr.known_nonzero(Token::new())),
+        }
       }
     }
 
@@ -1483,23 +1589,30 @@ macro_rules! nonzero_bitor {
   };
 }
 
-nonzero_bitor!(NonZeroUint, NonZeroUintRepr, UintCore; Uint: UintRepr, InlineUintRepr, UintReprMut);
-nonzero_bitor!(NonZeroInt, NonZeroIntRepr, IntCore; Int: IntRepr, InlineIntRepr, IntReprMut);
+nonzero_bitor!(NonZeroUint, NonZeroUintRepr, UintCore; Uint: UintRepr, UintReprMut);
+nonzero_bitor!(NonZeroInt, NonZeroIntRepr, IntCore; Int: IntRepr, IntReprMut);
 
-// As for `Int`, the negation of a reference computes for every storage, and the negation of a
-// value, for a storage whose integer holds it inline, passes a reference. `-MIN` overflows as a
-// native negation does: with overflow checks it panics, reporting the caller, and without them it
-// returns `MIN`.
-impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> Neg for NonZeroInt<B, R>
-where
-  R::Integer: InlineIntRepr,
-{
+// As for `Int`, the negation of a reference computes over `SignedNonZero`, and the negation of a
+// value on the inline storage of its integer, which `from_nonzero` turns its storage into and
+// `known_nonzero` back, for every storage. `-MIN` overflows as a native negation does: with
+// overflow checks it panics, reporting the caller, and without them it returns `MIN`.
+impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> Neg for NonZeroInt<B, R> {
   type Output = Self;
 
   #[inline]
   #[track_caller]
   fn neg(self) -> Self {
-    Neg::neg(&self)
+    let mut repr = <R::Integer as IntCore>::from_nonzero(self.value.repr, Token::new());
+    let (negated, overflow) = repr
+      .inline(Token::new())
+      .overflowing_neg_bits(B::U32, Token::new());
+    if overflow {
+      overflow::forward_neg();
+    }
+    repr.set_inline(negated, Token::new());
+    Self {
+      value: Int::wrap(repr.known_nonzero(Token::new())),
+    }
   }
 }
 
@@ -1525,8 +1638,12 @@ pub(crate) trait Parts: Sized {
   /// The integer that may be zero, of the same width and storage.
   type Integer;
 
-  /// The value, as the integer. It clones the storage.
-  fn integer(&self) -> Self::Integer;
+  /// The value, as the integer, which the storage lends, or which a native `NonZero` gives as a
+  /// copy.
+  fn integer(&self) -> View<'_, Self::Integer>;
+
+  /// The value, as the integer, which takes the storage, as `get` does.
+  fn into_integer(self) -> Self::Integer;
 
   /// A clone of `self`.
   fn duplicate(&self) -> Self;
@@ -1539,9 +1656,14 @@ impl<B, R: NonZeroUintRepr> Parts for NonZeroUint<B, R> {
   type Integer = Uint<B, R::Integer>;
 
   #[inline]
-  fn integer(&self) -> Uint<B, R::Integer> {
+  fn integer(&self) -> View<'_, Uint<B, R::Integer>> {
+    <R::Integer as UintCore>::lend_nonzero(&self.value, Token::new())
+  }
+
+  #[inline]
+  fn into_integer(self) -> Uint<B, R::Integer> {
     Uint::wrap(<R::Integer as UintCore>::from_nonzero(
-      self.value.repr.clone(),
+      self.value.repr,
       Token::new(),
     ))
   }
@@ -1563,9 +1685,14 @@ impl<B, R: NonZeroIntRepr> Parts for NonZeroInt<B, R> {
   type Integer = Int<B, R::Integer>;
 
   #[inline]
-  fn integer(&self) -> Int<B, R::Integer> {
+  fn integer(&self) -> View<'_, Int<B, R::Integer>> {
+    <R::Integer as IntCore>::lend_nonzero(&self.value, Token::new())
+  }
+
+  #[inline]
+  fn into_integer(self) -> Int<B, R::Integer> {
     Int::wrap(<R::Integer as IntCore>::from_nonzero(
-      self.value.repr.clone(),
+      self.value.repr,
       Token::new(),
     ))
   }
@@ -1590,12 +1717,17 @@ pub(crate) trait Saturated: Sized {
   fn saturated(max: bool) -> Self;
 }
 
-// The limits come from the sealed storage methods, without a constant.
+// The limits come from the sealed storage methods of the inline storage of the integer, without a
+// constant, and the storage of the integer stores the bound once.
 impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> Saturated for NonZeroUint<B, R> {
   #[inline]
   fn saturated(_: bool) -> Self {
-    let max = <R::Integer as UintCore>::zero(Token::new()).not_bits(B::U32, Token::new());
-    Self::known(Uint::wrap(max))
+    let max = <<R::Integer as UintCore>::Inline as UintCore>::zero(Token::new())
+      .not_bits(B::U32, Token::new());
+    Self::known(Uint::wrap(<R::Integer as UintCore>::from_inline(
+      max,
+      Token::new(),
+    )))
   }
 }
 
@@ -1604,7 +1736,7 @@ impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> Saturated for NonZeroInt<B, R> 
   fn saturated(max: bool) -> Self {
     let bits = B::U32;
     // The sign bit alone, which sign-extends to `MIN`. A value exists from one bit up.
-    let min = match <R::Integer as IntCore>::zero(Token::new()).with_bit(
+    let min = match <<R::Integer as IntCore>::Inline as IntCore>::zero(Token::new()).with_bit(
       bits.wrapping_sub(1),
       true,
       bits,
@@ -1620,6 +1752,9 @@ impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> Saturated for NonZeroInt<B, R> 
     } else {
       min
     };
-    Self::known(Int::wrap(bound))
+    Self::known(Int::wrap(<R::Integer as IntCore>::from_inline(
+      bound,
+      Token::new(),
+    )))
   }
 }

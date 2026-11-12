@@ -9,13 +9,15 @@ use typenum::{
 };
 
 use super::{
-  ArrayInteger, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger, FixedNonZero,
-  FromLimbs, IntegerOne, NativeInteger, NonZeroLimits, SignedFixedInteger, SignedNonZero,
-  UnsignedFixedInteger, UnsignedNonZero,
+  ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,
+  FixedNonZero, FromLimbs, IntegerAssign, IntegerOne, NativeInteger, NonZeroLimits, SaturatingOps,
+  SignedFixedInteger, SignedNonZero, UnsignedFixedInteger, UnsignedNonZero,
 };
 use crate::{
-  BitWidth, FitsBits, Int, NonZeroInt, NonZeroIntRepr, NonZeroUint, NonZeroUintRepr, Uint,
-  UintRepr, bigint, i7, i256, u7, u256,
+  BitWidth, FitsBits, Int, IntRepr, NonZeroInt, NonZeroIntRepr, NonZeroUint, NonZeroUintRepr, Uint,
+  UintRepr,
+  bigint::{self, tier},
+  i7, i256, u7, u256,
 };
 
 /// Asserts that the constants, the functions and the queries of [`FixedInteger`] and
@@ -480,4 +482,482 @@ fn the_nonzero_traits_need_only_the_storage_trait() {
   assert_eq!(<NonZeroUint<U7> as FixedNonZero>::BITS, 7);
   assert_eq!(UnsignedNonZero::cast_signed(five).get(), i7::new(5));
   assert_eq!(SignedNonZero::unsigned_abs(&minus_eight).get(), u7::new(8));
+}
+
+/// The forms of a binary operator with an owned operand: two values, a value and a reference, and a
+/// reference and a value, or `None` where the checked method of the operation returns `None`.
+type Forms<T> = Option<[T; 3]>;
+
+/// The results of the operators with an owned operand: eight binary operators in their [`Forms`],
+/// then `N` unary operators and shifts, each `None` where the checked method returns `None`.
+type Operators<T, const N: usize> = ([Forms<T>; 8], [Option<T>; N]);
+
+/// The operators with an owned operand of `a` and `b`, which make each operand again rather than
+/// clone it: `+`, `-`, `*`, `/` and `%` in the three [`Forms`] where the checked method returns a
+/// value, and `&`, `|` and `^` in all three; then `!a`, and `a << n` and `a >> n` with the amount
+/// by value and by reference where the checked shift returns a value. The code is bounded by the
+/// storage trait alone.
+#[inline(never)]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn unsigned_operators<B: FitsBits<R>, R: UintRepr>(
+  a: impl Fn() -> Uint<B, R>,
+  b: impl Fn() -> Uint<B, R>,
+  n: u32,
+) -> Operators<Uint<B, R>, 5> {
+  (
+    [
+      a()
+        .checked_add(&b())
+        .map(|_| [a() + b(), a() + &b(), &a() + b()]),
+      a()
+        .checked_sub(&b())
+        .map(|_| [a() - b(), a() - &b(), &a() - b()]),
+      a()
+        .checked_mul(&b())
+        .map(|_| [a() * b(), a() * &b(), &a() * b()]),
+      a()
+        .checked_div(&b())
+        .map(|_| [a() / b(), a() / &b(), &a() / b()]),
+      a()
+        .checked_rem(&b())
+        .map(|_| [a() % b(), a() % &b(), &a() % b()]),
+      Some([a() & b(), a() & &b(), &a() & b()]),
+      Some([a() | b(), a() | &b(), &a() | b()]),
+      Some([a() ^ b(), a() ^ &b(), &a() ^ b()]),
+    ],
+    [
+      Some(!a()),
+      a().checked_shl(n).map(|_| a() << n),
+      a().checked_shl(n).map(|_| a() << &n),
+      a().checked_shr(n).map(|_| a() >> n),
+      a().checked_shr(n).map(|_| a() >> &n),
+    ],
+  )
+}
+
+/// The operators with an owned operand of `a` and `b`, as [`unsigned_operators`] gives them, and
+/// `-a` where the checked negation returns a value.
+#[inline(never)]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn signed_operators<B: FitsBits<R>, R: IntRepr>(
+  a: impl Fn() -> Int<B, R>,
+  b: impl Fn() -> Int<B, R>,
+  n: u32,
+) -> Operators<Int<B, R>, 6> {
+  (
+    [
+      a()
+        .checked_add(&b())
+        .map(|_| [a() + b(), a() + &b(), &a() + b()]),
+      a()
+        .checked_sub(&b())
+        .map(|_| [a() - b(), a() - &b(), &a() - b()]),
+      a()
+        .checked_mul(&b())
+        .map(|_| [a() * b(), a() * &b(), &a() * b()]),
+      a()
+        .checked_div(&b())
+        .map(|_| [a() / b(), a() / &b(), &a() / b()]),
+      a()
+        .checked_rem(&b())
+        .map(|_| [a() % b(), a() % &b(), &a() % b()]),
+      Some([a() & b(), a() & &b(), &a() & b()]),
+      Some([a() | b(), a() | &b(), &a() | b()]),
+      Some([a() ^ b(), a() ^ &b(), &a() ^ b()]),
+    ],
+    [
+      Some(!a()),
+      a().checked_shl(n).map(|_| a() << n),
+      a().checked_shl(n).map(|_| a() << &n),
+      a().checked_shr(n).map(|_| a() >> n),
+      a().checked_shr(n).map(|_| a() >> &n),
+      a().checked_neg().map(|_| -a()),
+    ],
+  )
+}
+
+/// `Sum` and `Product` of the two values that `values` makes, of values and of references, where
+/// the checked sum and the checked product return a value; the code is bounded by the storage trait
+/// alone and a width that holds one.
+#[inline(never)]
+fn unsigned_folds<B: FitsBits<R> + NonZero, R: UintRepr>(
+  values: impl Fn() -> [Uint<B, R>; 2],
+) -> [Option<[Uint<B, R>; 2]>; 2] {
+  let [a, b] = values();
+  [
+    a.checked_add(&b)
+      .map(|_| [values().into_iter().sum(), values().iter().sum()]),
+    a.checked_mul(&b)
+      .map(|_| [values().into_iter().product(), values().iter().product()]),
+  ]
+}
+
+/// `Sum` and `Product` of the two values that `values` makes, as [`unsigned_folds`] gives them.
+#[inline(never)]
+fn signed_folds<B: FitsBits<R> + IsGreater<U1, Output = True>, R: IntRepr>(
+  values: impl Fn() -> [Int<B, R>; 2],
+) -> [Option<[Int<B, R>; 2]>; 2] {
+  let [a, b] = values();
+  [
+    a.checked_add(&b)
+      .map(|_| [values().into_iter().sum(), values().iter().sum()]),
+    a.checked_mul(&b)
+      .map(|_| [values().into_iter().product(), values().iter().product()]),
+  ]
+}
+
+/// The results of the five saturating methods, `None` for a division by zero, and of the four
+/// carrying and borrowing methods.
+type Saturating<T> = ([Option<T>; 5], [(T, bool); 4]);
+
+/// The saturating methods of `a` and `b` and `UnsignedFixedInteger`, in code bounded by the storage
+/// trait alone; the saturating division where `b` is not zero.
+#[inline(never)]
+fn unsigned_saturating_and_sign<B: FitsBits<R>, R: UintRepr>(
+  a: &Uint<B, R>,
+  b: &Uint<B, R>,
+  exp: u32,
+) -> Saturating<Uint<B, R>> {
+  let divisor = *b != Uint::<B, R>::default();
+  (
+    [
+      Some(a.saturating_add(b)),
+      Some(a.saturating_sub(b)),
+      Some(a.saturating_mul(b)),
+      divisor.then(|| a.saturating_div(b)),
+      Some(a.saturating_pow(exp)),
+    ],
+    [
+      a.carrying_add(b, false),
+      a.carrying_add(b, true),
+      a.borrowing_sub(b, false),
+      a.borrowing_sub(b, true),
+    ],
+  )
+}
+
+/// The saturating methods of `a` and `b`, as [`unsigned_saturating_and_sign`] gives them, in code
+/// bounded by the storage trait alone.
+#[inline(never)]
+fn signed_saturating<B: FitsBits<R>, R: IntRepr>(
+  a: &Int<B, R>,
+  b: &Int<B, R>,
+  exp: u32,
+) -> [Option<Int<B, R>>; 5] {
+  let divisor = *b != Int::<B, R>::default();
+  [
+    Some(a.saturating_add(b)),
+    Some(a.saturating_sub(b)),
+    Some(a.saturating_mul(b)),
+    divisor.then(|| a.saturating_div(b)),
+    Some(a.saturating_pow(exp)),
+  ]
+}
+
+/// The results of the methods of `SignedFixedInteger` of `a` that do not panic, in code bounded by
+/// the storage trait and `Clone`.
+type SignResults<B, R> = (
+  [bool; 2],
+  [Option<Int<B, R>>; 4],
+  (Int<B, R>, bool),
+  Uint<B, <R as IntRepr>::Unsigned>,
+);
+
+/// The sign queries, the saturating negation, the absolute value in the forms that do not panic,
+/// `signum` and `unsigned_abs` of `a`, through `SignedFixedInteger`.
+#[inline(never)]
+fn signed_sign<B: FitsBits<R>, R: IntRepr + Clone>(a: &Int<B, R>) -> SignResults<B, R> {
+  (
+    [a.is_negative(), a.is_positive()],
+    [
+      Some(a.saturating_neg()),
+      a.checked_abs(),
+      Some(a.wrapping_abs()),
+      Some(a.saturating_abs()),
+    ],
+    (a.signum(), a.overflowing_abs().1),
+    a.unsigned_abs(),
+  )
+}
+
+/// Zero, the limits and one through `FixedInteger` and `IntegerOne`, in code bounded by the storage
+/// trait and `Clone`, with a width that holds one.
+#[inline(never)]
+fn unsigned_general<B: FitsBits<R> + NonZero, R: UintRepr + Clone>() -> [Uint<B, R>; 4] {
+  [
+    FixedInteger::zero(),
+    FixedInteger::min_value(),
+    FixedInteger::max_value(),
+    IntegerOne::one(),
+  ]
+}
+
+/// Zero, the limits and one through `FixedInteger` and `IntegerOne`, as [`unsigned_general`] gives
+/// them.
+#[inline(never)]
+fn signed_general<B, R>() -> [Int<B, R>; 4]
+where
+  B: FitsBits<R> + IsGreater<U1, Output = True>,
+  R: IntRepr + Clone,
+{
+  [
+    FixedInteger::zero(),
+    FixedInteger::min_value(),
+    FixedInteger::max_value(),
+    IntegerOne::one(),
+  ]
+}
+
+/// The ten compound assignments of a clone of `a` by `b`, and by `n` for the shifts, where the
+/// checked method of the operation returns a value, in code bounded by `IntegerAssign` and the
+/// checked family alone.
+#[inline(never)]
+fn assignments<T: IntegerAssign + CheckedOps>(a: &T, b: &T, n: u32) -> [Option<T>; 10] {
+  let assigned = |assign: fn(&mut T, T)| {
+    let mut target = a.clone();
+    assign(&mut target, b.clone());
+    target
+  };
+  let shifted = |assign: fn(&mut T, u32)| {
+    let mut target = a.clone();
+    assign(&mut target, n);
+    target
+  };
+  [
+    a.checked_add(b).map(|_| assigned(|x, y| *x += y)),
+    a.checked_sub(b).map(|_| assigned(|x, y| *x -= y)),
+    a.checked_mul(b).map(|_| assigned(|x, y| *x *= y)),
+    a.checked_div(b).map(|_| assigned(|x, y| *x /= y)),
+    a.checked_rem(b).map(|_| assigned(|x, y| *x %= y)),
+    Some(assigned(|x, y| *x &= y)),
+    Some(assigned(|x, y| *x |= y)),
+    Some(assigned(|x, y| *x ^= y)),
+    a.checked_shl(n).map(|_| shifted(|x, n| *x <<= n)),
+    a.checked_shr(n).map(|_| shifted(|x, n| *x >>= n)),
+  ]
+}
+
+/// The amount of a shift of `bits` bits from the pair at indexes `i` and `j`: one of 0, half the
+/// width, the width less one and the width, which overflows.
+fn amount(bits: u32, i: usize, j: usize) -> u32 {
+  [0, bits / 2, bits.saturating_sub(1), bits][(i + j) % 4]
+}
+
+/// Checks the general layer of `Uint` over `$ty`, a storage of `$bits` bits, in a function of its
+/// own, at every pair of zero, one, the largest value and the largest value of half the width:
+/// the operators with an owned operand, the folds, the saturating methods, `UnsignedFixedInteger`,
+/// the functions of `FixedInteger` and `IntegerOne` and the compound assignments, against the
+/// inherent `const fn`s and constants of the storage.
+macro_rules! unsigned_general_layer {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      let values = [T::ZERO, T::ONE, T::MAX, T::MAX.unbounded_shr(T::BITS / 2)];
+      let general: [T; 4] = unsigned_general();
+      assert_eq!(general, [T::ZERO, T::MIN, T::MAX, T::ONE], "{}", stringify!($ty));
+      for (i, &a) in values.iter().enumerate() {
+        for (j, &b) in values.iter().enumerate() {
+          let n = amount(T::BITS, i, j);
+          let forms = |checked: Option<T>| checked.map(|value| [value; 3]);
+          let operators = (
+            [
+              forms(a.checked_add(&b)),
+              forms(a.checked_sub(&b)),
+              forms(a.checked_mul(&b)),
+              forms(a.checked_div(&b)),
+              forms(a.checked_rem(&b)),
+              Some([a.bitand(b); 3]),
+              Some([a.bitor(b); 3]),
+              Some([a.bitxor(b); 3]),
+            ],
+            [
+              Some(a.not()),
+              a.checked_shl(n),
+              a.checked_shl(n),
+              a.checked_shr(n),
+              a.checked_shr(n),
+            ],
+          );
+          assert_eq!(unsigned_operators(|| a, || b, n), operators, "{a} and {b} by {n}");
+          let folds = [
+            a.checked_add(&b).map(|sum| [sum; 2]),
+            a.checked_mul(&b).map(|product| [product; 2]),
+          ];
+          assert_eq!(unsigned_folds(|| [a, b]), folds, "{a} and {b}");
+          let saturating = (
+            [
+              Some(a.saturating_add(&b)),
+              Some(a.saturating_sub(&b)),
+              Some(a.saturating_mul(&b)),
+              (!b.is_zero()).then(|| a.saturating_div(&b)),
+              Some(a.saturating_pow(n)),
+            ],
+            [
+              a.carrying_add(&b, false),
+              a.carrying_add(&b, true),
+              a.borrowing_sub(&b, false),
+              a.borrowing_sub(&b, true),
+            ],
+          );
+          assert_eq!(unsigned_saturating_and_sign(&a, &b, n), saturating, "{a} and {b}");
+          let assigned = [
+            a.checked_add(&b),
+            a.checked_sub(&b),
+            a.checked_mul(&b),
+            a.checked_div(&b),
+            a.checked_rem(&b),
+            Some(a.bitand(b)),
+            Some(a.bitor(b)),
+            Some(a.bitxor(b)),
+            a.checked_shl(n),
+            a.checked_shr(n),
+          ];
+          assert_eq!(assignments(&a, &b, n), assigned, "{a} and {b} by {n}");
+        }
+      }
+    }
+    storage();
+  })+};
+}
+
+/// Checks the general layer of `Int` over `$ty` as [`unsigned_general_layer!`] does for `Uint`, at
+/// every pair of zero, the limits and the limits of half the width, with the negation and
+/// `SignedFixedInteger`, and with the folds and one at two bits or more, where one exists.
+macro_rules! signed_general_layer {
+  (@one one, $t:ty) => {
+    let general: [$t; 4] = signed_general();
+    assert_eq!(general, [<$t>::ZERO, <$t>::MIN, <$t>::MAX, <$t>::ONE], "{}", stringify!($t));
+  };
+  (@one no_one, $t:ty) => {};
+  (@folds one, $a:ident, $b:ident) => {
+    let folds = [
+      $a.checked_add(&$b).map(|sum| [sum; 2]),
+      $a.checked_mul(&$b).map(|product| [product; 2]),
+    ];
+    assert_eq!(signed_folds(|| [$a, $b]), folds, "{} and {}", $a, $b);
+  };
+  (@folds no_one, $a:ident, $b:ident) => {};
+  ($($ty:ty: $one:tt),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      let half = T::BITS / 2;
+      let values = [
+        T::ZERO,
+        T::MIN,
+        T::MAX,
+        T::MIN.unbounded_shr(half),
+        T::MAX.unbounded_shr(half),
+      ];
+      signed_general_layer!(@one $one, T);
+      for (i, &a) in values.iter().enumerate() {
+        for (j, &b) in values.iter().enumerate() {
+          let n = amount(T::BITS, i, j);
+          let forms = |checked: Option<T>| checked.map(|value| [value; 3]);
+          let operators = (
+            [
+              forms(a.checked_add(&b)),
+              forms(a.checked_sub(&b)),
+              forms(a.checked_mul(&b)),
+              forms(a.checked_div(&b)),
+              forms(a.checked_rem(&b)),
+              Some([a.bitand(b); 3]),
+              Some([a.bitor(b); 3]),
+              Some([a.bitxor(b); 3]),
+            ],
+            [
+              Some(a.not()),
+              a.checked_shl(n),
+              a.checked_shl(n),
+              a.checked_shr(n),
+              a.checked_shr(n),
+              a.checked_neg(),
+            ],
+          );
+          assert_eq!(signed_operators(|| a, || b, n), operators, "{a} and {b} by {n}");
+          signed_general_layer!(@folds $one, a, b);
+          let saturating = [
+            Some(a.saturating_add(&b)),
+            Some(a.saturating_sub(&b)),
+            Some(a.saturating_mul(&b)),
+            (!b.is_zero()).then(|| a.saturating_div(&b)),
+            Some(a.saturating_pow(n)),
+          ];
+          assert_eq!(signed_saturating(&a, &b, n), saturating, "{a} and {b}");
+          let assigned = [
+            a.checked_add(&b),
+            a.checked_sub(&b),
+            a.checked_mul(&b),
+            a.checked_div(&b),
+            a.checked_rem(&b),
+            Some(a.bitand(b)),
+            Some(a.bitor(b)),
+            Some(a.bitxor(b)),
+            a.checked_shl(n),
+            a.checked_shr(n),
+          ];
+          assert_eq!(assignments(&a, &b, n), assigned, "{a} and {b} by {n}");
+        }
+        let sign = (
+          [a.is_negative(), a.is_positive()],
+          [
+            Some(a.saturating_neg()),
+            a.checked_abs(),
+            Some(a.wrapping_abs()),
+            Some(a.saturating_abs()),
+          ],
+          (a.signum(), a.overflowing_abs().1),
+          a.unsigned_abs(),
+        );
+        assert_eq!(signed_sign(&a), sign, "{a}");
+      }
+    }
+    storage();
+  })+};
+}
+
+/// The general layer, the operators with an owned operand in their three forms, `Sum`, `Product`,
+/// the saturating methods, the sign traits, `FixedInteger`, `IntegerOne` and `IntegerAssign`, needs
+/// only the storage trait, with `Clone` for the traits that clone and a storage that holds the
+/// value in place for the assignments: in the natives and the arrays of the module's type list,
+/// code bounded by them gives what the inherent `const fn`s and constants give. Under Miri, in one
+/// native integer and one array of each sign.
+#[test]
+fn the_general_layer_needs_only_the_storage_trait() {
+  unsigned_general_layer!(Uint<U7, u8>, Uint<U200, [u64; 4]>);
+  signed_general_layer!(Int<U7, i8>: one, Int<U24, [u8; 3]>: one);
+  if tier().is_miri() {
+    return;
+  }
+  unsigned_general_layer!(
+    Uint<U1, u8>,
+    Uint<U8, u8>,
+    Uint<U9, u16>,
+    Uint<U24, u32>,
+    Uint<U64, u64>,
+    Uint<U100, u128>,
+    Uint<U7, u128>,
+    Uint<U7, [u8; 1]>,
+    Uint<U24, [u8; 3]>,
+    Uint<U100, [u16; 7]>,
+    Uint<U100, [u32; 4]>,
+    Uint<U256, [u128; 2]>,
+    u256,
+  );
+  signed_general_layer!(
+    Int<U1, i8>: no_one,
+    Int<U8, i8>: one,
+    Int<U9, i16>: one,
+    Int<U24, i32>: one,
+    Int<U65, i128>: one,
+    Int<U127, i128>: one,
+    Int<U1, i64>: no_one,
+    Int<U1, [u8; 1]>: no_one,
+    Int<U100, [u16; 7]>: one,
+    Int<U100, [u32; 4]>: one,
+    Int<U200, [u64; 4]>: one,
+    Int<U129, [u128; 2]>: one,
+    i256: one,
+  );
 }

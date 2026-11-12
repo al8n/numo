@@ -215,8 +215,9 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   that fills its limbs, `checked_from_limbs` for any width, which returns `None` unless the limbs
   hold a value of `Bits` bits, `checked_from_limbs_slice`, `wrapping_from_limbs_slice`,
   `overflowing_from_limbs_slice`, `saturating_from_limbs_slice` and `strict_from_limbs_slice`,
-  which read a slice of limbs of any length as the slices of bytes are read, and `to_limbs` and
-  `as_limbs`; `is_zero` and `is_one`, plus `is_negative` and `is_positive` for `Int`.
+  which read a slice of limbs of any length as the slices of bytes are read, and `to_limbs`,
+  `as_limbs` and `into_limbs`; `is_zero` and `is_one`, plus `is_negative` and `is_positive` for
+  `Int`.
 - The arithmetic of the native integers at the width `Bits`, as `const fn`s: addition, subtraction,
   multiplication, negation, division, remainder and exponentiation in the `checked_*`,
   `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` forms that the native integers have,
@@ -306,18 +307,18 @@ as in `Uint<Sum<U1024, U476>>` for 1500 bits.
   general layer requires `Clone` but not `Copy`: `FixedInteger`, with `zero()`, `min_value()`,
   `max_value()`, `is_zero`, `is_one`, the operators, `FromStr`, the formats and
   `from_str_radix()`, and `IntegerOne`, with `one()`; `zero()`, `min_value()`, `max_value()` and
-  `one()` return the constants `ZERO`, `MIN`, `MAX` and `ONE`. The const layer,
-  `ConstFixedInteger` and `ConstIntegerOne`, adds `Copy` and the constants themselves, which a
-  generic `const fn` can read. `UnsignedFixedInteger` and `SignedFixedInteger` have the methods of
-  each sign, `NativeInteger`, `ArrayInteger`, with the slices of limbs, and `FromLimbs` the
-  construction of each kind, the arithmetic traits `OverflowingOps`, `CheckedOps`, `WrappingOps`,
-  `SaturatingOps`, `StrictOps` and `UncheckedOps` the arithmetic, `IntegerMath`, `UnsignedMath`
-  and `SignedMath` the functions without an overflow prefix, such as `pow`, `isqrt` and `ilog10`,
-  `IntegerBits`, `UnsignedBits` and `SignedBits` the bit operations, `IntegerBytes`, `ByteArray`,
-  `FromByteArray` and `IntegerByteOrder` the bytes, `CheckedCastFrom`, `BoundedCastFrom`,
-  `WidenFrom` and `TruncateFrom`, which the target implements, the casts, and `IntegerFloat` the
-  conversions with the floats; with the bound `B: BitWidth`, such code uses `Uint<B>` and `Int<B>`
-  for any width from 0 to 65536 bits.
+  `one()` return the constants `ZERO`, `MIN`, `MAX` and `ONE`, and `IntegerAssign` adds the compound
+  assignments. The const layer, `ConstFixedInteger` and `ConstIntegerOne`, adds `Copy` and the
+  constants themselves, which a generic `const fn` can read. `UnsignedFixedInteger` and
+  `SignedFixedInteger` have the methods of each sign, `NativeInteger`, `ArrayInteger`, with the
+  slices of limbs, and `FromLimbs` the construction of each kind, the arithmetic traits
+  `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps` and `UncheckedOps` the
+  arithmetic, `IntegerMath`, `UnsignedMath` and `SignedMath` the functions without an overflow
+  prefix, such as `pow`, `isqrt` and `ilog10`, `IntegerBits`, `UnsignedBits` and `SignedBits` the
+  bit operations, `IntegerBytes`, `ByteArray`, `FromByteArray` and `IntegerByteOrder` the bytes,
+  `CheckedCastFrom`, `BoundedCastFrom`, `WidenFrom` and `TruncateFrom`, which the target implements,
+  the casts, and `IntegerFloat` the conversions with the floats; with the bound `B: BitWidth`, such
+  code uses `Uint<B>` and `Int<B>` for any width from 0 to 65536 bits.
 - A width that its storage cannot hold, `2^32` bits or more, or a width written with leading zero
   bits, which no `typenum` constant or operator gives, is rejected during type checking, and so is a
   width of more than 65536 bits without an explicit storage.

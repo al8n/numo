@@ -24,14 +24,21 @@
 //!   arguments; the inherent callback takes the type from its arguments;
 //! - `= prim name(operands; arguments) as result { body }` binds what `name` returns for the
 //!   operands and the scalar arguments, such as `Self::BITS`, to `result`, and returns `body`. It
-//!   is the one form whose body sees the raw storages, which it wraps with `Self::wrap`, for the
+//!   is the one form whose body sees the raw storages, which it wraps with `Self::of`, for the
 //!   results that a derived body, generic over the storage, cannot compute: it can neither test a
-//!   divisor for zero nor read the constant one. Without a return type, as in
+//!   divisor for zero nor read the constant one. A generic implementation computes `name` on the
+//!   inline storages that the operands lend, so that the row builds only the storage that it
+//!   returns. Without a return type, as in
 //!   `fn set_bit(&mut self, ..) = prim name(self; ..) as result { body }`, the method returns
-//!   nothing, and its body may store a new storage in `self.repr`.
+//!   nothing, and its body may store a value with `self.store`.
 //!
 //! A derived body calls the inherent `const fn`s of the storage in an inherent block, and the trait
-//! methods, which must be in scope, in a generic implementation.
+//! methods, which must be in scope, in a generic implementation. A row writes `Self::bound(max)`
+//! for the largest value if `max` and the smallest otherwise, and `self.duplicate()` for a copy of
+//! the value: an inherent block defines these, `of` and `store` as `const fn`s that read the
+//! constants, copy the value and write the field, and the generic implementations reach them
+//! through the helper trait `Rows` of `integer::traits`, which computes the limits from their words
+//! and clones the value.
 //!
 //! An unchecked row, `unsafe fn name(..) -> Self = unchecked method(operands), "message";`,
 //! declares an unsafe method whose caller guarantees that `method`, the overflowing method of the
@@ -45,9 +52,10 @@
 //! derived arm of `inherent_items!` ignores their `$args`. In an inherent block `$args` is
 //! `[integer, other]`, the integer of the same width and storage and the non-zero integer of the
 //! other sign, which the rows name through `nonzero_integer!` and `nonzero_other!`, and in a trait
-//! it is `[]`, for the associated types. A row calls `self.integer()`, the rows of the integer,
-//! `Self::known`, `Self::saturated`, `Self::duplicate` and other rows: an inherent block defines
-//! these as `const fn`s, and the generic implementations reach them through the helper traits of
+//! it is `[]`, for the associated types. A row calls `self.integer()`, which lends the value,
+//! `self.into_integer()`, which takes it, the rows of the integer, `Self::known`,
+//! `Self::saturated`, `Self::duplicate` and other rows: an inherent block defines these as
+//! `const fn`s, and the generic implementations reach them through the helper traits of
 //! `integer::nonzero`.
 
 /// Passes the queries of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
@@ -628,6 +636,7 @@ macro_rules! generic_items {
 
     generic_items!([] $($rest)*);
   };
+  // A row that sees raw storages computes on the inline storages that its operands lend.
   (
     []
     $(#[$meta:meta])*
@@ -639,7 +648,11 @@ macro_rules! generic_items {
     $(#[$meta])*
     #[inline]
     fn $name($($param)*) -> $ret {
-      let $result = $receiver.repr.$prim($(&$operand.repr,)* $($($arg,)+)? Token::new());
+      let $result = $receiver.repr.inline(Token::new()).$prim(
+        $($operand.repr.inline(Token::new()),)*
+        $($($arg,)+)?
+        Token::new()
+      );
       $body
     }
 
@@ -657,7 +670,11 @@ macro_rules! generic_items {
     $(#[$meta])*
     #[inline]
     fn $name($($param)*) {
-      let $result = $receiver.repr.$prim($(&$operand.repr,)* $($($arg,)+)? Token::new());
+      let $result = $receiver.repr.inline(Token::new()).$prim(
+        $($operand.repr.inline(Token::new()),)*
+        $($($arg,)+)?
+        Token::new()
+      );
       $body
     }
 

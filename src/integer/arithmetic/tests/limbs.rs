@@ -2,14 +2,15 @@
 //! saturating and strict ones, through the inherent `const fn`s against the bit model, and through
 //! `ArrayInteger` and from the slices of bytes of the same bytes against the inherent `const fn`s,
 //! in two limbs of each limb type at the widths of one and two limbs and next to them, and in no
-//! limbs; the panics of the strict one; code generic over the limb type; and constant contexts.
+//! limbs; the panics of the strict one; code generic over the limb type; constant contexts; and
+//! `into_limbs` and `clone_from`, against `to_limbs` and `clone`.
 
 use core::ops::{Not, Shl, Sub};
 
 use typenum::{U12, U15, U17, U31, U33, U255};
 
 use super::*;
-use crate::{ArrayInteger, InlineIntRepr, InlineUintRepr, IntegerBytes};
+use crate::{ArrayInteger, InlineIntRepr, InlineUintRepr, IntegerBytes, NonZeroInt, NonZeroUint};
 
 /// What the conversions from a slice give: through the inherent `const fn`s in `limb_reads!`,
 /// through `ArrayInteger` in [`limbs_through_traits`] and through `IntegerBytes` in
@@ -306,4 +307,72 @@ fn limb_slices_in_constant_contexts() {
     )
   );
   assert_eq!(ZERO_BITS, (Some(U0x0::ZERO), U0x0::ZERO));
+}
+
+/// Checks `into_limbs` of each array integer of the list, inherent and through `ArrayInteger`,
+/// against `to_limbs`, and `clone_from` against `clone`, written `Integer: [values];`, at each
+/// value, each type in a function of its own.
+macro_rules! limbs_move_out {
+  ($($ty:ty: [$($value:expr),+ $(,)?];)+) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      for value in [$($value),+] {
+        let value: T = value;
+        assert_eq!(value.into_limbs(), value.to_limbs(), "{value}");
+        assert_eq!(ArrayInteger::into_limbs(value), value.to_limbs(), "{value}");
+        let mut target = T::ZERO;
+        target.clone_from(&value);
+        assert_eq!(target, Clone::clone(&value), "{value}");
+      }
+    }
+    storage();
+  })+};
+}
+
+/// Checks `clone_from` of each integer of the list against `clone`, written `Integer: [values];`,
+/// into a target that holds `target`, each type in a function of its own: the natives and the
+/// non-zero integers, which have no limbs to move out.
+macro_rules! clone_from_agrees {
+  ($($ty:ty: $target:expr => [$($value:expr),+ $(,)?];)+) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      for value in [$($value),+] {
+        let value: T = value;
+        let mut target: T = $target;
+        target.clone_from(&value);
+        assert_eq!(target, Clone::clone(&value), "{value}");
+      }
+    }
+    storage();
+  })+};
+}
+
+/// `into_limbs`, inherent and through `ArrayInteger`, gives the limbs that `to_limbs` copies, and
+/// `clone_from` gives its target what `clone` gives: in arrays of each limb type and of no limbs,
+/// of both signs, at zero, one and the limits, and `clone_from` also in native storages and in the
+/// non-zero integers of both kinds of storage.
+#[test]
+fn into_limbs_and_clone_from_agree_with_to_limbs_and_clone() {
+  type I12x2 = Int<U12, [u8; 2]>;
+  limbs_move_out!(
+    Uint<U0, [u64; 0]>: [Uint::<U0, [u64; 0]>::ZERO];
+    Uint<U12, [u8; 2]>: [Uint::<U12, [u8; 2]>::ONE, Uint::<U12, [u8; 2]>::MAX];
+    Uint<U17, [u16; 2]>: [Uint::<U17, [u16; 2]>::ONE, Uint::<U17, [u16; 2]>::MAX];
+    Uint<U33, [u32; 2]>: [Uint::<U33, [u32; 2]>::ONE, Uint::<U33, [u32; 2]>::MAX];
+    u256: [u256::ONE, u256::MAX];
+    Uint<U255, [u128; 2]>: [Uint::<U255, [u128; 2]>::ONE, Uint::<U255, [u128; 2]>::MAX];
+    I12x2: [I12x2::ONE, I12x2::MIN, I12x2::MAX];
+    i256: [i256::ONE, i256::MIN, i256::MAX];
+    Int<U129, [u128; 2]>: [Int::<U129, [u128; 2]>::MIN, Int::<U129, [u128; 2]>::MAX];
+  );
+  clone_from_agrees!(
+    u7: u7::ZERO => [u7::ONE, u7::MAX];
+    i7: i7::MAX => [i7::MIN, i7::ZERO];
+    NonZeroUint<U7>: NonZeroUint::<U7>::MAX => [NonZeroUint::<U7>::MIN];
+    NonZeroInt<U7>: NonZeroInt::<U7>::MAX => [NonZeroInt::<U7>::MIN];
+    NonZeroUint<U200>: NonZeroUint::<U200>::MIN => [NonZeroUint::<U200>::MAX];
+    NonZeroInt<U200>: NonZeroInt::<U200>::MAX => [NonZeroInt::<U200>::MIN];
+  );
 }

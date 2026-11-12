@@ -17,16 +17,16 @@ use typenum::{
 
 pub use array_size::ArraySize;
 pub(crate) use sealed::{
-  InlineIntConsts, InlineUintConsts, IntCore, IntWidth, TypenumNumber, UintCore, UintWidth,
+  InlineIntConsts, InlineUintConsts, IntCore, IntWidth, TypenumNumber, UintCore, UintWidth, View,
 };
 
 use sealed::{
-  ArrayLimb, BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr,
-  LimbFor, MutableRepr, NativeBitsFit, NativeReprFilled, NonZeroRepr, ReprFilled, ReprLimb, Width,
+  BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr, LimbFor,
+  MutableRepr, NativeBitsFit, NativeReprFilled, NonZeroRepr, ReprFilled, ReprLimb, Width,
 };
 
 use crate::{
-  FromFloatError, RoundingMode, format,
+  FromFloatError, Int, RoundingMode, Uint, format,
   int::{
     self,
     float::{FloatFormat, FloatParts},
@@ -38,13 +38,15 @@ use crate::{
 mod array_size;
 
 mod sealed {
-  use core::{cmp::Ordering, fmt, hash::Hasher, marker::PhantomData, num::ParseIntError};
+  use core::{
+    cmp::Ordering, fmt, hash::Hasher, marker::PhantomData, num::ParseIntError, ops::Deref,
+  };
 
   use typenum::{B1, UInt, UTerm};
 
   use super::{FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, UintRepr};
   use crate::{
-    FromFloatError, RoundingMode,
+    FromFloatError, Int, RoundingMode, Uint,
     int::float::{FloatFormat, FloatParts},
     layout::Token,
   };
@@ -258,12 +260,6 @@ mod sealed {
       + UintRepr<Signed = Self::Array, NonZero = Self::Array>;
   }
 
-  /// A limb type of the array storages: `[L; N]` holds `N << L::BitsLog2` bits.
-  pub trait ArrayLimb {
-    /// The base-2 logarithm of the number of bits of a limb.
-    type BitsLog2;
-  }
-
   /// The type of the limbs of a storage, which the slices of limbs that it reads hold: `L` for an
   /// array `[L; N]`, and for a native integer the unsigned integer of its width, of which it is one
   /// limb, as its hash reads it.
@@ -276,6 +272,28 @@ mod sealed {
   // generic over the limb type.
   impl<L, const N: usize> ReprLimb for [L; N] {
     type Limb = L;
+  }
+
+  /// The integer of a non-zero integer, as the storage cores give it to the rows of the non-zero
+  /// integers: lent where the non-zero storage is the storage of the integer, as for an array, and
+  /// a copy of it for a native `NonZero`. It dereferences to the integer.
+  pub enum View<'a, T> {
+    /// The integer itself, lent.
+    Lent(&'a T),
+    /// A copy of the integer.
+    Owned(T),
+  }
+
+  impl<T> Deref for View<'_, T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+      match self {
+        Self::Lent(integer) => integer,
+        Self::Owned(integer) => integer,
+      }
+    }
   }
 
   /// Seals [`UintRepr`](super::UintRepr) and gives the trait implementations of
@@ -293,6 +311,20 @@ mod sealed {
     /// the native `NonZero` of a native integer, whose niche gives `Option` the size of the
     /// integer, and the array itself for an array of limbs.
     type NonZeroStorage;
+
+    /// The storage that computes the values of this storage and holds one inline: the storage
+    /// itself for a native integer or an array of limbs, and the array of a heap storage.
+    type Inline: UintCore;
+
+    /// Lends the value, as its inline storage.
+    fn inline(&self, token: Token) -> &Self::Inline;
+
+    /// A storage of the value `value`: `value` itself, or a new allocation that holds it.
+    fn from_inline(value: Self::Inline, token: Token) -> Self;
+
+    /// Stores the value `value`: in place where the storage holds its value in place, and
+    /// otherwise in a new allocation, which replaces the storage.
+    fn set_inline(&mut self, value: Self::Inline, token: Token);
 
     /// Zero.
     fn zero(token: Token) -> Self;
@@ -564,6 +596,13 @@ mod sealed {
       token: Token,
     ) -> T;
 
+    /// The integer of `nonzero`, the value of a non-zero integer: the integer itself where the
+    /// non-zero storage is this storage, as an array lends it, and a copy for a native integer.
+    fn lend_nonzero<B>(
+      nonzero: &Uint<B, Self::NonZeroStorage>,
+      token: Token,
+    ) -> View<'_, Uint<B, Self>>;
+
     /// The non-zero storage of a value that is not zero, as every non-zero result of the
     /// arithmetic is. A zero is a bug of this crate: it panics in a native integer, whose non-zero
     /// storage cannot hold it, and fails a debug assertion in an array.
@@ -635,6 +674,19 @@ mod sealed {
     /// The storage of a value that is not zero: [`IntRepr::NonZero`](super::IntRepr::NonZero), as
     /// for [`UintCore::NonZeroStorage`].
     type NonZeroStorage;
+
+    /// The storage that computes the values of this storage and holds one inline, as for
+    /// [`UintCore::Inline`].
+    type Inline: IntCore;
+
+    /// Lends the value, as its inline storage.
+    fn inline(&self, token: Token) -> &Self::Inline;
+
+    /// A storage of the value `value`, as for [`UintCore::from_inline`].
+    fn from_inline(value: Self::Inline, token: Token) -> Self;
+
+    /// Stores the value `value`, as for [`UintCore::set_inline`].
+    fn set_inline(&mut self, value: Self::Inline, token: Token);
 
     /// Zero.
     fn zero(token: Token) -> Self;
@@ -935,6 +987,13 @@ mod sealed {
       token: Token,
     ) -> T;
 
+    /// The integer of `nonzero`, the value of a non-zero integer, as for
+    /// [`UintCore::lend_nonzero`].
+    fn lend_nonzero<B>(
+      nonzero: &Int<B, Self::NonZeroStorage>,
+      token: Token,
+    ) -> View<'_, Int<B, Self>>;
+
     /// The non-zero storage of a value that is not zero, as for
     /// [`UintCore::known_nonzero`].
     fn known_nonzero(self, token: Token) -> Self::NonZeroStorage;
@@ -1070,46 +1129,24 @@ impl WholeBytes for UTerm {}
 
 impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
 
-/// `N * B` for limbs of `B` bits, the number of bits of `[L; N]`.
-type LimbBits<L, const N: usize> = Shleft<U<N>, <L as ArrayLimb>::BitsLog2>;
-
-// The bound below 2^32 is a comparison of types, because `typenum`'s `U32` and `U64` wrap: for
-// `64 * 2^58` bits, both are zero.
-impl<B, L: ArrayLimb, const N: usize> BitsOf<[L; N]> for B
-where
-  B: IsLessOrEqual<LimbBits<L, N>> + IsLess<U4294967296>,
-  Const<N>: ToUInt,
-  U<N>: Shl<L::BitsLog2>,
-  LeEq<B, LimbBits<L, N>>: BitsFit,
-  Le<B, U4294967296>: BitsBelow2Pow32,
-{
-}
-
-// `typenum`'s alias for `IsEqual::Output` is named `Eq`, as the trait of `core` is.
-impl<B, L: ArrayLimb, const N: usize> BitsFill<[L; N]> for B
-where
-  B: IsEqual<LimbBits<L, N>>,
-  Const<N>: ToUInt,
-  U<N>: Shl<L::BitsLog2>,
-  <B as IsEqual<LimbBits<L, N>>>::Output: ReprFilled,
-{
-}
-
 /// A storage of [`Uint`](crate::Uint): a native unsigned integer, `u8`, `u16`, `u32`, `u64` or
 /// `u128`, holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first.
 ///
 /// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
-/// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
-/// [`UncheckedOps`](crate::UncheckedOps), the math traits [`IntegerMath`](crate::IntegerMath) and
-/// [`UnsignedMath`](crate::UnsignedMath), the bit traits [`IntegerBits`](crate::IntegerBits) and
-/// [`UnsignedBits`](crate::UnsignedBits), the operators `+`, `-`, `*`, `/`, `%`, `&`, `|` and `^`
-/// on two references, as in `&a + &b`, and `!`, `<<` and `>>` on a reference, as in `&a << 3`, for
-/// every `Repr` that implements this trait. So does [`IntegerNonZero`](crate::IntegerNonZero),
+/// [`WrappingOps`](crate::WrappingOps), [`SaturatingOps`](crate::SaturatingOps),
+/// [`StrictOps`](crate::StrictOps) and [`UncheckedOps`](crate::UncheckedOps), the math traits
+/// [`IntegerMath`](crate::IntegerMath) and [`UnsignedMath`](crate::UnsignedMath), the bit traits
+/// [`IntegerBits`](crate::IntegerBits) and [`UnsignedBits`](crate::UnsignedBits),
+/// [`UnsignedFixedInteger`](crate::UnsignedFixedInteger), the operators `+`, `-`, `*`, `/`, `%`,
+/// `&`, `|` and `^` in every form of values and references, as in `a + &b`, `!`, `<<` and `>>`,
+/// `Sum`, and from one bit `Product`, for every `Repr` that implements this trait, and where `Repr`
+/// is `Clone`, as every storage of this crate is, [`FixedInteger`](crate::FixedInteger) and, from
+/// one bit, [`IntegerOne`](crate::IntegerOne). So does [`IntegerNonZero`](crate::IntegerNonZero),
 /// whose non-zero integer is the [`NonZeroUint`](crate::NonZeroUint) over the
-/// [`NonZero`](Self::NonZero) of `Repr`: on two references, `Uint<Bits, Repr>` divides by it with
-/// `/` and `%`, which cannot panic, and combines with it by `|`. This trait is sealed and cannot be
+/// [`NonZero`](Self::NonZero) of `Repr`: `Uint<Bits, Repr>` divides by it with `/` and `%`, which
+/// cannot panic, and combines with it by `|`, in every form. This trait is sealed and cannot be
 /// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
@@ -1140,15 +1177,19 @@ pub trait UintRepr:
 ///
 /// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
-/// [`WrappingOps`](crate::WrappingOps), [`StrictOps`](crate::StrictOps) and
-/// [`UncheckedOps`](crate::UncheckedOps), the math traits [`IntegerMath`](crate::IntegerMath) and
-/// [`SignedMath`](crate::SignedMath), the bit traits [`IntegerBits`](crate::IntegerBits) and
-/// [`SignedBits`](crate::SignedBits), the operators `+`, `-`, `*`, `/`, `%`, `&`, `|` and `^` on
-/// two references, as in `&a + &b`, and the negation `-`, `!`, `<<` and `>>` on a reference, for
-/// every `Repr` that implements this trait. So does [`IntegerNonZero`](crate::IntegerNonZero),
-/// whose non-zero integer is the [`NonZeroInt`](crate::NonZeroInt) over the
-/// [`NonZero`](Self::NonZero) of `Repr`, with which `Int<Bits, Repr>` combines by `|` on two
-/// references. This trait is sealed and cannot be implemented outside this crate.
+/// [`WrappingOps`](crate::WrappingOps), [`SaturatingOps`](crate::SaturatingOps),
+/// [`StrictOps`](crate::StrictOps) and [`UncheckedOps`](crate::UncheckedOps), the math traits
+/// [`IntegerMath`](crate::IntegerMath) and [`SignedMath`](crate::SignedMath), the bit traits
+/// [`IntegerBits`](crate::IntegerBits) and [`SignedBits`](crate::SignedBits), the operators `+`,
+/// `-`, `*`, `/`, `%`, `&`, `|` and `^` in every form of values and references, as in `a + &b`,
+/// the negation `-`, `!`, `<<` and `>>`, `Sum`, and from two bits `Product`, for every `Repr` that
+/// implements this trait, and where `Repr` is `Clone`, as every storage of this crate is,
+/// [`FixedInteger`](crate::FixedInteger), [`SignedFixedInteger`](crate::SignedFixedInteger) and,
+/// from two bits, [`IntegerOne`](crate::IntegerOne). So does
+/// [`IntegerNonZero`](crate::IntegerNonZero), whose non-zero integer is the
+/// [`NonZeroInt`](crate::NonZeroInt) over the [`NonZero`](Self::NonZero) of `Repr`, with which
+/// `Int<Bits, Repr>` combines by `|` in every form. This trait is sealed and cannot be implemented
+/// outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
   note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
@@ -1178,7 +1219,7 @@ pub trait IntRepr:
 /// `Display` and `Debug`, and `Copy` where `Repr` is `Copy`, for every `Repr` that implements this
 /// trait, and with the width relation of its integer, `Bits: FitsBits<Repr::Integer>`,
 /// [`FixedNonZero`](crate::FixedNonZero) and [`UnsignedNonZero`](crate::UnsignedNonZero), from one
-/// bit [`NonZeroLimits`](crate::NonZeroLimits), and `|` on two references, with itself and with its
+/// bit [`NonZeroLimits`](crate::NonZeroLimits), and `|` in every form, with itself and with its
 /// integer either way. `From` converts it to its integer. This trait is sealed and cannot be
 /// implemented outside this crate.
 #[diagnostic::on_unimplemented(
@@ -1207,8 +1248,8 @@ pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
 /// Each is the [`NonZero`](IntRepr::NonZero) of a storage of `Int`, its
 /// [`Integer`](Self::Integer). `NonZeroInt<Bits, Repr>` implements the traits of
 /// [`NonZeroUintRepr`] for `NonZeroUint`, with [`SignedNonZero`](crate::SignedNonZero) for
-/// [`UnsignedNonZero`](crate::UnsignedNonZero), and the negation `-` on a reference. This trait is
-/// sealed and cannot be implemented outside this crate.
+/// [`UnsignedNonZero`](crate::UnsignedNonZero), and the negation `-` on a value and on a reference.
+/// This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `NonZeroInt`",
   note = "`NonZeroInt` stores `core::num::NonZero<i8>` to `NonZero<i128>`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
@@ -1231,61 +1272,81 @@ pub trait NonZeroIntRepr: Eq + Clone + NonZeroRepr {
 /// compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=` and `>>=`.
 ///
 /// Every storage of this crate implements it: the native unsigned integers and the arrays of
-/// limbs. With it, `Uint` also has `/=` and `%=` by a [`NonZeroUint`](crate::NonZeroUint), and the
-/// `NonZeroUint` over its [`NonZero`](UintRepr::NonZero) has `|=`. This trait is sealed and cannot
-/// be implemented outside this crate.
+/// limbs. With it, `Uint` also has `/=` and `%=` by a [`NonZeroUint`](crate::NonZeroUint), the
+/// `NonZeroUint` over its [`NonZero`](UintRepr::NonZero) has `|=`, and where the storage is
+/// `Clone`, as every storage of this crate is, `Uint` implements
+/// [`IntegerAssign`](crate::IntegerAssign). This trait is sealed and cannot be implemented outside
+/// this crate.
 pub trait UintReprMut: UintRepr + MutableRepr {}
 
 /// A storage of [`Int`](crate::Int) that holds the value in place, so that the integers have the
 /// compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=` and `>>=`.
 ///
 /// Every storage of this crate implements it: the native signed integers and the arrays of limbs.
-/// With it, the [`NonZeroInt`](crate::NonZeroInt) over its [`NonZero`](IntRepr::NonZero) has `|=`.
-/// This trait is sealed and cannot be implemented outside this crate.
+/// With it, the [`NonZeroInt`](crate::NonZeroInt) over its [`NonZero`](IntRepr::NonZero) has `|=`,
+/// and where the storage is `Clone`, as every storage of this crate is, `Int` implements
+/// [`IntegerAssign`](crate::IntegerAssign). This trait is sealed and cannot be implemented outside
+/// this crate.
 pub trait IntReprMut: IntRepr + MutableRepr {}
 
 /// A storage of [`Uint`](crate::Uint) that holds the value inline, so that the integer is `Copy`: a
 /// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`.
 ///
-/// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger) and [`ConstFixedInteger`](crate::ConstFixedInteger), with
-/// the operators `+`, `-`, `*`, `/`, `%`, `!`, `&`, `|`, `^`, `<<` and `>>` on values and `Sum`,
-/// [`UnsignedFixedInteger`](crate::UnsignedFixedInteger)
-/// and [`SaturatingOps`](crate::SaturatingOps), and from one bit it has the constant `ONE` and
-/// implements [`IntegerOne`](crate::IntegerOne) and [`ConstIntegerOne`](crate::ConstIntegerOne),
-/// with `Product`, for every `Repr` that implements this trait. The
+/// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX` and implements
+/// [`ConstFixedInteger`](crate::ConstFixedInteger), and from one bit it has the constant `ONE` and
+/// implements [`ConstIntegerOne`](crate::ConstIntegerOne), for every `Repr` that implements this
+/// trait; the traits that need no constant are those of [`UintRepr`] and [`UintReprMut`]. The
 /// [`NonZeroUint`](crate::NonZeroUint) over its [`NonZero`](UintRepr::NonZero) has, from one bit,
 /// the constants `MIN` and `MAX`, with [`ConstNonZeroLimits`](crate::ConstNonZeroLimits) where that
-/// storage is `Copy`, and the operators on values: `/` and `%` of `Uint` by it, and `|`. The
-/// default storages of [`BitWidth`] are inline, and their non-zero storages are `Copy`. This trait
-/// is sealed and cannot be implemented outside this crate.
+/// storage is `Copy`. The default storages of [`BitWidth`] are inline, and their non-zero storages
+/// are `Copy`. This trait is sealed and cannot be implemented outside this crate.
 pub trait InlineUintRepr: UintReprMut + Copy + InlineUintConsts {}
 
 /// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
 /// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`.
 ///
-/// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX`, and implements
-/// [`FixedInteger`](crate::FixedInteger) and [`ConstFixedInteger`](crate::ConstFixedInteger), with
-/// the operators `+`, `-`, `*`, `/`, `%`, `!`, `&`, `|`, `^`, `<<` and `>>` on values and `Sum`,
-/// [`SignedFixedInteger`](crate::SignedFixedInteger),
-/// with the operator `-`, and [`SaturatingOps`](crate::SaturatingOps), and from two bits it has the
-/// constant `ONE` and implements [`IntegerOne`](crate::IntegerOne) and
-/// [`ConstIntegerOne`](crate::ConstIntegerOne), with `Product`, for every `Repr` that implements
-/// this trait. The [`NonZeroInt`](crate::NonZeroInt) over its [`NonZero`](IntRepr::NonZero) has,
-/// from one bit, the constants `MIN` and `MAX`, with
-/// [`ConstNonZeroLimits`](crate::ConstNonZeroLimits) where that storage is `Copy`, and the
-/// operators `|` and `-` on values. The default storages of [`BitWidth`] are inline, and their
-/// non-zero storages are `Copy`. This trait is sealed and cannot be implemented outside this crate.
+/// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX` and implements
+/// [`ConstFixedInteger`](crate::ConstFixedInteger), and from two bits it has the constant `ONE` and
+/// implements [`ConstIntegerOne`](crate::ConstIntegerOne), for every `Repr` that implements this
+/// trait; the traits that need no constant are those of [`IntRepr`] and [`IntReprMut`]. The
+/// [`NonZeroInt`](crate::NonZeroInt) over its [`NonZero`](IntRepr::NonZero) has, from one bit, the
+/// constants `MIN` and `MAX`, with [`ConstNonZeroLimits`](crate::ConstNonZeroLimits) where that
+/// storage is `Copy`. The default storages of [`BitWidth`] are inline, and their non-zero storages
+/// are `Copy`. This trait is sealed and cannot be implemented outside this crate.
 pub trait InlineIntRepr: IntReprMut + Copy + InlineIntConsts {}
 
-/// Implements [`ArrayLimb`], [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`],
-/// [`InlineUintRepr`], [`InlineIntRepr`], [`NonZeroUintRepr`] and [`NonZeroIntRepr`] for the arrays
-/// of each limb type, written `limb: BitsLog2, lower, upper`, where `lower` and `upper` are the
-/// modules of its limb layers.
+/// Implements [`UintRepr`], [`IntRepr`], [`UintReprMut`], [`IntReprMut`], [`InlineUintRepr`],
+/// [`InlineIntRepr`], [`NonZeroUintRepr`] and [`NonZeroIntRepr`] for the arrays of each limb type,
+/// and their width relations, written `limb: BitsLog2, lower, upper`, where `BitsLog2` is the
+/// base-2 logarithm of the number of bits of a limb, so that `[limb; N]` holds `N << BitsLog2`
+/// bits, and `lower` and `upper` are the modules of its limb layers.
+// Each limb type has width impls of its own. One impl over every array, bounded by a trait of the
+// limb types, would compute with the logarithm of that trait, which for an array of a type that is
+// not a limb reaches the recursive `Shl` impls of `typenum` and overflows the trait solver, instead
+// of failing with the diagnostic of the storage traits. The logarithm is written out, because rustc
+// does not match a where-clause that names it through the limb type against its normalized form.
 macro_rules! array_storage {
   ($($limb:ident: $bits_log2:ident, $lower:ident, $upper:ident);+ $(;)?) => {$(
-    impl ArrayLimb for $limb {
-      type BitsLog2 = $bits_log2;
+    // The bound below 2^32 is a comparison of types, because `typenum`'s `U32` and `U64` wrap: for
+    // `64 * 2^58` bits, both are zero.
+    impl<B, const N: usize> BitsOf<[$limb; N]> for B
+    where
+      B: IsLessOrEqual<Shleft<U<N>, $bits_log2>> + IsLess<U4294967296>,
+      Const<N>: ToUInt,
+      U<N>: Shl<$bits_log2>,
+      LeEq<B, Shleft<U<N>, $bits_log2>>: BitsFit,
+      Le<B, U4294967296>: BitsBelow2Pow32,
+    {
+    }
+
+    // `typenum`'s alias for `IsEqual::Output` is named `Eq`, as the trait of `core` is.
+    impl<B, const N: usize> BitsFill<[$limb; N]> for B
+    where
+      B: IsEqual<Shleft<U<N>, $bits_log2>>,
+      Const<N>: ToUInt,
+      U<N>: Shl<$bits_log2>,
+      <B as IsEqual<Shleft<U<N>, $bits_log2>>>::Output: ReprFilled,
+    {
     }
 
     impl<const N: usize> UintRepr for [$limb; N] {
@@ -1296,6 +1357,22 @@ macro_rules! array_storage {
     impl<const N: usize> UintCore for [$limb; N] {
       type Complement = Self;
       type NonZeroStorage = Self;
+      type Inline = Self;
+
+      #[inline(always)]
+      fn inline(&self, _: Token) -> &Self {
+        self
+      }
+
+      #[inline(always)]
+      fn from_inline(value: Self, _: Token) -> Self {
+        value
+      }
+
+      #[inline(always)]
+      fn set_inline(&mut self, value: Self, _: Token) {
+        *self = value;
+      }
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -1654,6 +1731,11 @@ macro_rules! array_storage {
       }
 
       #[inline]
+      fn lend_nonzero<B>(nonzero: &Uint<B, Self>, _: Token) -> View<'_, Uint<B, Self>> {
+        View::Lent(nonzero)
+      }
+
+      #[inline]
       fn known_nonzero(self, _: Token) -> Self {
         debug_assert!(!unsigned::$lower::is_zero(&self), "a non-zero result is zero");
         self
@@ -1712,6 +1794,22 @@ macro_rules! array_storage {
     impl<const N: usize> IntCore for [$limb; N] {
       type Magnitude = Self;
       type NonZeroStorage = Self;
+      type Inline = Self;
+
+      #[inline(always)]
+      fn inline(&self, _: Token) -> &Self {
+        self
+      }
+
+      #[inline(always)]
+      fn from_inline(value: Self, _: Token) -> Self {
+        value
+      }
+
+      #[inline(always)]
+      fn set_inline(&mut self, value: Self, _: Token) {
+        *self = value;
+      }
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -2093,6 +2191,11 @@ macro_rules! array_storage {
       }
 
       #[inline]
+      fn lend_nonzero<B>(nonzero: &Int<B, Self>, _: Token) -> View<'_, Int<B, Self>> {
+        View::Lent(nonzero)
+      }
+
+      #[inline]
       fn known_nonzero(self, _: Token) -> Self {
         debug_assert!(!signed::$upper::is_zero(&self), "a non-zero result is zero");
         self
@@ -2227,6 +2330,22 @@ macro_rules! native_storage {
     impl UintCore for $uint {
       type Complement = $int;
       type NonZeroStorage = core::num::NonZero<$uint>;
+      type Inline = Self;
+
+      #[inline(always)]
+      fn inline(&self, _: Token) -> &Self {
+        self
+      }
+
+      #[inline(always)]
+      fn from_inline(value: Self, _: Token) -> Self {
+        value
+      }
+
+      #[inline(always)]
+      fn set_inline(&mut self, value: Self, _: Token) {
+        *self = value;
+      }
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -2585,6 +2704,14 @@ macro_rules! native_storage {
       }
 
       #[inline]
+      fn lend_nonzero<B>(
+        nonzero: &Uint<B, core::num::NonZero<$uint>>,
+        _: Token,
+      ) -> View<'_, Uint<B, Self>> {
+        View::Owned(Uint::wrap(nonzero.repr.get()))
+      }
+
+      #[inline]
       fn known_nonzero(self, _: Token) -> core::num::NonZero<$uint> {
         int::$uint::known_nonzero(self)
       }
@@ -2644,6 +2771,22 @@ macro_rules! native_storage {
     impl IntCore for $int {
       type Magnitude = $uint;
       type NonZeroStorage = core::num::NonZero<$int>;
+      type Inline = Self;
+
+      #[inline(always)]
+      fn inline(&self, _: Token) -> &Self {
+        self
+      }
+
+      #[inline(always)]
+      fn from_inline(value: Self, _: Token) -> Self {
+        value
+      }
+
+      #[inline(always)]
+      fn set_inline(&mut self, value: Self, _: Token) {
+        *self = value;
+      }
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -3015,6 +3158,14 @@ macro_rules! native_storage {
       }
 
       #[inline]
+      fn lend_nonzero<B>(
+        nonzero: &Int<B, core::num::NonZero<$int>>,
+        _: Token,
+      ) -> View<'_, Int<B, Self>> {
+        View::Owned(Int::wrap(nonzero.repr.get()))
+      }
+
+      #[inline]
       fn known_nonzero(self, _: Token) -> core::num::NonZero<$int> {
         int::$int::known_nonzero(self)
       }
@@ -3184,11 +3335,12 @@ pub type Limbs<Bits, L = u64> = <L as LimbArray<Bits>>::Array;
 
 /// Implements [`LimbArray`] for each limb type, written `limb: BitsLog2, mask`, where `mask` is
 /// `2^BitsLog2 - 1`: the number of limbs is `(Bits + mask) >> BitsLog2`.
-// Each limb type has an impl of its own. One impl over `ArrayLimb` would compute with `BitsLog2`,
-// which for a type that is not a limb reaches the recursive `Shl` impls of `typenum` and overflows
-// the trait solver, instead of failing with the diagnostic of this trait. The masks are written
-// out, because rustc does not match a where-clause such as `Bits: Add<Sub1<Shleft<U1, U6>>>`
-// against the normalized `Bits: Add<U63>`.
+// Each limb type has an impl of its own, as it has width impls of its own in `array_storage!`. One
+// impl over a trait of the limb types would compute with the logarithm of their bits, which for a
+// type that is not a limb reaches the recursive `Shl` impls of `typenum` and overflows the trait
+// solver, instead of failing with the diagnostic of this trait. The masks are written out, because
+// rustc does not match a where-clause such as `Bits: Add<Sub1<Shleft<U1, U6>>>` against the
+// normalized `Bits: Add<U63>`.
 macro_rules! limb_arrays {
   ($($limb:ident: $bits_log2:ident, $mask:ident);+ $(;)?) => {$(
     impl<Bits: Unsigned> LimbFor<Bits> for $limb {}

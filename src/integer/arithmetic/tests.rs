@@ -24,9 +24,9 @@ use typenum::{
 
 use crate::{
   BitWidth, CheckedOps, ConstFixedInteger, ConstIntegerOne, FitsBits, FixedInteger, Int,
-  IntReprMut, IntegerBits, IntegerMath, IntegerOne, OverflowingOps, SaturatingOps, SignedBits,
-  SignedFixedInteger, SignedMath, StrictOps, Uint, UintReprMut, UncheckedOps, UnsignedBits,
-  UnsignedFixedInteger, UnsignedMath, WrappingOps,
+  IntReprMut, IntegerAssign, IntegerBits, IntegerMath, IntegerOne, OverflowingOps, SaturatingOps,
+  SignedBits, SignedFixedInteger, SignedMath, StrictOps, Uint, UintReprMut, UncheckedOps,
+  UnsignedBits, UnsignedFixedInteger, UnsignedMath, WrappingOps,
   bigint::{self, Tier, model, tier},
   i7, i256, u7, u256, u4096,
 };
@@ -1393,8 +1393,9 @@ fn arithmetic_trait_surface() {
     for<'a, 'b> &'a T: Div<&'b T, Output = T> + Rem<&'b T, Output = T>,
   {
   }
-  // `FixedInteger` gives the operators on values and their compound assignments with values.
-  fn fixed_operators<T: FixedInteger>() {
+  // `FixedInteger` gives the operators on values, and `IntegerAssign` their compound assignments
+  // with values.
+  fn fixed_operators<T: IntegerAssign>() {
     fn division<T: Div<Output = T> + Rem<Output = T> + DivAssign + RemAssign>() {}
     division::<T>();
   }

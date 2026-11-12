@@ -23,7 +23,7 @@ use core::ops::{
 use super::{Int, Uint, WrappingOps, arithmetic::overflow};
 use crate::{
   layout::Token,
-  width::{FitsBits, InlineIntRepr, InlineUintRepr, IntRepr, IntReprMut, UintRepr, UintReprMut},
+  width::{FitsBits, IntCore, IntRepr, IntReprMut, UintCore, UintRepr, UintReprMut},
 };
 
 /// Passes the bit methods of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
@@ -101,7 +101,7 @@ macro_rules! integer_bits_table {
       fn shl_exact(&self, rhs: u32) -> Option<Self>
         = prim shl_exact_bits(self; rhs, Self::BITS) as shifted {
           match shifted {
-            Some(shifted) => Some(Self::wrap(shifted)),
+            Some(shifted) => Some(Self::of(shifted)),
             None => None,
           }
         }
@@ -113,7 +113,7 @@ macro_rules! integer_bits_table {
       fn shr_exact(&self, rhs: u32) -> Option<Self>
         = prim shr_exact_bits(self; rhs, Self::BITS) as shifted {
           match shifted {
-            Some(shifted) => Some(Self::wrap(shifted)),
+            Some(shifted) => Some(Self::of(shifted)),
             None => None,
           }
         }
@@ -134,7 +134,7 @@ macro_rules! integer_bits_table {
       fn set_bit(&mut self, index: u32, value: bool)
         = prim with_bit(self; index, value, Self::BITS) as changed {
           match changed {
-            Some(changed) => self.repr = changed,
+            Some(changed) => self.store(changed),
             None => $crate::integer::arithmetic::domain::bit_index(),
           }
         }
@@ -305,41 +305,52 @@ macro_rules! bitwise_table {
 }
 
 /// Implements the bitwise operator `$op`, `&`, `|` or `^`, in its four forms of values and
-/// references, and its compound assignment `$assign` for a value and a reference. The form on two
-/// references combines the storages with the sealed storage method `$primitive`, for every
-/// storage, `$repr`; the forms with an owned operand, for a storage that holds the value inline,
-/// `$inline`, pass references to it; and the compound assignments, for a storage that holds the
-/// value in place, `$repr_mut`, store the result. Nothing overflows, so nothing panics, and as for
-/// the native integers the methods are not `#[track_caller]`.
+/// references, and its compound assignment `$assign` for a value and a reference, with the sealed
+/// storage method `$primitive`, for every storage, `$repr`, and the assignments for a storage that
+/// holds the value in place, `$repr_mut`. The form on two references combines the storages; the
+/// forms with an owned operand combine the inline storages that the operands lend and store the
+/// result in the owned operand, the left one when both are owned; and the compound assignments
+/// combine them in the same way and store the result in their target. Nothing overflows, so
+/// nothing panics, and as for the native integers the methods are not `#[track_caller]`.
 macro_rules! bit_operator {
+  // `$primitive` of the inline storages that `$lhs` and `$rhs` lend.
+  (@combine $lhs:expr, $rhs:expr, $primitive:ident) => {
+    $lhs.inline(Token::new()).$primitive($rhs.inline(Token::new()), Token::new())
+  };
   (
-    $type:ident: $repr:ident, $inline:ident, $repr_mut:ident;
+    $type:ident: $repr:ident, $repr_mut:ident;
     $op:ident $method:ident, $assign:ident $assign_method:ident, $primitive:ident
   ) => {
-    impl<B: FitsBits<R>, R: $inline> $op for $type<B, R> {
+    impl<B: FitsBits<R>, R: $repr> $op for $type<B, R> {
       type Output = Self;
 
       #[inline]
-      fn $method(self, rhs: Self) -> Self {
-        $op::$method(&self, &rhs)
+      fn $method(mut self, rhs: Self) -> Self {
+        let value = bit_operator!(@combine self.repr, rhs.repr, $primitive);
+        self.repr.set_inline(value, Token::new());
+        self
       }
     }
 
-    impl<B: FitsBits<R>, R: $inline> $op<&$type<B, R>> for $type<B, R> {
+    impl<B: FitsBits<R>, R: $repr> $op<&$type<B, R>> for $type<B, R> {
       type Output = Self;
 
       #[inline]
-      fn $method(self, rhs: &Self) -> Self {
-        $op::$method(&self, rhs)
+      fn $method(mut self, rhs: &Self) -> Self {
+        let value = bit_operator!(@combine self.repr, rhs.repr, $primitive);
+        self.repr.set_inline(value, Token::new());
+        self
       }
     }
 
-    impl<B: FitsBits<R>, R: $inline> $op<$type<B, R>> for &$type<B, R> {
+    impl<B: FitsBits<R>, R: $repr> $op<$type<B, R>> for &$type<B, R> {
       type Output = $type<B, R>;
 
       #[inline]
-      fn $method(self, rhs: $type<B, R>) -> $type<B, R> {
-        $op::$method(self, &rhs)
+      fn $method(self, mut rhs: $type<B, R>) -> $type<B, R> {
+        let value = bit_operator!(@combine self.repr, rhs.repr, $primitive);
+        rhs.repr.set_inline(value, Token::new());
+        rhs
       }
     }
 
@@ -362,48 +373,53 @@ macro_rules! bit_operator {
     impl<B: FitsBits<R>, R: $repr_mut> $assign<&$type<B, R>> for $type<B, R> {
       #[inline]
       fn $assign_method(&mut self, rhs: &Self) {
-        self.repr = self.repr.$primitive(&rhs.repr, Token::new());
+        let value = bit_operator!(@combine self.repr, rhs.repr, $primitive);
+        self.repr.set_inline(value, Token::new());
       }
     }
   };
 }
 
 bit_operator!(
-  Uint: UintRepr, InlineUintRepr, UintReprMut;
+  Uint: UintRepr, UintReprMut;
   BitAnd bitand, BitAndAssign bitand_assign, and
 );
 bit_operator!(
-  Uint: UintRepr, InlineUintRepr, UintReprMut;
+  Uint: UintRepr, UintReprMut;
   BitOr bitor, BitOrAssign bitor_assign, or
 );
 bit_operator!(
-  Uint: UintRepr, InlineUintRepr, UintReprMut;
+  Uint: UintRepr, UintReprMut;
   BitXor bitxor, BitXorAssign bitxor_assign, xor
 );
 bit_operator!(
-  Int: IntRepr, InlineIntRepr, IntReprMut;
+  Int: IntRepr, IntReprMut;
   BitAnd bitand, BitAndAssign bitand_assign, and
 );
 bit_operator!(
-  Int: IntRepr, InlineIntRepr, IntReprMut;
+  Int: IntRepr, IntReprMut;
   BitOr bitor, BitOrAssign bitor_assign, or
 );
 bit_operator!(
-  Int: IntRepr, InlineIntRepr, IntReprMut;
+  Int: IntRepr, IntReprMut;
   BitXor bitxor, BitXorAssign bitxor_assign, xor
 );
 
-/// Implements `!` for a reference, for every storage, `$repr`, with the sealed storage method
-/// `not_bits`, and for a value, for a storage that holds it inline, `$inline`, which passes a
-/// reference.
+/// Implements `!` for a reference, with the sealed storage method `not_bits`, and for a value, on
+/// the inline storage that it lends, which then stores the result, for every storage, `$repr`.
 macro_rules! not_operator {
-  ($type:ident: $repr:ident, $inline:ident) => {
-    impl<B: FitsBits<R>, R: $inline> Not for $type<B, R> {
+  ($type:ident: $repr:ident) => {
+    impl<B: FitsBits<R>, R: $repr> Not for $type<B, R> {
       type Output = Self;
 
       #[inline]
-      fn not(self) -> Self {
-        Not::not(&self)
+      fn not(mut self) -> Self {
+        let value = self
+          .repr
+          .inline(Token::new())
+          .not_bits(Self::BITS, Token::new());
+        self.repr.set_inline(value, Token::new());
+        self
       }
     }
 
@@ -418,8 +434,8 @@ macro_rules! not_operator {
   };
 }
 
-not_operator!(Uint: UintRepr, InlineUintRepr);
-not_operator!(Int: IntRepr, InlineIntRepr);
+not_operator!(Uint: UintRepr);
+not_operator!(Int: IntRepr);
 
 /// The amount `rhs` of a shift of `bits` bits, an unsigned primitive integer converted to `u128`,
 /// modulo `bits`, and whether it is `bits` or more. Zero bits take no remainder: every amount
@@ -451,18 +467,33 @@ const fn signed_amount(rhs: i128, bits: u32) -> (u32, bool) {
 
 /// Implements the shift operator `$op`, `<<` or `>>`, with each primitive integer of `$amount` as
 /// the amount, by value and by reference, on values and references, and its compound assignment
-/// `$assign` with an amount and a reference to one. The form on a reference computes, for every
-/// storage, `$repr`: `$reduce` takes the amount, converted to `$wide`, modulo `Bits`, and an
-/// amount that is negative or `Bits` or more repeats the overflow of a native shift with
-/// `$forward`, which panics or not as `overflow-checks` decides, before the wrapping shift
-/// `$wrapping` by the remainder. The forms on a value, for a storage that holds it inline,
-/// `$inline`, pass a reference, and the compound assignments, for a storage that holds the value in
-/// place, `$repr_mut`, store the result after the shift, so that a panic leaves their target
+/// `$assign` with an amount and a reference to one, for every storage, `$repr`, and the
+/// assignments for a storage that holds the value in place, `$repr_mut`. Each form takes the
+/// amount, converted to `$wide`, modulo `Bits` with `$reduce`, and an amount that is negative or
+/// `Bits` or more repeats the overflow of a native shift with `$forward`, which panics or not as
+/// `overflow-checks` decides, before the shift by the remainder: the form on a reference with the
+/// wrapping shift `$wrapping`, and the forms on a value and the compound assignments with the
+/// sealed storage method `$row` on the inline storage that the value lends, which then stores the
+/// result. The store comes after the shift, so that a panic leaves the target of an assignment
 /// unchanged. Each form reports its caller, as the native operators do.
 macro_rules! shift_operator {
+  // The inline storage that `$repr` lends shifted by `$rhs`, converted to `$wide` and taken modulo
+  // `$bits` by `$reduce`, with the sealed storage method `$row`: an amount that is negative or
+  // `$bits` or more first repeats the overflow of a native shift with `$forward`.
   (
-    $type:ident: $repr:ident, $inline:ident, $repr_mut:ident;
-    $op:ident $method:ident, $assign:ident $assign_method:ident, $wrapping:ident, $forward:ident;
+    @shifted $repr:expr, $rhs:expr, $reduce:ident as $wide:ty, $bits:expr, $row:ident,
+    $forward:ident
+  ) => {{
+    let (amount, overflow) = $reduce($rhs as $wide, $bits);
+    if overflow {
+      overflow::$forward();
+    }
+    $repr.inline(Token::new()).$row(amount, $bits, Token::new()).0
+  }};
+  (
+    $type:ident: $repr:ident, $repr_mut:ident;
+    $op:ident $method:ident, $assign:ident $assign_method:ident, $wrapping:ident, $row:ident,
+    $forward:ident;
     $reduce:ident as $wide:ty: $($amount:ty),+ $(,)?
   ) => {$(
     impl<B: FitsBits<R>, R: $repr> $op<$amount> for &$type<B, R> {
@@ -489,23 +520,26 @@ macro_rules! shift_operator {
       }
     }
 
-    impl<B: FitsBits<R>, R: $inline> $op<$amount> for $type<B, R> {
+    impl<B: FitsBits<R>, R: $repr> $op<$amount> for $type<B, R> {
       type Output = Self;
 
       #[inline]
       #[track_caller]
-      fn $method(self, rhs: $amount) -> Self {
-        $op::$method(&self, rhs)
+      fn $method(mut self, rhs: $amount) -> Self {
+        let value =
+          shift_operator!(@shifted self.repr, rhs, $reduce as $wide, Self::BITS, $row, $forward);
+        self.repr.set_inline(value, Token::new());
+        self
       }
     }
 
-    impl<B: FitsBits<R>, R: $inline> $op<&$amount> for $type<B, R> {
+    impl<B: FitsBits<R>, R: $repr> $op<&$amount> for $type<B, R> {
       type Output = Self;
 
       #[inline]
       #[track_caller]
       fn $method(self, rhs: &$amount) -> Self {
-        $op::$method(&self, *rhs)
+        $op::$method(self, *rhs)
       }
     }
 
@@ -513,8 +547,9 @@ macro_rules! shift_operator {
       #[inline]
       #[track_caller]
       fn $assign_method(&mut self, rhs: $amount) {
-        let shifted = $op::$method(&*self, rhs);
-        *self = shifted;
+        let value =
+          shift_operator!(@shifted self.repr, rhs, $reduce as $wide, Self::BITS, $row, $forward);
+        self.repr.set_inline(value, Token::new());
       }
     }
 
@@ -529,31 +564,31 @@ macro_rules! shift_operator {
 }
 
 /// Implements `<<` and `>>` and their compound assignments for `$type` over the storages of
-/// `$repr`, `$inline` and `$repr_mut`, with every primitive integer as the amount.
+/// `$repr` and `$repr_mut`, with every primitive integer as the amount.
 macro_rules! shift_operators {
-  ($type:ident: $repr:ident, $inline:ident, $repr_mut:ident) => {
+  ($type:ident: $repr:ident, $repr_mut:ident) => {
     shift_operator!(
-      $type: $repr, $inline, $repr_mut;
-      Shl shl, ShlAssign shl_assign, wrapping_shl, forward_shl;
+      $type: $repr, $repr_mut;
+      Shl shl, ShlAssign shl_assign, wrapping_shl, overflowing_shl_bits, forward_shl;
       unsigned_amount as u128: u8, u16, u32, u64, u128, usize
     );
     shift_operator!(
-      $type: $repr, $inline, $repr_mut;
-      Shl shl, ShlAssign shl_assign, wrapping_shl, forward_shl;
+      $type: $repr, $repr_mut;
+      Shl shl, ShlAssign shl_assign, wrapping_shl, overflowing_shl_bits, forward_shl;
       signed_amount as i128: i8, i16, i32, i64, i128, isize
     );
     shift_operator!(
-      $type: $repr, $inline, $repr_mut;
-      Shr shr, ShrAssign shr_assign, wrapping_shr, forward_shr;
+      $type: $repr, $repr_mut;
+      Shr shr, ShrAssign shr_assign, wrapping_shr, overflowing_shr_bits, forward_shr;
       unsigned_amount as u128: u8, u16, u32, u64, u128, usize
     );
     shift_operator!(
-      $type: $repr, $inline, $repr_mut;
-      Shr shr, ShrAssign shr_assign, wrapping_shr, forward_shr;
+      $type: $repr, $repr_mut;
+      Shr shr, ShrAssign shr_assign, wrapping_shr, overflowing_shr_bits, forward_shr;
       signed_amount as i128: i8, i16, i32, i64, i128, isize
     );
   };
 }
 
-shift_operators!(Uint: UintRepr, InlineUintRepr, UintReprMut);
-shift_operators!(Int: IntRepr, InlineIntRepr, IntReprMut);
+shift_operators!(Uint: UintRepr, UintReprMut);
+shift_operators!(Int: IntRepr, IntReprMut);

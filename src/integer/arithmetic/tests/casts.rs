@@ -1,13 +1,16 @@
 //! The casts between integers through `CheckedCastFrom`, `BoundedCastFrom`, `WidenFrom` and
 //! `TruncateFrom`: between the native integers against the native conversions, and between `Uint`
 //! and `Int` and the native integers, both ways, and between `Uint` and `Int` of other widths,
-//! storages and signs against the bit model. Each pair, and each width of the casts between the
-//! signs, checks in an instantiation of a generic function of its own, whose frame holds its values
-//! alone: the function is `#[inline(never)]`, since an optimized build would inline a function that
-//! has one call site, which would put every pair in the frame of the test, beyond the stack of a
-//! test thread.
+//! storages and signs against the bit model, and from a reference to a source against the source.
+//! Each pair, and each width of the casts between the signs, checks in an instantiation of a
+//! generic function of its own, whose frame holds its values alone: the function is
+//! `#[inline(never)]`, since an optimized build would inline a function that has one call site,
+//! which would put every pair in the frame of the test, beyond the stack of a test thread.
 
-use core::{any::type_name, num::TryFromIntError};
+use core::{
+  any::type_name,
+  num::{NonZero, TryFromIntError},
+};
 
 use typenum::{U3, U5, U12, U17, U33, U150, U193};
 
@@ -1068,4 +1071,141 @@ fn bool_converts_both_ways() {
   // As `bool` converts from the native integers.
   assert_eq!(bool::try_from(2u8), Err(above));
   assert_eq!(bool::try_from(-1i8), Err(below));
+}
+
+/// Checks that each function of `CheckedCastFrom` and `BoundedCastFrom` gives with a reference to
+/// each value of `samples` what it gives with the value: the checked, wrapping and saturating
+/// casts, and the strict and unchecked casts of a value that `T` holds.
+#[inline(never)]
+fn check_borrowed_cast<S, T>(samples: &[S])
+where
+  S: Model,
+  T: Model + BoundedCastFrom<S> + for<'a> BoundedCastFrom<&'a S>,
+{
+  for value in samples {
+    let name = || format!("{value:?} into {}", type_name::<T>());
+    let checked = <T as CheckedCastFrom<S>>::checked_cast_from(*value);
+    assert_eq!(
+      <T as CheckedCastFrom<&S>>::checked_cast_from(value),
+      checked,
+      "{}",
+      name()
+    );
+    assert_eq!(
+      <T as BoundedCastFrom<&S>>::wrapping_cast_from(value),
+      <T as BoundedCastFrom<S>>::wrapping_cast_from(*value),
+      "{}",
+      name()
+    );
+    assert_eq!(
+      <T as BoundedCastFrom<&S>>::saturating_cast_from(value),
+      <T as BoundedCastFrom<S>>::saturating_cast_from(*value),
+      "{}",
+      name()
+    );
+    if let Some(cast) = checked {
+      assert_eq!(
+        <T as CheckedCastFrom<&S>>::strict_cast_from(value),
+        cast,
+        "{}",
+        name()
+      );
+      // SAFETY: `checked_cast_from` returns `Some` for the value, which the reference reads, the
+      // precondition of `unchecked_cast_from`.
+      let unchecked = unsafe { <T as CheckedCastFrom<&S>>::unchecked_cast_from(value) };
+      assert_eq!(unchecked, cast, "{}", name());
+    }
+  }
+}
+
+/// Checks that `widen` gives with a reference to each value of `samples` what it gives with the
+/// value.
+#[inline(never)]
+fn check_borrowed_widen<S, T>(samples: &[S])
+where
+  S: Model,
+  T: Model + WidenFrom<S> + for<'a> WidenFrom<&'a S>,
+{
+  for value in samples {
+    assert_eq!(
+      <T as WidenFrom<&S>>::widen_from(value),
+      <T as WidenFrom<S>>::widen_from(*value),
+      "{value:?} into {}",
+      type_name::<T>()
+    );
+  }
+}
+
+/// Checks that `truncate` and its checked and saturating forms give with a reference to each value
+/// of `samples` what they give with the value.
+#[inline(never)]
+fn check_borrowed_truncate<S, T>(samples: &[S])
+where
+  S: Model,
+  T: Model + TruncateFrom<S> + for<'a> TruncateFrom<&'a S>,
+{
+  for value in samples {
+    assert_eq!(
+      (
+        <T as TruncateFrom<&S>>::truncate_from(value),
+        <T as TruncateFrom<&S>>::checked_truncate_from(value),
+        <T as TruncateFrom<&S>>::saturating_truncate_from(value),
+      ),
+      (
+        <T as TruncateFrom<S>>::truncate_from(*value),
+        <T as TruncateFrom<S>>::checked_truncate_from(*value),
+        <T as TruncateFrom<S>>::saturating_truncate_from(*value),
+      ),
+      "{value:?} into {}",
+      type_name::<T>()
+    );
+  }
+}
+
+/// Each function of the four cast traits gives with a reference to the source what it gives with
+/// the source, at the values of [`samples`]: from numo integers of each kind of storage into a
+/// native integer and into numo integers of other widths, storages and signs, from the native
+/// integers into numo integers, and in `widen` and `truncate` both ways.
+#[test]
+fn the_casts_take_a_borrowed_source() {
+  cast_pairs!(
+    check_borrowed_cast: [Uint<U7, u8>, Int<U65, [u32; 3]>, Uint<U200, [u8; 25]>]
+      => [i64, Uint<U8, [u8; 1]>, Int<U100, [u128; 1]>]
+  );
+  cast_pairs!(check_borrowed_cast: [u16, i64] => [Uint<U7, u8>, Int<U129, [u64; 3]>]);
+  pairs!(check_borrowed_widen:
+    Uint<U7, u8> => u8, usize, Uint<U200, [u64; 4]>;
+    Int<U12, [u16; 1]> => i16, isize, Int<U129, [u64; 3]>;
+    u16 => Uint<U33, [u32; 2]>;
+    i8 => Int<U64, i64>;
+  );
+  pairs!(check_borrowed_truncate:
+    Uint<U200, [u8; 25]> => u8, Uint<U65, [u64; 2]>;
+    Int<U129, [u64; 3]> => i64, Int<U7, i8>;
+    u128 => Uint<U128, u128>;
+    isize => Int<U12, [u16; 1]>;
+  );
+}
+
+/// The identities of `usize`, `isize` and their `NonZero`, which have implementations of their own
+/// beside the blanket ones, give with a reference to the source what they give with the source:
+/// `widen` into the type itself and, from a `NonZero`, into its integer, and `truncate` with its
+/// checked and saturating forms into the type itself, or into its integer from a `NonZero`, at the
+/// ends of each type and at the values next to them and to zero.
+#[test]
+fn the_pointer_sized_identities_take_a_borrowed_source() {
+  let unsigned = [0, 1, 2, usize::MAX / 2, usize::MAX - 1, usize::MAX];
+  check_borrowed_widen::<usize, usize>(&unsigned);
+  check_borrowed_truncate::<usize, usize>(&unsigned);
+  let signed = [isize::MIN, isize::MIN + 1, -1, 0, 1, isize::MAX];
+  check_borrowed_widen::<isize, isize>(&signed);
+  check_borrowed_truncate::<isize, isize>(&signed);
+  let unsigned: Vec<NonZero<usize>> = unsigned.into_iter().filter_map(NonZero::new).collect();
+  check_borrowed_widen::<NonZero<usize>, NonZero<usize>>(&unsigned);
+  check_borrowed_widen::<NonZero<usize>, usize>(&unsigned);
+  check_borrowed_truncate::<NonZero<usize>, usize>(&unsigned);
+  let signed: Vec<NonZero<isize>> = signed.into_iter().filter_map(NonZero::new).collect();
+  check_borrowed_widen::<NonZero<isize>, NonZero<isize>>(&signed);
+  check_borrowed_widen::<NonZero<isize>, isize>(&signed);
+  check_borrowed_truncate::<NonZero<isize>, isize>(&signed);
 }

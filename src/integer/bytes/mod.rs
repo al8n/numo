@@ -1068,27 +1068,27 @@ macro_rules! nonzero_byte_traits {
     {
       #[inline]
       fn swap_bytes(&self) -> Self {
-        Self::known(IntegerByteOrder::swap_bytes(&self.integer()))
+        Self::known(IntegerByteOrder::swap_bytes(&*self.integer()))
       }
 
       #[inline]
       fn to_be(&self) -> Self {
-        Self::known(IntegerByteOrder::to_be(&self.integer()))
+        Self::known(IntegerByteOrder::to_be(&*self.integer()))
       }
 
       #[inline]
       fn to_le(&self) -> Self {
-        Self::known(IntegerByteOrder::to_le(&self.integer()))
+        Self::known(IntegerByteOrder::to_le(&*self.integer()))
       }
 
       #[inline]
       fn from_be(x: Self) -> Self {
-        Self::known(IntegerByteOrder::from_be(x.integer()))
+        Self::known(IntegerByteOrder::from_be(x.into_integer()))
       }
 
       #[inline]
       fn from_le(x: Self) -> Self {
-        Self::known(IntegerByteOrder::from_le(x.integer()))
+        Self::known(IntegerByteOrder::from_le(x.into_integer()))
       }
     }
   )+};

@@ -641,8 +641,9 @@ fn shift_operators_follow_overflow_checks() {
 }
 
 /// The shift operators need only the storage trait, `UintRepr` or `IntRepr`, on a reference, and
-/// reach code bounded by `FixedInteger` alone on a value, where a literal amount is a `u32`, as in
-/// `x << 3`: in a native integer and in an array, they give the results of the checked shifts.
+/// reach code bounded by `FixedInteger` alone on a value, and their compound assignments code
+/// bounded by `IntegerAssign`, where a literal amount is a `u32`, as in `x << 3`: in a native
+/// integer and in an array, they give the results of the checked shifts.
 #[test]
 #[allow(clippy::op_ref, reason = "the operators on references are under test")]
 fn shift_operators_need_only_the_storage_trait() {
@@ -654,7 +655,7 @@ fn shift_operators_need_only_the_storage_trait() {
     [a << 3u32, a >> 1i8, a << &2usize]
   }
 
-  fn fixed<T: FixedInteger>(a: T) -> [T; 2] {
+  fn fixed<T: IntegerAssign>(a: T) -> [T; 2] {
     let mut assigned = a.clone();
     assigned <<= 2;
     assigned >>= 1;

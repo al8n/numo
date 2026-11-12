@@ -14,10 +14,10 @@ pub use error::{FromFloatError, TryNewError};
 pub use float::IntegerFloat;
 pub use traits::{
   ArrayInteger, CheckedOps, ConstFixedInteger, ConstIntegerOne, ConstNonZeroLimits, FixedInteger,
-  FixedNonZero, FromLimbs, IntegerBits, IntegerMath, IntegerNonZero, IntegerOne, NativeInteger,
-  NonZeroLimits, NonZeroOf, OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger,
-  SignedMath, SignedNonZero, StrictOps, UncheckedOps, UnsignedBits, UnsignedFixedInteger,
-  UnsignedMath, UnsignedNonZero, WrappingOps,
+  FixedNonZero, FromLimbs, IntegerAssign, IntegerBits, IntegerMath, IntegerNonZero, IntegerOne,
+  NativeInteger, NonZeroLimits, NonZeroOf, OverflowingOps, SaturatingOps, SignedBits,
+  SignedFixedInteger, SignedMath, SignedNonZero, StrictOps, UncheckedOps, UnsignedBits,
+  UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WrappingOps,
 };
 
 use typenum::{IsGreater, NonZero, True, U1};
@@ -636,8 +636,10 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
   // result establishes this, and equality, comparison, hashing, formatting and the arithmetic rely
   // on it. It is a logical invariant, not a safety invariant: no `unsafe` code may rely on it. The
   // `unchecked_*` methods assume only their caller's guarantee, which is stated through
-  // `checked_*`, so they do not rely on it either.
-  repr: Repr,
+  // `checked_*`, so they do not rely on it either. The field and `wrap` are visible to the crate,
+  // so the invariant binds the crate: only `integer` and `lend_nonzero` of the storage cores write
+  // the field.
+  pub(crate) repr: Repr,
   bits: PhantomData<Bits>,
 }
 
@@ -952,8 +954,10 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // arithmetic result establishes this, and equality, comparison, the sign queries, hashing,
   // formatting and the arithmetic rely on it. It is a logical invariant, not a safety invariant: no
   // `unsafe` code may rely on it. The `unchecked_*` methods assume only their caller's guarantee,
-  // which is stated through `checked_*`, so they do not rely on it either.
-  repr: Repr,
+  // which is stated through `checked_*`, so they do not rely on it either. As for `Uint`, the field
+  // and `wrap` are visible to the crate, so the invariant binds the crate: only `integer` and
+  // `lend_nonzero` of the storage cores write the field.
+  pub(crate) repr: Repr,
   bits: PhantomData<Bits>,
 }
 
@@ -1053,8 +1057,7 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// The division `Uint / NonZeroUint` and the remainder `Uint % NonZeroUint`, with `/=` and `%=`,
 /// divide by a value that is not zero, so they cannot panic, as for the native integers. `|`
 /// combines two non-zero integers, or one and its [`Uint`] either way, into a non-zero integer, and
-/// `|=` assigns it. The operators work on references for every storage, and on values for a
-/// storage whose integer holds the value inline. The traits
+/// `|=` assigns it. The operators work on values and on references for every storage. The traits
 /// [`FixedNonZero`](crate::FixedNonZero), [`UnsignedNonZero`](crate::UnsignedNonZero),
 /// [`NonZeroLimits`](crate::NonZeroLimits) and [`ConstNonZeroLimits`](crate::ConstNonZeroLimits)
 /// give generic code the methods and the limits. As for [`Uint`], a path to a method names the
@@ -1269,7 +1272,7 @@ pub struct NonZeroInt<Bits, Repr = <Bits as BitWidth>::NonZeroSigned> {
 impl<B, R> Uint<B, R> {
   /// Wraps `repr`. Requires it to hold a value of `Bits` bits.
   #[inline]
-  const fn wrap(repr: R) -> Self {
+  pub(crate) const fn wrap(repr: R) -> Self {
     Self {
       repr,
       bits: PhantomData,
@@ -1280,7 +1283,7 @@ impl<B, R> Uint<B, R> {
 impl<B, R> Int<B, R> {
   /// Wraps `repr`. Requires it to hold a value of `Bits` bits.
   #[inline]
-  const fn wrap(repr: R) -> Self {
+  pub(crate) const fn wrap(repr: R) -> Self {
     Self {
       repr,
       bits: PhantomData,
@@ -1505,6 +1508,28 @@ macro_rules! array_integers {
         }
       }
 
+      /// The bound that a saturating row returns: `MAX` if `max`, and `MIN` otherwise.
+      #[inline]
+      const fn bound(max: bool) -> Self {
+        if max {
+          Self::MAX
+        } else {
+          Self::MIN
+        }
+      }
+
+      /// Wraps `repr`, the storage that a row computes from the storages of its operands.
+      #[inline]
+      const fn of(repr: [$limb; N]) -> Self {
+        Self::wrap(repr)
+      }
+
+      /// Stores `repr`, the storage that a row computes from the storage of the value.
+      #[inline]
+      const fn store(&mut self, repr: [$limb; N]) {
+        self.repr = repr;
+      }
+
       overflowing_table!(inherent_items![unsigned, $lower, &]);
       checked_table!(inherent_items![unsigned, $lower, &]);
       wrapping_table!(inherent_items![unsigned, $lower, &]);
@@ -1661,6 +1686,18 @@ macro_rules! array_integers {
         &self.repr
       }
 
+      #[doc = concat!(
+        "Returns the ",
+        stringify!($bits),
+        "-bit limbs of the value, least significant first, and consumes it. The bits above"
+      )]
+      /// `Bits`, if any, are zero.
+      #[must_use]
+      #[inline]
+      pub const fn into_limbs(self) -> [$limb; N] {
+        self.repr
+      }
+
       integer_query_table!(inherent_items![unsigned, $lower, &]);
     }
 
@@ -1737,6 +1774,34 @@ macro_rules! array_integers {
           Ok(limbs) => Ok(Self::wrap(limbs)),
           Err(error) => Err(error),
         }
+      }
+
+      /// The bound that a saturating row returns: `MAX` if `max`, and `MIN` otherwise.
+      #[inline]
+      const fn bound(max: bool) -> Self {
+        if max {
+          Self::MAX
+        } else {
+          Self::MIN
+        }
+      }
+
+      /// A copy of `self`, for a row that returns its operand.
+      #[inline]
+      const fn duplicate(&self) -> Self {
+        *self
+      }
+
+      /// Wraps `repr`, the storage that a row computes from the storages of its operands.
+      #[inline]
+      const fn of(repr: [$limb; N]) -> Self {
+        Self::wrap(repr)
+      }
+
+      /// Stores `repr`, the storage that a row computes from the storage of the value.
+      #[inline]
+      const fn store(&mut self, repr: [$limb; N]) {
+        self.repr = repr;
       }
 
       overflowing_table!(inherent_items![signed, $upper, &]);
@@ -1915,6 +1980,18 @@ macro_rules! array_integers {
       #[inline]
       pub const fn as_limbs(&self) -> &[$limb; N] {
         &self.repr
+      }
+
+      #[doc = concat!(
+        "Returns the ",
+        stringify!($bits),
+        "-bit limbs of the value, least significant first, in two's complement, and consumes"
+      )]
+      /// it. The bits above `Bits`, if any, are copies of the sign bit.
+      #[must_use]
+      #[inline]
+      pub const fn into_limbs(self) -> [$limb; N] {
+        self.repr
       }
 
       integer_query_table!(inherent_items![signed, $upper, &]);
@@ -2138,6 +2215,28 @@ macro_rules! native_integers {
           Ok(value) => Ok(Self::wrap(value)),
           Err(error) => Err(error),
         }
+      }
+
+      /// The bound that a saturating row returns: `MAX` if `max`, and `MIN` otherwise.
+      #[inline]
+      const fn bound(max: bool) -> Self {
+        if max {
+          Self::MAX
+        } else {
+          Self::MIN
+        }
+      }
+
+      /// Wraps `repr`, the storage that a row computes from the storages of its operands.
+      #[inline]
+      const fn of(repr: $uint) -> Self {
+        Self::wrap(repr)
+      }
+
+      /// Stores `repr`, the storage that a row computes from the storage of the value.
+      #[inline]
+      const fn store(&mut self, repr: $uint) {
+        self.repr = repr;
       }
 
       overflowing_table!(inherent_items![$uint]);
@@ -2373,6 +2472,34 @@ macro_rules! native_integers {
           Ok(value) => Ok(Self::wrap(value)),
           Err(error) => Err(error),
         }
+      }
+
+      /// The bound that a saturating row returns: `MAX` if `max`, and `MIN` otherwise.
+      #[inline]
+      const fn bound(max: bool) -> Self {
+        if max {
+          Self::MAX
+        } else {
+          Self::MIN
+        }
+      }
+
+      /// A copy of `self`, for a row that returns its operand.
+      #[inline]
+      const fn duplicate(&self) -> Self {
+        *self
+      }
+
+      /// Wraps `repr`, the storage that a row computes from the storages of its operands.
+      #[inline]
+      const fn of(repr: $int) -> Self {
+        Self::wrap(repr)
+      }
+
+      /// Stores `repr`, the storage that a row computes from the storage of the value.
+      #[inline]
+      const fn store(&mut self, repr: $int) {
+        self.repr = repr;
       }
 
       overflowing_table!(inherent_items![$int]);
@@ -2625,6 +2752,13 @@ macro_rules! integer_traits {
       #[inline]
       fn clone(&self) -> Self {
         Self::wrap(self.repr.clone())
+      }
+
+      /// Copies the value of `source` into the storage of `self`, as the `clone_from` of the
+      /// storage does.
+      #[inline]
+      fn clone_from(&mut self, source: &Self) {
+        self.repr.clone_from(&source.repr);
       }
     }
 

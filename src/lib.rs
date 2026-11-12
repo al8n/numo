@@ -208,10 +208,12 @@
 //! Generic code reaches the same items through traits, each with one implementation for every
 //! storage of a kind, in two layers. The general layer, [`FixedInteger`], with `BITS`, `is_zero`,
 //! `is_one`, the operators, the text and the functions `zero`, `min_value`, `max_value` and
-//! `from_str_radix`, and [`IntegerOne`], with `one`, requires `Clone` but not `Copy`; its functions
-//! `zero`, `min_value`, `max_value` and `one` return the inherent constants `ZERO`, `MIN`, `MAX`
-//! and `ONE`. The const layer, [`ConstFixedInteger`] and
-//! [`ConstIntegerOne`], adds `Copy` and these constants, which a generic `const fn` can read.
+//! `from_str_radix`, and [`IntegerOne`], with `one`, requires `Clone` but not `Copy`, and needs of
+//! the storage only its storage trait and `Clone`: its functions `zero`, `min_value`, `max_value`
+//! and `one` compute the values of the inherent constants `ZERO`, `MIN`, `MAX` and `ONE`.
+//! [`IntegerAssign`] adds the compound assignments, for a storage that holds the value in place.
+//! The const layer, [`ConstFixedInteger`] and [`ConstIntegerOne`], adds `Copy` and these constants,
+//! which a generic `const fn` can read.
 //! [`UnsignedFixedInteger`] and [`SignedFixedInteger`] have the methods of each sign, the families
 //! [`OverflowingOps`], [`CheckedOps`], [`WrappingOps`], [`SaturatingOps`], [`StrictOps`] and
 //! [`UncheckedOps`] the arithmetic, [`IntegerMath`], [`UnsignedMath`] and [`SignedMath`] the
@@ -221,8 +223,8 @@
 //! target implements, the casts, also those with the native integers and the non-zero integers,
 //! [`IntegerFloat`] the conversions with the floats, and [`NativeInteger`], [`ArrayInteger`] and
 //! [`FromLimbs`] the construction of each kind. The bound `B: BitWidth` gives `Uint<B>` and
-//! `Int<B>` [`FixedInteger`] and [`ConstFixedInteger`], the sign traits, the families, the math
-//! traits, the bit traits, [`IntegerBytes`], the casts and [`IntegerFloat`];
+//! `Int<B>` [`FixedInteger`], [`IntegerAssign`] and [`ConstFixedInteger`], the sign traits, the
+//! families, the math traits, the bit traits, [`IntegerBytes`], the casts and [`IntegerFloat`];
 //! [`IntegerOne`] and [`ConstIntegerOne`] with a width that holds one; and [`IntegerByteOrder`]
 //! with `B: WholeBytes`. The trait methods are not `const`, so constant contexts call the inherent
 //! `const fn`s, which a concrete type reaches without importing a trait.
@@ -508,11 +510,11 @@ pub use decimal::{
 pub use integer::{
   ArrayInteger, BoundedCastFrom, ByteArray, CheckedCastFrom, CheckedOps, ConstFixedInteger,
   ConstIntegerOne, ConstNonZeroLimits, FixedInteger, FixedNonZero, FromByteArray, FromFloatError,
-  FromLimbs, Int, IntegerBits, IntegerByteOrder, IntegerBytes, IntegerFloat, IntegerMath,
-  IntegerNonZero, IntegerOne, NativeInteger, NonZeroInt, NonZeroLimits, NonZeroOf, NonZeroUint,
-  OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger, SignedMath, SignedNonZero,
-  StrictOps, TruncateFrom, TryNewError, Uint, UncheckedOps, UnsignedBits, UnsignedFixedInteger,
-  UnsignedMath, UnsignedNonZero, WidenFrom, WrappingOps,
+  FromLimbs, Int, IntegerAssign, IntegerBits, IntegerByteOrder, IntegerBytes, IntegerFloat,
+  IntegerMath, IntegerNonZero, IntegerOne, NativeInteger, NonZeroInt, NonZeroLimits, NonZeroOf,
+  NonZeroUint, OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger, SignedMath,
+  SignedNonZero, StrictOps, TruncateFrom, TryNewError, Uint, UncheckedOps, UnsignedBits,
+  UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WidenFrom, WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

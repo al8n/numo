@@ -872,9 +872,9 @@ fn bitwise_operations_of_up_to_16_bits() {
 }
 
 /// `&`, `|`, `^` and `!` on references need only the storage trait, `UintRepr` or `IntRepr`, not a
-/// storage that holds the value inline, and the operators on values, with their compound
-/// assignments, reach code bounded by `FixedInteger` alone: in a native integer and in an array,
-/// they give the results of the bitwise `const fn`s.
+/// storage that holds the value inline, the operators on values reach code bounded by
+/// `FixedInteger`, and their compound assignments code bounded by `IntegerAssign`: in a native
+/// integer and in an array, they give the results of the bitwise `const fn`s.
 #[test]
 fn bitwise_operators_need_only_the_storage_trait() {
   fn unsigned<B: FitsBits<R>, R: UintRepr>(a: &Uint<B, R>, b: &Uint<B, R>) -> [Uint<B, R>; 4] {
@@ -885,7 +885,7 @@ fn bitwise_operators_need_only_the_storage_trait() {
     [a & b, a | b, a ^ b, !a]
   }
 
-  fn fixed<T: FixedInteger>(a: T, b: T) -> [T; 4] {
+  fn fixed<T: IntegerAssign>(a: T, b: T) -> [T; 4] {
     let mut assigned = a.clone();
     assigned &= b.clone();
     assigned |= !b.clone();
