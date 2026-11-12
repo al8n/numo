@@ -288,6 +288,20 @@ mod sealed {
     /// integer, and the array itself for an array of limbs.
     type NonZeroStorage;
 
+    /// The storage that computes the values of this storage and holds one inline: the storage
+    /// itself for a native integer or an array of limbs, and the array of a heap storage.
+    type Inline: UintCore;
+
+    /// Lends the value, as its inline storage.
+    fn inline(&self, token: Token) -> &Self::Inline;
+
+    /// A storage of the value `value`: `value` itself, or a new allocation that holds it.
+    fn from_inline(value: Self::Inline, token: Token) -> Self;
+
+    /// Stores the value `value`: in place where the storage holds its value in place, and
+    /// otherwise in a new allocation, which replaces the storage.
+    fn set_inline(&mut self, value: Self::Inline, token: Token);
+
     /// Zero.
     fn zero(token: Token) -> Self;
 
@@ -629,6 +643,19 @@ mod sealed {
     /// The storage of a value that is not zero: [`IntRepr::NonZero`](super::IntRepr::NonZero), as
     /// for [`UintCore::NonZeroStorage`].
     type NonZeroStorage;
+
+    /// The storage that computes the values of this storage and holds one inline, as for
+    /// [`UintCore::Inline`].
+    type Inline: IntCore;
+
+    /// Lends the value, as its inline storage.
+    fn inline(&self, token: Token) -> &Self::Inline;
+
+    /// A storage of the value `value`, as for [`UintCore::from_inline`].
+    fn from_inline(value: Self::Inline, token: Token) -> Self;
+
+    /// Stores the value `value`, as for [`UintCore::set_inline`].
+    fn set_inline(&mut self, value: Self::Inline, token: Token);
 
     /// Zero.
     fn zero(token: Token) -> Self;
@@ -1289,6 +1316,22 @@ macro_rules! array_storage {
     impl<const N: usize> UintCore for [$limb; N] {
       type Complement = Self;
       type NonZeroStorage = Self;
+      type Inline = Self;
+
+      #[inline(always)]
+      fn inline(&self, _: Token) -> &Self {
+        self
+      }
+
+      #[inline(always)]
+      fn from_inline(value: Self, _: Token) -> Self {
+        value
+      }
+
+      #[inline(always)]
+      fn set_inline(&mut self, value: Self, _: Token) {
+        *self = value;
+      }
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -1705,6 +1748,22 @@ macro_rules! array_storage {
     impl<const N: usize> IntCore for [$limb; N] {
       type Magnitude = Self;
       type NonZeroStorage = Self;
+      type Inline = Self;
+
+      #[inline(always)]
+      fn inline(&self, _: Token) -> &Self {
+        self
+      }
+
+      #[inline(always)]
+      fn from_inline(value: Self, _: Token) -> Self {
+        value
+      }
+
+      #[inline(always)]
+      fn set_inline(&mut self, value: Self, _: Token) {
+        *self = value;
+      }
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -2220,6 +2279,22 @@ macro_rules! native_storage {
     impl UintCore for $uint {
       type Complement = $int;
       type NonZeroStorage = core::num::NonZero<$uint>;
+      type Inline = Self;
+
+      #[inline(always)]
+      fn inline(&self, _: Token) -> &Self {
+        self
+      }
+
+      #[inline(always)]
+      fn from_inline(value: Self, _: Token) -> Self {
+        value
+      }
+
+      #[inline(always)]
+      fn set_inline(&mut self, value: Self, _: Token) {
+        *self = value;
+      }
 
       #[inline]
       fn zero(_: Token) -> Self {
@@ -2637,6 +2712,22 @@ macro_rules! native_storage {
     impl IntCore for $int {
       type Magnitude = $uint;
       type NonZeroStorage = core::num::NonZero<$int>;
+      type Inline = Self;
+
+      #[inline(always)]
+      fn inline(&self, _: Token) -> &Self {
+        self
+      }
+
+      #[inline(always)]
+      fn from_inline(value: Self, _: Token) -> Self {
+        value
+      }
+
+      #[inline(always)]
+      fn set_inline(&mut self, value: Self, _: Token) {
+        *self = value;
+      }
 
       #[inline]
       fn zero(_: Token) -> Self {
