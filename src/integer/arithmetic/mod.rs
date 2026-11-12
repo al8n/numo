@@ -13,12 +13,14 @@
 //! `$crate::integer::arithmetic::domain`. The unchecked tables serve only the traits, whose bodies
 //! compute the overflowing or the checked method and check it with a debug assertion: they never
 //! call the inherent `unchecked_*` methods, which each storage writes out with their unsafe blocks.
-//! The operators are implemented once for every storage. On two references, `+`, `-`, `*` and the
-//! negation compute over `OverflowingOps`, repeating an overflow in a native operation, so that
-//! `overflow-checks` decides whether they panic, and `/` and `%` over `StrictOps`, which panic in
-//! every build, as for the native integers. With an owned operand, they compute the same with the
-//! sealed storage methods on the inline storages that the operands lend, and store the result in
-//! that operand, as a compound assignment stores it in its target.
+//! The operators are implemented once for every storage. `+`, `-`, `*` and the negation compute
+//! with the sealed storage methods on the inline storages that the operands lend, and repeat an
+//! overflow in a native operation, so that `overflow-checks` decides whether they panic: on two
+//! references they then allocate the result, and with an owned operand they store it in that
+//! operand, as a compound assignment stores it in its target. `/` and `%` on two references are
+//! the methods of `StrictOps`, which panic in every build, as for the native integers, and with an
+//! owned operand they compute the same on the inline storages and store the result in that
+//! operand.
 
 use core::{
   iter::{Product, Sum},
@@ -27,7 +29,7 @@ use core::{
 
 use typenum::{IsGreater, NonZero, True, U1};
 
-use super::{Int, OverflowingOps, StrictOps, Uint, nonzero};
+use super::{Int, StrictOps, Uint, nonzero};
 use crate::{
   layout::Token,
   width::{FitsBits, IntCore, IntRepr, IntReprMut, UintCore, UintRepr, UintReprMut},
@@ -1442,13 +1444,13 @@ pub(super) mod domain {
 
 /// Implements the binary operator `$op` in its four forms of values and references, and its
 /// compound assignment `$assign` for a value and a reference, for every storage, `$repr`, and the
-/// assignments for a storage that holds the value in place, `$repr_mut`. The form on two references
-/// computes over `OverflowingOps`. The forms with an owned operand compute with the sealed storage
-/// method `$primitive` on the inline storages that the operands lend, and store the result in the
-/// owned operand, the left one when both are owned; the compound assignments compute in the same
-/// way and store the result in their target. On overflow, each repeats a native overflow with
-/// `$forward`, which panics or not as `overflow-checks` decides; without a panic, the result is the
-/// wrapped value. Each stores the result after `$forward`, so that a panic leaves the target of an
+/// assignments for a storage that holds the value in place, `$repr_mut`. Every form computes with
+/// the sealed storage method `$primitive` on the inline storages that the operands lend, and on
+/// overflow repeats a native overflow with `$forward`, which panics or not as `overflow-checks`
+/// decides; without a panic, the result is the wrapped value. The form on two references then
+/// allocates the result, the forms with an owned operand store it in that operand, the left one
+/// when both are owned, and the compound assignments store it in their target. Each builds or
+/// stores the result after `$forward`, so that a panic builds nothing and leaves the target of an
 /// assignment unchanged, as for the native integers.
 macro_rules! binary_operator {
   // The value of `$primitive` on the inline storages that `$lhs` and `$rhs` lend, at `$bits` bits,
@@ -1465,7 +1467,7 @@ macro_rules! binary_operator {
     $type:ident: $repr:ident, $repr_mut:ident;
     $op:ident $method:ident,
     $assign:ident $assign_method:ident,
-    $overflowing:ident, $primitive:ident, $forward:ident
+    $primitive:ident, $forward:ident
   ) => {
     impl<B: FitsBits<R>, R: $repr> $op for $type<B, R> {
       type Output = Self;
@@ -1512,11 +1514,9 @@ macro_rules! binary_operator {
       #[inline]
       #[track_caller]
       fn $method(self, rhs: &$type<B, R>) -> $type<B, R> {
-        let (value, overflow) = OverflowingOps::$overflowing(self, rhs);
-        if overflow {
-          overflow::$forward();
-        }
-        value
+        let bits = $type::<B, R>::BITS;
+        let value = binary_operator!(@compute self.repr, rhs.repr, bits, $primitive, $forward);
+        $type::wrap(R::from_inline(value, Token::new()))
       }
     }
 
@@ -1542,27 +1542,27 @@ macro_rules! binary_operator {
 
 binary_operator!(
   Uint: UintRepr, UintReprMut;
-  Add add, AddAssign add_assign, overflowing_add, overflowing_add_bits, forward_add
+  Add add, AddAssign add_assign, overflowing_add_bits, forward_add
 );
 binary_operator!(
   Uint: UintRepr, UintReprMut;
-  Sub sub, SubAssign sub_assign, overflowing_sub, overflowing_sub_bits, forward_sub
+  Sub sub, SubAssign sub_assign, overflowing_sub_bits, forward_sub
 );
 binary_operator!(
   Uint: UintRepr, UintReprMut;
-  Mul mul, MulAssign mul_assign, overflowing_mul, overflowing_mul_bits, forward_mul
+  Mul mul, MulAssign mul_assign, overflowing_mul_bits, forward_mul
 );
 binary_operator!(
   Int: IntRepr, IntReprMut;
-  Add add, AddAssign add_assign, overflowing_add, overflowing_add_bits, forward_add
+  Add add, AddAssign add_assign, overflowing_add_bits, forward_add
 );
 binary_operator!(
   Int: IntRepr, IntReprMut;
-  Sub sub, SubAssign sub_assign, overflowing_sub, overflowing_sub_bits, forward_sub
+  Sub sub, SubAssign sub_assign, overflowing_sub_bits, forward_sub
 );
 binary_operator!(
   Int: IntRepr, IntReprMut;
-  Mul mul, MulAssign mul_assign, overflowing_mul, overflowing_mul_bits, forward_mul
+  Mul mul, MulAssign mul_assign, overflowing_mul_bits, forward_mul
 );
 
 /// Implements the division operator `$op`, `/` or `%`, in its four forms of values and references,
@@ -1682,8 +1682,9 @@ division_operator!(
   Rem rem, RemAssign rem_assign, strict_rem; 1, rem_by_zero, rem
 );
 
-// As for the binary operators, the negation of a reference computes over `OverflowingOps`, and the
-// negation of a value computes on the inline storage that it lends and stores the result in it.
+// As for the binary operators, the negation computes on the inline storage that its operand lends
+// and repeats an overflow; the negation of a reference then allocates the result, and the negation
+// of a value stores it in that value.
 impl<B: FitsBits<R>, R: IntRepr> Neg for Int<B, R> {
   type Output = Self;
 
@@ -1708,11 +1709,14 @@ impl<B: FitsBits<R>, R: IntRepr> Neg for &Int<B, R> {
   #[inline]
   #[track_caller]
   fn neg(self) -> Int<B, R> {
-    let (value, overflow) = OverflowingOps::overflowing_neg(self);
+    let (value, overflow) = self
+      .repr
+      .inline(Token::new())
+      .overflowing_neg_bits(Int::<B, R>::BITS, Token::new());
     if overflow {
       overflow::forward_neg();
     }
-    value
+    Int::wrap(R::from_inline(value, Token::new()))
   }
 }
 

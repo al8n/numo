@@ -39,7 +39,7 @@ use super::{
   arithmetic::{signed_one, unsigned_one},
   bytes::strict_limbs_slice,
   cast::limit,
-  nonzero::{Parts, Saturated, parse_signed, parse_unsigned, zero, zero_value},
+  nonzero::{Absolute, Parts, Saturated, parse_signed, parse_unsigned, zero, zero_value},
   text::check_radix,
 };
 use crate::{
@@ -1728,8 +1728,9 @@ impl<B: FitsBits<R>, R: IntRepr> SignedBits for Int<B, R> {
 }
 
 // The constants and the construction are written out, and the rows come from the tables. The bodies
-// reach the storage through its sealed trait and the helpers of `Parts` and `Saturated`, which need
-// neither `Copy` nor a constant, so that every storage implements the traits.
+// reach the storage through its sealed trait and the helpers of `Parts`, `Saturated` and
+// `Absolute`, which need neither `Copy` nor a constant, so that every storage implements the
+// traits.
 impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> FixedNonZero for NonZeroUint<B, R> {
   type Integer = Uint<B, R::Integer>;
 

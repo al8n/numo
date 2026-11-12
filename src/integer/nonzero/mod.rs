@@ -17,11 +17,12 @@
 //! The tables pass their rows to the callbacks of `tables`, as those of `arithmetic` and `bits` do,
 //! and every row is derived. A row calls `self.integer()`, which lends the value,
 //! `self.into_integer()`, which takes it, the rows of the integer, `Self::known`,
-//! `Self::saturated`, `Self::duplicate` and other rows, which an inherent block of each storage
-//! defines as `const fn`s and the generic implementations of the traits reach through [`Parts`] and
-//! [`Saturated`]. The integer of a row and the non-zero integer of the other sign are named through
-//! `nonzero_integer!` and `nonzero_other!`, from the `$args` of an inherent block, which holds the
-//! two concrete types, or from the associated types of a trait, which passes `[]`.
+//! `Self::saturated`, `Self::duplicate`, `self.magnitude()` and other rows, which an inherent block
+//! of each storage defines as `const fn`s and the generic implementations of the traits reach
+//! through [`Parts`], [`Saturated`] and [`Absolute`]. The integer of a row and the non-zero integer
+//! of the other sign are named through `nonzero_integer!` and `nonzero_other!`, from the `$args` of
+//! an inherent block, which holds the two concrete types, or from the associated types of a trait,
+//! which passes `[]`.
 
 use core::{
   cmp::Ordering,
@@ -34,7 +35,7 @@ use core::{
 
 use typenum::NonZero;
 
-use super::{Int, NonZeroInt, NonZeroUint, SignedNonZero, Uint, arithmetic::overflow};
+use super::{Int, NonZeroInt, NonZeroUint, Uint, arithmetic::overflow};
 use crate::{
   int::{self, parse_errors},
   layout::Token,
@@ -354,9 +355,9 @@ macro_rules! nonzero_int_table {
 
       /// Checked negation: `-self`, or `None` if `self` is `MIN`.
       fn checked_neg(&self) -> Option<Self> {
-        match self.overflowing_neg() {
-          (negated, false) => Some(negated),
-          (_, true) => None,
+        match self.integer().checked_neg() {
+          Some(negated) => Some(Self::known(negated)),
+          None => None,
         }
       }
 
@@ -369,9 +370,9 @@ macro_rules! nonzero_int_table {
       /// Saturating negation: `-self`, or `MAX` if `self` is `MIN`. One bit holds only -1, which
       /// is its `MAX`.
       fn saturating_neg(&self) -> Self {
-        match self.overflowing_neg() {
-          (negated, false) => negated,
-          (_, true) => Self::saturated(true),
+        match self.checked_neg() {
+          Some(negated) => negated,
+          None => Self::saturated(true),
         }
       }
 
@@ -387,9 +388,10 @@ macro_rules! nonzero_int_table {
 
       /// Checked absolute value: `|self|`, or `None` if `self` is `MIN`.
       fn checked_abs(&self) -> Option<Self> {
-        match self.overflowing_abs() {
-          (abs, false) => Some(abs),
-          (_, true) => None,
+        if self.is_negative() {
+          self.checked_neg()
+        } else {
+          Some(Self::duplicate(self))
         }
       }
 
@@ -402,9 +404,9 @@ macro_rules! nonzero_int_table {
       /// Saturating absolute value: `|self|`, or `MAX` if `self` is `MIN`. One bit holds only -1,
       /// which is its `MAX`.
       fn saturating_abs(&self) -> Self {
-        match self.overflowing_abs() {
-          (abs, false) => abs,
-          (_, true) => Self::saturated(true),
+        match self.checked_abs() {
+          Some(abs) => abs,
+          None => Self::saturated(true),
         }
       }
 
@@ -413,11 +415,12 @@ macro_rules! nonzero_int_table {
       /// integers (see [Overflow](crate::NonZeroInt#overflow)).
       #[track_caller]
       fn abs(&self) -> Self {
-        match self.overflowing_abs() {
-          (abs, false) => abs,
-          (abs, true) => {
+        match self.checked_abs() {
+          Some(abs) => abs,
+          // Only `MIN` overflows, and its wrapped absolute value is `MIN` itself.
+          None => {
             $crate::integer::arithmetic::overflow::forward_neg();
-            abs
+            Self::duplicate(self)
           }
         }
       }
@@ -425,7 +428,7 @@ macro_rules! nonzero_int_table {
       /// The absolute value, `|self|`, as the `NonZeroUint` of the same width in a storage of the
       /// same size, which also holds the absolute value of `MIN`.
       fn unsigned_abs(&self) -> nonzero_other!($args, Unsigned) {
-        <nonzero_other!($args, Unsigned)>::known(self.wrapping_abs().into_integer().cast_unsigned())
+        <nonzero_other!($args, Unsigned)>::known(self.magnitude())
       }
 
       /// The `Bits` bits of `self`, its two's complement, as the `NonZeroUint` of the same width in
@@ -753,6 +756,13 @@ macro_rules! array_nonzero {
         }
       }
 
+      /// The absolute value, as the unsigned integer of the same width, which also holds that of
+      /// `MIN` and is not zero.
+      #[inline]
+      const fn magnitude(&self) -> Uint<B, [$limb; N]> {
+        self.integer().unsigned_abs()
+      }
+
       nonzero_from_str_radix!(Int<B, [$limb; N]>);
       nonzero_byte_order!(Int<B, [$limb; N]>);
 
@@ -917,6 +927,13 @@ macro_rules! native_nonzero {
         } else {
           Self::known(Int::<B, $int>::MIN)
         }
+      }
+
+      /// The absolute value, as the unsigned integer of the same width, which also holds that of
+      /// `MIN` and is not zero.
+      #[inline]
+      const fn magnitude(&self) -> Uint<B, $uint> {
+        self.integer().unsigned_abs()
       }
 
       nonzero_from_str_radix!(Int<B, $int>);
@@ -1592,10 +1609,12 @@ macro_rules! nonzero_bitor {
 nonzero_bitor!(NonZeroUint, NonZeroUintRepr, UintCore; Uint: UintRepr, UintReprMut);
 nonzero_bitor!(NonZeroInt, NonZeroIntRepr, IntCore; Int: IntRepr, IntReprMut);
 
-// As for `Int`, the negation of a reference computes over `SignedNonZero`, and the negation of a
-// value on the inline storage of its integer, which `from_nonzero` turns its storage into and
-// `known_nonzero` back, for every storage. `-MIN` overflows as a native negation does: with
-// overflow checks it panics, reporting the caller, and without them it returns `MIN`.
+// As for `Int`, the negation computes on the inline storage of the integer and repeats an
+// overflow, for every storage: the negation of a reference on the integer that `with_nonzero`
+// lends, after which it allocates the result, and the negation of a value on its own storage, which
+// `from_nonzero` turns into the storage of the integer and `known_nonzero` back. `-MIN` overflows
+// as a native negation does: with overflow checks it panics, reporting the caller, and without
+// them it returns `MIN`.
 impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> Neg for NonZeroInt<B, R> {
   type Output = Self;
 
@@ -1622,11 +1641,22 @@ impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> Neg for &NonZeroInt<B, R> {
   #[inline]
   #[track_caller]
   fn neg(self) -> NonZeroInt<B, R> {
-    let (negated, overflow) = SignedNonZero::overflowing_neg(self);
+    let (negated, overflow) = <R::Integer as IntCore>::with_nonzero(
+      &self.value.repr,
+      |integer| {
+        integer
+          .inline(Token::new())
+          .overflowing_neg_bits(B::U32, Token::new())
+      },
+      Token::new(),
+    );
     if overflow {
       overflow::forward_neg();
     }
-    negated
+    let repr = <R::Integer as IntCore>::from_inline(negated, Token::new());
+    NonZeroInt {
+      value: Int::wrap(repr.known_nonzero(Token::new())),
+    }
   }
 }
 
@@ -1756,5 +1786,33 @@ impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> Saturated for NonZeroInt<B, R> 
       bound,
       Token::new(),
     )))
+  }
+}
+
+/// The absolute value of a non-zero signed integer as the unsigned integer of the same width, for
+/// the generic implementation of `unsigned_abs`, over every storage.
+// `Int::unsigned_abs` reaches generic code only through `SignedFixedInteger`, which needs a storage
+// that is `Clone`, as the integer of a non-zero storage need not be, so a row cannot call it on the
+// integer that `self.integer()` lends.
+pub(crate) trait Absolute {
+  /// The unsigned integer of the same width in a storage of the same size.
+  type Magnitude;
+
+  /// `|self|`, which also holds that of `MIN` and is not zero.
+  fn magnitude(&self) -> Self::Magnitude;
+}
+
+// The storage of the integer computes the absolute value of the value that the non-zero storage
+// lends, and builds the storage of the result once.
+impl<B, R: NonZeroIntRepr> Absolute for NonZeroInt<B, R> {
+  type Magnitude = Uint<B, <R::Integer as IntRepr>::Unsigned>;
+
+  #[inline]
+  fn magnitude(&self) -> Uint<B, <R::Integer as IntRepr>::Unsigned> {
+    Uint::wrap(<R::Integer as IntCore>::with_nonzero(
+      &self.value.repr,
+      |integer| integer.unsigned_abs(Token::new()),
+      Token::new(),
+    ))
   }
 }
