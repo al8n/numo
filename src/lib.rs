@@ -485,15 +485,18 @@
 //!
 //! The three frameworks use `std`, so these features need a target that has it; the code of this
 //! crate stays `no_std`.
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![deny(missing_docs)]
 
-#[cfg(feature = "quickcheck")]
-extern crate alloc;
+// `std` names the standard library with the `std` feature, and the `alloc` crate in a `no_std`
+// build with the `alloc` feature, so that heap code spells its paths through `std` in every build
+// that has a heap. A unit-test build always has the standard library, which the tests use.
+#[cfg(all(not(feature = "std"), not(test), feature = "alloc"))]
+extern crate alloc as std;
 
-#[cfg(test)]
+#[cfg(any(feature = "std", test))]
 extern crate std;
 
 #[cfg(test)]

@@ -109,10 +109,13 @@ jobs:
         run: |
           rustup target add ${{ matrix.target }}
           case "${{ matrix.target }}" in
-            # A bare-metal target has no `std`, so it builds without the default `std` feature.
+            # A bare-metal target has no `std`, so it builds without the default `std` feature,
+            # and with `alloc` it builds the heap storages.
             *-none-*)
               cargo build --target ${{ matrix.target }} --no-default-features
               cargo build --target ${{ matrix.target }} --no-default-features --features serde
+              cargo build --target ${{ matrix.target }} --no-default-features --features alloc
+              cargo build --target ${{ matrix.target }} --no-default-features --features alloc,serde
               ;;
             *)
               cargo build --target ${{ matrix.target }}
@@ -147,6 +150,42 @@ jobs:
       with:
         path: ~/.cargo
         key: ${{ runner.os }}-coverage-dotcargo
+    # A tier turns on its own feature, the feature of an optional dependency turns on no tier of
+    # this crate, and a build without `std` has no `std` feature of any crate on. `cargo tree`
+    # lists the packages of a build of the target, this crate first, each with the features that it
+    # has on, without the dev-dependencies, the build scripts and the proc macros of the host, and a
+    # feature is matched as a whole item of a list.
+    - name: Check what each feature turns on
+      shell: bash
+      run: |
+        packages() {
+          cargo tree -e no-dev,no-build,no-proc-macro --prefix none -f '{p} [{f}]' \
+            --no-default-features --features "$1"
+        }
+        listing() {
+          grep -E "\[([^]]*,)?($1)(,[^]]*)?\]"
+        }
+        for tier in std alloc; do
+          lines=$(packages "$tier")
+          if ! listing "$tier" <<<"${lines%%$'\n'*}"; then
+            echo "::error::--features $tier does not turn on $tier of this crate"
+            exit 1
+          fi
+        done
+        for feature in serde arbitrary proptest quickcheck; do
+          lines=$(packages "$feature")
+          if listing 'std|alloc' <<<"${lines%%$'\n'*}"; then
+            echo "::error::the feature $feature turns on a tier of this crate"
+            exit 1
+          fi
+        done
+        for features in '' alloc serde alloc,serde; do
+          lines=$(packages "$features")
+          if listing std <<<"$lines"; then
+            echo "::error::a build with the features '$features' has a std feature on"
+            exit 1
+          fi
+        done
     - name: Run build
       run: cargo hack build --feature-powerset --depth 2
   

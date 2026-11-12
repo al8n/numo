@@ -16,6 +16,8 @@ use typenum::{
 };
 
 pub use array_size::ArraySize;
+#[cfg(all(test, any(feature = "std", feature = "alloc")))]
+pub(crate) use heap::{ArrayLimb, ArrayRepr};
 pub(crate) use sealed::{
   InlineIntConsts, InlineUintConsts, IntCore, IntWidth, TypenumNumber, UintCore, UintWidth, View,
 };
@@ -36,6 +38,8 @@ use crate::{
 };
 
 mod array_size;
+#[cfg(any(feature = "std", feature = "alloc"))]
+mod heap;
 
 mod sealed {
   use core::{
@@ -1150,7 +1154,7 @@ impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
 /// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
-  note = "`Uint` stores an unsigned native integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`"
+  note = "`Uint` stores an unsigned native integer, `u8` to `u128`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, with the `std` or the `alloc` feature"
 )]
 pub trait UintRepr:
   Eq + UintCore<Complement = <Self as UintRepr>::Signed, NonZeroStorage = <Self as UintRepr>::NonZero>
@@ -1192,7 +1196,7 @@ pub trait UintRepr:
 /// outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
-  note = "`Int` stores a signed native integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
+  note = "`Int` stores a signed native integer, `i8` to `i128`, an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement, or such an array in a `Box`, with the `std` or the `alloc` feature"
 )]
 pub trait IntRepr:
   Eq + IntCore<Magnitude = <Self as IntRepr>::Unsigned, NonZeroStorage = <Self as IntRepr>::NonZero>
@@ -1224,7 +1228,7 @@ pub trait IntRepr:
 /// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `NonZeroUint`",
-  note = "`NonZeroUint` stores `core::num::NonZero<u8>` to `NonZero<u128>`, or an array `[u8; N]` to `[u128; N]`"
+  note = "`NonZeroUint` stores `core::num::NonZero<u8>` to `NonZero<u128>`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, with the `std` or the `alloc` feature"
 )]
 pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
   /// The storage of the integer that may be zero: `u8` for `core::num::NonZero<u8>`, and so on,
@@ -1252,7 +1256,7 @@ pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
 /// This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `NonZeroInt`",
-  note = "`NonZeroInt` stores `core::num::NonZero<i8>` to `NonZero<i128>`, or an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement"
+  note = "`NonZeroInt` stores `core::num::NonZero<i8>` to `NonZero<i128>`, an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement, or such an array in a `Box`, with the `std` or the `alloc` feature"
 )]
 pub trait NonZeroIntRepr: Eq + Clone + NonZeroRepr {
   /// The storage of the integer that may be zero: `i8` for `core::num::NonZero<i8>`, and so on,

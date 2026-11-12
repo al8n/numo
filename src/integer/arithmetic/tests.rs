@@ -2305,6 +2305,8 @@ mod casts;
 mod compare;
 mod division;
 mod floats;
+#[cfg(any(feature = "std", feature = "alloc"))]
+mod heap;
 mod limbs;
 mod nonzero;
 mod nonzero_casts;

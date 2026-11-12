@@ -3,9 +3,14 @@
 //! The choices come from `Gen::choose` over an identity table, which is uniform and stable across
 //! `quickcheck` 1.x, not from the `Arbitrary` impls of the integers, which return extreme values a
 //! tenth of the time. Shrinking returns the boxed iterator that the trait requires, the only
-//! allocation in the crate.
+//! allocation of these impls.
 
-use alloc::boxed::Box;
+// The trait returns a `Box`, and `quickcheck` uses the standard library, so every build of this
+// module has it, whatever the features of this crate.
+#[cfg(not(feature = "std"))]
+extern crate std;
+
+use std::boxed::Box;
 
 use ::quickcheck::{Arbitrary, Gen};
 
