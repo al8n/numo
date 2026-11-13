@@ -1,5 +1,6 @@
 use core::{hash::BuildHasher, num::NonZero};
 use std::{
+  boxed::Box,
   collections::hash_map::RandomState,
   format,
   string::{String, ToString},
@@ -12,11 +13,12 @@ use typenum::{
 };
 
 use super::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal,
-  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
+  ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalFloat, DecimalOne, DivRound, ExactMul,
+  FixedDecimal, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 use crate::{
-  ConvertError, Decimal, DivideError, ParseErrorKind, QuantizeError, RoundingMode, Scaled,
+  ConvertError, Decimal, DivideError, FromFloatError, ParseErrorKind, QuantizeError, RoundingMode,
+  Scaled,
   bigint::MODES,
   i192, i256, i320, i384, i448, i512,
   layout::{StorageCore, Token},
@@ -409,6 +411,111 @@ fn digits_are_the_inherent_ones() {
     Decimal<U116, U18, u448>,
     Decimal<U154, U0, u512>,
   );
+}
+
+/// Asserts that the six items of [`DecimalFloat`] are the inherent functions for each type:
+/// `to_f64` and `to_f32` at the values of [`samples`], compared by the bits, and the four readings
+/// of a float at `0.5`, `-2.5`, `0.1` and NaN, in `HalfEven` and `Up`. Each type checks in a
+/// function of its own, as in `assert_remainder_and_saturation!`.
+macro_rules! assert_floats {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      for value in &samples::<T>() {
+        assert_eq!(
+          (
+            DecimalFloat::to_f64(value).to_bits(),
+            DecimalFloat::to_f32(value).to_bits(),
+          ),
+          (value.to_f64().to_bits(), value.to_f32().to_bits()),
+          "{value}"
+        );
+      }
+      for x in [0.5, -2.5, 0.1, f64::NAN] {
+        let narrow = x as f32;
+        for mode in [RoundingMode::HalfEven, RoundingMode::Up] {
+          assert_eq!(
+            <T as DecimalFloat>::round_from_f64(x, mode),
+            T::round_from_f64(x, mode),
+            "{x}, {mode}"
+          );
+          assert_eq!(
+            <T as DecimalFloat>::round_from_f32(narrow, mode),
+            T::round_from_f32(narrow, mode),
+            "{x}, {mode}"
+          );
+          assert_eq!(
+            <T as DecimalFloat>::from_f64_shortest(x, mode),
+            T::from_f64_shortest(x, mode),
+            "{x}, {mode}"
+          );
+          assert_eq!(
+            <T as DecimalFloat>::from_f32_shortest(narrow, mode),
+            T::from_f32_shortest(narrow, mode),
+            "{x}, {mode}"
+          );
+        }
+      }
+    }
+    storage();
+  })+};
+}
+
+#[test]
+fn floats_are_the_inherent_ones() {
+  assert_floats!(
+    Decimal<U1, U1, i8>,
+    Decimal<U0, U2, i8>,
+    Decimal<U2, U2, i16>,
+    Decimal<U5, U4, i32>,
+    Decimal<U10, U8, i64>,
+    Decimal<U19, U19, i128>,
+    Decimal<U40, U17, i192>,
+    Decimal<U38, U38, i256>,
+    Decimal<U78, U18, i320>,
+    Decimal<U97, U18, i384>,
+    Decimal<U116, U18, i448>,
+    Decimal<U135, U18, i512>,
+    Decimal<U1, U1, u8>,
+    Decimal<U0, U2, u8>,
+    Decimal<U2, U2, u16>,
+    Decimal<U5, U4, u32>,
+    Decimal<U10, U9, u64>,
+    Decimal<U19, U19, u128>,
+    Decimal<U40, U17, u192>,
+    Decimal<U59, U18, u256>,
+    Decimal<U78, U18, u320>,
+    Decimal<U97, U18, u384>,
+    Decimal<U116, U18, u448>,
+    Decimal<U154, U0, u512>,
+  );
+}
+
+/// The example of [`DecimalFloat`] in its docs, which no local build compiles: the same
+/// statements, with `crate::` for `numo::`, and the float compared by its bits.
+#[test]
+fn the_example_of_decimal_float_in_the_docs() -> Result<(), Box<dyn core::error::Error>> {
+  // The mean of the values, as an `f64`.
+  fn mean<T: DecimalFloat>(values: &[T]) -> f64 {
+    values.iter().map(T::to_f64).sum::<f64>() / values.len() as f64
+  }
+
+  // A measurement read by its shortest text into any decimal type.
+  fn reading<T: DecimalFloat>(value: f64) -> Result<T, FromFloatError> {
+    T::from_f64_shortest(value, RoundingMode::HalfEven)
+  }
+
+  type Price = Decimal<U10, U8>;
+
+  let prices: [Price; 2] = ["1.5".parse()?, "2.5".parse()?];
+  assert_eq!(mean(&prices).to_bits(), 2.0f64.to_bits());
+  let cents: Decimal<U10, U2> = reading(2.675)?;
+  assert_eq!(cents.to_string(), "2.68");
+  let scaled: Scaled<Price> = reading(0.5)?;
+  assert_eq!((scaled.to_string(), scaled.scale()), ("0.5".to_string(), 1));
+  assert_eq!(reading::<Price>(f64::NAN), Err(FromFloatError::Nan));
+  Ok(())
 }
 
 /// Uses only what the bound `T: FixedDecimal` gives: `Clone`, `Default`, `FromStr`, `Display`,
@@ -910,10 +1017,10 @@ mod collisions {
   )]
   use crate::{
     ArrayInteger, CheckedOps, ConstDecimalOne, ConstFixedDecimal, ConstFixedInteger,
-    ConstIntegerOne, ConvertTo, Decimal, DecimalOne, DivRound, ExactMul, FixedDecimal,
-    FixedInteger, FromLimbs, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, Scaled,
-    SignedFixedDecimal, SignedFixedInteger, StrictOps, UncheckedOps, UnsignedFixedDecimal,
-    UnsignedFixedInteger, WidenTo, WrappingOps, i256, u256,
+    ConstIntegerOne, ConvertTo, Decimal, DecimalFloat, DecimalOne, DivRound, ExactMul,
+    FixedDecimal, FixedInteger, FromLimbs, IntegerFloat, IntegerOne, NativeInteger, OverflowingOps,
+    SaturatingOps, Scaled, SignedFixedDecimal, SignedFixedInteger, StrictOps, UncheckedOps,
+    UnsignedFixedDecimal, UnsignedFixedInteger, WidenTo, WrappingOps, i256, u256,
   };
 
   type Price = Decimal<U10, U8>;
@@ -1118,6 +1225,35 @@ mod collisions {
     let (zero, min, max, one) = (i256::ZERO, i256::MIN, i256::MAX, i256::ONE);
     assert_eq!(concrete, [zero, zero, min, min, max, max, one, one, zero]);
     assert_eq!(integer_values::<i256>(), concrete);
+  }
+
+  /// `to_f64` through the float trait of the decimals.
+  fn decimal_float<T: DecimalFloat>(x: &T) -> f64 {
+    x.to_f64()
+  }
+
+  /// `to_f64` through the float trait of the integers.
+  fn integer_float<T: IntegerFloat>(x: &T) -> f64 {
+    x.to_f64()
+  }
+
+  /// With both float traits in scope, which share four names, `to_f64` resolves on a concrete
+  /// decimal and a concrete integer, which have it as an inherent function, on a `Scaled`, which
+  /// has only the trait's, and in code bounded by either trait, and all agree.
+  #[test]
+  fn float_conversions_resolve() {
+    let price: Price = "-1.5".parse().unwrap();
+    let scaled: Scaled<Price> = "-1.50".parse().unwrap();
+    let int = i256::ONE.neg();
+    let decimals = [
+      price.to_f64(),
+      scaled.to_f64(),
+      decimal_float(&price),
+      decimal_float(&scaled),
+    ];
+    assert_eq!(decimals.map(f64::to_bits), [(-1.5f64).to_bits(); 4]);
+    let integers = [int.to_f64(), integer_float(&int)];
+    assert_eq!(integers.map(f64::to_bits), [(-1.0f64).to_bits(); 2]);
   }
 
   /// The negations resolve and agree, for a `Decimal` and for a `Scaled`: `-x` and `x.neg()` on a

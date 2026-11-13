@@ -3,9 +3,9 @@ use core::{ops::Neg, str::FromStr};
 use typenum::NonZero;
 
 use super::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertError, Decimal, DecimalLiteral, DecimalOne,
-  FixedDecimal, LiteralText, ParseError, ParseErrorKind, QuantizeError, Scaled, SignedFixedDecimal,
-  UnsignedFixedDecimal, float, literal, parse,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, Decimal, DecimalFloat, DecimalLiteral,
+  DecimalOne, FixedDecimal, LiteralText, ParseError, ParseErrorKind, QuantizeError, Scaled,
+  SignedFixedDecimal, UnsignedFixedDecimal, float, literal, parse,
 };
 use crate::{
   FromFloatError, i192, i256, i320, i384, i448, i512, int, layout::Layout, rounding::RoundingMode,
@@ -287,6 +287,43 @@ macro_rules! storage_decimal {
       (I, F): Layout<$repr>,
     {
       const ONE: Self = Self::ONE;
+    }
+
+    // The methods are the inherent ones, which `Self::` names first: those to a float and of the
+    // binary value of this impl's storage, and those of the shortest text of every storage.
+    impl<I, F> DecimalFloat for Decimal<I, F, $repr>
+    where
+      (I, F): Layout<$repr>,
+    {
+      #[inline]
+      fn to_f64(&self) -> f64 {
+        Self::to_f64(self)
+      }
+
+      #[inline]
+      fn to_f32(&self) -> f32 {
+        Self::to_f32(self)
+      }
+
+      #[inline]
+      fn round_from_f64(value: f64, mode: RoundingMode) -> Result<Self, FromFloatError> {
+        Self::round_from_f64(value, mode)
+      }
+
+      #[inline]
+      fn round_from_f32(value: f32, mode: RoundingMode) -> Result<Self, FromFloatError> {
+        Self::round_from_f32(value, mode)
+      }
+
+      #[inline]
+      fn from_f64_shortest(value: f64, mode: RoundingMode) -> Result<Self, FromFloatError> {
+        Self::from_f64_shortest(value, mode)
+      }
+
+      #[inline]
+      fn from_f32_shortest(value: f32, mode: RoundingMode) -> Result<Self, FromFloatError> {
+        Self::from_f32_shortest(value, mode)
+      }
     }
 
     impl<I, F, T> DecimalLiteral<T> for Decimal<I, F, $repr>

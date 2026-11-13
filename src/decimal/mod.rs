@@ -14,8 +14,8 @@ pub use error::{ConvertError, DivideError, ParseError, ParseErrorKind, QuantizeE
 pub use literal::{DecimalLiteral, LiteralText};
 pub use scaled::Scaled;
 pub use traits::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal,
-  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
+  ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalFloat, DecimalOne, DivRound, ExactMul,
+  FixedDecimal, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 
 use crate::{

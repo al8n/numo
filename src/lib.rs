@@ -531,8 +531,8 @@ pub use typenum;
 
 pub use aliases::*;
 pub use decimal::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalOne, DivRound,
-  DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError, Scaled,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalFloat, DecimalOne,
+  DivRound, DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError, Scaled,
   SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 pub use integer::{

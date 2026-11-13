@@ -41,6 +41,7 @@ use sealed::{Sealed, SealedPair, SealedTriple};
 
 use super::{ConvertError, Decimal, DivideError, ParseError, QuantizeError, Scaled};
 use crate::{
+  FromFloatError,
   layout::{DivIntermediate, Layout, Pick, Storage, Widen, WidenRepr},
   rounding::RoundingMode,
 };
@@ -502,6 +503,108 @@ pub trait DecimalOne: FixedDecimal {
 pub trait ConstDecimalOne: DecimalOne + ConstFixedDecimal {
   /// One.
   const ONE: Self;
+}
+
+/// The conversions of a decimal number with the floats `f64` and `f32`: [`Decimal`] over any
+/// storage, or [`Scaled`] over such a decimal.
+///
+/// The methods are the inherent functions of the same names, which a concrete type reaches
+/// without this trait, also in constant contexts but for the two that read the shortest text:
+/// [`to_f64`](Self::to_f64) and [`to_f32`](Self::to_f32), which round to the nearest float, ties
+/// to even; [`round_from_f64`](Self::round_from_f64), which reads the exact binary value of a
+/// float, and [`from_f64_shortest`](Self::from_f64_shortest), which reads its shortest text, each
+/// rounded once with a [`RoundingMode`] to the fraction digits of the type; and the `f32` form of
+/// each reading. They are for interchange and display, not for arithmetic that must be exact. The
+/// errors are those of [`FromFloatError`], which reports NaN, the infinities, a value above the
+/// range and one below it apart. `Decimal<I, F, R>` implements this trait for each storage `R`
+/// where `(I, F): Layout<R>`, and [`Scaled<D>`](Scaled) for every `D` that does: its conversions to
+/// a float are those of the value, and a value read from a float takes the fraction digits of the
+/// type as its scale, or by the shortest text the fraction digits of the text, at most those of
+/// the type.
+///
+/// ```
+/// use numo::{
+///   Decimal, DecimalFloat, FromFloatError, RoundingMode, Scaled,
+///   typenum::{U2, U8, U10},
+/// };
+///
+/// // The mean of the values, as an `f64`.
+/// fn mean<T: DecimalFloat>(values: &[T]) -> f64 {
+///   values.iter().map(T::to_f64).sum::<f64>() / values.len() as f64
+/// }
+///
+/// // A measurement read by its shortest text into any decimal type.
+/// fn reading<T: DecimalFloat>(value: f64) -> Result<T, FromFloatError> {
+///   T::from_f64_shortest(value, RoundingMode::HalfEven)
+/// }
+///
+/// type Price = Decimal<U10, U8>;
+///
+/// let prices: [Price; 2] = ["1.5".parse()?, "2.5".parse()?];
+/// assert_eq!(mean(&prices), 2.0);
+/// let cents: Decimal<U10, U2> = reading(2.675)?;
+/// assert_eq!(cents.to_string(), "2.68");
+/// let scaled: Scaled<Price> = reading(0.5)?;
+/// assert_eq!((scaled.to_string(), scaled.scale()), ("0.5".to_string(), 1));
+/// assert_eq!(reading::<Price>(f64::NAN), Err(FromFloatError::Nan));
+/// # Ok::<(), Box<dyn core::error::Error>>(())
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait DecimalFloat: FixedDecimal {
+  /// Converts the value to the nearest `f64`, ties to even, as [`Decimal::to_f64`] describes.
+  #[must_use]
+  fn to_f64(&self) -> f64;
+
+  /// Converts the value to the nearest `f32`, ties to even, as [`Decimal::to_f32`] describes.
+  #[must_use]
+  fn to_f32(&self) -> f32;
+
+  /// Converts the exact binary value of `value`, rounded once with `mode` to the fraction digits
+  /// of the type, as [`Decimal::round_from_f64`] describes.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`FromFloatError::Nan`] for NaN, [`Infinite`](FromFloatError::Infinite) for an
+  /// infinity, and for a rounded value outside the range of the type,
+  /// [`PosOverflow`](FromFloatError::PosOverflow) above it and
+  /// [`NegOverflow`](FromFloatError::NegOverflow) below it.
+  fn round_from_f64(value: f64, mode: RoundingMode) -> Result<Self, FromFloatError>;
+
+  /// Converts the exact binary value of `value`, rounded once with `mode` to the fraction digits
+  /// of the type, as [`Decimal::round_from_f32`] describes.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`FromFloatError::Nan`] for NaN, [`Infinite`](FromFloatError::Infinite) for an
+  /// infinity, and for a rounded value outside the range of the type,
+  /// [`PosOverflow`](FromFloatError::PosOverflow) above it and
+  /// [`NegOverflow`](FromFloatError::NegOverflow) below it.
+  fn round_from_f32(value: f32, mode: RoundingMode) -> Result<Self, FromFloatError>;
+
+  /// Converts the decimal that the shortest text of `value` names, rounded once with `mode` to the
+  /// fraction digits of the type, as [`Decimal::from_f64_shortest`] describes.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`FromFloatError::Nan`] for NaN, [`Infinite`](FromFloatError::Infinite) for an
+  /// infinity, and for a rounded value outside the range of the type,
+  /// [`PosOverflow`](FromFloatError::PosOverflow) above it and
+  /// [`NegOverflow`](FromFloatError::NegOverflow) below it.
+  #[doc(alias = "from_f64")]
+  fn from_f64_shortest(value: f64, mode: RoundingMode) -> Result<Self, FromFloatError>;
+
+  /// Converts the decimal that the shortest text of `value` names, rounded once with `mode` to the
+  /// fraction digits of the type, as [`Decimal::from_f32_shortest`] describes.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`FromFloatError::Nan`] for NaN, [`Infinite`](FromFloatError::Infinite) for an
+  /// infinity, and for a rounded value outside the range of the type,
+  /// [`PosOverflow`](FromFloatError::PosOverflow) above it and
+  /// [`NegOverflow`](FromFloatError::NegOverflow) below it.
+  #[doc(alias = "from_f32")]
+  fn from_f32_shortest(value: f32, mode: RoundingMode) -> Result<Self, FromFloatError>;
 }
 
 /// The exact product of two decimal numbers: [`Decimal::exact_mul`].
