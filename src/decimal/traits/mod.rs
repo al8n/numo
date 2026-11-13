@@ -183,6 +183,22 @@ pub trait FixedDecimal:
   #[must_use]
   fn checked_sub(&self, rhs: &Self) -> Option<Self>;
 
+  /// Returns the remainder of `self` divided by `rhs`, which has the sign of `self`, or `None` if
+  /// `rhs` is zero.
+  #[must_use]
+  fn checked_rem(&self, rhs: &Self) -> Option<Self>;
+
+  /// Adds two values, returning the limit that the sum passes if it is outside the range of the
+  /// type: the largest value above the range and the smallest below it.
+  #[must_use]
+  fn saturating_add(&self, rhs: &Self) -> Self;
+
+  /// Subtracts `rhs` from `self`, returning the limit that the difference passes if it is outside
+  /// the range of the type: the smallest value below the range, which is zero for an unsigned
+  /// storage, and the largest above it.
+  #[must_use]
+  fn saturating_sub(&self, rhs: &Self) -> Self;
+
   /// Rounds to a multiple of `step` with `mode`, as [`Decimal::quantize`] describes.
   ///
   /// # Errors

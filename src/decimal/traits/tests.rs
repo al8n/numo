@@ -160,6 +160,41 @@ macro_rules! assert_one {
   )+};
 }
 
+/// Asserts that `checked_rem`, `saturating_add` and `saturating_sub` of [`FixedDecimal`] are the
+/// inherent ones for each type, at every pair of the values of [`samples`]. Each type checks in a
+/// function of its own, whose frame holds the values of that type alone: the function is
+/// `#[inline(never)]`, since an optimized build would inline a function that has one call site,
+/// which would put every type in the frame of the test.
+macro_rules! assert_remainder_and_saturation {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      let values = samples::<T>();
+      for value in &values {
+        for rhs in &values {
+          assert_eq!(
+            FixedDecimal::checked_rem(value, rhs),
+            value.checked_rem(rhs),
+            "{value} % {rhs}"
+          );
+          assert_eq!(
+            FixedDecimal::saturating_add(value, rhs),
+            value.saturating_add(rhs),
+            "{value} + {rhs}"
+          );
+          assert_eq!(
+            FixedDecimal::saturating_sub(value, rhs),
+            value.saturating_sub(rhs),
+            "{value} - {rhs}"
+          );
+        }
+      }
+    }
+    storage();
+  })+};
+}
+
 #[test]
 fn signed_items_are_the_inherent_ones() {
   assert_signed!(
@@ -211,6 +246,36 @@ fn one_is_the_inherent_one() {
     Decimal<U116, U18, i448>,
     Decimal<U135, U18, i512>,
     Decimal<U1, U1, u8>,
+    Decimal<U2, U2, u16>,
+    Decimal<U5, U4, u32>,
+    Decimal<U10, U9, u64>,
+    Decimal<U19, U19, u128>,
+    Decimal<U40, U17, u192>,
+    Decimal<U59, U18, u256>,
+    Decimal<U78, U18, u320>,
+    Decimal<U97, U18, u384>,
+    Decimal<U116, U18, u448>,
+    Decimal<U154, U0, u512>,
+  );
+}
+
+#[test]
+fn remainder_and_saturation_are_the_inherent_ones() {
+  assert_remainder_and_saturation!(
+    Decimal<U1, U1, i8>,
+    Decimal<U0, U2, i8>,
+    Decimal<U2, U2, i16>,
+    Decimal<U5, U4, i32>,
+    Decimal<U10, U8, i64>,
+    Decimal<U19, U19, i128>,
+    Decimal<U40, U17, i192>,
+    Decimal<U38, U38, i256>,
+    Decimal<U78, U18, i320>,
+    Decimal<U97, U18, i384>,
+    Decimal<U116, U18, i448>,
+    Decimal<U135, U18, i512>,
+    Decimal<U1, U1, u8>,
+    Decimal<U0, U2, u8>,
     Decimal<U2, U2, u16>,
     Decimal<U5, U4, u32>,
     Decimal<U10, U9, u64>,

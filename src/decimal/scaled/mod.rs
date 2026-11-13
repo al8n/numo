@@ -371,6 +371,31 @@ where
     Some(Self::new(difference, self.scale.max(rhs.scale)))
   }
 
+  /// Returns the remainder of `self` divided by `rhs`, or `None` if `rhs` is zero. The remainder
+  /// takes the larger of the two scales.
+  fn checked_rem(&self, rhs: &Self) -> Option<Self> {
+    let remainder = self.value.checked_rem(&rhs.value)?;
+    Some(Self::new(remainder, self.scale.max(rhs.scale)))
+  }
+
+  /// Adds two values, returning the limit that the sum passes if it is outside the range of `D`.
+  /// The result takes the larger of the two scales, also when it is a limit.
+  fn saturating_add(&self, rhs: &Self) -> Self {
+    Self::new(
+      self.value.saturating_add(&rhs.value),
+      self.scale.max(rhs.scale),
+    )
+  }
+
+  /// Subtracts `rhs` from `self`, returning the limit that the difference passes if it is outside
+  /// the range of `D`. The result takes the larger of the two scales, also when it is a limit.
+  fn saturating_sub(&self, rhs: &Self) -> Self {
+    Self::new(
+      self.value.saturating_sub(&rhs.value),
+      self.scale.max(rhs.scale),
+    )
+  }
+
   /// Rounds to a multiple of `step` with `mode`, as [`Decimal::quantize`](crate::Decimal::quantize)
   /// describes. The result takes the scale of `step`.
   fn quantize(&self, step: &Self, mode: RoundingMode) -> Result<Self, QuantizeError> {
