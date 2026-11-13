@@ -1330,6 +1330,40 @@ pub(super) fn text<T: FixedInteger + ArrayInteger<Array: Debug>>(a: &T) -> Vec<S
   ]
 }
 
+/// The digits of `a` through `UnsignedDigits`: in the bases 10, `2^32 + 1` and `u64::MAX` the
+/// digits of `to_base_le` and the limbs of the integers that both readers of iterators read back
+/// from them; the integers read back from the digits of the radix 256 as bytes, from slices; and
+/// the `None` of a digit equal to the base and of one digit 255 more in the radix 256 than the
+/// bytes of the width, from a slice and from an iterator.
+#[inline(never)]
+pub(super) fn digits<T>(a: &T) -> Vec<String>
+where
+  T: UnsignedDigits + IntegerBytes + ArrayInteger<Array: Debug>,
+{
+  let mut results = Vec::new();
+  for base in [10, (1 << 32) + 1, u64::MAX] {
+    let le: Vec<u64> = a.to_base_le(base).collect();
+    results.push(format!(
+      "{le:?} {:?} {:?} {:?}",
+      T::checked_from_base_le(le.iter().copied(), base).map(limbs),
+      T::checked_from_base_be(le.iter().rev().copied(), base).map(limbs),
+      T::checked_from_base_le([base], base).map(limbs),
+    ));
+  }
+  let mut bytes: Vec<u8> = a.to_base_le(256).map(|digit| digit as u8).collect();
+  let le = T::checked_from_radix_le(&bytes, 256).map(limbs);
+  bytes.reverse();
+  let be = T::checked_from_radix_be(&bytes, 256).map(limbs);
+  let over = vec![255; T::BYTES + 1];
+  results.push(format!(
+    "{le:?} {be:?} {:?} {:?} {:?}",
+    T::checked_from_radix_le(&over, 256).map(limbs),
+    T::checked_from_base_be(over.iter().map(|&digit| u64::from(digit)), 256).map(limbs),
+    T::checked_from_radix_be(&[10], 10).map(limbs),
+  ));
+  results
+}
+
 /// The bytes of `a` through `IntegerBytes`: each byte, and the bytes copied to buffers of each
 /// length up to two more than the width needs, in both orders.
 #[inline(never)]
@@ -1509,6 +1543,7 @@ macro_rules! uint_results {
     results.extend(unsigned_methods(a, b));
     results.extend(text(a));
     results.extend(bytes(a));
+    results.extend(digits(a));
     results.extend(uint_conversions(a, b));
     results.extend(uint_operators::<_, $repr>(a, b, n));
     results

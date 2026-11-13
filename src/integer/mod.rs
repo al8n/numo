@@ -10,6 +10,7 @@ use core::{
 
 pub use bytes::{ByteArray, FromByteArray, IntegerByteOrder, IntegerBytes};
 pub use cast::{BoundedCastFrom, CheckedCastFrom, TruncateFrom, WidenFrom};
+pub use digits::UnsignedDigits;
 pub use error::{FromFloatError, TryNewError};
 pub use float::IntegerFloat;
 pub use traits::{
@@ -40,6 +41,8 @@ mod arithmetic;
 mod bits;
 #[macro_use]
 mod bytes;
+#[macro_use]
+mod digits;
 #[macro_use]
 mod float;
 #[macro_use]
@@ -1670,6 +1673,7 @@ macro_rules! array_integers {
       uint_bits_table!(inherent_items![unsigned, $lower, &, Int<B, [$limb; N]>]);
       bitwise_table!(inherent_items![unsigned, $lower, &]);
       byte_methods!([unsigned, $lower, &]);
+      digit_methods!([unsigned, $lower, &]);
       float_methods!([unsigned, $lower, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
@@ -2391,6 +2395,7 @@ macro_rules! native_integers {
       uint_bits_table!(inherent_items![$uint, Int<B, $int>]);
       bitwise_table!(inherent_items![$uint]);
       byte_methods!([$uint]);
+      digit_methods!([$uint]);
       float_methods!([$uint]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.

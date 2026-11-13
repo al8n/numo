@@ -888,6 +888,20 @@ pub(crate) fn digits_value<T: Copy + Into<u64>>(
   Some(value)
 }
 
+/// The digits of `value`, at least zero, in `base`, least significant first, without the zeros
+/// above the highest one, so zero has none: the model of the writers of digits.
+pub(crate) fn digits_of(value: &BigInt, base: u64) -> Vec<u64> {
+  let mut digits = Vec::new();
+  let mut rest = value.clone();
+  let zero = BigInt::from(0);
+  while rest > zero {
+    let digit = &rest % base;
+    digits.push(u64::try_from(digit).expect("below the base"));
+    rest /= base;
+  }
+  digits
+}
+
 /// `digits`, the digits of a number in `radix`, plus one.
 fn increment(digits: &str, radix: u32) -> String {
   let mut digits: Vec<u32> = digits
