@@ -1,20 +1,30 @@
 //! The traits of [`Decimal`] over a heap storage, a wide integer whose limbs are in a `Box`, an
-//! `Rc`, an `Arc` or a `triomphe::Arc`, and the parsing of a [`Scaled`] over such a decimal.
+//! `Rc`, an `Arc` or a `triomphe::Arc`; its operators with one owned operand, `a + &b` and
+//! `&a + b`, and for a `Box` its assignments by reference, `a += &b`; and the parsing and the
+//! operators with one owned operand of a [`Scaled`] over such a decimal.
 //!
 //! Each impl names its pointer in its header, so that no impl of this module matches a decimal over
 //! an inline storage: the candidates of such a decimal, and so what the compiler infers and reports
 //! for it, are those of its own storage. One impl over every storage that a sealed trait marks as a
 //! heap storage would match every decimal, and be a second candidate beside the impl of an inline
-//! storage.
+//! storage. An inline decimal has no operator with one owned operand, so that a literal on the
+//! right takes the type of the left operand, as in `price + dec!(0.5)`; with these, a heap decimal
+//! has two forms of `+` with an owned left operand.
 //!
 //! Every item computes in the twin, the decimal over the inline storage of the same width and sign,
 //! through the trait of the twin, which each call names. In an impl of a trait, `Self::` names an
 //! inherent item first, which a heap decimal has only where the item is generic over the storage,
 //! as `to_inline` and `from_inline` are, and otherwise the item of that trait itself. A value is
 //! stored once, by `from_inline`, after the twin returned it: nothing is built for `None` or an
-//! error.
+//! error. An operator stores into the operand that it owns, after the checked method of the twins
+//! returned, so that one that panics leaves its operands.
 
-use core::{ops::Neg, str::FromStr};
+#[cfg(any(feature = "std", feature = "alloc"))]
+use core::ops::{AddAssign, SubAssign};
+use core::{
+  ops::{Add, Neg, Sub},
+  str::FromStr,
+};
 #[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
 use std::sync::Arc;
 #[cfg(any(feature = "std", feature = "alloc"))]
@@ -26,6 +36,7 @@ use triomphe::Arc as TriompheArc;
 use super::{
   ConstDecimalOne, ConstFixedDecimal, ConvertError, Decimal, DecimalFloat, DecimalOne,
   FixedDecimal, ParseError, QuantizeError, Scaled, SignedFixedDecimal, UnsignedFixedDecimal,
+  ops::overflow,
 };
 use crate::{
   FromFloatError, Int, Uint,
@@ -40,11 +51,14 @@ use crate::{
 /// of the features and the target that give the pointer, which the docs show. Each impl is bounded
 /// as the storage is, by the width that fills the array and by the integer over the array being an
 /// inline storage, and by the trait of the twin. The impls that both integers have come from the
-/// arm `@shared`, and those of one sign are written for its integer by name.
+/// arm `@shared`, those of one sign are written for its integer by name, and the assignments by
+/// reference come from the arm `@mutable` of the kind.
 macro_rules! heap_decimals {
   ($pointer:ident, $kind:ident, [$cfg:meta]) => {
     heap_decimals!(@shared Uint, $pointer, [$cfg]);
     heap_decimals!(@shared Int, $pointer, [$cfg]);
+    heap_decimals!(@mutable $kind, Uint, $pointer, [$cfg]);
+    heap_decimals!(@mutable $kind, Int, $pointer, [$cfg]);
 
     #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<I, F, B, const N: usize> SignedFixedDecimal for Decimal<I, F, Int<B, $pointer<[u64; N]>>>
@@ -386,7 +400,296 @@ macro_rules! heap_decimals {
         Ok(Scaled::new(Decimal::from_inline(value), scale))
       }
     }
+
+    // The operators with one owned operand store into that operand, as those on two values store
+    // into the first: a `Box` in its allocation, and a shared pointer in a new allocation.
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
+    impl<I, F, B, const N: usize> Add<&Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>
+      for Decimal<I, F, $integer<B, $pointer<[u64; N]>>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+      Decimal<I, F, $integer<B, [u64; N]>>: FixedDecimal,
+    {
+      type Output = Self;
+
+      /// Adds `rhs`, by reference, to `self`, and stores the sum into `self`: in its allocation for
+      /// a `Box`, and in a new allocation for a shared pointer.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the sum is outside the range of the type, in every build, whatever
+      /// `overflow-checks` is. [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
+      #[inline]
+      #[track_caller]
+      fn add(mut self, rhs: &Self) -> Self {
+        let sum = match FixedDecimal::checked_add(&self.to_inline(), &rhs.to_inline()) {
+          Some(sum) => sum,
+          None => overflow::add(),
+        };
+        StorageCore::set_twin(&mut self.repr, sum.repr, Token::new());
+        self
+      }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
+    impl<I, F, B, const N: usize> Add<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>
+      for &Decimal<I, F, $integer<B, $pointer<[u64; N]>>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+      Decimal<I, F, $integer<B, [u64; N]>>: FixedDecimal,
+    {
+      type Output = Decimal<I, F, $integer<B, $pointer<[u64; N]>>>;
+
+      /// Adds `rhs` to `self`, by reference, and stores the sum into `rhs`: in its allocation for
+      /// a `Box`, and in a new allocation for a shared pointer.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the sum is outside the range of the type, in every build, whatever
+      /// `overflow-checks` is. [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
+      #[inline]
+      #[track_caller]
+      fn add(self, mut rhs: Decimal<I, F, $integer<B, $pointer<[u64; N]>>>) -> Self::Output {
+        let sum = match FixedDecimal::checked_add(&self.to_inline(), &rhs.to_inline()) {
+          Some(sum) => sum,
+          None => overflow::add(),
+        };
+        StorageCore::set_twin(&mut rhs.repr, sum.repr, Token::new());
+        rhs
+      }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
+    impl<I, F, B, const N: usize> Sub<&Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>
+      for Decimal<I, F, $integer<B, $pointer<[u64; N]>>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+      Decimal<I, F, $integer<B, [u64; N]>>: FixedDecimal,
+    {
+      type Output = Self;
+
+      /// Subtracts `rhs`, by reference, from `self`, and stores the difference into `self`: in its
+      /// allocation for a `Box`, and in a new allocation for a shared pointer.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the difference is outside the range of the type, which for an unsigned storage
+      /// is every difference below zero, in every build, whatever `overflow-checks` is.
+      /// [`checked_sub`](FixedDecimal::checked_sub) returns `None` instead.
+      #[inline]
+      #[track_caller]
+      fn sub(mut self, rhs: &Self) -> Self {
+        let difference = match FixedDecimal::checked_sub(&self.to_inline(), &rhs.to_inline()) {
+          Some(difference) => difference,
+          None => overflow::sub(),
+        };
+        StorageCore::set_twin(&mut self.repr, difference.repr, Token::new());
+        self
+      }
+    }
+
+    // The difference is `self - rhs`, which `rhs`, the operand that the form owns, stores.
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
+    impl<I, F, B, const N: usize> Sub<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>
+      for &Decimal<I, F, $integer<B, $pointer<[u64; N]>>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+      Decimal<I, F, $integer<B, [u64; N]>>: FixedDecimal,
+    {
+      type Output = Decimal<I, F, $integer<B, $pointer<[u64; N]>>>;
+
+      /// Subtracts `rhs` from `self`, by reference, and stores the difference into `rhs`: in its
+      /// allocation for a `Box`, and in a new allocation for a shared pointer.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the difference is outside the range of the type, which for an unsigned storage
+      /// is every difference below zero, in every build, whatever `overflow-checks` is.
+      /// [`checked_sub`](FixedDecimal::checked_sub) returns `None` instead.
+      #[inline]
+      #[track_caller]
+      fn sub(self, mut rhs: Decimal<I, F, $integer<B, $pointer<[u64; N]>>>) -> Self::Output {
+        let difference = match FixedDecimal::checked_sub(&self.to_inline(), &rhs.to_inline()) {
+          Some(difference) => difference,
+          None => overflow::sub(),
+        };
+        StorageCore::set_twin(&mut rhs.repr, difference.repr, Token::new());
+        rhs
+      }
+    }
+
+    // Each form of a `Scaled` is the same form of its decimal, so that it stores where that form
+    // stores. The fields of `Scaled` are private to its module: its public items read them.
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
+    impl<I, F, B, const N: usize> Add<&Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>>
+      for Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+      Decimal<I, F, $integer<B, [u64; N]>>: FixedDecimal,
+      Self: FixedDecimal,
+    {
+      type Output = Self;
+
+      /// Adds `rhs`, by reference, to `self`, the decimal of `rhs` to that of `self` as `+` does,
+      /// which stores the sum into the decimal of `self`. The sum takes the larger of the two
+      /// scales.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the sum is outside the range of the decimal, in every build, whatever
+      /// `overflow-checks` is. [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
+      #[inline]
+      #[track_caller]
+      fn add(self, rhs: &Self) -> Self {
+        let scale = self.scale().max(rhs.scale());
+        Self::new(self.into_value() + rhs.value(), scale)
+      }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
+    impl<I, F, B, const N: usize> Add<Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>>
+      for &Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+      Decimal<I, F, $integer<B, [u64; N]>>: FixedDecimal,
+      Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>: FixedDecimal,
+    {
+      type Output = Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>;
+
+      /// Adds `rhs` to `self`, by reference, the decimal of `rhs` to that of `self` as `+` does,
+      /// which stores the sum into the decimal of `rhs`. The sum takes the larger of the two
+      /// scales.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the sum is outside the range of the decimal, in every build, whatever
+      /// `overflow-checks` is. [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
+      #[inline]
+      #[track_caller]
+      fn add(self, rhs: Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>) -> Self::Output {
+        let scale = self.scale().max(rhs.scale());
+        Scaled::new(self.value() + rhs.into_value(), scale)
+      }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
+    impl<I, F, B, const N: usize> Sub<&Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>>
+      for Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+      Decimal<I, F, $integer<B, [u64; N]>>: FixedDecimal,
+      Self: FixedDecimal,
+    {
+      type Output = Self;
+
+      /// Subtracts `rhs`, by reference, from `self`, the decimal of `rhs` from that of `self` as
+      /// `-` does, which stores the difference into the decimal of `self`. The difference takes
+      /// the larger of the two scales.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the difference is outside the range of the decimal, which for an unsigned
+      /// storage is every difference below zero, in every build, whatever `overflow-checks` is.
+      /// [`checked_sub`](FixedDecimal::checked_sub) returns `None` instead.
+      #[inline]
+      #[track_caller]
+      fn sub(self, rhs: &Self) -> Self {
+        let scale = self.scale().max(rhs.scale());
+        Self::new(self.into_value() - rhs.value(), scale)
+      }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
+    impl<I, F, B, const N: usize> Sub<Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>>
+      for &Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+      Decimal<I, F, $integer<B, [u64; N]>>: FixedDecimal,
+      Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>: FixedDecimal,
+    {
+      type Output = Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>;
+
+      /// Subtracts `rhs` from `self`, by reference, the decimal of `rhs` from that of `self` as
+      /// `-` does, which stores the difference into the decimal of `rhs`. The difference takes the
+      /// larger of the two scales.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the difference is outside the range of the decimal, which for an unsigned
+      /// storage is every difference below zero, in every build, whatever `overflow-checks` is.
+      /// [`checked_sub`](FixedDecimal::checked_sub) returns `None` instead.
+      #[inline]
+      #[track_caller]
+      fn sub(self, rhs: Scaled<Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>) -> Self::Output {
+        let scale = self.scale().max(rhs.scale());
+        Scaled::new(self.value() - rhs.into_value(), scale)
+      }
+    }
   };
+  // A pointer that holds its coefficient in place has the assignments by reference, which store
+  // into the allocation of their target. A shared pointer never writes the coefficient that it
+  // holds, which another owner may read, so it has no assignment.
+  (@mutable in_place, $integer:ident, $pointer:ident, [$cfg:meta]) => {
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
+    impl<I, F, B, const N: usize> AddAssign<&Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>
+      for Decimal<I, F, $integer<B, $pointer<[u64; N]>>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+      Decimal<I, F, $integer<B, [u64; N]>>: FixedDecimal,
+    {
+      /// Adds `rhs`, by reference, to `self`, in the allocation of `self`.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the sum is outside the range of the type, in every build, whatever
+      /// `overflow-checks` is, and leaves `self` unchanged.
+      /// [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
+      #[inline]
+      #[track_caller]
+      fn add_assign(&mut self, rhs: &Self) {
+        match FixedDecimal::checked_add(&self.to_inline(), &rhs.to_inline()) {
+          Some(sum) => StorageCore::set_twin(&mut self.repr, sum.repr, Token::new()),
+          None => overflow::add(),
+        }
+      }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
+    impl<I, F, B, const N: usize> SubAssign<&Decimal<I, F, $integer<B, $pointer<[u64; N]>>>>
+      for Decimal<I, F, $integer<B, $pointer<[u64; N]>>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+      Decimal<I, F, $integer<B, [u64; N]>>: FixedDecimal,
+    {
+      /// Subtracts `rhs`, by reference, from `self`, in the allocation of `self`.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the difference is outside the range of the type, which for an unsigned storage
+      /// is every difference below zero, in every build, whatever `overflow-checks` is, and
+      /// leaves `self` unchanged. [`checked_sub`](FixedDecimal::checked_sub) returns `None`
+      /// instead.
+      #[inline]
+      #[track_caller]
+      fn sub_assign(&mut self, rhs: &Self) {
+        match FixedDecimal::checked_sub(&self.to_inline(), &rhs.to_inline()) {
+          Some(difference) => StorageCore::set_twin(&mut self.repr, difference.repr, Token::new()),
+          None => overflow::sub(),
+        }
+      }
+    }
+  };
+  (@mutable shared, $integer:ident, $pointer:ident, [$cfg:meta]) => {};
 }
 
 #[cfg(any(feature = "std", feature = "alloc"))]

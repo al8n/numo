@@ -1,7 +1,8 @@
 //! The arithmetic of `Decimal` and `Scaled` within one type: `checked_rem`, `saturating_add` and
 //! `saturating_sub` of every storage against the coefficients in `num-bigint`, at the limits and
 //! in constant contexts, and the operators `+`, `-`, `+=` and `-=` and `Sum` against `checked_add`
-//! and `checked_sub`, with their panics on a result outside the range. Each type checks in a
+//! and `checked_sub`, with their panics on a result outside the range; over a heap storage, also
+//! the forms with one owned operand and the assignments by reference. Each type checks in a
 //! function of its own, whose frame holds the values of that type alone: the function is
 //! `#[inline(never)]`, since an optimized build would inline a function that has one call site,
 //! and the frame of the test would then hold the values of every type.
@@ -685,4 +686,294 @@ fn sums_of_no_item_and_of_one() {
     (Du320::ZERO, 0),
     Scaled::into_parts,
   );
+}
+
+/// The operators and the sums of the decimals over a heap storage, a wide integer whose limbs are
+/// in a `Box`, an `Rc`, an `Arc` or a `triomphe::Arc`, and of a `Scaled` over them, against the
+/// checked methods of their twins: every form, those with one owned operand among them, and for a
+/// `Box` the assignments by value and by reference, with their panics. They capture the panics with
+/// [`panic_of`], whose hook is the one hook of the tests of the decimals.
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
+mod heap {
+  use core::fmt::Debug;
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  use core::ops::{AddAssign, SubAssign};
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  use std::rc::Rc;
+  #[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
+  use std::sync::Arc;
+
+  #[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+  use triomphe::Arc as TriompheArc;
+  use typenum::{U256, U320, U512, U576, U1024};
+
+  use super::*;
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  use crate::DecimalAssign;
+  use crate::{Int, Uint};
+
+  /// Checks the operators of `T`, a decimal over a heap storage or a `Scaled` over one, at every
+  /// pair of its [`samples`] against `checked_add` and `checked_sub` of the twins, comparing what
+  /// `parts` gives of a twin: the value, and for a `Scaled` the scale too. Where the checked method
+  /// returns a value, `a + b`, `a + &b`, `&a + b` and `&a + &b` give it, stored, and `-` likewise.
+  /// Where it returns `None`, each form panics with the message of the native operator and reports
+  /// its own line.
+  #[inline(never)]
+  #[allow(clippy::op_ref, reason = "the operators on references are under test")]
+  fn check_heap_operators<T, P>(parts: fn(T::Inline) -> P)
+  where
+    T: FixedDecimal + for<'a> Add<&'a T, Output = T> + for<'a> Sub<&'a T, Output = T>,
+    for<'a> &'a T:
+      Add<T, Output = T> + Add<&'a T, Output = T> + Sub<T, Output = T> + Sub<&'a T, Output = T>,
+    P: PartialEq + Debug,
+  {
+    let (add, sub) = overflow_messages();
+    let values = samples::<T>();
+    for a in &values {
+      for b in &values {
+        let (x, y) = (a.to_inline(), b.to_inline());
+        match x.checked_add(&y) {
+          Some(sum) => {
+            let sum = parts(sum);
+            assert_eq!(parts((a.clone() + b.clone()).to_inline()), sum, "{a} + {b}");
+            assert_eq!(parts((a.clone() + b).to_inline()), sum, "{a} + &{b}");
+            assert_eq!(parts((a + b.clone()).to_inline()), sum, "&{a} + {b}");
+            assert_eq!(parts((a + b).to_inline()), sum, "&{a} + &{b}");
+          }
+          None => {
+            panics_here!(a.clone() + b.clone(), add);
+            panics_here!(a.clone() + b, add);
+            panics_here!(a + b.clone(), add);
+            panics_here!(a + b, add);
+          }
+        }
+        match x.checked_sub(&y) {
+          Some(difference) => {
+            let difference = parts(difference);
+            assert_eq!(
+              parts((a.clone() - b.clone()).to_inline()),
+              difference,
+              "{a} - {b}"
+            );
+            assert_eq!(parts((a.clone() - b).to_inline()), difference, "{a} - &{b}");
+            assert_eq!(parts((a - b.clone()).to_inline()), difference, "&{a} - {b}");
+            assert_eq!(parts((a - b).to_inline()), difference, "&{a} - &{b}");
+          }
+          None => {
+            panics_here!(a.clone() - b.clone(), sub);
+            panics_here!(a.clone() - b, sub);
+            panics_here!(a - b.clone(), sub);
+            panics_here!(a - b, sub);
+          }
+        }
+      }
+    }
+  }
+
+  /// Checks the assignments of `T`, a decimal in a `Box` or a `Scaled` over one, at every pair of
+  /// its [`samples`] against `checked_add` and `checked_sub` of the twins, comparing what `parts`
+  /// gives. Where the checked method returns a value, `a += b` and `a += &b` give it, stored, and
+  /// `-=` likewise. Where it returns `None`, each panics with the message of the native operator,
+  /// reports its own line and leaves its target, with its scale for a `Scaled`.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline(never)]
+  fn check_heap_assignments<T, P>(parts: fn(T::Inline) -> P)
+  where
+    T: DecimalAssign + for<'a> AddAssign<&'a T> + for<'a> SubAssign<&'a T>,
+    P: PartialEq + Debug,
+  {
+    let (add, sub) = overflow_messages();
+    let values = samples::<T>();
+    for a in &values {
+      for b in &values {
+        let (x, y) = (a.to_inline(), b.to_inline());
+        match x.checked_add(&y) {
+          Some(sum) => {
+            let sum = parts(sum);
+            let mut target = a.clone();
+            target += b.clone();
+            assert_eq!(parts(target.to_inline()), sum, "{a} += {b}");
+            let mut target = a.clone();
+            target += b;
+            assert_eq!(parts(target.to_inline()), sum, "{a} += &{b}");
+          }
+          None => {
+            let mut target = a.clone();
+            panics_here!(target += b.clone(), add);
+            assert_eq!(parts(target.to_inline()), parts(x), "{a} += {b}");
+            let mut target = a.clone();
+            panics_here!(target += b, add);
+            assert_eq!(parts(target.to_inline()), parts(x), "{a} += &{b}");
+          }
+        }
+        match x.checked_sub(&y) {
+          Some(difference) => {
+            let difference = parts(difference);
+            let mut target = a.clone();
+            target -= b.clone();
+            assert_eq!(parts(target.to_inline()), difference, "{a} -= {b}");
+            let mut target = a.clone();
+            target -= b;
+            assert_eq!(parts(target.to_inline()), difference, "{a} -= &{b}");
+          }
+          None => {
+            let mut target = a.clone();
+            panics_here!(target -= b.clone(), sub);
+            assert_eq!(parts(target.to_inline()), parts(x), "{a} -= {b}");
+            let mut target = a.clone();
+            panics_here!(target -= b, sub);
+            assert_eq!(parts(target.to_inline()), parts(x), "{a} -= &{b}");
+          }
+        }
+      }
+    }
+  }
+
+  /// Checks `Sum` of `T`, a decimal over a heap storage or a `Scaled` over one, over values and
+  /// over references, against the fold of `checked_add` of the twins from zero, comparing what
+  /// `parts` gives: over no item, which gives zero, over one item, which gives the item, and over
+  /// three items, each pair of the [`samples`] followed by one of the first three. Where the fold
+  /// returns `None`, at the first partial sum outside the range, the sum panics with the message
+  /// of the native `+` and reports the fold of the library, in `file`, not its caller.
+  #[inline(never)]
+  fn check_heap_sums<T, P>(file: &str, parts: fn(T::Inline) -> P)
+  where
+    T: FixedDecimal + for<'a> Sum<&'a T>,
+    P: PartialEq + Debug,
+  {
+    let (add, _) = overflow_messages();
+    let values = samples::<T>();
+    let check = |items: &[T]| {
+      let zero = <T::Inline as ConstFixedDecimal>::ZERO;
+      let fold = items
+        .iter()
+        .try_fold(zero, |sum, value| sum.checked_add(&value.to_inline()));
+      match fold {
+        Some(total) => {
+          let total = parts(total);
+          let by_value = items.iter().cloned().sum::<T>().to_inline();
+          assert_eq!(parts(by_value), total, "{items:?}");
+          assert_eq!(
+            parts(items.iter().sum::<T>().to_inline()),
+            total,
+            "{items:?}"
+          );
+        }
+        None => {
+          let panics = [
+            panic_of(|| items.iter().cloned().sum::<T>()),
+            panic_of(|| items.iter().sum::<T>()),
+          ];
+          for panic in panics {
+            let (message, at, _) = panic.expect("a panic");
+            assert_eq!(message, add, "{items:?}");
+            // The location names the file with the separator of the host, and paths compare by
+            // component.
+            assert_eq!(PathBuf::from(at), PathBuf::from(file), "{items:?}");
+          }
+        }
+      }
+    };
+    check(&[]);
+    for a in &values {
+      check(&[a.clone()]);
+      for b in &values {
+        for c in &values[..3] {
+          check(&[a.clone(), b.clone(), c.clone()]);
+        }
+      }
+    }
+  }
+
+  /// Checks the operators and the sums of each type of the list, a decimal over a heap storage, and
+  /// of a `Scaled` over it.
+  macro_rules! heap_operators_agree {
+    ($($ty:ty),+ $(,)?) => {$(
+      check_heap_operators::<$ty, _>(|value| value);
+      check_heap_operators::<Scaled<$ty>, _>(Scaled::into_parts);
+      check_heap_sums::<$ty, _>("src/decimal/ops.rs", |value| value);
+      check_heap_sums::<Scaled<$ty>, _>("src/decimal/scaled/mod.rs", Scaled::into_parts);
+    )+};
+  }
+
+  /// Checks the operators and the sums of one type of each of six storages in the heap pointer
+  /// `$pointer`, those of `decimal::tests::heap`, and of a `Scaled` over each; under Miri, of the
+  /// first two, an unsigned and a signed storage.
+  macro_rules! pointer_operators_agree {
+    ($pointer:ident) => {
+      heap_operators_agree!(
+        Decimal<U39, U18, Uint<U192, $pointer<[u64; 3]>>>,
+        Decimal<U58, U18, Int<U256, $pointer<[u64; 4]>>>,
+      );
+      if !tier().is_miri() {
+        heap_operators_agree!(
+          Decimal<U78, U18, Uint<U320, $pointer<[u64; 5]>>>,
+          Decimal<U135, U18, Int<U512, $pointer<[u64; 8]>>>,
+          Decimal<U155, U18, Int<U576, $pointer<[u64; 9]>>>,
+          Decimal<U308, U0, Uint<U1024, $pointer<[u64; 16]>>>,
+        );
+      }
+    };
+  }
+
+  /// Checks the assignments of each type of the list, a decimal in a `Box`, and of a `Scaled` over
+  /// it.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  macro_rules! heap_assignments_agree {
+    ($($ty:ty),+ $(,)?) => {$(
+      check_heap_assignments::<$ty, _>(|value| value);
+      check_heap_assignments::<Scaled<$ty>, _>(Scaled::into_parts);
+    )+};
+  }
+
+  /// The operators of the decimals in a `Box`, and of a `Scaled` over each, give the results of
+  /// the checked methods of their twins, each stored, and panic where those return `None`, at the
+  /// line of the operator; so do their assignments, by value and by reference, which then leave
+  /// their target; and their sums give the fold of the checked additions, and panic in the fold of
+  /// the library.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[test]
+  fn boxed_operators_match_the_checked_methods() {
+    pointer_operators_agree!(Box);
+    heap_assignments_agree!(
+      Decimal<U39, U18, Uint<U192, Box<[u64; 3]>>>,
+      Decimal<U58, U18, Int<U256, Box<[u64; 4]>>>,
+    );
+    if !tier().is_miri() {
+      heap_assignments_agree!(
+        Decimal<U78, U18, Uint<U320, Box<[u64; 5]>>>,
+        Decimal<U135, U18, Int<U512, Box<[u64; 8]>>>,
+        Decimal<U155, U18, Int<U576, Box<[u64; 9]>>>,
+        Decimal<U308, U0, Uint<U1024, Box<[u64; 16]>>>,
+      );
+    }
+  }
+
+  /// The operators and the sums of the decimals in an `Rc`, and of a `Scaled` over each, match
+  /// the checked methods of their twins, as in a `Box`.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[test]
+  fn rc_operators_match_the_checked_methods() {
+    pointer_operators_agree!(Rc);
+  }
+
+  /// The operators and the sums of the decimals in an `Arc`, and of a `Scaled` over each, match
+  /// the checked methods of their twins, as in a `Box`.
+  #[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
+  #[test]
+  fn arc_operators_match_the_checked_methods() {
+    pointer_operators_agree!(Arc);
+  }
+
+  /// The operators and the sums of the decimals in a `triomphe::Arc`, and of a `Scaled` over each,
+  /// match the checked methods of their twins, as in a `Box`.
+  #[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+  #[test]
+  fn triomphe_operators_match_the_checked_methods() {
+    pointer_operators_agree!(TriompheArc);
+  }
 }

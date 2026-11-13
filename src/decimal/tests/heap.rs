@@ -4,7 +4,12 @@
 //! the traits, with its `None` and its errors; the conversions between a heap decimal and its twin
 //! and into other types, and the exact product; the texts and their parsing, the order, the hash
 //! and serde; the generators; a `Scaled` over a heap decimal; code generic over the decimal and
-//! over the storage; and the layout and the auto traits. The oracle of each check is the twin.
+//! over the storage; where the result of each operation lives, in the allocation of an operand or
+//! in one of its own, which the address of its limbs tells; the literals, which reach a heap
+//! decimal through its twin, and the type that a literal operand of an inline decimal takes beside
+//! the operators of the heap decimals; and the layout and the auto traits. The oracle of each
+//! check is the twin. The operators and their panics are checked in `decimal::tests::operators`,
+//! whose hook captures the panics: this module catches none.
 //!
 //! The checks of each pointer run for one type of each of six storages, of 192 to 1024 bits and of
 //! both signs, each at the digit limit of its storage. Each type checks in a function of its own,
@@ -13,11 +18,14 @@
 //! every type. The tier of the build sizes every sweep, and every random value comes from a
 //! generator with a seed written here, so that a failure replays.
 
+#[cfg(any(feature = "std", feature = "alloc"))]
+use core::ops::{AddAssign, SubAssign};
 use core::{
   any::TypeId,
   fmt::{Debug, Display, LowerExp, UpperExp},
   hash::BuildHasher,
   num::NonZero,
+  ops::Add,
 };
 #[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
 use std::sync::Arc;
@@ -47,10 +55,55 @@ use typenum::{
 
 use crate::{
   ArrayInteger, ConstFixedDecimal, ConvertError, Decimal, DecimalAssign, DecimalFloat, DecimalOne,
-  DivideError, FixedDecimal, FixedInteger, FromLimbs, Int, Layout, MutableStorage, ParseError,
-  RoundingMode, Scaled, SignedFixedDecimal, Storage, Uint, UnsignedFixedDecimal,
+  DivideError, FillsRepr, FixedDecimal, FixedInteger, FromLimbs, InlineStorage, Int, Layout,
+  MutableStorage, ParseError, RoundingMode, Scaled, SignedFixedDecimal, Storage, Uint,
+  UnsignedFixedDecimal,
   bigint::{MODES, floats::Words, tier},
+  dec, i256,
 };
+
+/// A heap storage of a decimal, as the checks of where a result lives read it: whether its pointer
+/// holds the coefficient in place, and the address of its limbs.
+trait Allocated: Storage {
+  /// Whether the pointer holds its coefficient in place, so that a result stored into an operand
+  /// keeps the allocation of the operand, as in a `Box`. A shared pointer gives each result an
+  /// allocation of its own.
+  const IN_PLACE: bool;
+
+  /// The address of the limbs, which `ArrayInteger::as_limbs` of the integer lends.
+  fn limbs(&self) -> *const u64;
+}
+
+/// Implements [`Allocated`] for the wide integers whose limbs are in the pointer `$pointer`, which
+/// holds its coefficient in place if `$in_place`.
+macro_rules! allocated {
+  ($pointer:ident, $in_place:literal) => {
+    allocated!(@integer Uint, $pointer, $in_place);
+    allocated!(@integer Int, $pointer, $in_place);
+  };
+  (@integer $integer:ident, $pointer:ident, $in_place:literal) => {
+    impl<B, const N: usize> Allocated for $integer<B, $pointer<[u64; N]>>
+    where
+      B: FillsRepr<[u64; N]>,
+      $integer<B, [u64; N]>: InlineStorage,
+    {
+      const IN_PLACE: bool = $in_place;
+
+      fn limbs(&self) -> *const u64 {
+        ArrayInteger::as_limbs(self).as_ptr()
+      }
+    }
+  };
+}
+
+#[cfg(any(feature = "std", feature = "alloc"))]
+allocated!(Box, true);
+#[cfg(any(feature = "std", feature = "alloc"))]
+allocated!(Rc, false);
+#[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
+allocated!(Arc, false);
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+allocated!(TriompheArc, false);
 
 /// The values at which a type is checked, as values of its twin `T`: zero, the limits, one, two
 /// and 25 units of the last digit, negated too for a signed storage, and random coefficients of
@@ -702,6 +755,164 @@ where
   }
 }
 
+/// The address of the limbs of `value`, read through the storage of the decimal.
+fn address<I, F, R: Allocated>(value: &Decimal<I, F, R>) -> *const u64 {
+  value.repr.limbs()
+}
+
+/// The value of `value` in its twin, and the address of its limbs.
+fn placed<I, F, R: Allocated>(value: &Decimal<I, F, R>) -> (Decimal<I, F, R::Inline>, *const u64) {
+  (value.to_inline(), address(value))
+}
+
+/// Checks where the results of `Decimal<I, F, R>` live, over `R`, a heap storage that holds its
+/// coefficient in place, at each sample and each pair of samples whose sum or difference is in the
+/// range: `+=` and `-=` by value and by reference, `clone_from`, also of a `Scaled`, and
+/// `from_repr` of the storage that `repr` moved out keep the allocation of their target; `a + b`,
+/// `a + &b` and a sum of values store into the allocation of `a`, the first item, and `&a + b`
+/// into that of `b`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn check_in_place<I, F, R>()
+where
+  R: Allocated,
+  Decimal<I, F, R>: DecimalAssign
+    + for<'a> AddAssign<&'a Decimal<I, F, R>>
+    + for<'a> SubAssign<&'a Decimal<I, F, R>>
+    + for<'a> Add<&'a Decimal<I, F, R>, Output = Decimal<I, F, R>>,
+  for<'a> &'a Decimal<I, F, R>: Add<Decimal<I, F, R>, Output = Decimal<I, F, R>>,
+  Decimal<I, F, R::Inline>: ConstFixedDecimal,
+{
+  assert!(R::IN_PLACE);
+  let values = pairs(Decimal::<I, F, R>::from_inline);
+  for (a, x) in &values {
+    let value = x.clone();
+    let at = address(&value);
+    let value = Decimal::<I, F, R>::from_repr(value.repr()).expect("in range");
+    assert_eq!(placed(&value), (*a, at), "{a}");
+    for (b, y) in &values {
+      let mut target = x.clone();
+      let at = address(&target);
+      target.clone_from(y);
+      assert_eq!(placed(&target), (*b, at), "{a} from {b}");
+      let mut target = Scaled::new(x.clone(), 3);
+      let at = address(target.value());
+      target.clone_from(&Scaled::new(y.clone(), 5));
+      let place = (placed(target.value()), target.scale());
+      assert_eq!(place, ((*b, at), 5), "{a} from {b}");
+      if let Some(sum) = a.checked_add(b) {
+        let mut target = x.clone();
+        let at = address(&target);
+        target += y.clone();
+        assert_eq!(placed(&target), (sum, at), "{a} += {b}");
+        let mut target = x.clone();
+        let at = address(&target);
+        target += y;
+        assert_eq!(placed(&target), (sum, at), "{a} += &{b}");
+        let lhs = x.clone();
+        let at = address(&lhs);
+        assert_eq!(placed(&(lhs + y.clone())), (sum, at), "{a} + {b}");
+        let lhs = x.clone();
+        let at = address(&lhs);
+        assert_eq!(placed(&(lhs + y)), (sum, at), "{a} + &{b}");
+        let rhs = y.clone();
+        let at = address(&rhs);
+        assert_eq!(placed(&(x + rhs)), (sum, at), "&{a} + {b}");
+        let items = [x.clone(), y.clone()];
+        let at = address(&items[0]);
+        let total: Decimal<I, F, R> = items.into_iter().sum();
+        assert_eq!(placed(&total), (sum, at), "the sum of {a} and {b}");
+      }
+      if let Some(difference) = a.checked_sub(b) {
+        let mut target = x.clone();
+        let at = address(&target);
+        target -= y.clone();
+        assert_eq!(placed(&target), (difference, at), "{a} -= {b}");
+        let mut target = x.clone();
+        let at = address(&target);
+        target -= y;
+        assert_eq!(placed(&target), (difference, at), "{a} -= &{b}");
+      }
+    }
+  }
+}
+
+/// Checks where the results of `Decimal<I, F, R>` live, over `R`, a shared heap storage, at each
+/// sample and each pair of samples whose sum is in the range: `clone` shares the allocation of its
+/// source, and so does `from_repr` of the storage that `repr` moved out; `clone_from`, also of a
+/// `Scaled`, shares that of its source; and `a + b`, `a + &b`, `&a + b`, `&a + &b` and a sum of
+/// values store into an allocation of their own, while the other owner of each operand keeps its
+/// value and its address.
+#[inline(never)]
+fn check_shared<I, F, R>()
+where
+  R: Allocated,
+  Decimal<I, F, R>: FixedDecimal + for<'a> Add<&'a Decimal<I, F, R>, Output = Decimal<I, F, R>>,
+  for<'a> &'a Decimal<I, F, R>: Add<Decimal<I, F, R>, Output = Decimal<I, F, R>>
+    + Add<&'a Decimal<I, F, R>, Output = Decimal<I, F, R>>,
+  Decimal<I, F, R::Inline>: ConstFixedDecimal,
+{
+  assert!(!R::IN_PLACE);
+  let values = pairs(Decimal::<I, F, R>::from_inline);
+  for (a, x) in &values {
+    let at = address(x);
+    let shared = x.clone();
+    assert_eq!(placed(&shared), (*a, at), "{a}");
+    let value = Decimal::<I, F, R>::from_repr(shared.repr()).expect("in range");
+    assert_eq!(placed(&value), (*a, at), "{a}");
+    for (b, y) in &values {
+      let owners = [placed(x), placed(y)];
+      let mut target = x.clone();
+      target.clone_from(y);
+      assert_eq!(placed(&target), owners[1], "{a} from {b}");
+      let mut target = Scaled::new(x.clone(), 3);
+      target.clone_from(&Scaled::new(y.clone(), 5));
+      let place = (placed(target.value()), target.scale());
+      assert_eq!(place, (owners[1], 5), "{a} from {b}");
+      if let Some(sum) = a.checked_add(b) {
+        let results: [Decimal<I, F, R>; 5] = [
+          x.clone() + y.clone(),
+          x.clone() + y,
+          x + y.clone(),
+          x + y,
+          [x.clone(), y.clone()].into_iter().sum(),
+        ];
+        for result in &results {
+          let (value, place) = placed(result);
+          assert_eq!(value, sum, "{a} + {b}");
+          assert!(place != owners[0].1 && place != owners[1].1, "{a} + {b}");
+        }
+      }
+      assert_eq!([placed(x), placed(y)], owners, "{a}, {b}");
+    }
+  }
+}
+
+/// Checks where `-a` stores, for `Decimal<I, F, R>` over a signed heap storage `R`, at each
+/// sample: into the allocation of `a` in a pointer that holds its coefficient in place, and in a
+/// shared pointer into an allocation of its own, while the other owner of `a` keeps its value and
+/// its address.
+#[inline(never)]
+fn check_negation_place<I, F, R>()
+where
+  R: Allocated,
+  Decimal<I, F, R>: SignedFixedDecimal,
+  Decimal<I, F, R::Inline>: ConstFixedDecimal + SignedFixedDecimal,
+{
+  for (a, x) in pairs(Decimal::<I, F, R>::from_inline) {
+    let other = x.clone();
+    let at = address(&x);
+    let negated = -x;
+    assert_eq!(negated.to_inline(), -a, "-{a}");
+    if R::IN_PLACE {
+      assert_eq!(address(&negated), at, "-{a}");
+    } else {
+      assert_ne!(address(&negated), at, "-{a}");
+      assert_eq!(placed(&other), (a, at), "-{a}");
+    }
+  }
+}
+
 /// Checks a type with [`check_values`], written `Integral, Fraction, Storage`.
 macro_rules! values_agree {
   ($integral:ty, $fraction:ty, $repr:ty) => {
@@ -713,6 +924,21 @@ macro_rules! values_agree {
 macro_rules! generic_code_agrees {
   ($integral:ty, $fraction:ty, $repr:ty) => {
     check_generic_code::<$integral, $fraction, $repr>()
+  };
+}
+
+/// Checks a type in a `Box` with [`check_in_place`], written `Integral, Fraction, Storage`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+macro_rules! in_place_agrees {
+  ($integral:ty, $fraction:ty, $repr:ty) => {
+    check_in_place::<$integral, $fraction, $repr>()
+  };
+}
+
+/// Checks a type in a shared pointer with [`check_shared`], written `Integral, Fraction, Storage`.
+macro_rules! shared_agrees {
+  ($integral:ty, $fraction:ty, $repr:ty) => {
+    check_shared::<$integral, $fraction, $repr>()
   };
 }
 
@@ -989,6 +1215,29 @@ macro_rules! heap_tests {
       for_each_type!(generic_code_agrees, $pointer);
     }
 
+    /// `-a` stores into the allocation of `a` in a pointer that holds its coefficient in place,
+    /// and into an allocation of its own in a shared one, for each signed type over the pointer.
+    #[test]
+    fn negation_stores_where_the_pointer_stores() {
+      check_negation_place::<U58, U18, Int<U256, $pointer<[u64; 4]>>>();
+      if !tier().is_miri() {
+        check_negation_place::<U135, U18, Int<U512, $pointer<[u64; 8]>>>();
+        check_negation_place::<U155, U18, Int<U576, $pointer<[u64; 9]>>>();
+      }
+    }
+
+    /// A literal reaches a decimal over the pointer through its twin: as the value that
+    /// `from_inline` stores, whose parameter gives the literal its type, and as a literal of the
+    /// twin, widened.
+    #[test]
+    fn literals_come_through_the_twin() {
+      type Heap = Decimal<U58, U18, Int<U256, $pointer<[u64; 4]>>>;
+      let stored = Heap::from_inline(dec!(1.5));
+      assert_eq!(stored.to_string(), "1.5");
+      let widened: Heap = dec!(1.5 as Decimal<U58, U18, i256>).widen();
+      assert_eq!(widened, stored);
+    }
+
     /// A decimal over the pointer has the size and the alignment of a pointer, and so has its
     /// `Option`, which takes the niche of the pointer, for each type over the pointer.
     #[test]
@@ -1005,6 +1254,20 @@ macro_rules! heap_tests {
   };
 }
 
+/// Defines the tests of the decimals over the shared heap pointer `$pointer`, which never writes
+/// the coefficient that it holds.
+macro_rules! shared_tests {
+  ($pointer:ident) => {
+    /// A result over the pointer takes an allocation of its own, while the other owners of its
+    /// operands keep their values and their addresses, and `clone`, `clone_from` and `repr` with
+    /// `from_repr` share an allocation, for each type over the pointer.
+    #[test]
+    fn results_take_allocations_of_their_own() {
+      for_each_type!(shared_agrees, $pointer);
+    }
+  };
+}
+
 /// The generic code of the checks takes a decimal over an inline storage too, as its own twin:
 /// code bounded by `FixedDecimal` and by `DecimalAssign`, over any storage and over a storage that
 /// holds its coefficient in place.
@@ -1012,6 +1275,24 @@ macro_rules! heap_tests {
 fn generic_code_takes_an_inline_decimal() {
   check_generic_code::<U10, U8, i64>();
   check_assignments::<U10, U8, i64>();
+}
+
+/// In this build, which has the heap storages and their operators with one owned operand, a literal
+/// on the right of `+` and of `+=` takes the type of the left operand, a decimal over an inline
+/// storage or a `Scaled` over one: no operator of a heap decimal is a candidate for them.
+#[test]
+fn a_literal_operand_takes_the_type_of_an_inline_decimal() {
+  type Price = Decimal<U10, U8>;
+  let price: Price = "64250.5".parse().expect("a price");
+  assert_eq!((price + dec!(0.5)).to_string(), "64251");
+  let mut total = price;
+  total += dec!(0.25);
+  assert_eq!(total.to_string(), "64250.75");
+  let scaled = Scaled::new(price, 2);
+  assert_eq!((scaled + dec!(0.5)).to_string(), "64251.00");
+  let mut total = scaled;
+  total += dec!(0.25);
+  assert_eq!(total.to_string(), "64250.75");
 }
 
 /// `Box<[u64; N]>`, which holds its coefficient in place.
@@ -1045,6 +1326,15 @@ mod boxed {
     }
   }
 
+  /// A result in a `Box` stays in the allocation of the operand that the operation owns: of its
+  /// target for an assignment, by value or by reference, and for `clone_from`; of the left operand
+  /// of `a + b` and `a + &b` and of the right one of `&a + b`; of the first item of a sum; and of
+  /// the storage that `repr` moved out and `from_repr` took back.
+  #[test]
+  fn results_stay_in_the_allocation_of_an_operand() {
+    for_each_type!(in_place_agrees, Box);
+  }
+
   /// Code bounded by `DecimalAssign` and code over a storage that holds its coefficient in place
   /// take the decimals in a `Box`, and give the results of their twins.
   #[test]
@@ -1066,6 +1356,7 @@ mod rc {
   use super::*;
 
   heap_tests!(Rc);
+  shared_tests!(Rc);
 }
 
 /// `Arc<[u64; N]>`.
@@ -1074,6 +1365,7 @@ mod arc {
   use super::*;
 
   heap_tests!(Arc);
+  shared_tests!(Arc);
 
   /// The decimals in an `Arc` are `Send` and `Sync`, as the `Arc` is.
   #[test]
@@ -1089,6 +1381,7 @@ mod triomphe_arc {
   use super::*;
 
   heap_tests!(TriompheArc);
+  shared_tests!(TriompheArc);
 
   /// The decimals in a `triomphe::Arc` are `Send` and `Sync`, as the pointer is.
   #[test]

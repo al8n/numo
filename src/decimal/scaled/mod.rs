@@ -20,6 +20,8 @@ use crate::{
   rounding::RoundingMode,
 };
 
+#[cfg(any(feature = "std", feature = "alloc"))]
+mod heap;
 #[cfg(test)]
 mod tests;
 
