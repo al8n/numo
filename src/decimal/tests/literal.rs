@@ -8,7 +8,7 @@
 //! literals lists them first in a constant of the same type, and a comparison that a constant can
 //! make is made there too.
 
-use std::{format, vec, vec::Vec};
+use std::{format, string::ToString, vec, vec::Vec};
 
 use num_bigint::BigInt;
 use typenum::{
@@ -236,7 +236,6 @@ fn literals_take_the_type_of_their_context() {
     (tuple.0, "7.5"),
     (vector[0], "8.5"),
     (vector[1], "14.5"),
-    (some.expect("a value"), "9.5"),
     (closure(), "10.5"),
     (matched, "11.5"),
     (*promoted, "13.5"),
@@ -245,6 +244,7 @@ fn literals_take_the_type_of_their_context() {
   for (value, text) in contexts {
     assert_eq!(value, parse::<Price>(text), "{text}");
   }
+  assert_eq!(some, Some(parse::<Price>("9.5")));
 
   let a: Price = dec!(100);
   assert_eq!(a + dec!(0.5), parse::<Price>("100.5"));
