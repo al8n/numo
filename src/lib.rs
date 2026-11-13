@@ -1,11 +1,12 @@
 //! Exact fixed-point decimal numbers whose digit counts are part of the type.
 //!
 //! [`Decimal<Integral, Fraction, Repr>`](Decimal) stores the value `c / 10^Fraction` as an integer
-//! coefficient `c` of type `Repr`, with `|c| <= 10^(Integral + Fraction) - 1`. The digit counts
-//! are [`typenum`] numbers, so capacity is checked during type checking: no value can be created
-//! for a type with more than 154 digits or with a `Repr` that cannot hold its digits. `Repr`
-//! defaults to the smallest signed integer that holds the digits, up to 153 digits; an unsigned
-//! `Repr`, such as `u64` for up to 19 digits, gives a type whose values are never negative.
+//! coefficient `c` of type `Repr`, with `|c| <= 10^(Integral + Fraction) - 1`. The digit counts are
+//! [`typenum`] numbers, so capacity is checked during type checking: a type holds up to 307 digits,
+//! or 308 in an explicit `u1024`, and no value can be created for a type with more digits or with a
+//! `Repr` that cannot hold its digits. `Repr` defaults to the smallest signed integer that holds
+//! the digits; an unsigned `Repr`, such as `u64` for up to 19 digits, gives a type whose values are
+//! never negative.
 //!
 //! ```
 //! use numo::{
@@ -98,14 +99,19 @@
 //!
 //! # Wide storage
 //!
-//! Up to 38 digits, `Repr` is a native integer. Beyond that, up to 153 digits, it is one of the
-//! wide integers of this crate, aliases of [`Uint`] and [`Int`] that store 64-bit limbs: the signed
-//! [`i192`], [`i256`], [`i320`], [`i384`], [`i448`] and [`i512`] hold 57, 76, 96, 115, 134 and 153
-//! digits, and the unsigned [`u192`], [`u256`], [`u320`], [`u384`], [`u448`] and [`u512`] hold 57,
-//! 77, 96, 115, 134 and 154. So any uint256 amount, which has at most 78 digits, fits a `u320`. The
-//! 154th digit is available only with an explicit `u512`, as in `Decimal<U154, U0, u512>`; the
-//! default storage and the product of [`exact_mul`](Decimal::exact_mul) stop at 153 digits, and a
-//! product with more digits fails to compile.
+//! Up to 38 digits, `Repr` is a native integer. Beyond that, up to 307 digits, it is one of the
+//! wide integers of this crate, aliases of [`Uint`] and [`Int`] that store 64-bit limbs, every 64
+//! bits from 192 to 1024: the signed [`i192`], [`i256`], [`i320`], [`i384`], [`i448`], [`i512`],
+//! [`i576`], [`i640`], [`i704`], [`i768`], [`i832`], [`i896`], [`i960`] and [`i1024`] hold 57, 76,
+//! 96, 115, 134, 153, 173, 192, 211, 230, 250, 269, 288 and 307 digits, and the unsigned [`u192`],
+//! [`u256`], [`u320`], [`u384`], [`u448`], [`u512`], [`u576`], [`u640`], [`u704`], [`u768`],
+//! [`u832`], [`u896`], [`u960`] and [`u1024`] hold 57, 77, 96, 115, 134, 154, 173, 192, 211, 231,
+//! 250, 269, 288 and 308. So any uint256 amount, which has at most 78 digits, fits a `u320`. The
+//! 308th digit is available only with an explicit `u1024`, as in `Decimal<U308, U0, u1024>`; the
+//! default storage stops at 307 digits, and so does the product of
+//! [`exact_mul`](Decimal::exact_mul) but for two unsigned operands, which have a product of up to
+//! 308 digits: the product of any two decimals of at most 512 bits has a type, and a product with
+//! more digits fails to compile.
 //!
 //! A wide coefficient is built from its limbs, least significant first, and
 //! [`from_repr`](Decimal::from_repr) returns `None` when it is out of range. Parsing decimal text

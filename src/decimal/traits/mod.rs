@@ -430,7 +430,9 @@ pub trait ConstFixedDecimal: DecimalAssign + FixedDecimal<Inline = Self> + Copy 
 
 /// A decimal number with a signed storage: [`Decimal`] over `i8`, `i16`, `i32`, `i64`, `i128`,
 /// [`i192`](crate::i192), [`i256`](crate::i256), [`i320`](crate::i320), [`i384`](crate::i384),
-/// [`i448`](crate::i448) or [`i512`](crate::i512), or [`Scaled`] over such a decimal.
+/// [`i448`](crate::i448), [`i512`](crate::i512), [`i576`](crate::i576), [`i640`](crate::i640),
+/// [`i704`](crate::i704), [`i768`](crate::i768), [`i832`](crate::i832), [`i896`](crate::i896),
+/// [`i960`](crate::i960) or [`i1024`](crate::i1024), or [`Scaled`] over such a decimal.
 ///
 /// The methods are the inherent methods of the same names, which a concrete type reaches without
 /// this trait, also in constant contexts. The range of a signed storage is symmetric, so negation
@@ -479,7 +481,9 @@ pub trait SignedFixedDecimal: FixedDecimal + Neg<Output = Self> {
 
 /// A decimal number with an unsigned storage, whose values are never negative: [`Decimal`] over
 /// `u8`, `u16`, `u32`, `u64`, `u128`, [`u192`](crate::u192), [`u256`](crate::u256),
-/// [`u320`](crate::u320), [`u384`](crate::u384), [`u448`](crate::u448) or [`u512`](crate::u512),
+/// [`u320`](crate::u320), [`u384`](crate::u384), [`u448`](crate::u448), [`u512`](crate::u512),
+/// [`u576`](crate::u576), [`u640`](crate::u640), [`u704`](crate::u704), [`u768`](crate::u768),
+/// [`u832`](crate::u832), [`u896`](crate::u896), [`u960`](crate::u960) or [`u1024`](crate::u1024),
 /// or [`Scaled`] over such a decimal.
 ///
 /// This trait has no items of its own. As a bound, it states that values are never negative, so
@@ -684,13 +688,13 @@ pub trait DecimalFloat: FixedDecimal {
 ///
 /// `exact_mul` is the inherent method of the same name, which a concrete type reaches without this
 /// trait. [`Decimal`] implements this trait for every pair of decimal types whose product has at
-/// most 153 digits, with the bounds of the inherent method, which generic code then does not
-/// repeat. `Output` has the integral and fraction digits of both operands together, in the storage
-/// that [`Pick`](crate::Pick) chooses for them, which is unsigned only if both operand storages
-/// are. It implements [`FixedDecimal`], so generic code with that trait in scope computes with the
-/// product without a bound of its own. As for [`Mul`](core::ops::Mul), `Rhs` defaults to `Self`.
-/// Two [`Scaled`] values multiply into a `Scaled` with the product of their decimals and the sum
-/// of their scales, saturating at 65535.
+/// most 307 digits, or 308 when both operand storages are unsigned, with the bounds of the inherent
+/// method, which generic code then does not repeat. `Output` has the integral and fraction digits
+/// of both operands together, in the storage that [`Pick`](crate::Pick) chooses for them, which is
+/// unsigned only if both operand storages are. It implements [`FixedDecimal`], so generic code with
+/// that trait in scope computes with the product without a bound of its own. As for
+/// [`Mul`](core::ops::Mul), `Rhs` defaults to `Self`. Two [`Scaled`] values multiply into a
+/// `Scaled` with the product of their decimals and the sum of their scales, saturating at 65535.
 ///
 /// ```
 /// use numo::{
@@ -822,7 +826,7 @@ pub trait ConvertTo<T>: SealedPair<T> {
 ///
 /// `div_round` is the inherent method of the same name, which a concrete type reaches without this
 /// trait. [`Decimal`] implements this trait for every dividend, divisor and quotient type whose
-/// intermediate has at most 153 digits, or 154 when both operand storages are unsigned, with the
+/// intermediate has at most 307 digits, or 308 when both operand storages are unsigned, with the
 /// bounds of the inherent method, which generic code then does not repeat. A [`Scaled`] divides by
 /// a `Scaled` into a `Scaled` whose scale is the fraction digits of `Out`.
 ///

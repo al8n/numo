@@ -4,8 +4,8 @@ FEATURES
 
 - `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers with type-level digit
   counts, stored in a native integer from `i8` to `i128` or from `u8` to `u128` (up to 38 digits),
-  or in a wide integer from `i192` to `i512` or from `u192` to `u512` (up to 153 digits, and 154
-  with an explicit `u512`).
+  or in a wide integer from `i192` to `i1024` or from `u192` to `u1024` (up to 307 digits, or 308 in
+  an explicit `u1024`).
   - `const fn` constants and methods for each storage: `ZERO`, `ONE`, `MIN`, `MAX`, `parse`,
     `from_repr`, `repr`, `checked_add`, `checked_sub`, `is_zero` and `is_positive`, plus `neg`,
     `abs` and `is_negative` for signed storages.
@@ -24,14 +24,16 @@ FEATURES
   - The conversions with the floats, for interchange and display, not for arithmetic that must be
     exact. `to_f64` and `to_f32`, `const fn`s of every storage, return the nearest float, ties to
     even, rounded once, the float that parsing the text of the decimal gives; like `trunc`, `floor`
-    and `ceil`, they round without a `RoundingMode`. `to_f32` gives the infinity of the sign of the
-    value for a magnitude that rounds to `2^128` or more, a subnormal float for one that rounds
-    below `2^-126`, and a zero with the sign of the value from `2^-150` down. From a float, each
-    reading is rounded once with a `RoundingMode` to the fraction digits of the type:
-    `round_from_f64` and `round_from_f32`, `const fn`s, read the exact binary value, and
-    `from_f64_shortest` and `from_f32_shortest` the shortest text that parses back to the float, so
-    that `0.1` reads as `0.1`. NaN and the infinities are reported by `FromFloatError`, and `-0.0`
-    is zero. The sealed trait `DecimalFloat` gives the six to generic code.
+    and `ceil`, they round without a `RoundingMode`. `to_f64` never gives an infinity, and a
+    subnormal float only for the two smallest values above zero of a type with 308 fraction digits.
+    `to_f32` gives the infinity of the sign of the value for a magnitude that rounds to `2^128` or
+    more, a subnormal float for one that rounds below `2^-126`, and a zero with the sign of the
+    value from `2^-150` down. From a float, each reading is rounded once with a `RoundingMode` to
+    the fraction digits of the type: `round_from_f64` and `round_from_f32`, `const fn`s, read the
+    exact binary value, and `from_f64_shortest` and `from_f32_shortest` the shortest text that
+    parses back to the float, so that `0.1` reads as `0.1`. NaN and the infinities are reported by
+    `FromFloatError`, and `-0.0` is zero. The sealed trait `DecimalFloat` gives the six to generic
+    code.
   - Exact parsing through `FromStr`, and the shortest exact text through `Display` and `Debug`.
   - Parsing accepts the numeric strings of the General Decimal Arithmetic specification, every
     form that `f64` parses (signs, `.5`, `5.`, exponents) and `_` separators as in Rust literals,
@@ -56,13 +58,11 @@ FEATURES
     whatever its magnitude, `-0` included. `-` alone, a second sign and other invalid text after
     the sign are `InvalidSyntax`, and `-inf` is `NotFinite`. The kind comes after `NotFinite` and
     before `OutOfRange`, as the sign is decided after the syntax and before the value.
-  - Wide storages: `i192`, `i256`, `i320`, `i384`, `i448` and `i512` hold 57, 76, 96, 115, 134 and
-    153 digits, and `u192`, `u256`, `u320`, `u384`, `u448` and `u512` hold 57, 77, 96, 115, 134 and
-    154, so any uint256 amount fits `Decimal<U60, U18, u320>`. They have the same constants,
-    `const fn` methods, parsing and formatting as the native storages; products reach up to 153
-    digits, and `widen` and `try_convert` convert between native and wide storages. The 154th digit
-    is available only with an explicit `u512`, as in `Decimal<U154, U0, u512>`, because no signed
-    storage holds it.
+  - The wide storages are `i192` to `i1024` and `u192` to `u1024`, every 64 bits, for decimals of up
+    to 307 digits, or 308 in an explicit `u1024`, each with the constants, the `const fn`s and
+    `dec!`. The product of any two decimals of at most 512 bits has a type. Any uint256 amount fits
+    `Decimal<U60, U18, u320>`, and `widen` and `try_convert` convert between native and wide
+    storages.
   - The errors `ParseErrorKind`, `ConvertError`, `QuantizeError` and `DivideError` have a
     `const fn` predicate for each variant, such as `is_out_of_range`.
   - The constants `INTEGRAL`, `FRACTION` and `DIGITS`, the digit counts of the type, and `SIGNED`,
@@ -136,7 +136,7 @@ FEATURES
   - `div_round` divides by a decimal of any type into any decimal type, rounding the quotient once
     with the mode, and reports the new `DivideError`: `DivisionByZero` for a zero divisor, which
     never gives zero, and `OutOfRange` for a quotient outside the target's range. The intermediate
-    is sized at the type level; one of more than 153 digits fails to compile, and 154 is allowed
+    is sized at the type level; one of more than 307 digits fails to compile, and 308 is allowed
     only when both storages are unsigned.
   - `const fn` `round_significant` rounds to a number of significant digits with the mode, in the
     type of the value, and reports `OutOfRange` where a carry leaves the range. The count is a
