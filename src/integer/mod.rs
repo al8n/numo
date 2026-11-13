@@ -148,7 +148,11 @@ mod traits;
 /// The limbs live in the allocation, and each result where its operation puts it. An operator on
 /// two references allocates its result, and an operator with an owned operand stores its result in
 /// the allocation of that operand, the left one of two, so `a + b` reuses the allocation of `a` and
-/// frees that of `b`. A compound assignment, as in `total += &a`,
+/// frees that of `b`. A method builds only the integers that it returns, and none when it returns
+/// `None` or an error, and one that takes its integer by value, as the casts between the signs and
+/// [`from_be`](crate::IntegerByteOrder::from_be) do, stores its result in that allocation. `Sum`
+/// and `Product` of values store their result in the allocation of the first item, and those of
+/// references allocate it. A compound assignment, as in `total += &a`,
 /// [`set_bit`](crate::IntegerBits::set_bit) and `clone_from` store in the allocation of their
 /// target, `clone` allocates, and the casts between the signs keep the allocation. `From` moves a
 /// `Box<[L; N]>` out of an integer, and into one whose width fills the array, without a copy, and

@@ -5,8 +5,8 @@
 //! row of a heap storage lends the arrays of its operands to the row of the same name of the
 //! array, through `Borrow`, and puts each array that it returns in an allocation of its own, as
 //! `from_inline` does. The exceptions are zero, which is built in its allocation, the conversions
-//! with the non-zero storage, which is the pointer itself, and the casts between the signs, which
-//! store their result in the allocation that they consume.
+//! with the non-zero storage, which is the pointer itself, and the casts between the signs, the
+//! saturating ones among them, which store their result in the allocation that they consume.
 
 use core::{
   borrow::{Borrow, BorrowMut},

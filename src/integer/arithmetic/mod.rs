@@ -6,10 +6,13 @@
 //! without an overflow prefix, such as the Euclidean and rounded division, the roots and the
 //! logarithms; the panics; and the operators, `Sum` and `Product`.
 //!
-//! Each storage computes the overflowing methods at the width `Bits`, and most other methods are
-//! derived from them. The tables pass their rows to the callbacks of `tables`, for the inherent
-//! `const fn`s of each storage and for the generic implementations of the traits, so their bodies
-//! name the panics by the full paths `$crate::integer::arithmetic::overflow` and
+//! Each storage computes the overflowing methods at the width `Bits`. The checked methods compute
+//! the same on the storage, and build a value only where it is in range; the wrapping methods are
+//! derived from the overflowing ones, and the saturating and the strict ones from the checked ones
+//! or, where a zero divisor must panic, from the division of the storage, so that a method builds
+//! only the integers that it returns. The tables pass their rows to the callbacks of `tables`, for
+//! the inherent `const fn`s of each storage and for the generic implementations of the traits, so
+//! their bodies name the panics by the full paths `$crate::integer::arithmetic::overflow` and
 //! `$crate::integer::arithmetic::domain`. The unchecked tables serve only the traits, whose bodies
 //! compute the overflowing or the checked method and check it with a debug assertion: they never
 //! call the inherent `unchecked_*` methods, which each storage writes out with their unsafe blocks.
