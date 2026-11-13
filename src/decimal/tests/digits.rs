@@ -12,6 +12,7 @@
 //! test would then hold the values of every type.
 use core::num::NonZero;
 use std::{
+  boxed::Box,
   format,
   string::{String, ToString},
   vec::Vec,
@@ -821,4 +822,63 @@ fn engineering_notation_with_precision_and_flags() {
     format!("{:>#8e}", value::<Decimal<U0, U2>>("0.12")),
     "  120e-3"
   );
+}
+
+/// The example of the parts and the digits of a value in the docs of `Decimal`, which no local
+/// build compiles: the same statements, with `crate::` for `numo::`.
+#[test]
+fn the_example_of_the_parts_and_the_digits_in_the_docs() -> Result<(), Box<dyn core::error::Error>>
+{
+  type Price = Decimal<U10, U8>;
+
+  const FIVE: NonZero<u32> = NonZero::new(5).unwrap();
+
+  let change: Price = "-64250.75".parse()?;
+  assert_eq!(change.trunc().to_string(), "-64250");
+  assert_eq!(change.fract().to_string(), "-0.75");
+  assert_eq!(change.floor()?.to_string(), "-64251");
+  assert_eq!(change.ceil()?.to_string(), "-64250");
+  assert!(!change.is_integer());
+  assert_eq!(Price::MAX.ceil(), Err(ConvertError::OutOfRange));
+
+  assert_eq!(change.order_of_magnitude(), 4);
+  assert_eq!(change.significant_digits(), 7);
+  assert_eq!(change.fraction_digits(), 2);
+  let rounded = change.round_significant(FIVE, RoundingMode::HalfEven)?;
+  assert_eq!(rounded.to_string(), "-64251");
+
+  // A count read from data is checked where it is read.
+  let count: u32 = 2;
+  let digits = NonZero::new(count).ok_or("no digits")?;
+  let rounded = change.round_significant(digits, RoundingMode::Down)?;
+  assert_eq!(rounded.to_string(), "-64000");
+  Ok(())
+}
+
+/// The example of scientific and engineering notation in the docs of `Decimal`, which no local
+/// build compiles: the same statements, with `crate::` for `numo::`.
+#[test]
+fn the_example_of_the_exponent_formats_in_the_docs() -> Result<(), crate::ParseError> {
+  type Price = Decimal<U10, U8>;
+
+  let price: Price = "64250.5".parse()?;
+  assert_eq!(format!("{price:e}"), "6.42505e4");
+  assert_eq!(format!("{price:E}"), "6.42505E4");
+  assert_eq!(format!("{:e}", "0.00012".parse::<Price>()?), "1.2e-4");
+  assert_eq!(format!("{:e}", Price::ZERO), "0e0");
+  assert_eq!(format!("{price:.8e}"), "6.42505000e4");
+  assert_eq!(format!("{price:.2e}"), "6.42505e4");
+  assert_eq!(format!("{:012e}", -price), "-006.42505e4");
+  assert_eq!(format!("{price:>12E}"), "   6.42505E4");
+  assert_eq!(format!("{price:e}").parse::<Price>()?, price);
+
+  assert_eq!(format!("{price:#e}"), "64.2505e3");
+  assert_eq!(format!("{:#e}", "0.00012".parse::<Price>()?), "120e-6");
+  assert_eq!(
+    format!("{:#E}", "12345678".parse::<Price>()?),
+    "12.345678E6"
+  );
+  assert_eq!(format!("{:#.2e}", "100".parse::<Price>()?), "100.00e0");
+  assert_eq!(format!("{price:#e}").parse::<Price>()?, price);
+  Ok(())
 }

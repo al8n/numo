@@ -116,6 +116,16 @@ mod tests;
 /// - [`round_to`](ConvertTo::round_to) and [`div_round`](DivRound::div_round) take the fraction
 ///   digits of the target type, so an exact `1.00 / 4` into a type with 8 fraction digits is
 ///   `0.25000000`, where the General Decimal Arithmetic would give `0.25`;
+/// - [`trunc`](FixedDecimal::trunc), [`floor`](FixedDecimal::floor) and
+///   [`ceil`](FixedDecimal::ceil) take scale 0, and [`fract`](FixedDecimal::fract) keeps the scale;
+/// - [`round_significant`](FixedDecimal::round_significant) takes the scale that the significant
+///   digits of its result need, between 0 and 255, so `305.459` to four digits is `305.5`, to seven
+///   `305.4590`, and `999.96` to four digits `1000`;
+/// - [`order_of_magnitude`](FixedDecimal::order_of_magnitude),
+///   [`significant_digits`](FixedDecimal::significant_digits),
+///   [`fraction_digits`](FixedDecimal::fraction_digits) and
+///   [`is_integer`](FixedDecimal::is_integer) are those of the value, whatever the scale: `2.50`
+///   has one fraction digit and scale 2, and `2.00` is an integer;
 /// - negation and [`abs`](SignedFixedDecimal::abs) keep the scale;
 /// - zero, the limits, one and a value made by [`from_repr`](FixedDecimal::from_repr) have scale
 ///   0, and `Scaled::new` gives a coefficient another scale.

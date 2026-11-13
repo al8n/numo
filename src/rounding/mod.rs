@@ -5,10 +5,12 @@ use core::cmp::Ordering;
 /// How to round a value that lies between two representable results.
 ///
 /// [`Decimal::round_to`](crate::Decimal::round_to) rounds to fewer fraction digits,
-/// [`Decimal::quantize`](crate::Decimal::quantize) rounds to a multiple of a step, and
-/// [`Decimal::div_round`](crate::Decimal::div_round) rounds a quotient. Each takes the mode as an
-/// argument; there is no default mode. In every mode, a value that is already representable is
-/// returned unchanged, and a negative value that rounds to zero gives zero, which has no sign.
+/// [`Decimal::quantize`](crate::Decimal::quantize) rounds to a multiple of a step,
+/// [`Decimal::div_round`](crate::Decimal::div_round) rounds a quotient, and
+/// [`Decimal::round_significant`](crate::Decimal::round_significant) rounds to a number of
+/// significant digits. Each takes the mode as an argument; there is no default mode. In every
+/// mode, a value that is already representable is returned unchanged, and a negative value that
+/// rounds to zero gives zero, which has no sign.
 ///
 /// The modes are those of Java's `RoundingMode` without `UNNECESSARY`, whose part an exact
 /// conversion such as [`try_convert`](crate::Decimal::try_convert) plays, and all eight of the
@@ -80,19 +82,21 @@ pub enum RoundingMode {
   HalfDown,
   /// To the nearer result; a tie goes to the even one, which is the result whose last digit is
   /// even for [`round_to`](crate::Decimal::round_to) and [`div_round`](crate::Decimal::div_round),
-  /// and the multiple with the even quotient for [`quantize`](crate::Decimal::quantize). Also known
-  /// as banker's rounding.
+  /// the result whose last kept digit is even for
+  /// [`round_significant`](crate::Decimal::round_significant), and the multiple with the even
+  /// quotient for [`quantize`](crate::Decimal::quantize). Also known as banker's rounding.
   HalfEven,
   /// Away from zero if the last digit of the result rounded toward zero is 0 or 5, and toward zero
   /// otherwise: `ROUND_05UP` of the General Decimal Arithmetic specification. The digit is the last
-  /// kept one for [`round_to`](crate::Decimal::round_to), the last digit of the quotient for
+  /// kept one for [`round_to`](crate::Decimal::round_to) and
+  /// [`round_significant`](crate::Decimal::round_significant), the last digit of the quotient for
   /// [`div_round`](crate::Decimal::div_round), and the last decimal digit of the number of steps
   /// for [`quantize`](crate::Decimal::quantize).
   ///
   /// A result that is not exact thus never ends in 0 or 5, so rounding it again to fewer digits, in
   /// any mode, gives what rounding the exact value once gives. This holds for the roundings at a
-  /// power of ten: `round_to`, `div_round`, and `quantize` with a step `10^-k`. This makes it the
-  /// mode for an intermediate result that a later step rounds again.
+  /// power of ten: `round_to`, `div_round`, `round_significant`, and `quantize` with a step
+  /// `10^-k`. This makes it the mode for an intermediate result that a later step rounds again.
   #[is_variant(ignore)]
   Up05,
 }

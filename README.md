@@ -107,8 +107,10 @@ fn main() -> Result<(), ParseError> {
   `checked_sub` return `None` outside the range, `exact_mul` returns a wider type that always holds
   the product, up to 153 digits, `widen` converts to a type with at least as many digits, and
   `try_convert` reports `OutOfRange` or `Inexact` instead of rounding. Rounding happens only where
-  an explicit `RoundingMode` is given: `round_to` converts to fewer fraction digits, `quantize`
-  rounds to a multiple of a step, and `div_round` divides into any decimal type.
+  it is asked for: `trunc`, `floor` and `ceil` round to an integer in their own direction, and every
+  other rounding takes an explicit `RoundingMode`: `round_to` converts to fewer fraction digits,
+  `quantize` rounds to a multiple of a step, `div_round` divides into any decimal type, and
+  `round_significant` rounds to a number of significant digits.
   The modes are `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`, `HalfEven` and `Up05`.
 - The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
   references, and `Sum` adds the values or the references of an iterator. They are exact too: a
@@ -117,6 +119,9 @@ fn main() -> Result<(), ParseError> {
   `saturating_add` and `saturating_sub` the limit that it passes. `checked_rem` is the exact
   remainder, with the sign of the dividend. There are no `*`, `/` or `%` operators: `exact_mul`
   and `div_round` are methods.
+- The parts and the digits of a value: `trunc`, `fract`, `floor` and `ceil`, in the type of the
+  value, where `floor` and `ceil` report a result out of range, and `is_integer`,
+  `order_of_magnitude`, `significant_digits` and `fraction_digits`.
 - Conversions follow the sign of the storage. The product of two unsigned storages is unsigned,
   and any other product is signed. `widen` converts an unsigned storage to any storage, but a
   signed storage only to a signed one. `try_convert` reports a negative value converted to an
@@ -145,7 +150,8 @@ fn main() -> Result<(), ParseError> {
   or a `static` item and with `as` when the code is checked, and elsewhere when the code is
   generated.
 - `Display` writes the shortest exact text, without an exponent, and `{:e}` and `{:E}` write it in
-  scientific notation, such as `6.42505e4`. Format precision pads with zeros but never rounds.
+  scientific notation, such as `6.42505e4`, or with `#` in engineering notation, such as
+  `64.2505e3`. Format precision pads with zeros but never rounds.
 
 ```rust
 use numo::{
@@ -175,7 +181,7 @@ that the text showed, for code that must write a text back as it came. It parses
 of `Decimal::parse`, in a `const fn` of each storage and through `FromStr`, writes at least as many
 fraction digits as its scale, and compares, orders and hashes by value only. Every decimal trait is
 implemented for it over any decimal, so generic code takes a `Scaled` and a bare decimal alike: a
-sum takes the larger scale, an exact product the sum of the scales, and a rounded value or a
+sum takes the larger scale, an exact product the sum of the scales, and a value of `round_to` or a
 quotient the fraction digits of its target type. The operators `+`, `-`, `+=` and `-=` and `Sum`
 work as for a decimal, and their result takes the larger scale. A scale above 255 is
 `ScaleTooLarge`, which only the `parse` of `Scaled` reports. A literal of `dec!` keeps its scale
