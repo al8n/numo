@@ -413,7 +413,7 @@ pub trait UnsignedDigits: Sealed + Sized {
   ///
   /// Panics if `base` is below 2, reporting the caller, when it is called.
   #[track_caller]
-  fn to_base_le(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<Self>;
+  fn to_base_le(&self, base: u64) -> impl FusedIterator<Item = u64> + use<Self>;
 
   /// The digits of the value in `base`, most significant first, without the zeros above the
   /// highest one, so zero has none. They are collected in a `Vec`, which a value that is not zero
@@ -425,7 +425,7 @@ pub trait UnsignedDigits: Sealed + Sized {
   #[cfg(any(feature = "std", feature = "alloc"))]
   #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
   #[track_caller]
-  fn to_base_be(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<Self>;
+  fn to_base_be(&self, base: u64) -> impl FusedIterator<Item = u64> + use<Self>;
 
   /// The digits of the value in `radix`, a byte each, most significant first: the one digit 0 for
   /// zero.
@@ -491,14 +491,14 @@ impl<B: FitsBits<R>, R: UintRepr> UnsignedDigits for Uint<B, R> {
 
   #[inline]
   #[track_caller]
-  fn to_base_le(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<B, R> {
+  fn to_base_le(&self, base: u64) -> impl FusedIterator<Item = u64> + use<B, R> {
     Self::to_base_le(self, base)
   }
 
   #[cfg(any(feature = "std", feature = "alloc"))]
   #[inline]
   #[track_caller]
-  fn to_base_be(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<B, R> {
+  fn to_base_be(&self, base: u64) -> impl FusedIterator<Item = u64> + use<B, R> {
     Self::to_base_be(self, base)
   }
 
@@ -595,7 +595,7 @@ impl<B: FitsBits<R>, R: UintRepr> Uint<B, R> {
   /// Panics if `base` is below 2, reporting the caller, when it is called.
   #[inline]
   #[track_caller]
-  pub fn to_base_le(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<B, R> {
+  pub fn to_base_le(&self, base: u64) -> impl FusedIterator<Item = u64> + use<B, R> {
     check_base(base, "to_base_le: base must be at least 2");
     BaseDigits::new(self.repr.inline(Token::new()), base)
   }
@@ -620,7 +620,7 @@ impl<B: FitsBits<R>, R: UintRepr> Uint<B, R> {
   #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
   #[inline]
   #[track_caller]
-  pub fn to_base_be(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<B, R> {
+  pub fn to_base_be(&self, base: u64) -> impl FusedIterator<Item = u64> + use<B, R> {
     check_base(base, "to_base_be: base must be at least 2");
     let value = self.repr.inline(Token::new());
     let bit_len = B::U32 - value.leading_zeros_bits(B::U32, Token::new());
