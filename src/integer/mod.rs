@@ -94,7 +94,8 @@ mod traits;
 /// [Conversions](Uint#conversions)), `Hash` depends only on the value and `Bits`, whatever the
 /// storage, and `Display` and `Debug` write decimal.
 ///
-/// The aliases from 192 to 512 bits are the wide storages of [`Decimal`](crate::Decimal):
+/// The aliases from 192 to 1024 bits, every 64 bits, are the wide storages of
+/// [`Decimal`](crate::Decimal):
 ///
 /// ```
 /// use numo::{

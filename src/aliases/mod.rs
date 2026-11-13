@@ -9,12 +9,12 @@
 //! that holds it, as the default storage is: `u7` is `Uint<U7, u8>` and `i24` is `Int<U24, i32>`.
 //! An integer of 129 to 1024 bits is stored in `[u64; ceil(N / 64)]`, the limbs that the default
 //! storage takes: `u144` is `Uint<U144, [u64; 3]>` and `i256` is `Int<U256, [u64; 4]>`. The widths
-//! of the wide storages of [`Decimal`](crate::Decimal), 192, 256, 320, 384, 448 and 512 bits, are
-//! among them. Beyond 1024 bits only `u2048`, `u4096`, `i2048` and `i4096` have an alias, each of
-//! which fills `N / 64` limbs of 64 bits. Any other width is written out, such as `Uint<U8192>` for
-//! its default storage, and so is any other storage, such as `Uint<U7, u16>`,
-//! `Uint<U256, [u8; 32]>` or `Uint<U256, [u128; 2]>`. A width that `typenum` has no constant for is
-//! computed, as in `Uint<Sum<U1024, U476>>` for 1500 bits.
+//! of the wide storages of [`Decimal`](crate::Decimal), 192 to 1024 bits, every 64 bits, are among
+//! them. Beyond 1024 bits only `u2048`, `u4096`, `i2048` and `i4096` have an alias, each of which
+//! fills `N / 64` limbs of 64 bits. Any other width is written out, such as `Uint<U8192>` for its
+//! default storage, and so is any other storage, such as `Uint<U7, u16>`, `Uint<U256, [u8; 32]>` or
+//! `Uint<U256, [u128; 2]>`. A width that `typenum` has no constant for is computed, as in
+//! `Uint<Sum<U1024, U476>>` for 1500 bits.
 //!
 //! The non-zero integers have aliases too: `NonZeroUN` is the non-zero integer of `uN` and
 //! `NonZeroIN` that of `iN`, so `NonZeroUN` is exactly [`NonZeroOf<uN>`](crate::NonZeroOf), in the
