@@ -13,6 +13,12 @@
 //! takes over, as the absolute value of a value that is not negative and the conversions into a
 //! non-zero integer do, and an integer that an operation takes gives up its share unless the
 //! result is its allocation, which frees the allocation only where no other owner holds it.
+//!
+//! The digits and the forms that return a `Vec` or a `String` are counted too, in a heap storage
+//! and in the inline twin: a constructor from digits builds the integer that it returns and
+//! nothing for `None`, the iterator of the digits allocates nothing, and a form that returns a
+//! `Vec` or a `String` allocates it once, with a capacity that it does not outgrow, and not at all
+//! where it is empty.
 
 #![cfg(any(
   feature = "std",
@@ -35,7 +41,7 @@ use numo::{
   ArrayInteger, CheckedCastFrom, CheckedOps, FixedInteger, FixedNonZero, FromLimbs, Int,
   IntegerBits, IntegerByteOrder, IntegerFloat, IntegerMath, IntegerOne, NonZeroInt, NonZeroLimits,
   NonZeroUint, SaturatingOps, SignedBits, SignedFixedInteger, SignedNonZero, Uint, UnsignedBits,
-  UnsignedFixedInteger, UnsignedNonZero, WidenFrom, WrappingOps, typenum::U256,
+  UnsignedDigits, UnsignedFixedInteger, UnsignedNonZero, WidenFrom, WrappingOps, typenum::U256,
 };
 #[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
 use triomphe::Arc as TriompheArc;
@@ -135,12 +141,167 @@ macro_rules! allocates {
   }};
 }
 
-/// The inline twin of `Boxed`.
+/// The inline twin of `Boxed` and of each `Shared`.
 type Inline = Uint<U256, [u64; 4]>;
 
 /// The address of the limbs of `value`: that of its allocation.
 fn address<T: ArrayInteger>(value: &T) -> *const T::Array {
   std::ptr::from_ref(value.as_limbs())
+}
+
+/// The digits of `2^256` in the radix 256, most significant first: one more than the largest value
+/// of 256 bits.
+const OVER_BE: [u8; 33] = {
+  let mut digits = [0; 33];
+  digits[0] = 1;
+  digits
+};
+
+/// The same digits, least significant first.
+const OVER_LE: [u8; 33] = {
+  let mut digits = [0; 33];
+  digits[32] = 1;
+  digits
+};
+
+/// The digits of `2^256` in the base `2^32`, most significant first.
+const OVER_WORDS_BE: [u64; 9] = [1, 0, 0, 0, 0, 0, 0, 0, 0];
+
+/// The same digits, least significant first.
+const OVER_WORDS_LE: [u64; 9] = [0, 0, 0, 0, 0, 0, 0, 0, 1];
+
+/// Asserts what the unsigned integer `$uint`, of 256 bits, allocates when it reads digits and when
+/// it writes them through its iterator. A constructor allocates `$built` times for the integer
+/// that it returns, once in a heap storage and never inline, and not at all for `None`, whether a
+/// digit is not below the base or the value is `2^256`: a reader that built a value and dropped it
+/// would return the same `None`, and only the count tells the two apart. The iterator of the
+/// digits allocates nothing.
+macro_rules! reads_digits {
+  ($uint:ty, $built:literal) => {{
+    let radix_be = <$uint as UnsignedDigits>::checked_from_radix_be;
+    let radix_le = <$uint as UnsignedDigits>::checked_from_radix_le;
+
+    assert!(allocates!(0, 0; radix_be(&[1, 10], 10)).is_none());
+    assert!(allocates!(0, 0; radix_le(&[10, 1], 10)).is_none());
+    assert!(allocates!(0, 0; <$uint>::checked_from_base_be([1, 10], 10)).is_none());
+    assert!(allocates!(0, 0; <$uint>::checked_from_base_le([10, 1], 10)).is_none());
+
+    assert!(allocates!(0, 0; radix_be(&OVER_BE, 256)).is_none());
+    assert!(allocates!(0, 0; radix_le(&OVER_LE, 256)).is_none());
+    assert!(allocates!(0, 0; <$uint>::checked_from_base_be(OVER_WORDS_BE, 1 << 32)).is_none());
+    assert!(allocates!(0, 0; <$uint>::checked_from_base_le(OVER_WORDS_LE, 1 << 32)).is_none());
+
+    assert!(allocates!($built, 0; radix_be(&[1, 2, 7], 10)).is_some());
+    assert!(allocates!($built, 0; radix_le(&[7, 2, 1], 10)).is_some());
+    assert!(allocates!($built, 0; <$uint>::checked_from_base_be([1, 2, 7], 10)).is_some());
+    assert!(allocates!($built, 0; <$uint>::checked_from_base_le([7, 2, 1], 10)).is_some());
+
+    let largest = black_box(<$uint as FixedInteger>::max_value());
+    assert_eq!(allocates!(0, 0; largest.to_base_le(10).count()), 78);
+  }};
+}
+
+/// Asserts that each form of the integers `$uint` and `$int`, of 256 bits, and of their non-zero
+/// integers `$nonzero` and `$nonzero_int`, that returns a `Vec` or a `String` allocates what it
+/// returns, once, and nothing else, in a heap storage as in an inline one. Its capacity is a bound
+/// of what it writes, which the largest value meets exactly in the radixes 2 and 256, and the
+/// smallest signed one in the radix 2 with its sign: a writer that reserved one less would
+/// reallocate, which the allocator counts. What is empty is not allocated: the digits of zero in a
+/// base, and its trimmed bytes. The text of a signed integer builds no magnitude in the heap,
+/// which would count a second allocation and a free.
+#[cfg(any(feature = "std", feature = "alloc"))]
+macro_rules! writes_vectors_and_text {
+  ($uint:ty, $int:ty, $nonzero:ty, $nonzero_int:ty) => {{
+    let most = black_box(<$uint as FixedInteger>::max_value());
+    let zero = black_box(<$uint as FixedInteger>::min_value());
+    let least = black_box(<$int as FixedInteger>::min_value());
+    let greatest = black_box(<$int as FixedInteger>::max_value());
+    let minus_one = black_box(<$int>::from(-1i64));
+    let nothing = black_box(<$int>::from(0i64));
+    let nonzero = black_box(<$nonzero as NonZeroLimits>::max_value());
+    let negative = black_box(<$nonzero_int as NonZeroLimits>::min_value());
+
+    // The digits of a base, most significant first: the `Vec` is freed with its iterator.
+    assert_eq!(allocates!(1, 1; most.to_base_be(10).count()), 78);
+    assert_eq!(allocates!(0, 0; zero.to_base_be(10).count()), 0);
+
+    // The digits of a radix, which fill the capacity in the radixes 2 and 256.
+    assert_eq!(allocates!(1, 0; most.to_radix_le(2)).len(), 256);
+    assert_eq!(allocates!(1, 0; most.to_radix_be(2)).len(), 256);
+    assert_eq!(allocates!(1, 0; most.to_radix_le(3)).len(), 162);
+    assert_eq!(allocates!(1, 0; most.to_radix_be(3)).len(), 162);
+    assert_eq!(allocates!(1, 0; most.to_radix_le(10)).len(), 78);
+    assert_eq!(allocates!(1, 0; most.to_radix_be(10)).len(), 78);
+    assert_eq!(allocates!(1, 0; most.to_radix_le(256)).len(), 32);
+    assert_eq!(allocates!(1, 0; most.to_radix_be(256)).len(), 32);
+    assert_eq!(allocates!(1, 0; zero.to_radix_le(2)), [0]);
+    assert_eq!(allocates!(1, 0; zero.to_radix_be(2)), [0]);
+    assert_eq!(allocates!(1, 0; zero.to_radix_le(3)), [0]);
+    assert_eq!(allocates!(1, 0; zero.to_radix_be(3)), [0]);
+    assert_eq!(allocates!(1, 0; zero.to_radix_le(10)), [0]);
+    assert_eq!(allocates!(1, 0; zero.to_radix_be(10)), [0]);
+    assert_eq!(allocates!(1, 0; zero.to_radix_le(256)), [0]);
+    assert_eq!(allocates!(1, 0; zero.to_radix_be(256)), [0]);
+
+    // The text, which fills the capacity in the radix 2, with the sign of a negative value.
+    assert_eq!(allocates!(1, 0; most.to_str_radix(2)).len(), 256);
+    assert_eq!(allocates!(1, 0; most.to_str_radix(36)).len(), 50);
+    assert_eq!(allocates!(1, 0; zero.to_str_radix(2)), "0");
+    assert_eq!(allocates!(1, 0; zero.to_str_radix(36)), "0");
+    assert_eq!(allocates!(1, 0; least.to_str_radix(2)).len(), 257);
+    assert_eq!(allocates!(1, 0; least.to_str_radix(36)).len(), 51);
+    assert_eq!(allocates!(1, 0; minus_one.to_str_radix(2)), "-1");
+    assert_eq!(allocates!(1, 0; minus_one.to_str_radix(36)), "-1");
+    assert_eq!(allocates!(1, 0; nonzero.to_str_radix(2)).len(), 256);
+    assert_eq!(allocates!(1, 0; nonzero.to_str_radix(36)).len(), 50);
+    assert_eq!(allocates!(1, 0; negative.to_str_radix(2)).len(), 257);
+    assert_eq!(allocates!(1, 0; negative.to_str_radix(36)).len(), 51);
+
+    // The bytes: the 32 of the width, and the shortest ones, of which zero has none.
+    assert_eq!(allocates!(1, 0; most.to_le_bytes_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; most.to_be_bytes_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; most.to_le_bytes_trimmed_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; most.to_be_bytes_trimmed_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; zero.to_le_bytes_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; zero.to_be_bytes_vec()).len(), 32);
+    assert!(allocates!(0, 0; zero.to_le_bytes_trimmed_vec()).is_empty());
+    assert!(allocates!(0, 0; zero.to_be_bytes_trimmed_vec()).is_empty());
+    assert_eq!(allocates!(1, 0; minus_one.to_le_bytes_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; minus_one.to_be_bytes_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; minus_one.to_le_bytes_trimmed_vec()), [0xff]);
+    assert_eq!(allocates!(1, 0; minus_one.to_be_bytes_trimmed_vec()), [0xff]);
+    assert_eq!(allocates!(1, 0; least.to_le_bytes_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; least.to_be_bytes_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; least.to_le_bytes_trimmed_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; least.to_be_bytes_trimmed_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; greatest.to_le_bytes_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; greatest.to_be_bytes_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; greatest.to_le_bytes_trimmed_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; greatest.to_be_bytes_trimmed_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; nothing.to_le_bytes_vec()).len(), 32);
+    assert_eq!(allocates!(1, 0; nothing.to_be_bytes_vec()).len(), 32);
+    assert!(allocates!(0, 0; nothing.to_le_bytes_trimmed_vec()).is_empty());
+    assert!(allocates!(0, 0; nothing.to_be_bytes_trimmed_vec()).is_empty());
+  }};
+}
+
+/// The inline twin reads digits, and writes them through its iterator, without allocating.
+#[test]
+fn the_inline_twin_reads_digits_without_allocating() {
+  reads_digits!(Inline, 0);
+}
+
+/// On the inline twin, each form that returns a `Vec` or a `String` allocates what it returns and
+/// nothing else, as on a heap storage.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[test]
+fn the_inline_twin_allocates_what_a_writer_returns() {
+  writes_vectors_and_text!(
+    Inline,
+    Int<U256, [u64; 4]>,
+    NonZeroUint<U256, [u64; 4]>,
+    NonZeroInt<U256, [u64; 4]>
+  );
 }
 
 /// The checks of the storage that holds its value in place, `Box<[u64; 4]>` at 256 bits.
@@ -542,13 +703,27 @@ mod boxed {
   }
 
   /// The casts of the cast traits build their target from the words of their source, also where
-  /// both are one type: a cast allocates its target, and frees a source that it is given.
+  /// both are one type: a cast allocates its target, and frees a source given by value.
   #[test]
   fn casts_build_their_target() {
     let (a, b) = pair();
     assert!(allocates!(1, 1; Boxed::checked_cast_from(a)).is_some());
     assert!(allocates!(1, 0; Boxed::checked_cast_from(&b)).is_some());
     assert!(allocates!(1, 1; BoxedInt::checked_cast_from(b)).is_some());
+  }
+
+  /// A constructor from digits builds the integer that it returns and nothing for `None`, and the
+  /// iterator of the digits allocates nothing.
+  #[test]
+  fn digits_are_read_into_the_integer_alone() {
+    reads_digits!(Boxed, 1);
+  }
+
+  /// Each form that returns a `Vec` or a `String` allocates what it returns, once, and nothing
+  /// else: the limbs stay in their box.
+  #[test]
+  fn vectors_and_texts_are_allocated_once() {
+    writes_vectors_and_text!(Boxed, BoxedInt, BoxedNonZero, BoxedNonZeroInt);
   }
 }
 
@@ -962,8 +1137,8 @@ macro_rules! shared_storage {
       }
 
       /// The casts of the cast traits build their target from the words of their source, also
-      /// where both are one type: a cast allocates its target, and a source that it is given gives
-      /// up its share.
+      /// where both are one type: a cast allocates its target, and a source given by value gives up
+      /// its share.
       #[test]
       fn casts_build_their_target() {
         let (a, b) = pair();
@@ -972,6 +1147,22 @@ macro_rules! shared_storage {
         let other = b.clone();
         assert!(allocates!(1, 0; SharedInt::checked_cast_from(b)).is_some());
         assert_eq!(other.to_string(), "7");
+      }
+
+      /// A constructor from digits builds the integer that it returns and nothing for `None`, and
+      /// the iterator of the digits allocates nothing.
+      #[test]
+      fn digits_are_read_into_the_integer_alone() {
+        reads_digits!(Shared, 1);
+      }
+
+      /// Each form that returns a `Vec` or a `String` allocates what it returns, once, and nothing
+      /// else. The forms need the `std` or the `alloc` feature, which a build with `triomphe`
+      /// alone does not have.
+      #[cfg(any(feature = "std", feature = "alloc"))]
+      #[test]
+      fn vectors_and_texts_are_allocated_once() {
+        writes_vectors_and_text!(Shared, SharedInt, SharedNonZero, SharedNonZeroInt);
       }
     }
   };
