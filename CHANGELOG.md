@@ -12,7 +12,7 @@ FEATURES
   - The operators `+`, `-`, `+=` and `-=` between two values of one type, `+` and `-` also between
     two references, and `Sum` for values and references. A result outside the range of the type
     panics in every build, whatever `overflow-checks` is, with the message of the native
-    operators; `checked_add` and `checked_sub` return `None` instead. `*` and `/` stay the methods
+    operators; `checked_add` and `checked_sub` return `None` instead. `*` and `/` are the methods
     `exact_mul` and `div_round`.
   - `const fn` `checked_rem`, the exact remainder with the sign of the dividend, and
     `saturating_add` and `saturating_sub`, which return the limit that the result passes.

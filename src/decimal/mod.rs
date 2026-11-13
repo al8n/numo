@@ -102,16 +102,17 @@ mod tests;
 /// digit counts, such as formatting and conversions (see [`Layout`]).
 ///
 /// The constants and methods defined for each storage, such as [`ZERO`](Self::ZERO) and
-/// [`checked_add`](Self::checked_add), reach generic code through traits in two layers. The
-/// general layer is [`FixedDecimal`] for every storage, [`SignedFixedDecimal`] and
-/// [`UnsignedFixedDecimal`] for each sign, and [`DecimalOne`] for the types that hold one. It
-/// requires `Clone` but not `Copy`, and its functions `zero`, `max_value`, `min_value` and `one`
-/// return [`ZERO`](Self::ZERO), [`MAX`](Self::MAX), [`MIN`](Self::MIN) and [`ONE`](Self::ONE).
-/// The const layer, [`ConstFixedDecimal`] and [`ConstDecimalOne`], adds `Copy` and these
-/// constants, which a generic `const fn` can read. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
-/// [`DivRound`] carry the bounds of the methods between decimal types. Because the implementations
-/// are per storage, code generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`,
-/// which `R: Storage` and `(I, F): Layout<R>` do not imply. Every type also has the constants
+/// [`checked_add`](Self::checked_add), reach generic code through traits in two layers. The general
+/// layer is [`FixedDecimal`] for every storage, [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`]
+/// for each sign, and [`DecimalOne`] for the types that hold one. It requires `Clone` but not
+/// `Copy`, has the operators `+` and `-` on values and `Sum`, and its functions `zero`,
+/// `max_value`, `min_value` and `one` return [`ZERO`](Self::ZERO), [`MAX`](Self::MAX),
+/// [`MIN`](Self::MIN) and [`ONE`](Self::ONE). The const layer, [`ConstFixedDecimal`] and
+/// [`ConstDecimalOne`], adds `Copy`, the assignments `+=` and `-=` and these constants, which a
+/// generic `const fn` can read. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] carry the
+/// bounds of the methods between decimal types. Because the implementations are per storage, code
+/// generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and
+/// `(I, F): Layout<R>` do not imply. Every type also has the constants
 /// [`INTEGRAL`](Self::INTEGRAL), [`FRACTION`](Self::FRACTION) and [`DIGITS`](Self::DIGITS), its
 /// digit counts, and [`SIGNED`](Self::SIGNED), whether its storage is signed, for generic code that
 /// derives a display scale or a step from the fraction digits of the type:
@@ -145,12 +146,12 @@ mod tests;
 /// # Operations
 ///
 /// Every operation is exact: it returns the exact result or reports failure, and nothing rounds,
-/// truncates or wraps unless asked to. [`checked_add`](Self::checked_add) and
-/// [`checked_sub`](Self::checked_sub) return `None` for a result outside the range of the type,
-/// and [`saturating_add`](Self::saturating_add) and [`saturating_sub`](Self::saturating_sub) the
-/// limit that it passes. [`checked_rem`](Self::checked_rem) returns the remainder of a division
-/// whose quotient is truncated toward zero, which has the sign of the dividend, or `None` for a
-/// divisor of zero.
+/// truncates, saturates or wraps unless asked to. [`checked_add`](Self::checked_add) and
+/// [`checked_sub`](Self::checked_sub) return `None` for a result outside the range of the type, and
+/// [`saturating_add`](Self::saturating_add) and [`saturating_sub`](Self::saturating_sub) the limit
+/// that it passes. [`checked_rem`](Self::checked_rem) returns the remainder of a division whose
+/// quotient is truncated toward zero, which has the sign of the dividend, or `None` for a divisor
+/// of zero.
 ///
 /// The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
 /// references, and [`Sum`](core::iter::Sum) adds the values or the references of an iterator. They

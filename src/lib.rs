@@ -29,8 +29,8 @@
 //! ```
 //!
 //! Every operation is exact: it returns the exact result or reports failure, and nothing rounds,
-//! truncates or wraps unless asked to. The operators `+`, `-`, `+=` and `-=` between two values of
-//! one type, and `Sum`, are exact too: where [`checked_add`](Decimal::checked_add) and
+//! truncates, saturates or wraps unless asked to. The operators `+`, `-`, `+=` and `-=` between two
+//! values of one type, and `Sum`, are exact too: where [`checked_add`](Decimal::checked_add) and
 //! [`checked_sub`](Decimal::checked_sub) return `None`, for a result outside the range of the type,
 //! they panic, in every build, and [`saturating_add`](Decimal::saturating_add) and
 //! [`saturating_sub`](Decimal::saturating_sub) return the limit that the result passes. Rounding

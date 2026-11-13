@@ -103,12 +103,12 @@ fn main() -> Result<(), ParseError> {
   written; with an explicit `Repr`, the type's constants and constructors fail, so no value of it
   can be created. The type itself has no bounds, so generic code can store and pass values
   without any.
-- Every operation is exact or fails. `checked_add` and `checked_sub` return `None` outside the
-  range, `exact_mul` returns a wider type that always holds the product, up to 153 digits, `widen`
-  converts to a type with at least as many digits, and `try_convert` reports `OutOfRange` or
-  `Inexact` instead of rounding. Rounding happens only where an explicit `RoundingMode` is given:
-  `round_to` converts to fewer fraction digits, `quantize` rounds to a multiple of a step, and
-  `div_round` divides into any decimal type.
+- Every operation is exact or fails, unless it is asked to round or to saturate. `checked_add` and
+  `checked_sub` return `None` outside the range, `exact_mul` returns a wider type that always holds
+  the product, up to 153 digits, `widen` converts to a type with at least as many digits, and
+  `try_convert` reports `OutOfRange` or `Inexact` instead of rounding. Rounding happens only where
+  an explicit `RoundingMode` is given: `round_to` converts to fewer fraction digits, `quantize`
+  rounds to a multiple of a step, and `div_round` divides into any decimal type.
 - The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
   references, and `Sum` adds the values or the references of an iterator. They are exact too: a
   result outside the range panics in every build, whatever `overflow-checks` is, with the message

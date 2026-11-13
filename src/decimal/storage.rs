@@ -876,8 +876,8 @@ macro_rules! storage_decimal {
       ///
       /// The quotient is truncated toward zero, so the remainder has the sign of `self` and a
       /// magnitude below that of `rhs`: it is exact and always in range.
-      /// [`is_multiple_of`](Self::is_multiple_of) tells whether it is zero, also for a step of
-      /// zero.
+      /// [`is_multiple_of`](Self::is_multiple_of) tells whether the remainder is zero, and takes a
+      /// step of zero too, of which only zero is a multiple.
       #[must_use]
       #[inline]
       pub const fn checked_rem(&self, rhs: &Self) -> Option<Self> {
