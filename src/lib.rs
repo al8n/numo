@@ -563,3 +563,12 @@ mod sample;
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub mod serde;
 mod width;
+
+/// The items that the expansion of [`dec!`] names from the crate that calls it. They are not part
+/// of the API, and may change in any release.
+#[doc(hidden)]
+pub mod __private {
+  pub use core::{concat, stringify};
+
+  pub use crate::decimal::{DecimalLiteral, LiteralText};
+}

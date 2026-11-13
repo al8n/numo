@@ -16,7 +16,7 @@ use super::Scaled;
 use crate::{
   ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalOne, DivRound,
   DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError, RoundingMode,
-  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo, bigint::MODES, i256, i512, u256, u512,
+  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo, bigint::MODES, dec, i256, i512, u256, u512,
 };
 
 /// 20 integral and 18 fraction digits in an `i128`.
@@ -488,6 +488,52 @@ fn parse_and_accessors_in_const_context() {
   assert_eq!(SCALE, 8);
   assert_eq!(DECIMAL.to_string(), "0.001");
   assert_text(&MADE, "1.0000", 4);
+}
+
+/// A literal keeps the scale of its text, as `parse` does. `==` compares the value alone, so the
+/// text and the scale are asserted.
+#[test]
+fn a_literal_keeps_its_scale() {
+  type Tenths = Scaled<Decimal<U2, U1>>;
+  // The literal that the test writes bare.
+  const _: WideS = dec!(0.125);
+  const PADDED: WideS = dec!(1.50);
+  const EXPONENT: WideS = dec!(250e-2);
+  const WHOLE: WideS = dec!(1E+2);
+  const NEGATIVE: WideS = dec!(-1.50);
+  const ZERO: WideS = dec!(0e-255);
+  const FINE: Tenths = dec!(2.5000);
+  const NAMED: [WideS; 5] = [
+    dec!(1.50 as WideS),
+    dec!(250e-2 as WideS),
+    dec!(1E+2 as WideS),
+    dec!(-1.50 as WideS),
+    dec!(0e-255 as WideS),
+  ];
+  const NAMED_FINE: Tenths = dec!(2.5000 as Tenths);
+  const _: () = assert!(PADDED.scale() == 2 && EXPONENT.scale() == 2 && WHOLE.scale() == 0);
+  const _: () = assert!(NEGATIVE.scale() == 2 && ZERO.scale() == 255 && FINE.scale() == 4);
+  const _: () = assert!(NAMED[0].scale() == 2 && NAMED[1].scale() == 2 && NAMED[2].scale() == 0);
+  const _: () = assert!(NAMED[3].scale() == 2 && NAMED[4].scale() == 255);
+  const _: () = assert!(NAMED_FINE.scale() == 4);
+
+  let zeros = format!("0.{}", "0".repeat(255));
+  let inferred = [PADDED, EXPONENT, WHOLE, NEGATIVE, ZERO];
+  let expected = [
+    ("1.50", 2),
+    ("2.50", 2),
+    ("100", 0),
+    ("-1.50", 2),
+    (zeros.as_str(), 255),
+  ];
+  for ((value, named), (text, scale)) in inferred.iter().zip(&NAMED).zip(expected) {
+    assert_text(value, text, scale);
+    assert_text(named, text, scale);
+  }
+  assert_text(&FINE, "2.5000", 4);
+  assert_text(&NAMED_FINE, "2.5000", 4);
+  // A sum takes the larger scale.
+  assert_text(&(PADDED + dec!(0.125)), "1.625", 3);
 }
 
 #[test]

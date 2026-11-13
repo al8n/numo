@@ -11,6 +11,7 @@ use core::{
 use typenum::{And, Diff, Max, Maximum, Sum};
 
 pub use error::{ConvertError, DivideError, ParseError, ParseErrorKind, QuantizeError};
+pub use literal::{DecimalLiteral, LiteralText};
 pub use scaled::Scaled;
 pub use traits::{
   ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal,
@@ -28,6 +29,7 @@ use crate::{
 
 mod error;
 mod format;
+mod literal;
 mod ops;
 mod parse;
 mod scaled;
