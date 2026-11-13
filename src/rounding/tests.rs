@@ -99,7 +99,7 @@ fn increments_matches_rounding_by_distance() {
 #[test]
 fn increments_per_mode() {
   use Ordering::{Equal, Greater, Less};
-  use RoundingMode::{Ceiling, Down, Floor, HalfDown, HalfEven, HalfUp, Up};
+  use RoundingMode::{Ceiling, Down, Floor, HalfDown, HalfEven, HalfUp, Up, Up05};
 
   // No mode but `Up05` reads the last digit.
   for ends in [false, true] {
@@ -128,9 +128,36 @@ fn increments_per_mode() {
         assert!(!increments(HalfEven, negative, false, Equal, false, ends));
         assert!(increments(HalfEven, negative, false, Equal, true, ends));
         assert!(increments(HalfEven, negative, false, Greater, false, ends));
+        // `Up05` reads the last digit alone, and an exact quotient stays.
+        for odd in [false, true] {
+          assert_eq!(increments(Up05, negative, false, half, odd, ends), ends);
+          assert!(!increments(Up05, negative, true, half, odd, ends));
+        }
       }
     }
   }
+}
+
+/// The predicate of `Up05` is written by hand, named as `as_str` names the mode; the derived ones
+/// are false for it.
+#[test]
+fn up05_has_its_predicate_and_name() {
+  const IS_UP05: bool = RoundingMode::Up05.is_up05();
+  assert!(IS_UP05);
+  for mode in MODES {
+    assert_eq!(mode.is_up05(), mode == RoundingMode::Up05, "{mode:?}");
+  }
+  let mode = RoundingMode::Up05;
+  assert!(!mode.is_up());
+  assert!(!mode.is_down());
+  assert!(!mode.is_ceiling());
+  assert!(!mode.is_floor());
+  assert!(!mode.is_half_up());
+  assert!(!mode.is_half_down());
+  assert!(!mode.is_half_even());
+  assert_eq!(mode.as_str(), "up05");
+  assert_eq!(std::format!("{mode}"), "up05");
+  assert_eq!(std::format!("{mode:?}"), "Up05");
 }
 
 #[test]
