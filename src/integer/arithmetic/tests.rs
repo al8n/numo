@@ -26,7 +26,7 @@ use crate::{
   BitWidth, CheckedOps, ConstFixedInteger, ConstIntegerOne, FitsBits, FixedInteger, Int,
   IntReprMut, IntegerAssign, IntegerBits, IntegerMath, IntegerOne, OverflowingOps, SaturatingOps,
   SignedBits, SignedFixedInteger, SignedMath, StrictOps, Uint, UintReprMut, UncheckedOps,
-  UnsignedBits, UnsignedFixedInteger, UnsignedMath, WrappingOps,
+  UnsignedBits, UnsignedDigits, UnsignedFixedInteger, UnsignedMath, WrappingOps,
   bigint::{self, Tier, model, tier},
   i7, i256, u7, u256, u4096,
 };
@@ -2369,6 +2369,7 @@ mod bits;
 mod bytes;
 mod casts;
 mod compare;
+mod digits;
 mod division;
 mod floats;
 #[cfg(any(feature = "std", feature = "alloc"))]
@@ -2381,5 +2382,11 @@ mod powers;
 mod serde;
 #[cfg(feature = "serde")]
 mod serde_helpers;
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
+mod shared;
 mod shifts;
 mod text;

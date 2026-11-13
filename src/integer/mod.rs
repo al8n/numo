@@ -10,6 +10,7 @@ use core::{
 
 pub use bytes::{ByteArray, FromByteArray, IntegerByteOrder, IntegerBytes};
 pub use cast::{BoundedCastFrom, CheckedCastFrom, TruncateFrom, WidenFrom};
+pub use digits::UnsignedDigits;
 pub use error::{FromFloatError, TryNewError};
 pub use float::IntegerFloat;
 pub use traits::{
@@ -41,13 +42,19 @@ mod bits;
 #[macro_use]
 mod bytes;
 #[macro_use]
+mod digits;
+#[macro_use]
 mod float;
 #[macro_use]
 mod nonzero;
 mod cast;
 mod compare;
 mod convert;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
 mod heap;
 #[cfg(feature = "serde")]
 mod serde;
@@ -145,14 +152,17 @@ mod traits;
 /// work as for an inline storage, as do `BITS`, `BYTES` and the casts, which are inherent for every
 /// storage.
 ///
-/// The limbs live in the allocation, and each result where its operation puts it. An operator on
-/// two references allocates its result, and an operator with an owned operand stores its result in
-/// the allocation of that operand, the left one of two, so `a + b` reuses the allocation of `a` and
-/// frees that of `b`. A method builds only the integers that it returns, and none when it returns
-/// `None` or an error, and one that takes its integer by value, as the casts between the signs and
-/// [`from_be`](crate::IntegerByteOrder::from_be) do, stores its result in that allocation. `Sum`
-/// and `Product` of values store their result in the allocation of the first item, and those of
-/// references allocate it. A compound assignment, as in `total += &a`,
+/// The limbs live in the allocation, and each result where its operation puts it. In a `Box`, an
+/// operator on two references allocates its result, and an operator with an owned operand stores
+/// its result in the allocation of that operand, the left one of two, so `a + b` reuses the
+/// allocation of `a` and frees that of `b`. A method builds only the integers that it returns, and
+/// none when it returns `None` or an error, and one that takes its integer by value, as the casts
+/// between the signs and [`from_be`](crate::IntegerByteOrder::from_be) do, stores its result in
+/// that allocation. The casts, such as `checked_cast` and `widen`, are the exception: they build
+/// their target from the words of the source, so a cast into a heap storage allocates its target,
+/// also from a source of the same type, and frees a source given by value. `Sum` and `Product` of
+/// values store their result in the allocation of the first item, and of no item a new allocation,
+/// and those of references allocate it. A compound assignment, as in `total += &a`,
 /// [`set_bit`](crate::IntegerBits::set_bit) and `clone_from` store in the allocation of their
 /// target, `clone` allocates, and the casts between the signs keep the allocation. `From` moves a
 /// `Box<[L; N]>` out of an integer, and into one whose width fills the array, without a copy, and
@@ -188,6 +198,47 @@ mod traits;
 /// let limbs: Box<[u64; 64]> = sum.into();
 /// assert_eq!(limbs[0], 18);
 /// assert_eq!(U4096x64::from(limbs).to_string(), "18");
+/// # }
+/// ```
+///
+/// With the same features, `Repr` can also be such an array in an `Rc`, `Rc<[L; N]>`, and on a
+/// target with atomic pointers in an `Arc`, `Arc<[L; N]>`; with the `triomphe` feature, on such a
+/// target, in a `triomphe::Arc`, `triomphe::Arc<[L; N]>`, which holds one count and no weak count.
+/// These storages are shared and read-only: `clone` shares the value without an allocation, and a
+/// value that they hold is never written. A method makes at most one allocation for each integer
+/// that it returns: none where it returns the value of its operand, which it then shares, as the
+/// absolute value of a value that is not negative does. A fold makes one, and a method that takes a
+/// shared integer by value, an operator with an owned operand among them, allocates its result and
+/// gives up its share, whose allocation another owner may hold. They have no compound assignment
+/// and no [`IntegerAssign`](crate::IntegerAssign), whose `|=` would look like a write in place.
+/// [`set_bit`](crate::IntegerBits::set_bit), which takes `&mut self` for every storage, changes the
+/// value of its target, not the allocation: it puts the changed value in a new allocation, and the
+/// other owners of the old one keep their value. An integer in an `Arc` or a `triomphe::Arc` is
+/// `Send` and `Sync`, and one in an `Rc` is neither. A large value that many owners read, such as a
+/// modulus, is read into a computation in another storage through a borrowed cast source, as in
+/// `u256::widen_from(&modulus)`, or through [`ArrayInteger::as_limbs`], without a clone. The zero
+/// of a `triomphe::Arc` is built as an array and moved into its allocation, so an unoptimized build
+/// has the array on the stack; the other heap storages build their zero in its allocation.
+///
+/// ```
+/// # #[cfg(any(feature = "std", feature = "alloc"))]
+/// # {
+/// use std::rc::Rc;
+///
+/// use numo::{ArrayInteger, IntegerBits, Uint, typenum::U256};
+///
+/// type Shared = Uint<U256, Rc<[u64; 4]>>;
+///
+/// let a = Shared::from(7u64);
+/// let b = a.clone();
+/// assert!(core::ptr::eq(a.as_limbs(), b.as_limbs()));
+///
+/// // Every result is a new allocation, and the other owner keeps its value.
+/// let sum = a + &b;
+/// assert_eq!(sum.to_string(), "14");
+/// let mut c = b.clone();
+/// c.set_bit(8, true);
+/// assert_eq!((b.to_string(), c.to_string()), ("7".into(), "263".into()));
 /// # }
 /// ```
 ///
@@ -304,8 +355,12 @@ mod traits;
 /// is `PosOverflow`. The range is that of `Bits`, not of the storage, so `"200"` overflows
 /// [`u7`](crate::u7) although its `u8` holds 200, and zero bits read every spelling of zero, such
 /// as `"0"`, `"+0"` and `"00"`, and nothing else. A radix outside 2 to 36 panics in every build,
-/// reporting the caller. In a constant, a width above the default storages, or above about 16384
-/// bits in `u8` limbs, may need `#[allow(long_running_const_eval)]` on the constant.
+/// reporting the caller. In a constant, the work grows with the number of digits and with the
+/// number of limbs of the storage. A text or a digit sequence that fills 65536 bits in
+/// `[u64; 1024]`, or 16384 bits in `[u8; 2048]`, can exceed the compiler's default limit for
+/// evaluating a constant, so such a constant may need `#[allow(long_running_const_eval)]`. Where
+/// an evaluation runs far beyond that limit, the compiler still prints a warning that it is taking
+/// a long time, whatever the level of the lint, as it does for a text that fills 65536 bits.
 ///
 /// `Display` and `Debug` write decimal, `Debug` also under `{:x?}` and `{:X?}`, whose flags the
 /// standard library does not expose. The radix formats `Binary`, `Octal`, `LowerHex` and
@@ -314,7 +369,15 @@ mod traits;
 /// precision of `{:e}` rounds the digits after the first half to even, which
 /// [`Decimal`](crate::Decimal) never does. Nothing allocates: a native storage writes as its native
 /// integer does, and an array writes its radix digits through a buffer of 64 bytes and its decimal
-/// digits through the buffer of `Display`.
+/// digits through the buffer of `Display`, on the stack.
+///
+/// With the `std` or the `alloc` feature, [`to_str_radix`](Self::to_str_radix) returns the text
+/// that `from_str_radix` reads back as a `String`, in any radix from 2 to 36, with lowercase
+/// letters and `"0"` for zero, and panics for another radix. The radixes 2, 8, 16 and 10 give the
+/// texts of `{:b}`, `{:o}`, `{:x}` and `Display`, so `to_str_radix(10)` is the form of `Display`'s
+/// text whose digits are on the heap. It allocates the `String` alone, once, on every storage. For
+/// [`Int`] it writes `-` and the digits of the magnitude, where the radix formats write the bits:
+/// `{:x}` of [`i7`](crate::i7) -1 is `7f`, and `to_str_radix(16)` is `-1`.
 ///
 /// ```
 /// use core::num::IntErrorKind;
@@ -387,6 +450,15 @@ mod traits;
 /// byte at an index and panics from `BYTES` up. The methods that read a value borrow it, as every
 /// `to_*` method does, and nothing allocates.
 ///
+/// With the `std` or the `alloc` feature, [`to_le_bytes_vec`](Self::to_le_bytes_vec) and
+/// [`to_be_bytes_vec`](Self::to_be_bytes_vec) return the `BYTES` bytes in a `Vec` at every width,
+/// and [`to_le_bytes_trimmed_vec`](Self::to_le_bytes_trimmed_vec) and
+/// [`to_be_bytes_trimmed_vec`](Self::to_be_bytes_trimmed_vec) the shortest bytes that
+/// `checked_from_le_slice` and `checked_from_be_slice` read back as the value: without the zero
+/// bytes above it, so none for zero. Each allocates the `Vec` that it returns, and nothing else.
+/// Without a feature, the same bytes are those that `copy_le_bytes_to` writes, of which the
+/// trimmed ones are the first `bit_width().div_ceil(8)`.
+///
 /// At a width of whole bytes, [`swap_bytes`](Self::swap_bytes) reverses the bytes, and
 /// [`to_be`](Self::to_be), [`to_le`](Self::to_le), [`from_be`](Self::from_be) and
 /// [`from_le`](Self::from_le) convert the value to and from an order as the native integers do: on
@@ -432,6 +504,89 @@ mod traits;
 /// assert_eq!(value.copy_be_bytes_to(&mut buf), 3);
 /// assert_eq!(buf, [1, 2, 3, 0]);
 /// assert_eq!(value.checked_copy_be_bytes_to(&mut [0; 2]), None);
+/// ```
+///
+/// # Digits
+///
+/// The digits of a value in a base come in two stems, each with one role:
+///
+/// | | `radix` | `base` |
+/// |---|---|---|
+/// | a digit | `u8` | `u64` |
+/// | the base | `u32`, from 2 to 256 | `u64`, from 2 up |
+/// | read from | a slice, in a `const fn` | an iterator |
+/// | written to | a `Vec<u8>`, with the `std` or the `alloc` feature | an iterator, without allocation |
+///
+/// [`checked_from_radix_be`](Self::checked_from_radix_be) and
+/// [`checked_from_radix_le`](Self::checked_from_radix_le), `const fn`s of each inline storage, read
+/// digits in bytes, most or least significant first, as an alphabet of text such as base 58 maps
+/// them; [`checked_from_base_be`](Self::checked_from_base_be) and
+/// [`checked_from_base_le`](Self::checked_from_base_le) read digits in `u64` from an iterator, such
+/// as the words of another representation or runs of decimal digits. Each returns `None` for a
+/// digit that is not below the base and for a value above `MAX`; no digits are zero, and zeros
+/// above the value are read. [`to_base_le`](Self::to_base_le) returns the digits of a value, least
+/// significant first, as an iterator that holds what is left of the value and allocates nothing.
+/// With the `std` or the `alloc` feature, [`to_base_be`](Self::to_base_be) returns them most
+/// significant first, from a `Vec`, and [`to_radix_be`](Self::to_radix_be) and
+/// [`to_radix_le`](Self::to_radix_le) return the digits of a radix as bytes in a `Vec`; without
+/// those features, a caller fills a buffer from `to_base_le` and reads it backwards. A radix or a
+/// base outside its range panics, in every build, reporting the caller, and in a constant fails to
+/// compile. The trait [`UnsignedDigits`](crate::UnsignedDigits) gives generic code the methods.
+///
+/// Zero is written as the crates of each stem write it, and every form reads back what every form
+/// writes:
+///
+/// | Form | Zero |
+/// |---|---|
+/// | `to_radix_le`, `to_radix_be` | the one digit `[0]` |
+/// | `to_base_le`, `to_base_be` | no digit |
+/// | `to_le_bytes_trimmed_vec`, `to_be_bytes_trimmed_vec` | no byte |
+/// | `to_str_radix` | `"0"` |
+///
+/// On an inline storage, the constructors and `to_base_le` allocate nothing, and the other writers
+/// allocate their `Vec` once, with the capacity that the digits need, which for zero in
+/// `to_base_be` is none. On a heap storage, a constructor allocates the integer that it returns,
+/// and nothing when it returns `None`; `to_base_le` allocates nothing, and the writers their `Vec`
+/// alone.
+///
+/// A writer divides the value by the largest power of the base in a `u64` once for each run of
+/// that many digits, and a reader multiplies by it, so a value of `n` limbs and `d` digits costs
+/// about `n * d / k` limb operations, where `k` is the digits of such a run: 19 for decimal, 7 for
+/// the radix 256 and 1 for a base of `2^32` or more. A wide value thus costs time quadratic in its
+/// width, as its text does; the constants of the widest widths may need the attribute of the
+/// section [Text](Uint#text).
+///
+/// The `const fn`s are one function of each inline storage, so `Uint::checked_from_radix_be(..)`
+/// with only an expected type, and no storage named, is ambiguous (E0034), as
+/// `Uint::from_str_radix(..)` is; the other methods are one item for every storage.
+///
+/// ```
+/// use numo::{Uint, typenum::U100, u7};
+///
+/// assert_eq!(u7::checked_from_radix_be(&[1, 2, 7], 10), Some(u7::new(127)));
+/// assert_eq!(u7::checked_from_radix_le(&[7, 2, 1], 10), Some(u7::new(127)));
+/// assert_eq!(u7::checked_from_radix_be(&[1, 2, 8], 10), None);
+/// assert_eq!(u7::checked_from_radix_be(&[0, 0, 1, 2, 7], 10), Some(u7::new(127)));
+/// const DIGITS: Option<u7> = u7::checked_from_radix_be(&[0x7f], 256);
+/// assert_eq!(DIGITS, Some(u7::MAX));
+///
+/// // The digits of a base, least significant first, without allocation, and read back.
+/// let value = Uint::<U100>::MAX;
+/// let mut words = [0; 4];
+/// let mut count = 0;
+/// for (word, digit) in words.iter_mut().zip(value.to_base_le(1 << 32)) {
+///   *word = digit;
+///   count += 1;
+/// }
+/// assert_eq!((words, count), ([0xffff_ffff, 0xffff_ffff, 0xffff_ffff, 0xf], 4));
+/// assert_eq!(Uint::<U100>::checked_from_base_le(words, 1 << 32), Some(value));
+/// assert_eq!(u7::ZERO.to_base_le(10).next(), None);
+/// # #[cfg(any(feature = "std", feature = "alloc"))]
+/// # {
+/// assert_eq!(u7::new(100).to_radix_be(58), [1, 42]);
+/// assert_eq!(u7::ZERO.to_radix_be(58), [0]);
+/// assert_eq!(u7::new(100).to_base_be(10).collect::<Vec<u64>>(), [1, 0, 0]);
+/// # }
 /// ```
 ///
 /// # Conversions
@@ -716,8 +871,9 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// module [`aliases`](crate::aliases) names common widths, such as [`i7`](crate::i7) for
 /// `Int<U7, i8>` and [`i256`](crate::i256) for `Int<U256, [u64; 4]>`. The type has the size,
 /// alignment and ABI of `Repr`, and as for [`Uint`], each storage gives a distinct type. With the
-/// `std` or the `alloc` feature, `Repr` can also be an array of limbs in a `Box`, as for `Uint`,
-/// whose section [Heap storages](Uint#heap-storages) applies to `Int` as well.
+/// `std` or the `alloc` feature, `Repr` can also be an array of limbs in a `Box`, an `Rc` or an
+/// `Arc`, and with the `triomphe` feature in a `triomphe::Arc`, as for `Uint`, whose section
+/// [Heap storages](Uint#heap-storages) applies to `Int` as well.
 ///
 /// As for [`Uint`], in a native integer [`new`](Self::new) and [`try_new`](Self::try_new) create a
 /// value and [`value`](Self::value) returns it, and in an array [`from_limbs`](Self::from_limbs)
@@ -849,6 +1005,14 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// reads `-` and the digits of the magnitude. The exponent formats write `-` before a negative
 /// value.
 ///
+/// With the `std` or the `alloc` feature, [`to_str_radix`](Self::to_str_radix) writes what
+/// `from_str_radix` reads: `-` and the digits of the magnitude, where the radix formats write the
+/// bits, so `to_str_radix(16)` of -1 of 7 bits is `-1` and `{:x}` is `7f`. `Int` has no digit
+/// sequences: those of the magnitude are the digits of `Uint` of
+/// [`unsigned_abs`](Self::unsigned_abs), beside [`is_negative`](Self::is_negative), and those of
+/// the bits of [`cast_unsigned`](Self::cast_unsigned); the `Uint` of the digits reads back through
+/// [`checked_cast_signed`](crate::Uint::checked_cast_signed) or a negation.
+///
 /// ```
 /// use core::num::IntErrorKind;
 ///
@@ -864,6 +1028,8 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// assert_eq!(format!("{:x}", Int::<U7, [u64; 1]>::MIN), "40");
 /// assert_eq!(u7::from_str_radix(&format!("{minus_one:x}"), 16), Ok(minus_one.cast_unsigned()));
 /// assert_eq!(format!("{:e} {:.0e}", i7::MIN, i7::new(-35)), "-6.4e1 -4e1");
+/// # #[cfg(any(feature = "std", feature = "alloc"))]
+/// assert_eq!(minus_one.to_str_radix(16), "-1");
 /// ```
 ///
 /// # Bytes
@@ -885,7 +1051,12 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// an array, such as [`checked_from_limbs_slice`](Self::checked_from_limbs_slice), read the limbs
 /// in two's complement in the same way, the sign being the top bit of the last limb. The byte order
 /// is that of [`Uint`], and [`swap_bytes`](Self::swap_bytes) reads the reversed bytes again in
-/// two's complement.
+/// two's complement. With the `std` or the `alloc` feature, the vectors are those of [`Uint`]:
+/// [`to_le_bytes_vec`](Self::to_le_bytes_vec) and [`to_be_bytes_vec`](Self::to_be_bytes_vec) hold
+/// the `BYTES` bytes, and [`to_le_bytes_trimmed_vec`](Self::to_le_bytes_trimmed_vec) and
+/// [`to_be_bytes_trimmed_vec`](Self::to_be_bytes_trimmed_vec) the shortest two's complement that
+/// `checked_from_le_slice` reads back: none for zero, `[0xff]` for -1 at every width, and
+/// `[0x80, 0x00]`, least significant first, for 128.
 ///
 /// ```
 /// use numo::{
@@ -1041,10 +1212,12 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// as for the native `NonZero`: `Option<NonZeroUint<U7>>` takes one byte. An array has no value
 /// that it cannot hold, so `Option` of an array storage adds a tag. Each storage gives a distinct
 /// type, as for [`Uint`]. With the `std` or the `alloc` feature, `Repr` can also be an array of
-/// limbs in a `Box`, which is its own non-zero storage (see [Heap storages](Uint#heap-storages)):
-/// the niche of the pointer gives `Option` the size of a pointer, `new`, `get`, `TryFrom` and the
-/// casts between the signs move the pointer and do not allocate, and `|=` stores its result in an
-/// allocation of its own.
+/// limbs in a `Box`, an `Rc` or an `Arc`, and with the `triomphe` feature in a `triomphe::Arc`,
+/// each its own non-zero storage (see [Heap storages](Uint#heap-storages)): the niche of the
+/// pointer gives `Option` the size of a pointer, and `new`, `get` and `TryFrom` move the pointer
+/// and do not allocate. In a `Box`, the casts between the signs move the pointer too, and `|=`
+/// stores its result in an allocation of its own; a shared storage puts the result of a cast
+/// between the signs in a new allocation, and has no `|=`.
 ///
 /// In each storage, [`new`](Self::new) creates a value from the [`Uint`] of the same width and
 /// storage, returning `None` for zero, and [`get`](Self::get) returns it, as `From` does.
@@ -1245,7 +1418,8 @@ pub struct NonZeroUint<Bits, Repr = <Bits as BitWidth>::NonZeroUnsigned> {
 /// [`to_le`](Self::to_le), [`from_be`](Self::from_be) and [`from_le`](Self::from_le), is that of
 /// the [`Int`] of the same value at a width of whole bytes, as for [`NonZeroUint`]: a conversion of
 /// the value, not a layout, for an array storage. With the `std` or the `alloc` feature, `Repr` can
-/// also be an array of limbs in a `Box`, as for [`NonZeroUint`].
+/// also be an array of limbs in a `Box`, an `Rc` or an `Arc`, and with the `triomphe` feature in a
+/// `triomphe::Arc`, as for [`NonZeroUint`].
 ///
 /// # Arithmetic
 ///
@@ -1616,6 +1790,7 @@ macro_rules! array_integers {
       uint_bits_table!(inherent_items![unsigned, $lower, &, Int<B, [$limb; N]>]);
       bitwise_table!(inherent_items![unsigned, $lower, &]);
       byte_methods!([unsigned, $lower, &]);
+      digit_methods!([unsigned, $lower, &]);
       float_methods!([unsigned, $lower, &]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.
@@ -2337,6 +2512,7 @@ macro_rules! native_integers {
       uint_bits_table!(inherent_items![$uint, Int<B, $int>]);
       bitwise_table!(inherent_items![$uint]);
       byte_methods!([$uint]);
+      digit_methods!([$uint]);
       float_methods!([$uint]);
 
       /// Unchecked addition: `self + rhs`, assuming it cannot overflow.

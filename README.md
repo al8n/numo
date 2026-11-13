@@ -31,7 +31,7 @@ traits do.
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, and with the `std` or the `alloc` feature in a `Box`, updated in place, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, the conversions with `f64` and `f32`, truncating, saturating, rounded by a mode or exact, with `From` where lossless, serde, as numbers up to 128 bits and decimal strings above, with helpers for decimal strings, Ethereum quantities, fixed-width hexadecimal, reading by type, bytes in either order and ruint's form, and generic traits |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, and with the `std` or the `alloc` feature in a `Box`, updated in place, or shared in an `Rc`, an `Arc` or a `triomphe::Arc`, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, the conversions with `f64` and `f32`, truncating, saturating, rounded by a mode or exact, with `From` where lossless, serde, as numbers up to 128 bits and decimal strings above, with helpers for decimal strings, Ethereum quantities, fixed-width hexadecimal, reading by type, bytes in either order and ruint's form, and generic traits |
 | `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, or over a heap storage, whose pointer keeps `Option` free, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, `TryFrom` of the integer, the conversions with the native `NonZero` integers by direction, the casts into any integer and, checking for zero, from any integer, serde as their integers, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
@@ -46,16 +46,18 @@ cargo add numo
 
 | Feature | Description |
 |---|---|
-| `std` (default) | Links the standard library, and turns on the default features of `thiserror`; gives the heap storages |
-| `alloc` | Gives the heap storages to a `no_std` build, through the `alloc` crate |
+| `std` (default) | Links the standard library, and turns on the default features of `thiserror` and `std` of `triomphe` when that feature is on; gives the heap storages and the forms that return a `Vec` or a `String` |
+| `alloc` | Gives the heap storages and the forms that return a `Vec` or a `String` to a `no_std` build, through the `alloc` crate |
 | `serde` | `Serialize` and `Deserialize`, through `serde_core`; turns on no feature of another crate |
 | `arbitrary` | `Arbitrary` for fuzzing; the `arbitrary` crate uses `std` |
 | `proptest` | `Arbitrary` and strategies for property tests, with the `std` feature of `proptest` |
 | `quickcheck` | `Arbitrary` for property tests; the `quickcheck` crate uses `std` |
+| `triomphe` | `triomphe::Arc<[L; N]>` as a read-only heap storage, on a target with atomic pointers; on another target it turns nothing on |
 
 With no feature the crate is `no_std` and does not allocate. `std` and `alloc` are independent:
-either one gives the heap storage `Box<[L; N]>`, and neither turns the other on. No feature of an
-optional dependency turns on `std` or `alloc`.
+either one gives the heap storages `Box<[L; N]>`, `Rc<[L; N]>` and `Arc<[L; N]>` and the forms that
+return a `Vec` or a `String`, and neither turns the other on. No feature of an optional dependency
+turns on `std` or `alloc`.
 
 ## Example
 
@@ -269,10 +271,12 @@ allocates its result, a compound assignment of `Uint` or `Int` computes in place
 with an owned operand stores its result in the allocation of that operand, the left one of two. A
 method builds only the integers that it returns, none when it returns `None` or an error, and one
 that takes its integer by value, as the casts between the signs do, stores its result in that
-allocation. Each operation computes in arrays on the stack before it stores, so a heap storage keeps
-the value off the stack and not the working space. `From` moves a `Box<[L; N]>` out of an integer,
-and into one whose width fills the array, without a copy, and `ArrayInteger` reads and builds the
-limbs. serde writes and reads a boxed integer as the inline integer of its width.
+allocation, while a cast, such as `checked_cast`, builds its target from the words of the source and
+frees a source given by value. Each operation computes in arrays on the stack before it stores, so a
+heap storage keeps the value off the stack and not the working space. `From` moves a `Box<[L; N]>`
+out of an integer, and into one whose width fills the array, without a copy, and `ArrayInteger`
+reads and builds the limbs. serde writes and reads a boxed integer as the inline integer of its
+width.
 
 ```rust
 use numo::{FixedInteger, Uint, typenum::U4096};
@@ -336,7 +340,10 @@ assert_eq!(sum.to_string(), "8");
   the storage holds. `Display` and `Debug` write decimal, `{:b}`, `{:o}`, `{:x}` and `{:X}` write
   the digits of a `Uint` and the two's complement of the `Bits` bits of an `Int`, and `{:e}` and
   `{:E}` write scientific notation, rounding half to even at a precision, all with the flags of the
-  native integers and without allocation.
+  native integers and without allocation. With the `std` or the `alloc` feature, `to_str_radix`
+  returns the text that `from_str_radix` reads back, in the radixes 2 to 36, with `-` and the
+  digits of the magnitude of a negative `Int`, where `{:x}` writes its bits: `-1` and `7f` for
+  `i7` -1.
 - The bytes of the native integers at the width `Bits`, the low `BYTES` bytes of the storage, in
   two's complement for `Int`: `to_le_bytes`, `to_be_bytes` and `to_ne_bytes` return an array whose
   length is part of its type, up to 8192 bits, and `checked_from_le_bytes` and the other orders read
@@ -346,7 +353,17 @@ assert_eq!(sum.to_string(), "8");
   `strict_from_le_slice` read a slice of any length, `copy_le_bytes_to` writes the bytes to a
   buffer at any width, and `byte` reads one byte. At a width of whole bytes, `swap_bytes`,
   `to_be`, `to_le`, `from_be` and `from_le` convert the byte order as the native integers do, by
-  value rather than by layout.
+  value rather than by layout. With the `std` or the `alloc` feature, `to_le_bytes_vec` and
+  `to_be_bytes_vec` return the bytes at any width, and `to_le_bytes_trimmed_vec` and
+  `to_be_bytes_trimmed_vec` the shortest bytes that the slices read back: none for zero, and the
+  shortest two's complement of an `Int`.
+- The digits of a `Uint` in any base, through `UnsignedDigits`: `checked_from_radix_be` and
+  `checked_from_radix_le`, `const fn`s, read digits in bytes in a radix from 2 to 256, and
+  `checked_from_base_be` and `checked_from_base_le` read digits in `u64` from an iterator in any
+  base from 2, each with `None` for a digit outside the base or a value outside the width;
+  `to_base_le` writes the digits as an iterator without allocation, and with the `std` or the
+  `alloc` feature `to_base_be`, `to_radix_be` and `to_radix_le` write them into a `Vec`, as in a
+  base-58 text of a `u256`: `u256::checked_from_radix_be(&x.to_radix_be(58), 58) == Some(x)`.
 - The casts of the native integers, still unstable, between any widths and signs: `checked_cast`,
   `wrapping_cast`, `saturating_cast`, `strict_cast` and the `unsafe` `unchecked_cast` into a
   `Uint`, an `Int` or a native integer, the checked, strict and unchecked ones also into a non-zero
@@ -408,8 +425,8 @@ assert_eq!(sum.to_string(), "8");
   storage is that of the default storage, and `NonZeroOf<T>` names the non-zero integer of an
   integer `T`, as in `NonZeroOf<u7>`. `new` and `get` convert from and to the integer,
   `new_unchecked` converts without the check of zero, `from_str_radix` and `FromStr` parse as the
-  integer does, with the error of the native `NonZero` integers for zero, the formats write what
-  the integer writes, and the methods of the native `NonZero`
+  integer does, with the error of the native `NonZero` integers for zero, the formats and
+  `to_str_radix` write what the integer writes, and the methods of the native `NonZero`
   integers at the width are `const fn`s: the bit counts, the highest and the lowest one, the
   rotations, the byte order of whole bytes, the checked and saturating multiplication, powers and
   addition, the logarithms, the square root, the midpoint, the division rounded up, the casts, and

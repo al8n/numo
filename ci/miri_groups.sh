@@ -42,6 +42,8 @@ miri_groups=(
   "9 integer::arithmetic::tests::nonzero_casts::"
   "7 integer::arithmetic::tests::floats::"
   "6 integer::arithmetic::tests::heap::"
+  "9 integer::arithmetic::tests::shared::"
+  "8 integer::arithmetic::tests::digits::"
   "1 integer::arithmetic::"
   "2 integer::tests::int_"
   "2 integer::tests::uint_"
@@ -87,17 +89,18 @@ miri_check_shard() {
 }
 
 # Run the groups of one shard on one target. The Miri flags and the rustflags come from the caller.
+# Each run has the default features and `triomphe`, so that the tests of its `Arc` run too.
 miri_run_shard() {
   local target=$1 shard=$2 group group_shard filter
   local skips=()
   for group in "${miri_groups[@]}"; do
     read -r group_shard filter <<<"$group"
     if [ "$group_shard" = "$shard" ]; then
-      cargo miri test --tests --target "$target" --lib -- "$filter" "${skips[@]}"
+      cargo miri test --tests --target "$target" --lib --features triomphe -- "$filter" "${skips[@]}"
     fi
     skips+=(--skip "$filter")
   done
   if [ "$shard" = "$miri_rest_shard" ]; then
-    cargo miri test --tests --target "$target" --lib -- "${skips[@]}"
+    cargo miri test --tests --target "$target" --lib --features triomphe -- "${skips[@]}"
   fi
 }

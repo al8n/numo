@@ -51,6 +51,11 @@ impl FixedNonZero for Local {
     Ok(Self)
   }
 
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  fn to_str_radix(&self, _: u32) -> String {
+    String::new()
+  }
+
   fn leading_zeros(&self) -> u32 {
     0
   }

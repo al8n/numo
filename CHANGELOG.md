@@ -149,17 +149,25 @@ FEATURES
   `[L; N]` holds, such as `Uint<U4096, Box<[u64; 64]>>`. The integer has the size of a pointer, is
   not `Copy`, and has no constants and no `const fn`s: its API is the traits, with
   `FixedInteger::zero`, `min_value` and `max_value` and `IntegerOne::one` for the constants. An
-  operator on two references allocates its result, a compound assignment of `Uint` or `Int`
-  computes in place, and an operator with an owned operand stores its result in the allocation of
-  that operand, the left one of two. A method builds only the integers that it returns, none when it
+  operator on two references allocates its result, a compound assignment of `Uint` or `Int` computes
+  in place, and an operator with an owned operand stores its result in the allocation of that
+  operand, the left one of two. A method builds only the integers that it returns, none when it
   returns `None` or an error, and one that takes its integer by value, as the casts between the
-  signs do, stores its result in that allocation. Each operation computes in arrays on the stack
-  before it stores, so a heap storage keeps the value off the stack and not the working space.
-  `From` moves a `Box<[L; N]>` out of an integer, and into one whose width fills the array, without
-  a copy, and `ArrayInteger` reads and builds the limbs. serde writes and reads a boxed integer as
-  the inline integer of its width.
-- The `std` and `alloc` features are independent, and either one gives the heap storages: `alloc`
-  gives them to a `no_std` build. With no feature the crate is `no_std` and does not allocate.
+  signs do, stores its result in that allocation, while a cast, such as `checked_cast`, builds its
+  target from the words of the source and frees a source given by value. Each operation computes in
+  arrays on the stack before it stores, so a heap storage keeps the value off the stack and not the
+  working space. `From` moves a `Box<[L; N]>` out of an integer, and into one whose width fills the
+  array, without a copy, and `ArrayInteger` reads and builds the limbs. serde writes and reads a
+  boxed integer as the inline integer of its width. `Rc<[L; N]>` and, on a target with atomic
+  pointers, `Arc<[L; N]>` are storages too, read-only: a clone shares the value, a method makes at
+  most one allocation for each integer that it returns and a fold one, a method that takes a shared
+  integer by value allocates its result and gives up its share, and there is no compound assignment.
+  The `triomphe` feature adds `triomphe::Arc<[L; N]>`, a storage of the same kind without a weak
+  count, on a target with atomic pointers. An integer in an `Arc` or a `triomphe::Arc` is `Send` and
+  `Sync`, and one in an `Rc` is neither.
+- The `std` and `alloc` features are independent, and either one gives the heap storages and the
+  forms that return a `Vec` or a `String`: `alloc` gives them to a `no_std` build. With no feature
+  the crate is `no_std` and does not allocate.
 - The `arbitrary`, `proptest` and `quickcheck` features: the `Arbitrary` trait of each crate for
   `Decimal` and `RoundingMode`, for fuzzing and property tests on a target with `std`. One generator
   serves all three: an edge value one time in eight (zero, one unit in the last place, one, `MAX`,
@@ -221,8 +229,12 @@ FEATURES
     integers, `core::num::ParseIntError`, with its kinds in the native order: a byte that is not a
     digit is `InvalidDigit`, unless the digits before it already pass the range of `Bits`, which is
     `PosOverflow` or `NegOverflow`, whatever the storage holds. A radix outside 2 to 36 panics in
-    every build, reporting the caller. In a constant, a width above the default storages, or above
-    about 16384 bits in `u8` limbs, may need `#[allow(long_running_const_eval)]`.
+    every build, reporting the caller. In a constant, the work grows with the digits and with the
+    limbs of the storage: a text or a digit sequence that fills 65536 bits in `[u64; 1024]`, or
+    16384 bits in `[u8; 2048]`, can exceed the compiler's default limit for evaluating a constant,
+    which may then need `#[allow(long_running_const_eval)]`. Far beyond that limit, as for a text
+    that fills 65536 bits, the compiler still warns that the evaluation is taking a long time,
+    whatever the level of the lint.
   - The radix formats `Binary`, `Octal`, `LowerHex` and `UpperHex`, which write the digits of a
     `Uint` and the two's complement of the `Bits` bits of an `Int`, whatever the storage holds
     above them, and the exponent formats `LowerExp` and `UpperExp`, whose precision rounds the
@@ -271,6 +283,28 @@ FEATURES
     bits, `FromByteArray`, with the conversions from the arrays of whole bytes, and
     `IntegerByteOrder`, with the byte order of whole bytes. The bound `B: BitWidth` gives `Uint<B>`
     and `Int<B>` `IntegerBytes`, and with `B: WholeBytes` `IntegerByteOrder`.
+  - Digits in any base, for `Uint` in every storage, through the new trait `UnsignedDigits`.
+    `checked_from_radix_be` and `checked_from_radix_le`, `const fn`s of every inline storage, read
+    digits in bytes, most or least significant first, in a radix from 2 to 256, and return `None`
+    for a digit that is not below the radix and for a value outside the width; no digits are zero,
+    and zeros above the value are read. `checked_from_base_be` and `checked_from_base_le` read
+    digits in `u64` from an iterator, in any base from 2. `to_base_le` returns the digits of a
+    value as an iterator, least significant first, which divides the value once for each run of
+    digits that a `u64` holds and allocates nothing; zero has no digits there. A radix or a base
+    outside its range panics, reporting the caller. `Int` has no digit sequences: `unsigned_abs`
+    gives those of its magnitude.
+  - With the `std` or the `alloc` feature, the forms that return a `Vec` or a `String`.
+    `to_radix_be` and `to_radix_le` return the digits of a `Uint` in a radix from 2 to 256 as
+    bytes, where zero is the one digit 0, and `to_base_be` its digits in `u64`, most significant
+    first. `to_str_radix`, of `Uint`, `Int`, `NonZeroUint` and `NonZeroInt` and in `FixedInteger`
+    and `FixedNonZero`, returns the text that `from_str_radix` reads back, in a radix from 2 to 36
+    with lowercase letters, with `-` before the digits of a negative value, where the radix formats
+    write its bits. `to_le_bytes_vec` and `to_be_bytes_vec`, of `Uint` and `Int` and in
+    `IntegerBytes`, return the bytes at any width, and `to_le_bytes_trimmed_vec` and
+    `to_be_bytes_trimmed_vec` the shortest bytes that `checked_from_le_slice` and
+    `checked_from_be_slice` read back as the value: none for zero, and the shortest two's
+    complement of a negative value. Each allocates what it returns and nothing else, in every
+    storage.
   - The arithmetic of the native integers at the width `Bits`, as `const fn`s of every storage:
     `overflowing_*`, `checked_*`, `wrapping_*` and `strict_*` addition, subtraction, multiplication
     and negation, and `saturating_*` addition, subtraction and multiplication; `carrying_add` and

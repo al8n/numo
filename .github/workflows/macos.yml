@@ -125,10 +125,10 @@ jobs:
         key: ${{ runner.os }}-coverage-dotcargo
     - name: Run test
       run: cargo hack test --each-feature
-    - name: Run the arithmetic tests without overflow checks and the Full tier of the integer serde tests
-      run: cargo test --release --lib --features serde integer::arithmetic
+    - name: Run the arithmetic tests without overflow checks and the Full tier of the integer serde and triomphe tests
+      run: cargo test --release --lib --features serde,triomphe integer::arithmetic
     # A process of its own, with the features of the step before, so that nothing is built again:
     # the tests of the integers and those of the decimals each capture panics with a hook that they
     # install, and a panic that fell while the other hook was being installed would not be captured.
     - name: Run the decimal operators without overflow checks
-      run: cargo test --release --lib --features serde decimal::tests::operators
+      run: cargo test --release --lib --features serde,triomphe decimal::tests::operators

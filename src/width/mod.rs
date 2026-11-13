@@ -16,15 +16,20 @@ use typenum::{
 };
 
 pub use array_size::ArraySize;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
 pub(crate) use heap::{ArrayLimb, ArrayRepr};
 pub(crate) use sealed::{
-  InlineIntConsts, InlineUintConsts, IntCore, IntWidth, TypenumNumber, UintCore, UintWidth, View,
+  InlineIntConsts, InlineUintConsts, IntCore, IntWidth, ReprLimb, TypenumNumber, UintCore,
+  UintWidth, View,
 };
 
 use sealed::{
   BitsBelow2Pow32, BitsFill, BitsFit, BitsOf, Canonical, DefaultArray, DefaultRepr, LimbFor,
-  MutableRepr, NativeBitsFit, NativeReprFilled, NonZeroRepr, ReprFilled, ReprLimb, Width,
+  MutableRepr, NativeBitsFit, NativeReprFilled, NonZeroRepr, ReprFilled, Width,
 };
 
 use crate::{
@@ -38,7 +43,11 @@ use crate::{
 };
 
 mod array_size;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
 mod heap;
 
 mod sealed {
@@ -384,6 +393,31 @@ mod sealed {
     /// Requires `bits` to be at most the bits of the storage.
     fn checked_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Option<Self>;
 
+    /// The integer whose digits in `radix` are `digits`, most significant first if `big_endian` and
+    /// least significant first otherwise, as an integer of `bits` bits, or `None` if a digit is not
+    /// below `radix` or the integer is `2^bits` or more. No digits are zero. Requires
+    /// `2 <= radix <= 256` and `bits` to be at most the bits of the storage.
+    fn checked_read_digits(
+      digits: &[u8],
+      big_endian: bool,
+      radix: u32,
+      bits: u32,
+      token: Token,
+    ) -> Option<Self>;
+
+    /// `self * factor + addend` if it has `bits` bits, or `None` otherwise. Requires `bits` to be
+    /// at most the bits of the storage.
+    fn checked_mul_add_u64(
+      &self,
+      factor: u64,
+      addend: u64,
+      bits: u32,
+      token: Token,
+    ) -> Option<Self>;
+
+    /// The quotient and the remainder of the value divided by `divisor`. Requires `divisor != 0`.
+    fn div_rem_u64(&self, divisor: u64, token: Token) -> (Self, u64);
+
     /// The integer in `bytes`, read as [`checked_read_bytes`](Self::checked_read_bytes) reads it,
     /// modulo `2^bits`. Requires `bits` to be at most the bits of the storage.
     fn wrapping_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Self;
@@ -697,8 +731,9 @@ mod sealed {
     type NonZeroStorage;
 
     /// The storage that computes the values of this storage and holds one inline, as for
-    /// [`UintCore::Inline`].
-    type Inline: IntCore;
+    /// [`UintCore::Inline`]. Its magnitude is an unsigned storage, so generic code can compute
+    /// the magnitude of a lent value without a storage of its own.
+    type Inline: IntCore<Magnitude: UintCore>;
 
     /// Lends the value, as its inline storage.
     fn inline(&self, token: Token) -> &Self::Inline;
@@ -1158,8 +1193,9 @@ impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
 /// A storage of [`Uint`](crate::Uint): a native unsigned integer, `u8`, `u16`, `u32`, `u64` or
 /// `u128`, holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first. With
-/// the `std` or the `alloc` feature, such an array in a `Box`, `Box<[L; N]>`, holds it in its
-/// allocation (see [Heap storages](crate::Uint#heap-storages)).
+/// the `std` or the `alloc` feature, such an array in a `Box`, an `Rc` or an `Arc`, as in
+/// `Box<[L; N]>`, holds it in its allocation, and so does such an array in a `triomphe::Arc` with
+/// the `triomphe` feature (see [Heap storages](crate::Uint#heap-storages)).
 ///
 /// `Uint<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
@@ -1178,20 +1214,20 @@ impl<U: Unsigned> WholeBytes for UInt<UInt<UInt<U, B0>, B0>, B0> {}
 /// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Uint`",
-  note = "`Uint` stores an unsigned native integer, `u8` to `u128`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, with the `std` or the `alloc` feature"
+  note = "`Uint` stores an unsigned native integer, `u8` to `u128`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature, or in a `triomphe::Arc`, with the `triomphe` feature"
 )]
 pub trait UintRepr:
   Eq + UintCore<Complement = <Self as UintRepr>::Signed, NonZeroStorage = <Self as UintRepr>::NonZero>
 {
   /// The storage of [`Int`](crate::Int) of the same size: `i8` for `u8`, `i16` for `u16`, and so
-  /// on, and the same storage for an array of limbs and a box of one. It holds the bits of a value
-  /// read in two's complement, as [`cast_signed`](crate::UnsignedBits::cast_signed) reads them, and
-  /// its [`Unsigned`](IntRepr::Unsigned) is this storage again, so that generic code over the width
-  /// casts `Uint<B>` to `Int<B>` and back.
+  /// on, and the same storage for an array of limbs and for a heap storage. It holds the bits of a
+  /// value read in two's complement, as [`cast_signed`](crate::UnsignedBits::cast_signed) reads
+  /// them, and its [`Unsigned`](IntRepr::Unsigned) is this storage again, so that generic code over
+  /// the width casts `Uint<B>` to `Int<B>` and back.
   type Signed: IntRepr<Unsigned = Self>;
 
   /// The storage of the values of this storage that are not zero: `core::num::NonZero<u8>` for
-  /// `u8`, and so on, and the same storage for an array of limbs and a box of one. Its
+  /// `u8`, and so on, and the same storage for an array of limbs and for a heap storage. Its
   /// [`Integer`](NonZeroUintRepr::Integer) is this storage again, and its
   /// [`Signed`](NonZeroUintRepr::Signed), the storage of a cast, is the
   /// [`NonZero`](IntRepr::NonZero) of [`Signed`](Self::Signed).
@@ -1201,8 +1237,9 @@ pub trait UintRepr:
 /// A storage of [`Int`](crate::Int): a native signed integer, `i8`, `i16`, `i32`, `i64` or `i128`,
 /// holds the value itself, and the array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or
 /// `[u128; N]` holds it in `N` limbs of 8, 16, 32, 64 or 128 bits, least significant first, in
-/// two's complement. With the `std` or the `alloc` feature, such an array in a `Box`,
-/// `Box<[L; N]>`, holds it in its allocation (see [Heap storages](crate::Uint#heap-storages)).
+/// two's complement. With the `std` or the `alloc` feature, such an array in a `Box`, an `Rc` or
+/// an `Arc`, as in `Box<[L; N]>`, holds it in its allocation, and so does such an array in a
+/// `triomphe::Arc` with the `triomphe` feature (see [Heap storages](crate::Uint#heap-storages)).
 ///
 /// `Int<Bits, Repr>` implements `Ord`, `Hash`, `Display`, `Debug` and `Default`, the arithmetic
 /// traits [`OverflowingOps`](crate::OverflowingOps), [`CheckedOps`](crate::CheckedOps),
@@ -1221,17 +1258,17 @@ pub trait UintRepr:
 /// outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Int`",
-  note = "`Int` stores a signed native integer, `i8` to `i128`, an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement, or such an array in a `Box`, with the `std` or the `alloc` feature"
+  note = "`Int` stores a signed native integer, `i8` to `i128`, an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature, or in a `triomphe::Arc`, with the `triomphe` feature"
 )]
 pub trait IntRepr:
   Eq + IntCore<Magnitude = <Self as IntRepr>::Unsigned, NonZeroStorage = <Self as IntRepr>::NonZero>
 {
   /// The storage of [`Uint`](crate::Uint) of the same size: `u8` for `i8`, `u16` for `i16`, and so
-  /// on, and the same storage for an array of limbs and a box of one.
+  /// on, and the same storage for an array of limbs and for a heap storage.
   type Unsigned: UintRepr;
 
   /// The storage of the values of this storage that are not zero: `core::num::NonZero<i8>` for
-  /// `i8`, and so on, and the same storage for an array of limbs and a box of one. Its
+  /// `i8`, and so on, and the same storage for an array of limbs and for a heap storage. Its
   /// [`Integer`](NonZeroIntRepr::Integer) is this storage again, and its
   /// [`Unsigned`](NonZeroIntRepr::Unsigned), the storage of a cast, is the
   /// [`NonZero`](UintRepr::NonZero) of [`Unsigned`](Self::Unsigned).
@@ -1242,7 +1279,8 @@ pub trait IntRepr:
 /// `NonZero<u32>`, `NonZero<u64>` or `NonZero<u128>`, which holds a value that is not zero, or an
 /// array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, which holds it in `N` limbs,
 /// least significant first, as for [`Uint`](crate::Uint), and with the `std` or the `alloc`
-/// feature such an array in a `Box`.
+/// feature such an array in a `Box`, an `Rc` or an `Arc`, or with the `triomphe` feature in a
+/// `triomphe::Arc`.
 ///
 /// Each is the [`NonZero`](UintRepr::NonZero) of a storage of `Uint`, its
 /// [`Integer`](Self::Integer). `NonZeroUint<Bits, Repr>` implements `Clone`, `Eq`, `Ord`, `Hash`,
@@ -1254,19 +1292,19 @@ pub trait IntRepr:
 /// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `NonZeroUint`",
-  note = "`NonZeroUint` stores `core::num::NonZero<u8>` to `NonZero<u128>`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, with the `std` or the `alloc` feature"
+  note = "`NonZeroUint` stores `core::num::NonZero<u8>` to `NonZero<u128>`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature, or in a `triomphe::Arc`, with the `triomphe` feature"
 )]
 pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
   /// The storage of the integer that may be zero: `u8` for `core::num::NonZero<u8>`, and so on,
-  /// and the storage itself for an array of limbs and a box of one. Its
+  /// and the storage itself for an array of limbs and for a heap storage. Its
   /// [`NonZero`](UintRepr::NonZero) is this storage again.
   type Integer: UintRepr<NonZero = Self>;
 
   /// The non-zero storage of the signed integer of the same size: `core::num::NonZero<i8>` for
-  /// `NonZero<u8>`, and so on, and the storage itself for an array of limbs and a box of one. Its
-  /// [`Integer`](NonZeroIntRepr::Integer) is the [`Signed`](UintRepr::Signed) of this storage's
-  /// `Integer`, which holds the bits of a cast, and it is the [`NonZero`](IntRepr::NonZero) of
-  /// that storage, as [`UintRepr::NonZero`] states.
+  /// `NonZero<u8>`, and so on, and the storage itself for an array of limbs and for a heap storage.
+  /// Its [`Integer`](NonZeroIntRepr::Integer) is the [`Signed`](UintRepr::Signed) of this
+  /// storage's `Integer`, which holds the bits of a cast, and it is the
+  /// [`NonZero`](IntRepr::NonZero) of that storage, as [`UintRepr::NonZero`] states.
   type Signed: NonZeroIntRepr<Integer = <Self::Integer as UintRepr>::Signed>;
 }
 
@@ -1274,7 +1312,8 @@ pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
 /// `NonZero<i32>`, `NonZero<i64>` or `NonZero<i128>`, which holds a value that is not zero, or an
 /// array `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, which holds it in `N` limbs,
 /// least significant first, in two's complement, as for [`Int`](crate::Int), and with the `std` or
-/// the `alloc` feature such an array in a `Box`.
+/// the `alloc` feature such an array in a `Box`, an `Rc` or an `Arc`, or with the `triomphe`
+/// feature in a `triomphe::Arc`.
 ///
 /// Each is the [`NonZero`](IntRepr::NonZero) of a storage of `Int`, its
 /// [`Integer`](Self::Integer). `NonZeroInt<Bits, Repr>` implements the traits of
@@ -1283,17 +1322,17 @@ pub trait NonZeroUintRepr: Eq + Clone + NonZeroRepr {
 /// This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `NonZeroInt`",
-  note = "`NonZeroInt` stores `core::num::NonZero<i8>` to `NonZero<i128>`, an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement, or such an array in a `Box`, with the `std` or the `alloc` feature"
+  note = "`NonZeroInt` stores `core::num::NonZero<i8>` to `NonZero<i128>`, an array `[u8; N]` to `[u128; N]` of unsigned limbs in two's complement, or such an array in a `Box`, an `Rc` or an `Arc`, with the `std` or the `alloc` feature, or in a `triomphe::Arc`, with the `triomphe` feature"
 )]
 pub trait NonZeroIntRepr: Eq + Clone + NonZeroRepr {
   /// The storage of the integer that may be zero: `i8` for `core::num::NonZero<i8>`, and so on,
-  /// and the storage itself for an array of limbs and a box of one. Its
+  /// and the storage itself for an array of limbs and for a heap storage. Its
   /// [`NonZero`](IntRepr::NonZero) is this storage again.
   type Integer: IntRepr<NonZero = Self>;
 
   /// The non-zero storage of the unsigned integer of the same size: `core::num::NonZero<u8>` for
-  /// `NonZero<i8>`, and so on, and the storage itself for an array of limbs and a box of one. Its
-  /// [`Integer`](NonZeroUintRepr::Integer) is the [`Unsigned`](IntRepr::Unsigned) of this
+  /// `NonZero<i8>`, and so on, and the storage itself for an array of limbs and for a heap storage.
+  /// Its [`Integer`](NonZeroUintRepr::Integer) is the [`Unsigned`](IntRepr::Unsigned) of this
   /// storage's `Integer`, which holds the bits of a cast, and it is the
   /// [`NonZero`](UintRepr::NonZero) of that storage, as [`IntRepr::NonZero`] states.
   type Unsigned: NonZeroUintRepr<Integer = <Self::Integer as IntRepr>::Unsigned>;
@@ -1302,26 +1341,27 @@ pub trait NonZeroIntRepr: Eq + Clone + NonZeroRepr {
 /// A storage of [`Uint`](crate::Uint) that holds the value in place, so that the integers have the
 /// compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=` and `>>=`.
 ///
-/// Every storage of this crate implements it: the native unsigned integers, the arrays of limbs
-/// and the boxes of them. With it, `Uint` also has `/=` and `%=` by a
-/// [`NonZeroUint`](crate::NonZeroUint), the `NonZeroUint` over its [`NonZero`](UintRepr::NonZero)
-/// has `|=`, and where the storage is `Clone`, as every storage of this crate is, `Uint` implements
-/// [`IntegerAssign`](crate::IntegerAssign). This trait is sealed and cannot be implemented outside
-/// this crate.
+/// The native unsigned integers, the arrays of limbs and the boxes of them implement it, and the
+/// shared heap storages, an `Rc`, an `Arc` or a `triomphe::Arc` of an array, do not. With it,
+/// `Uint` also has `/=` and `%=` by a [`NonZeroUint`](crate::NonZeroUint), the `NonZeroUint` over
+/// its [`NonZero`](UintRepr::NonZero) has `|=`, and where the storage is `Clone`, as every storage
+/// of this crate is, `Uint` implements [`IntegerAssign`](crate::IntegerAssign). This trait is
+/// sealed and cannot be implemented outside this crate.
 pub trait UintReprMut: UintRepr + MutableRepr {}
 
 /// A storage of [`Int`](crate::Int) that holds the value in place, so that the integers have the
 /// compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=` and `>>=`.
 ///
-/// Every storage of this crate implements it: the native signed integers, the arrays of limbs and
-/// the boxes of them. With it, the [`NonZeroInt`](crate::NonZeroInt) over its
-/// [`NonZero`](IntRepr::NonZero) has `|=`, and where the storage is `Clone`, as every storage of
-/// this crate is, `Int` implements [`IntegerAssign`](crate::IntegerAssign). This trait is sealed
-/// and cannot be implemented outside this crate.
+/// The native signed integers, the arrays of limbs and the boxes of them implement it, and the
+/// shared heap storages, an `Rc`, an `Arc` or a `triomphe::Arc` of an array, do not. With it, the
+/// [`NonZeroInt`](crate::NonZeroInt) over its [`NonZero`](IntRepr::NonZero) has `|=`, and where
+/// the storage is `Clone`, as every storage of this crate is, `Int` implements
+/// [`IntegerAssign`](crate::IntegerAssign). This trait is sealed and cannot be implemented outside
+/// this crate.
 pub trait IntReprMut: IntRepr + MutableRepr {}
 
 /// A storage of [`Uint`](crate::Uint) that holds the value inline, so that the integer is `Copy`: a
-/// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`. A box of an array
+/// native unsigned integer, `u8` to `u128`, or an array `[u8; N]` to `[u128; N]`. A heap storage
 /// does not implement it.
 ///
 /// `Uint<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX` and implements
@@ -1335,7 +1375,7 @@ pub trait IntReprMut: IntRepr + MutableRepr {}
 pub trait InlineUintRepr: UintReprMut + Copy + InlineUintConsts {}
 
 /// A storage of [`Int`](crate::Int) that holds the value inline, so that the integer is `Copy`: a
-/// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`. A box of an array
+/// native signed integer, `i8` to `i128`, or an array `[u8; N]` to `[u128; N]`. A heap storage
 /// does not implement it.
 ///
 /// `Int<Bits, Repr>` has the constants `ZERO`, `MIN` and `MAX` and implements
@@ -1482,6 +1522,27 @@ macro_rules! array_storage {
         _: Token,
       ) -> Option<Self> {
         unsigned::$lower::checked_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn checked_read_digits(
+        digits: &[u8],
+        big_endian: bool,
+        radix: u32,
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        unsigned::$lower::checked_read_digits(digits, big_endian, radix, bits)
+      }
+
+      #[inline]
+      fn checked_mul_add_u64(&self, factor: u64, addend: u64, bits: u32, _: Token) -> Option<Self> {
+        unsigned::$lower::append_chunk(self, factor, addend, bits, false)
+      }
+
+      #[inline]
+      fn div_rem_u64(&self, divisor: u64, _: Token) -> (Self, u64) {
+        unsigned::$lower::div_rem_chunk(self, divisor)
       }
 
       #[inline]
@@ -2473,6 +2534,27 @@ macro_rules! native_storage {
         _: Token,
       ) -> Option<Self> {
         int::$uint::checked_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn checked_read_digits(
+        digits: &[u8],
+        big_endian: bool,
+        radix: u32,
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        int::$uint::checked_read_digits(digits, big_endian, radix, bits)
+      }
+
+      #[inline]
+      fn checked_mul_add_u64(&self, factor: u64, addend: u64, bits: u32, _: Token) -> Option<Self> {
+        int::$uint::checked_mul_add_chunk(*self, factor, addend, bits)
+      }
+
+      #[inline]
+      fn div_rem_u64(&self, divisor: u64, _: Token) -> (Self, u64) {
+        int::$uint::div_rem_chunk(*self, divisor)
       }
 
       #[inline]

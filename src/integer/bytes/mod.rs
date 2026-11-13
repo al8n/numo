@@ -82,6 +82,30 @@ pub(crate) const fn strict_limbs_slice() -> ! {
   panic!("strict_from_limbs_slice: the limbs hold a value outside the range of the integer")
 }
 
+/// The number of the shortest bytes of the value of `repr`, of `bits` bits, unsigned: those up to
+/// its highest one, none for zero.
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn uint_trimmed_len<R: UintCore>(repr: &R, bits: u32) -> usize {
+  (bits - repr.leading_zeros_bits(bits, Token::new())).div_ceil(8) as usize
+}
+
+/// The number of the shortest bytes of the value of `repr`, of `bits` bits, in two's complement:
+/// none for zero, and otherwise those of its bits below the copies of its sign at the top and one
+/// sign bit.
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn int_trimmed_len<R: IntCore>(repr: &R, bits: u32) -> usize {
+  if repr.is_zero(Token::new()) {
+    return 0;
+  }
+  // A value that is not zero has at least one copy of its sign: its top bit.
+  let copies = if repr.is_negative(Token::new()) {
+    repr.leading_ones_bits(bits, Token::new())
+  } else {
+    repr.leading_zeros_bits(bits, Token::new())
+  };
+  (bits - copies + 1).div_ceil(8) as usize
+}
+
 /// Emits the byte methods of `Uint` and `Int` as inherent `const fn`s of one storage, in an impl
 /// block whose width relation holds: `$args` is `[layer]` for a native integer, which its layer in
 /// `int` takes by value, or `[group, layer, &]` for an array, which its layers take by reference,
@@ -686,6 +710,37 @@ pub trait IntegerBytes: Sealed + Sized {
   #[must_use]
   #[track_caller]
   fn strict_from_be_slice(bytes: &[u8]) -> Self;
+
+  /// The bytes of the value, least significant first, in a `Vec`: those of
+  /// [`copy_le_bytes_to`](Self::copy_le_bytes_to), `BYTES` of them, at any width.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  fn to_le_bytes_vec(&self) -> std::vec::Vec<u8>;
+
+  /// The bytes of the value, most significant first, in a `Vec`: those of
+  /// [`to_le_bytes_vec`](Self::to_le_bytes_vec) in reverse order.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  fn to_be_bytes_vec(&self) -> std::vec::Vec<u8>;
+
+  /// The shortest bytes, least significant first, that
+  /// [`checked_from_le_slice`](Self::checked_from_le_slice) reads back as the value: none for
+  /// zero, without the zero bytes above the value for `Uint`, and the shortest two's complement
+  /// for `Int`.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  fn to_le_bytes_trimmed_vec(&self) -> std::vec::Vec<u8>;
+
+  /// The shortest bytes, most significant first, that
+  /// [`checked_from_be_slice`](Self::checked_from_be_slice) reads back as the value: those of
+  /// [`to_le_bytes_trimmed_vec`](Self::to_le_bytes_trimmed_vec) in reverse order.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  fn to_be_bytes_trimmed_vec(&self) -> std::vec::Vec<u8>;
 }
 
 /// The bytes of an integer as an array whose length is part of its type: [`Uint`] and [`Int`]
@@ -831,11 +886,11 @@ pub trait IntegerByteOrder: Sealed + Sized {
 /// Implements the byte traits for [`Uint`] and [`Int`], written `Integer: Repr`, with the sealed
 /// methods of the storage trait `Repr`, which neither need `Copy` nor read a constant of a value.
 /// [`IntegerByteOrder`] also needs `Repr: Clone`, to return the value itself where the order is
-/// that of the target; `from_be` and `from_le` take their value, and store its reversed bytes in
-/// its storage.
+/// that of the target; `from_be` and `from_le` take their value, and the one that reverses the
+/// bytes on the target stores them in its storage.
 // Trait methods cannot be `const`.
 macro_rules! byte_traits {
-  ($($integer:ident: $repr:ident),+ $(,)?) => {$(
+  ($($integer:ident: $repr:ident, $trimmed:ident);+ $(;)?) => {$(
     impl<B: FitsBits<R>, R: $repr> IntegerBytes for $integer<B, R> {
       const BYTES: usize = Self::BYTES;
 
@@ -942,6 +997,94 @@ macro_rules! byte_traits {
           Some(value) => value,
           None => strict_be_slice(),
         }
+      }
+
+      #[cfg(any(feature = "std", feature = "alloc"))]
+      #[inline]
+      fn to_le_bytes_vec(&self) -> std::vec::Vec<u8> {
+        Self::to_le_bytes_vec(self)
+      }
+
+      #[cfg(any(feature = "std", feature = "alloc"))]
+      #[inline]
+      fn to_be_bytes_vec(&self) -> std::vec::Vec<u8> {
+        Self::to_be_bytes_vec(self)
+      }
+
+      #[cfg(any(feature = "std", feature = "alloc"))]
+      #[inline]
+      fn to_le_bytes_trimmed_vec(&self) -> std::vec::Vec<u8> {
+        Self::to_le_bytes_trimmed_vec(self)
+      }
+
+      #[cfg(any(feature = "std", feature = "alloc"))]
+      #[inline]
+      fn to_be_bytes_trimmed_vec(&self) -> std::vec::Vec<u8> {
+        Self::to_be_bytes_trimmed_vec(self)
+      }
+    }
+
+    // One item for every storage, which writes the bytes of the storage into the `Vec` that it
+    // returns, allocated once with its length.
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    impl<B: FitsBits<R>, R: $repr> $integer<B, R> {
+      /// The bytes of the value, least significant first, in a `Vec`: [`BYTES`](Self::BYTES) of
+      /// them, those of [`to_le_bytes`](Self::to_le_bytes) at every width, also above 8192 bits.
+      #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+      #[must_use]
+      #[inline]
+      pub fn to_le_bytes_vec(&self) -> std::vec::Vec<u8> {
+        self.bytes_vec(Self::BYTES, false)
+      }
+
+      /// The bytes of the value, most significant first, in a `Vec`: those of
+      /// [`to_le_bytes_vec`](Self::to_le_bytes_vec) in reverse order.
+      #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+      #[must_use]
+      #[inline]
+      pub fn to_be_bytes_vec(&self) -> std::vec::Vec<u8> {
+        self.bytes_vec(Self::BYTES, true)
+      }
+
+      /// The shortest bytes, least significant first, that
+      /// [`checked_from_le_slice`](Self::checked_from_le_slice) reads back as the value: none for
+      /// zero, and the low bytes of the storage up to the highest one that the value needs, which
+      /// for `Uint` is the highest byte that is not zero and for `Int` the shortest two's
+      /// complement, whose top bit is the sign. The length is never above `BYTES`.
+      ///
+      /// ```
+      /// use numo::{Int, Uint, i7, typenum::U16};
+      ///
+      /// assert_eq!(Uint::<U16>::new(0x80).to_le_bytes_trimmed_vec(), [0x80]);
+      /// assert_eq!(Int::<U16>::new(128).to_le_bytes_trimmed_vec(), [0x80, 0x00]);
+      /// assert_eq!(Int::<U16>::new(-129).to_le_bytes_trimmed_vec(), [0x7f, 0xff]);
+      /// assert_eq!(i7::new(-1).to_le_bytes_trimmed_vec(), [0xff]);
+      /// assert!(i7::ZERO.to_le_bytes_trimmed_vec().is_empty());
+      /// ```
+      #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+      #[must_use]
+      #[inline]
+      pub fn to_le_bytes_trimmed_vec(&self) -> std::vec::Vec<u8> {
+        self.bytes_vec($trimmed(&self.repr, B::U32), false)
+      }
+
+      /// The shortest bytes, most significant first, that
+      /// [`checked_from_be_slice`](Self::checked_from_be_slice) reads back as the value: those of
+      /// [`to_le_bytes_trimmed_vec`](Self::to_le_bytes_trimmed_vec) in reverse order.
+      #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+      #[must_use]
+      #[inline]
+      pub fn to_be_bytes_trimmed_vec(&self) -> std::vec::Vec<u8> {
+        self.bytes_vec($trimmed(&self.repr, B::U32), true)
+      }
+
+      /// The low `len` bytes of the storage, most significant first if `big_endian`. Requires
+      /// `len <= BYTES`.
+      #[inline]
+      fn bytes_vec(&self, len: usize, big_endian: bool) -> std::vec::Vec<u8> {
+        let mut bytes = std::vec![0; len];
+        self.repr.write_bytes(&mut bytes, big_endian, Token::new());
+        bytes
       }
     }
 
@@ -1062,7 +1205,7 @@ macro_rules! byte_traits {
   )+};
 }
 
-byte_traits!(Uint: UintRepr, Int: IntRepr);
+byte_traits!(Uint: UintRepr, uint_trimmed_len; Int: IntRepr, int_trimmed_len);
 
 /// Implements [`IntegerByteOrder`] for the non-zero integers, written `NonZero: Repr`, through the
 /// helpers of [`Parts`], over every storage whose integer storage is `Clone`, as the implementation

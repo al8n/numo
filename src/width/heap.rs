@@ -1,31 +1,38 @@
 //! The heap storages of [`Uint`](crate::Uint) and [`Int`](crate::Int) and of their non-zero
-//! integers: an array of limbs `[L; N]` in a `Box`, with the `std` or the `alloc` feature.
+//! integers: an array of limbs `[L; N]` in a `Box` or an `Rc`, and on a target with atomic
+//! pointers in an `Arc`, with the `std` or the `alloc` feature; and on such a target in a
+//! `triomphe::Arc`, with the `triomphe` feature.
 //!
 //! The array is the inline storage of the pointer, `Inline`, whose rows compute every value. Each
 //! row of a heap storage lends the arrays of its operands to the row of the same name of the
 //! array, through `Borrow`, and puts each array that it returns in an allocation of its own, as
-//! `from_inline` does. The exceptions are zero, which is built in its allocation, the conversions
-//! with the non-zero storage, which is the pointer itself, and the casts between the signs, the
-//! saturating ones among them, which store their result in the allocation that they consume.
+//! `from_inline` does. The exceptions are zero, which is built in its allocation, and the
+//! conversions with the non-zero storage, which is the pointer itself. A `Box` holds its value in
+//! place: it stores a value and the casts between the signs, the saturating ones among them, in
+//! its allocation. The shared pointers never write a value that they hold: they replace the pointer
+//! with a new allocation.
 
-use core::{
-  borrow::{Borrow, BorrowMut},
-  cmp::Ordering,
-  fmt,
-  hash::Hasher,
-  num::ParseIntError,
-};
-use std::{boxed::Box, vec};
+#[cfg(any(feature = "std", feature = "alloc"))]
+use core::borrow::BorrowMut;
+use core::{borrow::Borrow, cmp::Ordering, fmt, hash::Hasher, num::ParseIntError};
+#[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
+use std::sync::Arc;
+#[cfg(any(feature = "std", feature = "alloc"))]
+use std::{boxed::Box, rc::Rc, vec};
 
 use super::{
-  BitsFill, BitsOf, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, IntReprMut, MutableRepr,
-  NonZeroIntRepr, NonZeroRepr, NonZeroUintRepr, ReprLimb, UintCore, UintRepr, UintReprMut, View,
+  BitsFill, BitsOf, InlineIntRepr, InlineUintRepr, IntCore, IntRepr, NonZeroIntRepr, NonZeroRepr,
+  NonZeroUintRepr, ReprLimb, UintCore, UintRepr, View,
 };
+#[cfg(any(feature = "std", feature = "alloc"))]
+use super::{IntReprMut, MutableRepr, UintReprMut};
 use crate::{
   FromFloatError, Int, RoundingMode, Uint,
   int::float::{FloatFormat, FloatParts},
   layout::Token,
 };
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+use triomphe::Arc as TriompheArc;
 
 /// A limb type of an array storage, `u8`, `u16`, `u32`, `u64` or `u128`, whose zero builds the zero
 /// of a heap storage in its allocation.
@@ -75,6 +82,7 @@ array_limbs!(u8, u16, u32, u64, u128);
 /// The zero of `N` limbs in a `Box`, built in its allocation: `vec!` of zero limbs takes zeroed
 /// memory, and the conversion of the boxed slice into the boxed array keeps the allocation, so no
 /// array of the limbs is on the stack.
+#[cfg(any(feature = "std", feature = "alloc"))]
 fn boxed_zero<L: ArrayLimb, const N: usize>() -> Box<[L; N]> {
   match vec![L::ZERO; N].into_boxed_slice().try_into() {
     Ok(zero) => zero,
@@ -82,8 +90,45 @@ fn boxed_zero<L: ArrayLimb, const N: usize>() -> Box<[L; N]> {
   }
 }
 
+/// The zero of `N` limbs in an `Rc`, built in its allocation: the zero limbs, an iterator of known
+/// length, are collected into one allocation of the counts and the limbs, and the conversion of the
+/// slice into the array keeps it, so no array of the limbs is on the stack.
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn rc_zero<L: ArrayLimb, const N: usize>() -> Rc<[L; N]> {
+  match core::iter::repeat_n(L::ZERO, N)
+    .collect::<Rc<[L]>>()
+    .try_into()
+  {
+    Ok(zero) => zero,
+    Err(_) => length(),
+  }
+}
+
+/// The zero of `N` limbs in an `Arc`, built in its allocation, as [`rc_zero`] builds it in an
+/// `Rc`.
+#[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
+fn arc_zero<L: ArrayLimb, const N: usize>() -> Arc<[L; N]> {
+  match core::iter::repeat_n(L::ZERO, N)
+    .collect::<Arc<[L]>>()
+    .try_into()
+  {
+    Ok(zero) => zero,
+    Err(_) => length(),
+  }
+}
+
+/// The zero of `N` limbs in a `triomphe::Arc`, which has no conversion of a slice into an array:
+/// the zeroed array is moved into its allocation, in one allocation of the count and the limbs. An
+/// optimized build zeroes the limbs in the allocation; an unoptimized one builds the array on the
+/// stack first.
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+fn triomphe_zero<L: ArrayLimb, const N: usize>() -> TriompheArc<[L; N]> {
+  TriompheArc::new([L::ZERO; N])
+}
+
 /// Panics on a slice of limbs whose length is not that of its array: a bug of this crate, as the
 /// slice is made with the length of the array.
+#[cfg(any(feature = "std", feature = "alloc"))]
 #[cold]
 fn length() -> ! {
   panic!("a slice of limbs does not have the length of its array")
@@ -562,11 +607,13 @@ macro_rules! heap_rows {
 
 /// Implements the storage traits of [`Uint`], [`Int`] and their non-zero integers, the storage
 /// cores and the width relations, for the arrays of limbs in the heap pointer `$pointer`, written
-/// `pointer, zero`, where the pointer holds its array in place and writes it through `BorrowMut`,
-/// and `zero` builds zero in its allocation. Each storage core delegates to the array through
-/// `heap_rows!`, and the rows that differ between the cores are written for each.
+/// `pointer, zero, kind, [cfg]`, where `zero` builds zero in its allocation, `kind` is `in_place`
+/// for a pointer that writes its array through `BorrowMut` and `shared` for one that never writes
+/// it, and `cfg` is the predicate of the features and the target that give the pointer, which the
+/// docs show. Each storage core delegates to the array through `heap_rows!`, and the rows that
+/// differ between the cores are written for each.
 macro_rules! heap_storage {
-  ($pointer:ident, $zero:ident) => {
+  ($pointer:ident, $zero:ident, $kind:ident, [$cfg:meta]) => {
     // The width relations of the array, so that generic code bounded by `B: FitsBits<[L; N]>` has
     // `B: FitsBits<$pointer<[L; N]>>`, and a width that the array does not hold reports the error
     // of the array.
@@ -578,7 +625,7 @@ macro_rules! heap_storage {
       type Limb = L;
     }
 
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<L: ArrayLimb, const N: usize> UintRepr for $pointer<[L; N]>
     where
       [L; N]: ArrayRepr,
@@ -596,11 +643,7 @@ macro_rules! heap_storage {
       type Inline = [L; N];
 
       heap_rows!(UintCore, uint, $zero);
-
-      #[inline]
-      fn set_inline(&mut self, value: [L; N], _: Token) {
-        *BorrowMut::<[L; N]>::borrow_mut(self) = value;
-      }
+      heap_storage!(@writes $kind, UintCore, cast_signed_bits, saturating_cast_signed_bits);
 
       #[inline]
       fn fmt_pow2(
@@ -665,20 +708,34 @@ macro_rules! heap_storage {
         (uint(value), overflow)
       }
 
-      // The signed storage is the pointer, so the casts store their result in the allocation that
-      // they consume.
       #[inline]
-      fn cast_signed_bits(mut self, bits: u32, token: Token) -> Self {
-        let array: &mut [L; N] = self.borrow_mut();
-        *array = <[L; N] as UintCore>::cast_signed_bits(*array, bits, token);
-        self
+      fn checked_read_digits(
+        digits: &[u8],
+        big_endian: bool,
+        radix: u32,
+        bits: u32,
+        token: Token,
+      ) -> Option<Self> {
+        <[L; N] as UintCore>::checked_read_digits(digits, big_endian, radix, bits, token).map(uint)
       }
 
       #[inline]
-      fn saturating_cast_signed_bits(mut self, bits: u32, token: Token) -> Self {
-        let array: &mut [L; N] = self.borrow_mut();
-        *array = <[L; N] as UintCore>::saturating_cast_signed_bits(*array, bits, token);
-        self
+      fn checked_mul_add_u64(
+        &self,
+        factor: u64,
+        addend: u64,
+        bits: u32,
+        token: Token,
+      ) -> Option<Self> {
+        <[L; N] as UintCore>::checked_mul_add_u64(self.borrow(), factor, addend, bits, token)
+          .map(uint)
+      }
+
+      #[inline]
+      fn div_rem_u64(&self, divisor: u64, token: Token) -> (Self, u64) {
+        let (quotient, remainder) =
+          <[L; N] as UintCore>::div_rem_u64(self.borrow(), divisor, token);
+        (uint(quotient), remainder)
       }
 
       #[inline]
@@ -687,7 +744,7 @@ macro_rules! heap_storage {
       }
     }
 
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<L: ArrayLimb, const N: usize> IntRepr for $pointer<[L; N]>
     where
       [L; N]: ArrayRepr,
@@ -705,11 +762,7 @@ macro_rules! heap_storage {
       type Inline = [L; N];
 
       heap_rows!(IntCore, int, $zero);
-
-      #[inline]
-      fn set_inline(&mut self, value: [L; N], _: Token) {
-        *BorrowMut::<[L; N]>::borrow_mut(self) = value;
-      }
+      heap_storage!(@writes $kind, IntCore, cast_unsigned_bits, saturating_cast_unsigned_bits);
 
       #[inline]
       fn fmt_pow2(
@@ -753,22 +806,6 @@ macro_rules! heap_storage {
         ))
       }
 
-      // The unsigned storage is the pointer, so the casts store their result in the allocation that
-      // they consume.
-      #[inline]
-      fn cast_unsigned_bits(mut self, bits: u32, token: Token) -> Self {
-        let array: &mut [L; N] = self.borrow_mut();
-        *array = <[L; N] as IntCore>::cast_unsigned_bits(*array, bits, token);
-        self
-      }
-
-      #[inline]
-      fn saturating_cast_unsigned_bits(mut self, bits: u32, token: Token) -> Self {
-        let array: &mut [L; N] = self.borrow_mut();
-        *array = <[L; N] as IntCore>::saturating_cast_unsigned_bits(*array, bits, token);
-        self
-      }
-
       #[inline]
       fn lend_nonzero<B>(nonzero: &Int<B, Self>, _: Token) -> View<'_, Int<B, Self>> {
         View::Lent(nonzero)
@@ -777,7 +814,7 @@ macro_rules! heap_storage {
 
     impl<L: ArrayLimb, const N: usize> NonZeroRepr for $pointer<[L; N]> where [L; N]: ArrayRepr {}
 
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<L: ArrayLimb, const N: usize> NonZeroUintRepr for $pointer<[L; N]>
     where
       [L; N]: ArrayRepr,
@@ -786,7 +823,7 @@ macro_rules! heap_storage {
       type Signed = Self;
     }
 
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<L: ArrayLimb, const N: usize> NonZeroIntRepr for $pointer<[L; N]>
     where
       [L; N]: ArrayRepr,
@@ -795,14 +832,82 @@ macro_rules! heap_storage {
       type Unsigned = Self;
     }
 
+    heap_storage!(@mutable $kind, $pointer, [$cfg]);
+  };
+  // A pointer that holds its value in place stores a value in its allocation, and the casts between
+  // the signs, the saturating ones among them, whose storage is the pointer again, store their
+  // result in the allocation that they consume.
+  (@writes in_place, $core:ident, $($cast:ident),+) => {
+    #[inline]
+    fn set_inline(&mut self, value: [L; N], _: Token) {
+      *BorrowMut::<[L; N]>::borrow_mut(self) = value;
+    }
+
+    $(
+      #[inline]
+      fn $cast(mut self, bits: u32, token: Token) -> Self {
+        let array: &mut [L; N] = self.borrow_mut();
+        *array = <[L; N] as $core>::$cast(*array, bits, token);
+        self
+      }
+    )+
+  };
+  // A shared pointer never writes the array that it holds, which other owners may read: a value
+  // replaces the pointer with a new allocation, and so does the result of each cast.
+  (@writes shared, $core:ident, $($cast:ident),+) => {
+    #[inline]
+    fn set_inline(&mut self, value: [L; N], _: Token) {
+      *self = Self::new(value);
+    }
+
+    $(
+      #[inline]
+      fn $cast(self, bits: u32, token: Token) -> Self {
+        let array: &[L; N] = self.borrow();
+        Self::new(<[L; N] as $core>::$cast(*array, bits, token))
+      }
+    )+
+  };
+  (@mutable in_place, $pointer:ident, [$cfg:meta]) => {
     impl<L: ArrayLimb, const N: usize> MutableRepr for $pointer<[L; N]> where [L; N]: ArrayRepr {}
 
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<L: ArrayLimb, const N: usize> UintReprMut for $pointer<[L; N]> where [L; N]: ArrayRepr {}
 
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    #[cfg_attr(docsrs, doc(cfg($cfg)))]
     impl<L: ArrayLimb, const N: usize> IntReprMut for $pointer<[L; N]> where [L; N]: ArrayRepr {}
   };
+  (@mutable shared, $pointer:ident, [$cfg:meta]) => {};
 }
 
-heap_storage!(Box, boxed_zero);
+#[cfg(any(feature = "std", feature = "alloc"))]
+heap_storage!(
+  Box,
+  boxed_zero,
+  in_place,
+  [any(feature = "std", feature = "alloc")]
+);
+#[cfg(any(feature = "std", feature = "alloc"))]
+heap_storage!(
+  Rc,
+  rc_zero,
+  shared,
+  [any(feature = "std", feature = "alloc")]
+);
+#[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
+heap_storage!(
+  Arc,
+  arc_zero,
+  shared,
+  [all(
+    any(feature = "std", feature = "alloc"),
+    target_has_atomic = "ptr"
+  )]
+);
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+heap_storage!(
+  TriompheArc,
+  triomphe_zero,
+  shared,
+  [all(feature = "triomphe", target_has_atomic = "ptr")]
+);

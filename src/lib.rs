@@ -153,9 +153,11 @@
 //! fills, and [`Limbs<Bits, L>`](Limbs) names the array of limbs of type `L` that holds it.
 //!
 //! With the `std` or the `alloc` feature, the storage can also be an array of limbs in a `Box`,
-//! `Box<[L; N]>`, such as `Uint<U4096, Box<[u64; 64]>>`, which keeps the value off the stack. Such
-//! an integer is not `Copy`, and has the traits of the general layer below but not the constants
-//! and the `const fn`s (see [Heap storages](Uint#heap-storages)).
+//! `Box<[L; N]>`, such as `Uint<U4096, Box<[u64; 64]>>`, which keeps the value off the stack, or
+//! shared and read-only in an `Rc` or, on a target with atomic pointers, an `Arc`; with the
+//! `triomphe` feature, on such a target, in a `triomphe::Arc`. Such an integer is not `Copy`, and
+//! has the traits of the general layer below but not the constants and the `const fn`s (see
+//! [Heap storages](Uint#heap-storages)).
 //!
 //! Each type has the constants `BITS`, `ZERO`, `MIN` and `MAX`, and `ONE` from one bit for `Uint`
 //! and from two bits for `Int`. In a native integer, its `const fn` constructors are `new`, which
@@ -369,10 +371,11 @@
 //! # `no_std`
 //!
 //! The crate is `no_std` without the `std` feature, which is a default feature. The `std` and the
-//! `alloc` features are independent: either one gives the heap storages, and `alloc` gives them to
-//! a `no_std` build, through the `alloc` crate. The crate allocates only in the heap storages and
-//! in the boxed iterator that the `quickcheck` feature returns from shrinking, as the `quickcheck`
-//! trait requires, so with no feature it never allocates.
+//! `alloc` features are independent: either one gives the heap storages and the forms that return
+//! a `Vec` or a `String`, such as `to_str_radix` and `to_radix_be`, and `alloc` gives them to a
+//! `no_std` build, through the `alloc` crate. The crate allocates only in the heap storages, in
+//! those forms, and in the boxed iterator that the `quickcheck` feature returns from shrinking, as
+//! the `quickcheck` trait requires, so with no feature it never allocates.
 //!
 //! # `serde`
 //!
@@ -533,7 +536,7 @@ pub use integer::{
   IntegerMath, IntegerNonZero, IntegerOne, NativeInteger, NonZeroInt, NonZeroLimits, NonZeroOf,
   NonZeroUint, OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger, SignedMath,
   SignedNonZero, StrictOps, TruncateFrom, TryNewError, Uint, UncheckedOps, UnsignedBits,
-  UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WidenFrom, WrappingOps,
+  UnsignedDigits, UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WidenFrom, WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

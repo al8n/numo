@@ -613,6 +613,69 @@ macro_rules! native {
         Ok(value)
       }
 
+      /// The integer whose digits in `radix`, a byte each, are `digits`, most significant first if
+      /// `big_endian` and least significant first otherwise, as a value of `bits` bits, or `None`
+      /// if a digit is not below `radix` or the value is `2^bits` or more. No digits are zero.
+      /// Requires `2 <= radix <= 256` and `bits <= BITS`.
+      pub(crate) const fn checked_read_digits(
+        digits: &[u8],
+        big_endian: bool,
+        radix: u32,
+        bits: u32,
+      ) -> Option<$uint> {
+        // In `u128`, which holds the radix 256, which a `u8` does not, and every value in range.
+        let max = max_of_bits(bits) as u128;
+        let mut value: u128 = 0;
+        let mut i = 0;
+        while i < digits.len() {
+          let digit = if big_endian {
+            digits[i]
+          } else {
+            digits[digits.len() - 1 - i]
+          };
+          if digit as u32 >= radix {
+            return None;
+          }
+          value = match value.checked_mul(radix as u128) {
+            Some(product) => match product.checked_add(digit as u128) {
+              Some(sum) if sum <= max => sum,
+              _ => return None,
+            },
+            None => return None,
+          };
+          i += 1;
+        }
+        Some(value as $uint)
+      }
+
+      /// `value * factor + addend` if it is at most `2^bits - 1`, and `None` otherwise. Requires
+      /// `bits <= BITS`.
+      #[inline]
+      pub(crate) const fn checked_mul_add_chunk(
+        value: $uint,
+        factor: u64,
+        addend: u64,
+        bits: u32,
+      ) -> Option<$uint> {
+        // In `u128`, which holds the product of a value of up to 64 bits by a `u64`; the checks
+        // catch the products of a wider value that it does not hold.
+        match (value as u128).checked_mul(factor as u128) {
+          Some(product) => match product.checked_add(addend as u128) {
+            Some(sum) if sum <= max_of_bits(bits) as u128 => Some(sum as $uint),
+            _ => None,
+          },
+          None => None,
+        }
+      }
+
+      /// Quotient and remainder of `value / divisor`. Requires `divisor != 0`.
+      #[inline]
+      pub(crate) const fn div_rem_chunk(value: $uint, divisor: u64) -> ($uint, u64) {
+        let (wide, divisor) = (value as u128, divisor as u128);
+        // The quotient is at most the value, and the remainder below the divisor.
+        ((wide / divisor) as $uint, (wide % divisor) as u64)
+      }
+
       /// `value` with the bit at `index` set if `set`, and cleared otherwise, or `None` for
       /// `index >= bits`. Requires `bits <= BITS`.
       #[inline]

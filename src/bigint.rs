@@ -842,6 +842,70 @@ pub(crate) fn radix_digits(mut magnitude: u128, radix: u32) -> String {
   }
 }
 
+/// Every sequence of up to `max_len` digits taken from `set`, with repetition, the empty one first.
+pub(crate) fn digit_sequences<T: Copy>(set: &[T], max_len: usize) -> Vec<Vec<T>> {
+  let mut sequences = vec![Vec::new()];
+  let mut last = vec![Vec::new()];
+  for _ in 0..max_len {
+    last = last
+      .iter()
+      .flat_map(|sequence: &Vec<T>| {
+        set.iter().map(move |&digit| {
+          let mut longer = sequence.clone();
+          longer.push(digit);
+          longer
+        })
+      })
+      .collect();
+    sequences.extend(last.iter().cloned());
+  }
+  sequences
+}
+
+/// The longest digit sequences that the checks of the readers of digits take in full: 4 in an
+/// optimized build, 3 in an unoptimized one and 2 under Miri.
+pub(crate) fn digit_sequence_len() -> usize {
+  match tier() {
+    Tier::Full => 4,
+    Tier::Debug => 3,
+    Tier::Miri => 2,
+  }
+}
+
+/// The value of `digits` in `base`, the most significant first if `big_endian`, or `None` if a
+/// digit is not below `base`: the model of the readers of digits. No digits are zero.
+pub(crate) fn digits_value<T: Copy + Into<u64>>(
+  digits: &[T],
+  big_endian: bool,
+  base: u64,
+) -> Option<BigInt> {
+  let mut value = BigInt::from(0);
+  let mut weight = BigInt::from(1);
+  for k in 0..digits.len() {
+    let digit: u64 = digits[if big_endian { digits.len() - 1 - k } else { k }].into();
+    if digit >= base {
+      return None;
+    }
+    value += &weight * digit;
+    weight *= base;
+  }
+  Some(value)
+}
+
+/// The digits of `value`, at least zero, in `base`, least significant first, without the zeros
+/// above the highest one, so zero has none: the model of the writers of digits.
+pub(crate) fn digits_of(value: &BigInt, base: u64) -> Vec<u64> {
+  let mut digits = Vec::new();
+  let mut rest = value.clone();
+  let zero = BigInt::from(0);
+  while rest > zero {
+    let digit = &rest % base;
+    digits.push(u64::try_from(digit).expect("below the base"));
+    rest /= base;
+  }
+  digits
+}
+
 /// `digits`, the digits of a number in `radix`, plus one.
 fn increment(digits: &str, radix: u32) -> String {
   let mut digits: Vec<u32> = digits

@@ -65,7 +65,8 @@ mod sealed {
 }
 
 /// An integer of a fixed number of bits: [`Uint`] and [`Int`] over a native integer, an array of
-/// limbs or, with the `std` or the `alloc` feature, a box of such an array.
+/// limbs or, with the `std` or the `alloc` feature or the `triomphe` feature, such an array in a
+/// heap storage.
 ///
 /// [`zero`](Self::zero), [`min_value`](Self::min_value) and [`max_value`](Self::max_value) return
 /// zero and the limits, the values of the inherent constants `ZERO`, `MIN` and `MAX`, and have no
@@ -190,12 +191,26 @@ pub trait FixedInteger:
   #[track_caller]
   fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError>;
 
+  /// The text of the value in `radix`, from 2 to 36, which `from_str_radix` reads back, as the
+  /// inherent `to_str_radix` writes it: `-` before the digits of the magnitude of a negative
+  /// value, lowercase letters, and `"0"` for zero.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 36, reporting the caller.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String;
+
   integer_query_table!(trait_items![]);
 }
 
 /// The compound assignments of an integer of a fixed number of bits: [`Uint`] and [`Int`] over a
 /// storage that holds the value in place, as a native integer, an array of limbs and a box of one
-/// do.
+/// do. The shared heap storages, an `Rc`, an `Arc` or a `triomphe::Arc` of an array, never write a
+/// value that they hold, and their integers do not implement it.
 ///
 /// The supertraits give generic code `+=`, `-=` and `*=`, which on overflow panic or wrap as
 /// `overflow-checks` decides, `/=` and `%=`, which panic on a zero divisor and on overflow in every
@@ -381,7 +396,7 @@ pub trait SignedFixedInteger: Sealed + Sized + Neg<Output = Self> {
 }
 
 /// An integer that holds one: [`Uint`] of at least one bit and [`Int`] of at least two bits, over a
-/// native integer, an array of limbs or a box of one.
+/// native integer, an array of limbs or a heap storage of one.
 ///
 /// [`one`](Self::one) returns one, the value of the inherent constant `ONE`, and has no inherent
 /// counterpart; a concrete type reaches `ONE` without this trait, also in constant contexts, and
@@ -496,16 +511,17 @@ pub trait NativeInteger: ConstFixedInteger {
 
 /// An integer stored in an array of limbs, least significant first: [`Uint`] and [`Int`] over
 /// `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, and with the `std` or the `alloc`
-/// feature over such an array in a `Box`.
+/// feature over such an array in a `Box`, an `Rc` or an `Arc`, or with the `triomphe` feature in a
+/// `triomphe::Arc`.
 ///
 /// [`Array`](Self::Array) is the array and [`Limb`](Self::Limb) the type of its limbs. The methods
 /// are the limbs, the checked conversion from them, and the conversions from a slice of limbs of
 /// any length, least significant first, checked, wrapping, overflowing, saturating and strict,
 /// which read it unsigned for `Uint` and in two's complement for `Int`, as the slices of bytes of
 /// [`IntegerBytes`](crate::IntegerBytes) do. For an array, they are the inherent items of the same
-/// names, which a concrete type reaches without this trait, also in constant contexts. A box has no
-/// inherent items: its methods lend the array in the box, copy it out, or build an array and put it
-/// in an allocation of its own.
+/// names, which a concrete type reaches without this trait, also in constant contexts. A heap
+/// storage has no inherent items: its methods lend the array in the pointer, copy it out, or build
+/// an array and put it in an allocation of its own.
 ///
 /// ```
 /// use numo::{
@@ -588,8 +604,8 @@ pub trait ArrayInteger: Sealed + Sized {
 }
 
 /// An integer stored in an array of limbs that its width fills, so that every bit pattern is a
-/// value: [`Uint`] and [`Int`] whose `Bits` implements [`FillsRepr`] for the array, or for the box
-/// of one.
+/// value: [`Uint`] and [`Int`] whose `Bits` implements [`FillsRepr`] for the array, or for a heap
+/// storage of one.
 ///
 /// ```
 /// use numo::{FromLimbs, Uint, u256, typenum::U24};
@@ -952,7 +968,7 @@ pub trait SignedBits: Sealed + Sized + IntegerMath {
 }
 
 /// A non-zero integer of a fixed number of bits: [`NonZeroUint`] and [`NonZeroInt`] over the
-/// `NonZero` of a native integer, an array of limbs or a box of one.
+/// `NonZero` of a native integer, an array of limbs or a heap storage of one.
 ///
 /// [`Integer`](Self::Integer) is the integer of the same width and storage that may be zero, which
 /// [`new`](Self::new) takes and [`get`](Self::get) returns. `BITS`, `new`, `get` and the methods of
@@ -1063,6 +1079,19 @@ pub trait FixedNonZero:
   /// Panics if `radix` is not from 2 to 36, reporting the caller.
   #[track_caller]
   fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError>;
+
+  /// The text of the value in `radix`, from 2 to 36, which `from_str_radix` reads back, as the
+  /// inherent `to_str_radix` writes it: `-` before the digits of the magnitude of a negative
+  /// value, and lowercase letters.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 36, reporting the caller.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String;
 
   nonzero_table!(Uint, trait_items![]);
 }
@@ -1273,6 +1302,13 @@ impl<B: FitsBits<R>, R: UintRepr + Clone> FixedInteger for Uint<B, R> {
     R::from_str_radix_bits(src.as_bytes(), radix, B::U32, Token::new()).map(Self::wrap)
   }
 
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String {
+    Self::to_str_radix(self, radix)
+  }
+
   integer_query_table!(generic_items![]);
 }
 
@@ -1300,6 +1336,13 @@ impl<B: FitsBits<R>, R: IntRepr + Clone> FixedInteger for Int<B, R> {
   fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
     check_radix(radix);
     R::from_str_radix_bits(src.as_bytes(), radix, B::U32, Token::new()).map(Self::wrap)
+  }
+
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String {
+    Self::to_str_radix(self, radix)
   }
 
   integer_query_table!(generic_items![]);
@@ -1770,6 +1813,13 @@ impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> FixedNonZero for NonZeroUint<B
     parse_unsigned(src, radix)
   }
 
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String {
+    Self::to_str_radix(self, radix)
+  }
+
   nonzero_table!(Uint, generic_items![]);
 }
 
@@ -1810,6 +1860,13 @@ impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> FixedNonZero for NonZeroInt<B, 
   fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
     check_radix(radix);
     parse_signed(src, radix)
+  }
+
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String {
+    Self::to_str_radix(self, radix)
   }
 
   nonzero_table!(Int, generic_items![]);
