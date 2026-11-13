@@ -8,10 +8,11 @@ use super::{
   SignedFixedDecimal, UnsignedFixedDecimal, float, literal, parse,
 };
 use crate::{
-  FromFloatError, i192, i256, i320, i384, i448, i512, int,
+  FromFloatError, i192, i256, i320, i384, i448, i512, i576, i640, i704, i768, i832, i896, i960,
+  i1024, int,
   layout::{FloatScratch, InlineCore, Layout},
   rounding::RoundingMode,
-  u192, u256, u320, u384, u448, u512,
+  u192, u256, u320, u384, u448, u512, u576, u640, u704, u768, u832, u896, u960, u1024,
 };
 
 /// Implements the constants, `const fn` methods and traits that depend only on the storage, for
@@ -1245,7 +1246,7 @@ macro_rules! storage_decimal {
         if int::$repr::is_zero($($by)* self.repr) {
           return 0;
         }
-        // A coefficient has at most 155 digits and a type at most 154 fraction digits.
+        // A coefficient has at most 309 digits and a type at most 308 fraction digits.
         self.coefficient_digits().0 as i32 - 1 - Self::FRACTION as i32
       }
 
@@ -1323,8 +1324,9 @@ macro_rules! storage_decimal {
 
       /// Converts the value to the nearest `f64`, ties to even, rounded once: the float that
       /// parsing the text of the decimal gives. Zero gives `+0.0`. A decimal other than zero is
-      /// between `10^-154` and `10^154` in magnitude, inside the normal range of `f64`, so the
-      /// result is never an infinity or a subnormal float.
+      /// between `10^-308` and `10^308` in magnitude, so the result is never an infinity. It is a
+      /// subnormal float only for a value below `2^-1022`, which only a type with 308 fraction
+      /// digits holds.
       ///
       /// For interchange and display, not for arithmetic that must be exact.
       #[must_use]
@@ -1438,6 +1440,14 @@ storage_decimal!(
   i384: signed wide,
   i448: signed wide,
   i512: signed wide,
+  i576: signed wide,
+  i640: signed wide,
+  i704: signed wide,
+  i768: signed wide,
+  i832: signed wide,
+  i896: signed wide,
+  i960: signed wide,
+  i1024: signed wide,
   u8: unsigned native,
   u16: unsigned native,
   u32: unsigned native,
@@ -1449,4 +1459,12 @@ storage_decimal!(
   u384: unsigned wide,
   u448: unsigned wide,
   u512: unsigned wide,
+  u576: unsigned wide,
+  u640: unsigned wide,
+  u704: unsigned wide,
+  u768: unsigned wide,
+  u832: unsigned wide,
+  u896: unsigned wide,
+  u960: unsigned wide,
+  u1024: unsigned wide,
 );

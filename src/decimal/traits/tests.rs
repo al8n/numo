@@ -9,7 +9,8 @@ use std::{
 
 use typenum::{
   U0, U1, U2, U4, U5, U8, U9, U10, U11, U12, U16, U17, U18, U19, U20, U21, U22, U26, U38, U40, U50,
-  U58, U59, U60, U78, U96, U97, U116, U135, U154, Unsigned,
+  U58, U59, U60, U78, U96, U97, U116, U135, U154, U155, U173, U174, U192, U193, U211, U212, U231,
+  U232, U250, U251, U269, U270, U288, U289, U307, U308, Unsigned,
 };
 
 use super::{
@@ -20,9 +21,9 @@ use crate::{
   ConvertError, Decimal, DivideError, FromFloatError, InlineStorage, ParseErrorKind, QuantizeError,
   RoundingMode, Scaled,
   bigint::MODES,
-  i192, i256, i320, i384, i448, i512,
+  i192, i256, i320, i384, i448, i512, i576, i640, i704, i768, i832, i896, i960, i1024,
   layout::{InlineCore, Token},
-  u192, u256, u320, u384, u448, u512,
+  u192, u256, u320, u384, u448, u512, u576, u640, u704, u768, u832, u896, u960, u1024,
 };
 
 /// Zero, the limits, and one, two and 25 units in the last place, also negated for a signed
@@ -123,48 +124,63 @@ macro_rules! assert_fixed {
   })+};
 }
 
-/// As [`assert_fixed!`], and the methods of [`SignedFixedDecimal`] are the inherent ones.
+/// As [`assert_fixed!`], and the methods of [`SignedFixedDecimal`] are the inherent ones. Each type
+/// checks in a function of its own, as in `assert_remainder_and_saturation!`.
 macro_rules! assert_signed {
   ($(Decimal<$integral:ty, $fraction:ty, $repr:ty>),+ $(,)?) => {$({
-    assert_fixed!(Decimal<$integral, $fraction, $repr>);
-    type T = Decimal<$integral, $fraction, $repr>;
-    signed::<T>();
-    assert!(T::SIGNED);
-    for value in samples::<T>() {
-      assert_eq!(SignedFixedDecimal::is_negative(&value), value.is_negative(), "{value}");
-      assert_eq!(SignedFixedDecimal::neg(&value), value.neg(), "{value}");
-      assert_eq!(SignedFixedDecimal::abs(&value), value.abs(), "{value}");
-    }
+    #[inline(never)]
+    fn storage() {
+      assert_fixed!(Decimal<$integral, $fraction, $repr>);
+      type T = Decimal<$integral, $fraction, $repr>;
+      signed::<T>();
+      assert!(T::SIGNED);
+      for value in samples::<T>() {
+        assert_eq!(SignedFixedDecimal::is_negative(&value), value.is_negative(), "{value}");
+        assert_eq!(SignedFixedDecimal::neg(&value), value.neg(), "{value}");
+        assert_eq!(SignedFixedDecimal::abs(&value), value.abs(), "{value}");
+      }
 
-    // A negative step is invalid, and the coefficient `-10^DIGITS` is below `MIN`.
-    let unit = T::parse(&format!("1e-{}", T::FRACTION)).unwrap();
-    assert_eq!(
-      FixedDecimal::quantize(&unit, &unit.neg(), RoundingMode::Up),
-      Err(QuantizeError::InvalidStep)
-    );
-    let beyond = InlineCore::checked_mul_pow10(&unit.repr(), T::DIGITS, Token::new()).unwrap();
-    let below = InlineCore::checked_neg(&beyond, Token::new()).unwrap();
-    assert_eq!(<T as FixedDecimal>::from_repr(below), None);
+      // A negative step is invalid, and the coefficient `-10^DIGITS` is below `MIN`.
+      let unit = T::parse(&format!("1e-{}", T::FRACTION)).unwrap();
+      assert_eq!(
+        FixedDecimal::quantize(&unit, &unit.neg(), RoundingMode::Up),
+        Err(QuantizeError::InvalidStep)
+      );
+      let beyond = InlineCore::checked_mul_pow10(&unit.repr(), T::DIGITS, Token::new()).unwrap();
+      let below = InlineCore::checked_neg(&beyond, Token::new()).unwrap();
+      assert_eq!(<T as FixedDecimal>::from_repr(below), None);
+    }
+    storage();
   })+};
 }
 
-/// As [`assert_fixed!`], for a type with an unsigned storage.
+/// As [`assert_fixed!`], for a type with an unsigned storage. Each type checks in a function of its
+/// own, as in `assert_remainder_and_saturation!`.
 macro_rules! assert_unsigned {
   ($(Decimal<$integral:ty, $fraction:ty, $repr:ty>),+ $(,)?) => {$({
-    assert_fixed!(Decimal<$integral, $fraction, $repr>);
-    unsigned::<Decimal<$integral, $fraction, $repr>>();
-    assert!(!Decimal::<$integral, $fraction, $repr>::SIGNED);
+    #[inline(never)]
+    fn storage() {
+      assert_fixed!(Decimal<$integral, $fraction, $repr>);
+      unsigned::<Decimal<$integral, $fraction, $repr>>();
+      assert!(!Decimal::<$integral, $fraction, $repr>::SIGNED);
+    }
+    storage();
   })+};
 }
 
 /// Asserts that [`DecimalOne::one`] and [`ConstDecimalOne::ONE`] are the inherent `ONE`, which is
-/// one, for each type.
+/// one, for each type. Each type checks in a function of its own, as in
+/// `assert_remainder_and_saturation!`.
 macro_rules! assert_one {
-  ($($ty:ty),+ $(,)?) => {$(
-    assert_eq!(<$ty as DecimalOne>::one(), <$ty>::ONE);
-    assert_eq!(<$ty as ConstDecimalOne>::ONE, <$ty>::ONE);
-    assert_eq!(<$ty as DecimalOne>::one().to_string(), "1");
-  )+};
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      assert_eq!(<$ty as DecimalOne>::one(), <$ty>::ONE);
+      assert_eq!(<$ty as ConstDecimalOne>::ONE, <$ty>::ONE);
+      assert_eq!(<$ty as DecimalOne>::one().to_string(), "1");
+    }
+    storage();
+  })+};
 }
 
 /// Asserts that `checked_rem`, `saturating_add` and `saturating_sub` of [`FixedDecimal`] are the
@@ -217,6 +233,15 @@ fn signed_items_are_the_inherent_ones() {
     Decimal<U97, U18, i384>,
     Decimal<U116, U18, i448>,
     Decimal<U135, U18, i512>,
+    Decimal<U155, U18, i576>,
+    Decimal<U174, U18, i640>,
+    Decimal<U193, U18, i704>,
+    Decimal<U212, U18, i768>,
+    Decimal<U232, U18, i832>,
+    Decimal<U251, U18, i896>,
+    Decimal<U270, U18, i960>,
+    Decimal<U289, U18, i1024>,
+    Decimal<U0, U307, i1024>,
   );
 }
 
@@ -235,6 +260,15 @@ fn unsigned_items_are_the_inherent_ones() {
     Decimal<U97, U18, u384>,
     Decimal<U116, U18, u448>,
     Decimal<U154, U0, u512>,
+    Decimal<U173, U0, u576>,
+    Decimal<U192, U0, u640>,
+    Decimal<U211, U0, u704>,
+    Decimal<U231, U0, u768>,
+    Decimal<U250, U0, u832>,
+    Decimal<U269, U0, u896>,
+    Decimal<U288, U0, u960>,
+    Decimal<U308, U0, u1024>,
+    Decimal<U0, U308, u1024>,
   );
 }
 
@@ -252,6 +286,14 @@ fn one_is_the_inherent_one() {
     Decimal<U97, U18, i384>,
     Decimal<U116, U18, i448>,
     Decimal<U135, U18, i512>,
+    Decimal<U155, U18, i576>,
+    Decimal<U174, U18, i640>,
+    Decimal<U193, U18, i704>,
+    Decimal<U212, U18, i768>,
+    Decimal<U232, U18, i832>,
+    Decimal<U251, U18, i896>,
+    Decimal<U270, U18, i960>,
+    Decimal<U289, U18, i1024>,
     Decimal<U1, U1, u8>,
     Decimal<U2, U2, u16>,
     Decimal<U5, U4, u32>,
@@ -263,6 +305,14 @@ fn one_is_the_inherent_one() {
     Decimal<U97, U18, u384>,
     Decimal<U116, U18, u448>,
     Decimal<U154, U0, u512>,
+    Decimal<U173, U0, u576>,
+    Decimal<U192, U0, u640>,
+    Decimal<U211, U0, u704>,
+    Decimal<U231, U0, u768>,
+    Decimal<U250, U0, u832>,
+    Decimal<U269, U0, u896>,
+    Decimal<U288, U0, u960>,
+    Decimal<U308, U0, u1024>,
   );
 }
 
@@ -281,6 +331,15 @@ fn remainder_and_saturation_are_the_inherent_ones() {
     Decimal<U97, U18, i384>,
     Decimal<U116, U18, i448>,
     Decimal<U135, U18, i512>,
+    Decimal<U155, U18, i576>,
+    Decimal<U174, U18, i640>,
+    Decimal<U193, U18, i704>,
+    Decimal<U212, U18, i768>,
+    Decimal<U232, U18, i832>,
+    Decimal<U251, U18, i896>,
+    Decimal<U270, U18, i960>,
+    Decimal<U289, U18, i1024>,
+    Decimal<U0, U307, i1024>,
     Decimal<U1, U1, u8>,
     Decimal<U0, U2, u8>,
     Decimal<U2, U2, u16>,
@@ -293,6 +352,15 @@ fn remainder_and_saturation_are_the_inherent_ones() {
     Decimal<U97, U18, u384>,
     Decimal<U116, U18, u448>,
     Decimal<U154, U0, u512>,
+    Decimal<U173, U0, u576>,
+    Decimal<U192, U0, u640>,
+    Decimal<U211, U0, u704>,
+    Decimal<U231, U0, u768>,
+    Decimal<U250, U0, u832>,
+    Decimal<U269, U0, u896>,
+    Decimal<U288, U0, u960>,
+    Decimal<U308, U0, u1024>,
+    Decimal<U0, U308, u1024>,
   );
 }
 
@@ -331,6 +399,15 @@ fn parts_are_the_inherent_ones() {
     Decimal<U97, U18, i384>,
     Decimal<U116, U18, i448>,
     Decimal<U135, U18, i512>,
+    Decimal<U155, U18, i576>,
+    Decimal<U174, U18, i640>,
+    Decimal<U193, U18, i704>,
+    Decimal<U212, U18, i768>,
+    Decimal<U232, U18, i832>,
+    Decimal<U251, U18, i896>,
+    Decimal<U270, U18, i960>,
+    Decimal<U289, U18, i1024>,
+    Decimal<U0, U307, i1024>,
     Decimal<U1, U1, u8>,
     Decimal<U0, U2, u8>,
     Decimal<U2, U2, u16>,
@@ -343,6 +420,15 @@ fn parts_are_the_inherent_ones() {
     Decimal<U97, U18, u384>,
     Decimal<U116, U18, u448>,
     Decimal<U154, U0, u512>,
+    Decimal<U173, U0, u576>,
+    Decimal<U192, U0, u640>,
+    Decimal<U211, U0, u704>,
+    Decimal<U231, U0, u768>,
+    Decimal<U250, U0, u832>,
+    Decimal<U269, U0, u896>,
+    Decimal<U288, U0, u960>,
+    Decimal<U308, U0, u1024>,
+    Decimal<U0, U308, u1024>,
   );
 }
 
@@ -398,6 +484,15 @@ fn digits_are_the_inherent_ones() {
     Decimal<U97, U18, i384>,
     Decimal<U116, U18, i448>,
     Decimal<U135, U18, i512>,
+    Decimal<U155, U18, i576>,
+    Decimal<U174, U18, i640>,
+    Decimal<U193, U18, i704>,
+    Decimal<U212, U18, i768>,
+    Decimal<U232, U18, i832>,
+    Decimal<U251, U18, i896>,
+    Decimal<U270, U18, i960>,
+    Decimal<U289, U18, i1024>,
+    Decimal<U0, U307, i1024>,
     Decimal<U1, U1, u8>,
     Decimal<U0, U2, u8>,
     Decimal<U2, U2, u16>,
@@ -410,6 +505,15 @@ fn digits_are_the_inherent_ones() {
     Decimal<U97, U18, u384>,
     Decimal<U116, U18, u448>,
     Decimal<U154, U0, u512>,
+    Decimal<U173, U0, u576>,
+    Decimal<U192, U0, u640>,
+    Decimal<U211, U0, u704>,
+    Decimal<U231, U0, u768>,
+    Decimal<U250, U0, u832>,
+    Decimal<U269, U0, u896>,
+    Decimal<U288, U0, u960>,
+    Decimal<U308, U0, u1024>,
+    Decimal<U0, U308, u1024>,
   );
 }
 
@@ -477,6 +581,15 @@ fn floats_are_the_inherent_ones() {
     Decimal<U97, U18, i384>,
     Decimal<U116, U18, i448>,
     Decimal<U135, U18, i512>,
+    Decimal<U155, U18, i576>,
+    Decimal<U174, U18, i640>,
+    Decimal<U193, U18, i704>,
+    Decimal<U212, U18, i768>,
+    Decimal<U232, U18, i832>,
+    Decimal<U251, U18, i896>,
+    Decimal<U270, U18, i960>,
+    Decimal<U289, U18, i1024>,
+    Decimal<U0, U307, i1024>,
     Decimal<U1, U1, u8>,
     Decimal<U0, U2, u8>,
     Decimal<U2, U2, u16>,
@@ -489,6 +602,15 @@ fn floats_are_the_inherent_ones() {
     Decimal<U97, U18, u384>,
     Decimal<U116, U18, u448>,
     Decimal<U154, U0, u512>,
+    Decimal<U173, U0, u576>,
+    Decimal<U192, U0, u640>,
+    Decimal<U211, U0, u704>,
+    Decimal<U231, U0, u768>,
+    Decimal<U250, U0, u832>,
+    Decimal<U269, U0, u896>,
+    Decimal<U288, U0, u960>,
+    Decimal<U308, U0, u1024>,
+    Decimal<U0, U308, u1024>,
   );
 }
 
@@ -701,6 +823,14 @@ fn every_storage_is_its_own_twin() {
     Decimal<U97, U18, i384>,
     Decimal<U116, U18, i448>,
     Decimal<U135, U18, i512>,
+    Decimal<U155, U18, i576>,
+    Decimal<U174, U18, i640>,
+    Decimal<U193, U18, i704>,
+    Decimal<U212, U18, i768>,
+    Decimal<U232, U18, i832>,
+    Decimal<U251, U18, i896>,
+    Decimal<U270, U18, i960>,
+    Decimal<U289, U18, i1024>,
     Decimal<U1, U1, u8>,
     Decimal<U2, U2, u16>,
     Decimal<U5, U4, u32>,
@@ -712,6 +842,14 @@ fn every_storage_is_its_own_twin() {
     Decimal<U97, U18, u384>,
     Decimal<U116, U18, u448>,
     Decimal<U154, U0, u512>,
+    Decimal<U173, U0, u576>,
+    Decimal<U192, U0, u640>,
+    Decimal<U211, U0, u704>,
+    Decimal<U231, U0, u768>,
+    Decimal<U250, U0, u832>,
+    Decimal<U269, U0, u896>,
+    Decimal<U288, U0, u960>,
+    Decimal<U308, U0, u1024>,
   );
 }
 

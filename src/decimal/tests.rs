@@ -16,13 +16,15 @@ use num_bigint::BigInt;
 use typenum::{
   And, Diff, Max, Maximum, Sum, U0, U1, U2, U3, U4, U5, U6, U8, U9, U10, U11, U12, U15, U16, U17,
   U18, U19, U20, U21, U22, U26, U28, U30, U34, U37, U38, U39, U40, U49, U58, U59, U60, U70, U76,
-  U77, U78, U96, U97, U116, U120, U135, U136, U143, U144, U153, U154, Unsigned,
+  U77, U78, U96, U97, U116, U120, U135, U136, U143, U144, U153, U154, U155, U173, U174, U192, U193,
+  U211, U212, U231, U232, U250, U251, U269, U270, U288, U289, U290, U307, U308, Unsigned,
 };
 
 use super::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
 use crate::{
   DivIntermediate, InlineStorage, Layout, RoundingMode, Storage, bigint, i192, i256, i320, i384,
-  i448, i512, u192, u256, u320, u384, u448, u512,
+  i448, i512, i576, i640, i704, i768, i832, i896, i960, i1024, u192, u256, u320, u384, u448, u512,
+  u576, u640, u704, u768, u832, u896, u960, u1024,
 };
 
 /// `i8` at its 2-digit limit.
@@ -1367,6 +1369,9 @@ fn exp_zero_is_0e0_for_every_layout() {
   assert_eq!(format!("{:e}", D0x153::ZERO), "0e0");
   assert_eq!(format!("{:e}", D154x0u512::ZERO), "0e0");
   assert_eq!(format!("{:e}", D0x154u512::ZERO), "0e0");
+  assert_eq!(format!("{:e}", D0x307::ZERO), "0e0");
+  assert_eq!(format!("{:e}", D308x0u1024::ZERO), "0e0");
+  assert_eq!(format!("{:e}", D0x308u1024::ZERO), "0e0");
   assert_eq!(format!("{:e}", D2x2u16::ZERO), "0e0");
 
   assert_eq!(format!("{:.2e}", D0x38::ZERO), "0.00e0");
@@ -1375,6 +1380,7 @@ fn exp_zero_is_0e0_for_every_layout() {
   assert_eq!(format!("{:010e}", D0x38::ZERO), "00000000e0");
   assert_eq!(format!("{:+010.2E}", D0x38::ZERO), "+0000.00E0");
   assert_eq!(format!("{:*^9e}", D0x154u512::ZERO), "***0e0***");
+  assert_eq!(format!("{:*^9e}", D0x308u1024::ZERO), "***0e0***");
 }
 
 #[test]
@@ -1577,8 +1583,8 @@ fn assert_exp_padding<T: LowerExp + UpperExp>(value: T, text: &str) {
 fn exp_width_counts_the_whole_text() {
   type D39x0 = Decimal<U39, U0>;
 
-  // Width 9 with each exponent text, `e0`, `e-1`, `e38`, `e-38`, `e153` and `e-154`: the right,
-  // left and center alignments, and the `0` flag.
+  // Width 9 with each exponent text, `e0`, `e-1`, `e38`, `e-38`, `e153`, `e-154`, `e307` and
+  // `e-308`: the right, left and center alignments, and the `0` flag.
   macro_rules! assert_padded {
     ($value:expr, [$right:literal, $left:literal, $center:literal, $zero:literal]) => {{
       let value = $value;
@@ -1615,6 +1621,14 @@ fn exp_width_counts_the_whole_text() {
     "1e-154".parse::<D0x154u512>().unwrap(),
     ["   1e-154", "1e-154   ", " 1e-154  ", "0001e-154"]
   );
+  assert_padded!(
+    "1e307".parse::<D308x0u1024>().unwrap(),
+    ["    1e307", "1e307    ", "  1e307  ", "00001e307"]
+  );
+  assert_padded!(
+    "1e-308".parse::<D0x308u1024>().unwrap(),
+    ["   1e-308", "1e-308   ", " 1e-308  ", "0001e-308"]
+  );
 
   // Exponents of two to five bytes, in values with and without a sign, at widths below, at and
   // above the length of the text.
@@ -1628,10 +1642,16 @@ fn exp_width_counts_the_whole_text() {
   assert_exp_padding(D153x0::MIN, &format!("-9.{}e152", nines(152)));
   assert_exp_padding("1e-154".parse::<D0x154u512>().unwrap(), "1e-154");
   assert_exp_padding("-1e-153".parse::<D0x153>().unwrap(), "-1e-153");
+  assert_exp_padding("1e307".parse::<D308x0u1024>().unwrap(), "1e307");
+  assert_exp_padding(D307x0::MIN, &format!("-9.{}e306", nines(306)));
+  assert_exp_padding("1e-308".parse::<D0x308u1024>().unwrap(), "1e-308");
+  assert_exp_padding("-1e-307".parse::<D0x307>().unwrap(), "-1e-307");
 
   // A mantissa with a fraction, with a long exponent text.
   assert_exp_padding(D154x0u512::MAX, &format!("9.{}e153", nines(153)));
   assert_exp_padding("1.5e-153".parse::<D0x154u512>().unwrap(), "1.5e-153");
+  assert_exp_padding(D308x0u1024::MAX, &format!("9.{}e307", nines(307)));
+  assert_exp_padding("1.5e-307".parse::<D0x308u1024>().unwrap(), "1.5e-307");
   assert_exp_padding(D2x2::ZERO, "0e0");
 }
 
@@ -2353,6 +2373,12 @@ type D0x153 = Decimal<U0, U153>;
 type D135x18 = Decimal<U135, U18>;
 /// `u512` at its 154-digit limit, one digit more than `i512` holds.
 type D154x0u512 = Decimal<U154, U0, u512>;
+/// `i1024` at its 307-digit limit.
+type D307x0 = Decimal<U307, U0>;
+type D0x307 = Decimal<U0, U307>;
+type D289x18 = Decimal<U289, U18>;
+/// `u1024` at its 308-digit limit, one digit more than `i1024` holds.
+type D308x0u1024 = Decimal<U308, U0, u1024>;
 
 #[test]
 fn wide_storage_layout() {
@@ -2372,6 +2398,23 @@ fn wide_storage_layout() {
   let _: i512 = D135x18::ZERO.repr();
   let _: i512 = D153x0::ZERO.repr();
   let _: u512 = D154x0u512::ZERO.repr();
+  let _: i576 = Decimal::<U155, U18>::ZERO.repr();
+  let _: u576 = Decimal::<U173, U0, u576>::ZERO.repr();
+  let _: i640 = Decimal::<U174, U18>::ZERO.repr();
+  let _: u640 = Decimal::<U192, U0, u640>::ZERO.repr();
+  let _: i704 = Decimal::<U193, U18>::ZERO.repr();
+  let _: u704 = Decimal::<U211, U0, u704>::ZERO.repr();
+  let _: i768 = Decimal::<U212, U18>::ZERO.repr();
+  let _: u768 = Decimal::<U231, U0, u768>::ZERO.repr();
+  let _: i832 = Decimal::<U232, U18>::ZERO.repr();
+  let _: u832 = Decimal::<U250, U0, u832>::ZERO.repr();
+  let _: i896 = Decimal::<U251, U18>::ZERO.repr();
+  let _: u896 = Decimal::<U269, U0, u896>::ZERO.repr();
+  let _: i960 = Decimal::<U270, U18>::ZERO.repr();
+  let _: u960 = Decimal::<U288, U0, u960>::ZERO.repr();
+  let _: i1024 = D289x18::ZERO.repr();
+  let _: i1024 = D307x0::ZERO.repr();
+  let _: u1024 = D308x0u1024::ZERO.repr();
 
   assert_eq!(size_of::<D39x18>(), 24);
   assert_eq!(size_of::<D58x18>(), 32);
@@ -2380,6 +2423,15 @@ fn wide_storage_layout() {
   assert_eq!(size_of::<D116x18>(), 56);
   assert_eq!(size_of::<D135x18>(), 64);
   assert_eq!(size_of::<D154x0u512>(), size_of::<u512>());
+  assert_eq!(size_of::<Decimal<U155, U18>>(), 72);
+  assert_eq!(size_of::<Decimal<U174, U18>>(), 80);
+  assert_eq!(size_of::<Decimal<U193, U18>>(), 88);
+  assert_eq!(size_of::<Decimal<U212, U18>>(), 96);
+  assert_eq!(size_of::<Decimal<U232, U18>>(), 104);
+  assert_eq!(size_of::<Decimal<U251, U18>>(), 112);
+  assert_eq!(size_of::<Decimal<U270, U18>>(), 120);
+  assert_eq!(size_of::<D289x18>(), 128);
+  assert_eq!(size_of::<D308x0u1024>(), size_of::<u1024>());
   assert_eq!(size_of::<TokenAmount>(), size_of::<u320>());
   assert_eq!(align_of::<TokenAmount>(), align_of::<u64>());
   // A few digits in an explicitly chosen wide storage.
@@ -2406,6 +2458,24 @@ fn wide_trait_surface() {
   assert_traits::<D116x18>();
   assert_traits::<D0x153>();
   assert_traits::<D154x0u512>();
+  assert_traits::<Decimal<U155, U18, i576>>();
+  assert_traits::<Decimal<U173, U0, u576>>();
+  assert_traits::<Decimal<U174, U18, i640>>();
+  assert_traits::<Decimal<U192, U0, u640>>();
+  assert_traits::<Decimal<U193, U18, i704>>();
+  assert_traits::<Decimal<U211, U0, u704>>();
+  assert_traits::<Decimal<U212, U18, i768>>();
+  assert_traits::<Decimal<U231, U0, u768>>();
+  assert_traits::<Decimal<U232, U18, i832>>();
+  assert_traits::<Decimal<U250, U0, u832>>();
+  assert_traits::<Decimal<U251, U18, i896>>();
+  assert_traits::<Decimal<U269, U0, u896>>();
+  assert_traits::<Decimal<U270, U18, i960>>();
+  assert_traits::<Decimal<U288, U0, u960>>();
+  assert_traits::<D289x18>();
+  assert_traits::<D308x0u1024>();
+  assert_traits::<D0x307>();
+  assert_traits::<D0x308u1024>();
 }
 
 #[test]
@@ -2446,16 +2516,28 @@ fn wide_constants() {
   assert_eq!(D0x153::MAX.to_string(), format!("0.{}", nines(153)));
   assert_eq!(D154x0u512::MAX.to_string(), nines(154));
   assert_eq!(D154x0u512::MIN, D154x0u512::ZERO);
+  assert_eq!(
+    D289x18::MAX.to_string(),
+    format!("{}.{}", nines(289), nines(18))
+  );
+  assert_eq!(D307x0::MAX.to_string(), nines(307));
+  assert_eq!(D307x0::MIN, -D307x0::MAX);
+  assert_eq!(D0x307::MAX.to_string(), format!("0.{}", nines(307)));
+  assert_eq!(D308x0u1024::MAX.to_string(), nines(308));
+  assert_eq!(D308x0u1024::MIN, D308x0u1024::ZERO);
 
   assert_eq!(TokenAmount::INTEGRAL, 60);
   assert_eq!(TokenAmount::FRACTION, 18);
   assert_eq!(TokenAmount::DIGITS, 78);
   assert_eq!(D0x153::DIGITS, 153);
   assert_eq!(D154x0u512::DIGITS, 154);
+  assert_eq!(D0x307::DIGITS, 307);
+  assert_eq!(D308x0u1024::DIGITS, 308);
   assert_eq!(
     [D58x18::SIGNED, D96x0u320::SIGNED, D154x0u512::SIGNED],
     [true, false, false]
   );
+  assert_eq!([D307x0::SIGNED, D308x0u1024::SIGNED], [true, false]);
 }
 
 #[test]
@@ -2516,6 +2598,31 @@ fn wide_from_repr_checks_the_decimal_range() {
   assert_eq!(D154x0u512::from_repr(u512_of(bigint::pow10(154))), None);
   assert_eq!(D154x0u512::from_repr(u512::from_limbs([u64::MAX; 8])), None);
   assert_eq!(D154x0u512::from_repr(u512::ZERO), Some(D154x0u512::ZERO));
+
+  // `i1024` holds 307 digits and `u1024` holds 308.
+  let i1024_of = |value: BigInt| i1024::from_limbs(bigint::to_limbs(&value, true).expect("fits"));
+  let u1024_of = |value: BigInt| u1024::from_limbs(bigint::to_limbs(&value, false).expect("fits"));
+  let max_307 = bigint::pow10(307) - 1u8;
+  assert_eq!(
+    D307x0::from_repr(i1024_of(max_307.clone())),
+    Some(D307x0::MAX)
+  );
+  assert_eq!(D307x0::from_repr(i1024_of(-max_307)), Some(D307x0::MIN));
+  assert_eq!(D307x0::from_repr(i1024_of(bigint::pow10(307))), None);
+  let mut limbs = [0; 16];
+  limbs[15] = 1 << 63;
+  assert_eq!(D307x0::from_repr(i1024::from_limbs(limbs)), None);
+  let max_308 = bigint::pow10(308) - 1u8;
+  assert_eq!(
+    D308x0u1024::from_repr(u1024_of(max_308)),
+    Some(D308x0u1024::MAX)
+  );
+  assert_eq!(D308x0u1024::from_repr(u1024_of(bigint::pow10(308))), None);
+  assert_eq!(
+    D308x0u1024::from_repr(u1024::from_limbs([u64::MAX; 16])),
+    None
+  );
+  assert_eq!(D308x0u1024::from_repr(u1024::ZERO), Some(D308x0u1024::ZERO));
 }
 
 /// The statements of the example of the bytes in the docs of `Decimal`.
@@ -2621,6 +2728,15 @@ fn bytes_are_those_of_the_coefficient() {
     Decimal<U97, U18, i384>,
     Decimal<U116, U18, i448>,
     Decimal<U135, U18, i512>,
+    Decimal<U155, U18, i576>,
+    Decimal<U174, U18, i640>,
+    Decimal<U193, U18, i704>,
+    Decimal<U212, U18, i768>,
+    Decimal<U232, U18, i832>,
+    Decimal<U251, U18, i896>,
+    Decimal<U270, U18, i960>,
+    Decimal<U289, U18, i1024>,
+    Decimal<U0, U307, i1024>,
   );
   bytes_round_trip!(
     Decimal<U1, U1, u8>,
@@ -2633,6 +2749,15 @@ fn bytes_are_those_of_the_coefficient() {
     Decimal<U97, U18, u384>,
     Decimal<U116, U18, u448>,
     Decimal<U154, U0, u512>,
+    Decimal<U173, U0, u576>,
+    Decimal<U192, U0, u640>,
+    Decimal<U211, U0, u704>,
+    Decimal<U231, U0, u768>,
+    Decimal<U250, U0, u832>,
+    Decimal<U269, U0, u896>,
+    Decimal<U288, U0, u960>,
+    Decimal<U308, U0, u1024>,
+    Decimal<U0, U308, u1024>,
   );
 }
 
@@ -2771,12 +2896,41 @@ fn wide_parse_and_display_at_the_limits() {
     format!("{:>160}", D153x0::MIN),
     format!("{:>160}", format!("-{}", nines(153)))
   );
+
+  assert_eq!(D307x0::parse(&nines(307)), Ok(D307x0::MAX));
+  assert_eq!(D307x0::parse(&format!("-{}", nines(307))), Ok(D307x0::MIN));
+  assert_eq!(
+    parse_kind::<D307x0>(&nines(308)),
+    Some(ParseErrorKind::OutOfRange)
+  );
+  assert_eq!(D0x307::parse(&format!("0.{}", nines(307))), Ok(D0x307::MAX));
+  assert_eq!(
+    parse_kind::<D0x307>("1e-308"),
+    Some(ParseErrorKind::Inexact)
+  );
+  assert_eq!(D308x0u1024::parse(&nines(308)), Ok(D308x0u1024::MAX));
+  assert_eq!(
+    parse_kind::<D308x0u1024>(&nines(309)),
+    Some(ParseErrorKind::OutOfRange)
+  );
+  assert_eq!(
+    parse_kind::<D308x0u1024>("-0"),
+    Some(ParseErrorKind::Negative)
+  );
+  assert_eq!(
+    parse_kind::<D308x0u1024>(&format!("-{}", nines(309))),
+    Some(ParseErrorKind::Negative)
+  );
+  assert_eq!(
+    format!("{:>320}", D307x0::MIN),
+    format!("{:>320}", format!("-{}", nines(307)))
+  );
 }
 
 #[test]
 fn wide_exp_at_the_limits() {
-  // The exponent runs from -154, the last place of 154 fraction digits, to 153, the first of 154
-  // integral digits.
+  // At 512 bits the exponent runs from -154, the last place of 154 fraction digits, to 153, the
+  // first of 154 integral digits, and at 1024 bits from -308 to 307.
   let max = format!("9.{}", nines(153));
   assert_eq!(format!("{:e}", D154x0u512::MAX), format!("{max}e153"));
   assert_eq!(format!("{:E}", D154x0u512::MAX), format!("{max}E153"));
@@ -2814,6 +2968,50 @@ fn wide_exp_at_the_limits() {
   for value in [D0x153::MIN, D0x153::MAX, unit] {
     assert_eq!(format!("{value:e}").parse::<D0x153>(), Ok(value));
     assert_eq!(format!("{value:0170.10E}").parse::<D0x153>(), Ok(value));
+  }
+
+  let max = format!("9.{}", nines(307));
+  assert_eq!(format!("{:e}", D308x0u1024::MAX), format!("{max}e307"));
+  assert_eq!(format!("{:E}", D308x0u1024::MAX), format!("{max}E307"));
+  assert_eq!(format!("{:e}", D0x308u1024::MAX), format!("{max}e-1"));
+  let last_place: D0x308u1024 = "1e-308".parse().unwrap();
+  assert_eq!(last_place.to_string(), format!("0.{}1", zeros(307)));
+  assert_eq!(format!("{last_place:e}"), "1e-308");
+  assert_eq!(format!("{last_place:E}"), "1E-308");
+  assert_eq!(format!("{:e}", D308x0u1024::ONE), "1e0");
+
+  let max = format!("9.{}", nines(306));
+  assert_eq!(format!("{:e}", D307x0::MIN), format!("-{max}e306"));
+  assert_eq!(format!("{:e}", D307x0::MAX), format!("{max}e306"));
+  assert_eq!(format!("{:e}", D0x307::MIN), format!("-{max}e-1"));
+  let unit: D0x307 = "1e-307".parse().unwrap();
+  assert_eq!(unit.to_string(), format!("0.{}1", zeros(306)));
+  assert_eq!(format!("{unit:e}"), "1e-307");
+  assert_eq!(format!("{:e}", -unit), "-1e-307");
+
+  for value in [D308x0u1024::MAX, D308x0u1024::ONE, D308x0u1024::ZERO] {
+    assert_eq!(format!("{value:e}").parse::<D308x0u1024>(), Ok(value));
+    assert_eq!(format!("{value:+e}").parse::<D308x0u1024>(), Ok(value));
+    assert_eq!(
+      format!("{value:0330.10E}").parse::<D308x0u1024>(),
+      Ok(value)
+    );
+  }
+  for value in [D0x308u1024::MAX, last_place, D0x308u1024::ZERO] {
+    assert_eq!(format!("{value:e}").parse::<D0x308u1024>(), Ok(value));
+    assert_eq!(format!("{value:+e}").parse::<D0x308u1024>(), Ok(value));
+    assert_eq!(
+      format!("{value:0330.10E}").parse::<D0x308u1024>(),
+      Ok(value)
+    );
+  }
+  for value in [D307x0::MIN, D307x0::MAX, -D307x0::ONE] {
+    assert_eq!(format!("{value:e}").parse::<D307x0>(), Ok(value));
+    assert_eq!(format!("{value:0330.10E}").parse::<D307x0>(), Ok(value));
+  }
+  for value in [D0x307::MIN, D0x307::MAX, unit] {
+    assert_eq!(format!("{value:e}").parse::<D0x307>(), Ok(value));
+    assert_eq!(format!("{value:0330.10E}").parse::<D0x307>(), Ok(value));
   }
 
   // Wide storages of other sizes.
@@ -2941,6 +3139,12 @@ fn wide_widen() {
   assert_eq!(unsigned.to_string(), nines(77));
   let signed: D135x18 = D97x18u384::MAX.widen();
   assert_eq!(signed.to_string(), format!("{}.{}", nines(97), nines(18)));
+  let widest: D289x18 = D135x18::MIN.widen();
+  assert_eq!(widest.to_string(), format!("-{}.{}", nines(135), nines(18)));
+  let unsigned: D308x0u1024 = D154x0u512::MAX.widen();
+  assert_eq!(unsigned.to_string(), nines(154));
+  let signed: D289x18 = D154x0u512::MAX.widen();
+  assert_eq!(signed.to_string(), nines(154));
 }
 
 #[test]
@@ -3044,7 +3248,8 @@ fn wide_try_convert() {
     Err(ConvertError::OutOfRange)
   );
 
-  // The widest unsigned storage holds one digit more than the widest signed one.
+  // The widest unsigned storage holds one digit more than the widest signed one, at 512 bits and at
+  // 1024.
   assert_eq!(
     D154x0u512::MAX.try_convert::<U153, U0, i512>(),
     Err(ConvertError::OutOfRange)
@@ -3075,6 +3280,32 @@ fn wide_try_convert() {
     D135x18::MIN.try_convert::<U97, U18, i384>(),
     Err(ConvertError::OutOfRange)
   );
+  assert_eq!(
+    D308x0u1024::MAX.try_convert::<U307, U0, i1024>(),
+    Err(ConvertError::OutOfRange)
+  );
+  assert_eq!(
+    D307x0::MAX
+      .try_convert::<U308, U0, u1024>()
+      .map(|value| value.to_string()),
+    Ok(nines(307))
+  );
+  assert_eq!(
+    D307x0::MIN.try_convert::<U308, U0, u1024>(),
+    Err(ConvertError::OutOfRange)
+  );
+  assert_eq!(
+    D307x0::ONE.try_convert::<U0, U307, i1024>(),
+    Err(ConvertError::OutOfRange)
+  );
+  assert_eq!(
+    D307x0::ZERO.try_convert::<U0, U307, i1024>(),
+    Ok(D0x307::ZERO)
+  );
+  assert_eq!(
+    D0x307::MAX.try_convert::<U307, U0, i1024>(),
+    Err(ConvertError::Inexact)
+  );
 }
 
 #[test]
@@ -3100,6 +3331,8 @@ fn wide_methods_in_const_context() {
   const ERROR: Result<D96x0, ParseError> = D96x0::parse("1e96");
   const WIDEST: Result<D154x0u512, ParseError> = D154x0u512::parse("1e153");
   const WIDEST_OVERFLOW: Option<D154x0u512> = D154x0u512::MAX.checked_add(&D154x0u512::ONE);
+  const WIDEST_1024: Result<D308x0u1024, ParseError> = D308x0u1024::parse("1e307");
+  const WIDEST_1024_OVERFLOW: Option<D308x0u1024> = D308x0u1024::MAX.checked_add(&D308x0u1024::ONE);
 
   assert_eq!(ONE_TOKEN, TokenAmount::ONE);
   assert_eq!(
@@ -3119,6 +3352,11 @@ fn wide_methods_in_const_context() {
     Ok(format!("1{}", zeros(153)))
   );
   assert_eq!(WIDEST_OVERFLOW, None);
+  assert_eq!(
+    WIDEST_1024.map(|value| value.repr().to_string()),
+    Ok(format!("1{}", zeros(307)))
+  );
+  assert_eq!(WIDEST_1024_OVERFLOW, None);
 }
 
 #[test]
@@ -3186,6 +3424,8 @@ type D40x40 = Decimal<U40, U40>;
 type D1x38 = Decimal<U1, U38>;
 /// `u512`, with only fraction digits.
 type D0x154u512 = Decimal<U0, U154, u512>;
+/// `u1024`, with only fraction digits.
+type D0x308u1024 = Decimal<U0, U308, u1024>;
 
 /// The table in the documentation of `RoundingMode`: coefficients with one fraction digit, and
 /// what they round to with no fraction digits, in the order of `bigint::MODES`.
@@ -3487,8 +3727,8 @@ fn round_to_checks_the_range_after_rounding() {
   );
 }
 
-/// Rounding away 20, 38, 153 and 154 fraction digits, which divide by powers of ten of two to
-/// eight limbs.
+/// Rounding away 20, 38, 153, 154, 307 and 308 fraction digits, which divide by powers of ten of
+/// two to sixteen limbs.
 #[test]
 fn round_to_across_limb_steps() {
   use RoundingMode::{Ceiling, Down, Floor, HalfDown, HalfEven, HalfUp, Up, Up05};
@@ -3533,6 +3773,43 @@ fn round_to_across_limb_steps() {
     );
   }
   let half: D0x153 = "-0.5".parse().unwrap();
+  for (mode, expected) in [(HalfUp, -1), (HalfDown, 0), (HalfEven, 0)] {
+    assert_eq!(
+      half.round_to::<U1, U0, i8>(mode).map(|v| v.repr()),
+      Ok(expected),
+      "{mode:?}"
+    );
+  }
+
+  let half: D0x308u1024 = "0.5".parse().unwrap();
+  let below: D0x308u1024 = format!("0.4{}", nines(307)).parse().unwrap();
+  for (mode, at_half, below_half) in rows {
+    assert_eq!(
+      half.round_to::<U1, U0, u8>(mode).map(|v| v.repr()),
+      Ok(at_half),
+      "{mode:?}"
+    );
+    assert_eq!(
+      below.round_to::<U1, U0, u8>(mode).map(|v| v.repr()),
+      Ok(below_half),
+      "{mode:?}"
+    );
+  }
+  let below: D0x307 = format!("-0.4{}", nines(306)).parse().unwrap();
+  for (mode, expected) in [
+    (Up, -1),
+    (HalfUp, 0),
+    (HalfEven, 0),
+    (Floor, -1),
+    (Ceiling, 0),
+  ] {
+    assert_eq!(
+      below.round_to::<U1, U0, i8>(mode).map(|v| v.repr()),
+      Ok(expected),
+      "{mode:?}"
+    );
+  }
+  let half: D0x307 = "-0.5".parse().unwrap();
   for (mode, expected) in [(HalfUp, -1), (HalfDown, 0), (HalfEven, 0)] {
     assert_eq!(
       half.round_to::<U1, U0, i8>(mode).map(|v| v.repr()),
@@ -3702,6 +3979,18 @@ fn quantize_rejects_steps_that_are_not_positive() {
       Err(QuantizeError::InvalidStep)
     );
     assert_eq!(
+      D307x0::MAX.quantize(&D307x0::ZERO, mode),
+      Err(QuantizeError::InvalidStep)
+    );
+    assert_eq!(
+      D307x0::MAX.quantize(&D307x0::MIN, mode),
+      Err(QuantizeError::InvalidStep)
+    );
+    assert_eq!(
+      D308x0u1024::MAX.quantize(&D308x0u1024::ZERO, mode),
+      Err(QuantizeError::InvalidStep)
+    );
+    assert_eq!(
       TokenAmount::ONE.quantize(&TokenAmount::ZERO, mode),
       Err(QuantizeError::InvalidStep)
     );
@@ -3750,8 +4039,8 @@ fn quantize_reports_both_kinds_of_overflow() {
     Ok(MAX_19_U64 - 1)
   );
 
-  // The wide storages whose largest sums overflow: `u256` with 77 digits, `i320` with 96 and
-  // `u512` with 154.
+  // The wide storages whose largest sums overflow: `u256` with 77 digits, `i320` with 96, `u512`
+  // with 154 and `u1024` with 308.
   let step = D77x0u256::MAX.checked_sub(&D77x0u256::ONE).unwrap();
   assert_eq!(
     D77x0u256::MAX.quantize(&step, Up),
@@ -3774,6 +4063,12 @@ fn quantize_reports_both_kinds_of_overflow() {
     Err(QuantizeError::OutOfRange)
   );
   assert_eq!(D154x0u512::MAX.quantize(&step, HalfEven), Ok(step));
+  let step = D308x0u1024::MAX.checked_sub(&D308x0u1024::ONE).unwrap();
+  assert_eq!(
+    D308x0u1024::MAX.quantize(&step, Up),
+    Err(QuantizeError::OutOfRange)
+  );
+  assert_eq!(D308x0u1024::MAX.quantize(&step, HalfEven), Ok(step));
 }
 
 /// Values and steps of several limbs against rounding by distance.
@@ -3945,7 +4240,8 @@ where
 
 /// The intermediates of the documented divisions: native operands with a native or a wide
 /// intermediate, an intermediate wider than both operands and the target, the uint256 amount by a
-/// price, and the widest, of 153 digits or, for two unsigned storages, 154.
+/// price, and the widest, of 153 digits or, for two unsigned storages, 154, at 512 bits, and of 307
+/// or 308 digits at 1024 bits.
 #[test]
 fn div_round_intermediates() {
   // A budget by a price.
@@ -3982,8 +4278,8 @@ fn div_round_intermediates() {
     intermediate::<U60, U18, u320, U10, U10, u128, U18>(),
     (88, TypeId::of::<u320>(), 40)
   );
-  // The widest: 153 digits, with the dividend or the divisor scaled, and 154 when both storages
-  // are unsigned.
+  // The widest at 512 bits: 153 digits, with the dividend or the divisor scaled, and 154 when
+  // both storages are unsigned.
   assert_eq!(
     intermediate::<U135, U18, i512, U10, U8, i64, U10>(),
     (153, TypeId::of::<i512>(), 64)
@@ -3995,6 +4291,19 @@ fn div_round_intermediates() {
   assert_eq!(
     intermediate::<U136, U10, u512, U10, U8, u64, U10>(),
     (154, TypeId::of::<u512>(), 64)
+  );
+  // At 1024 bits: 307 digits, and 308 when both storages are unsigned.
+  assert_eq!(
+    intermediate::<U289, U18, i1024, U10, U8, i64, U10>(),
+    (307, TypeId::of::<i1024>(), 128)
+  );
+  assert_eq!(
+    intermediate::<U0, U307, i1024, U1, U0, i8, U1>(),
+    (307, TypeId::of::<i1024>(), 128)
+  );
+  assert_eq!(
+    intermediate::<U290, U10, u1024, U10, U8, u64, U10>(),
+    (308, TypeId::of::<u1024>(), 128)
   );
   // 19 digits fit a `u64` when both storages are unsigned, and need an `i128` otherwise.
   assert_eq!(
@@ -4016,43 +4325,50 @@ fn div_round_intermediates() {
 /// target, also for `0 / 0`; it is reported before anything else, such as a quotient out of range.
 #[test]
 fn div_round_by_zero() {
+  // Each storage checks in a function of its own, whose frame holds the values of that storage
+  // alone.
   macro_rules! assert_by_zero {
     ($($repr:ident),+) => {$(
       {
-        type D = Decimal<U1, U1, $repr>;
-        let name = stringify!($repr);
-        for mode in bigint::MODES {
-          for value in [D::ZERO, D::ONE, D::MAX, D::MIN] {
+        #[inline(never)]
+        fn storage() {
+          type D = Decimal<U1, U1, $repr>;
+          let name = stringify!($repr);
+          for mode in bigint::MODES {
+            for value in [D::ZERO, D::ONE, D::MAX, D::MIN] {
+              assert_eq!(
+                value.div_round::<U1, U1, $repr, _, _, _>(&D::ZERO, mode),
+                Err(DivideError::DivisionByZero),
+                "{value} in {name}, {mode:?}"
+              );
+              assert_eq!(
+                value.div_round::<U0, U1, i8, _, _, _>(&D::ZERO, mode),
+                Err(DivideError::DivisionByZero),
+                "{value} in {name}, {mode:?}"
+              );
+              assert_eq!(
+                value.div_round::<U0, U1, u8, _, _, _>(&D::ZERO, mode),
+                Err(DivideError::DivisionByZero),
+                "{value} in {name}, {mode:?}"
+              );
+            }
+            // A negative dividend into an unsigned target.
             assert_eq!(
-              value.div_round::<U1, U1, $repr, _, _, _>(&D::ZERO, mode),
+              D1x1::MIN.div_round::<U1, U1, u8, _, _, _>(&D::ZERO, mode),
               Err(DivideError::DivisionByZero),
-              "{value} in {name}, {mode:?}"
-            );
-            assert_eq!(
-              value.div_round::<U0, U1, i8, _, _, _>(&D::ZERO, mode),
-              Err(DivideError::DivisionByZero),
-              "{value} in {name}, {mode:?}"
-            );
-            assert_eq!(
-              value.div_round::<U0, U1, u8, _, _, _>(&D::ZERO, mode),
-              Err(DivideError::DivisionByZero),
-              "{value} in {name}, {mode:?}"
+              "{name}, {mode:?}"
             );
           }
-          // A negative dividend into an unsigned target.
-          assert_eq!(
-            D1x1::MIN.div_round::<U1, U1, u8, _, _, _>(&D::ZERO, mode),
-            Err(DivideError::DivisionByZero),
-            "{name}, {mode:?}"
-          );
         }
+        storage();
       }
     )+};
   }
 
   assert_by_zero!(
-    i8, i16, i32, i64, i128, i192, i256, i320, i384, i448, i512, u8, u16, u32, u64, u128, u192,
-    u256, u320, u384, u448, u512
+    i8, i16, i32, i64, i128, i192, i256, i320, i384, i448, i512, i576, i640, i704, i768, i832,
+    i896, i960, i1024, u8, u16, u32, u64, u128, u192, u256, u320, u384, u448, u512, u576, u640,
+    u704, u768, u832, u896, u960, u1024
   );
   for mode in bigint::MODES {
     assert_eq!(
@@ -4061,6 +4377,14 @@ fn div_round_by_zero() {
     );
     assert_eq!(
       D154x0u512::MAX.div_round::<U154, U0, u512, _, _, _>(&D154x0u512::ZERO, mode),
+      Err(DivideError::DivisionByZero)
+    );
+    assert_eq!(
+      D307x0::MAX.div_round::<U307, U0, i1024, _, _, _>(&D307x0::ZERO, mode),
+      Err(DivideError::DivisionByZero)
+    );
+    assert_eq!(
+      D308x0u1024::MAX.div_round::<U308, U0, u1024, _, _, _>(&D308x0u1024::ZERO, mode),
       Err(DivideError::DivisionByZero)
     );
   }
@@ -4366,6 +4690,23 @@ fn div_round_at_the_limits() {
       D154x0u512::MAX.div_round::<U154, U0, u512, _, _, _>(&D154x0u512::ONE, mode),
       Ok(D154x0u512::MAX)
     );
+    let minus_one = D307x0::ONE.neg();
+    assert_eq!(
+      D307x0::MIN.div_round::<U307, U0, i1024, _, _, _>(&minus_one, mode),
+      Ok(D307x0::MAX)
+    );
+    assert_eq!(
+      D307x0::MIN.div_round::<U307, U0, i1024, _, _, _>(&D307x0::MIN, mode),
+      Ok(D307x0::ONE)
+    );
+    assert_eq!(
+      D308x0u1024::MAX.div_round::<U308, U0, u1024, _, _, _>(&D308x0u1024::MAX, mode),
+      Ok(D308x0u1024::ONE)
+    );
+    assert_eq!(
+      D308x0u1024::MAX.div_round::<U308, U0, u1024, _, _, _>(&D308x0u1024::ONE, mode),
+      Ok(D308x0u1024::MAX)
+    );
     // `-9.9 / -0.1` into a type with more integral digits.
     let tenth = D1x1::from_repr(-1).unwrap();
     assert_eq!(
@@ -4616,8 +4957,8 @@ mod with_serde {
   use std::{format, string::ToString};
 
   use super::{
-    D0x153, D0x154u512, D1x1, D1x1u8, D2x2, D153x0, D154x0u512, Decimal, Price, TokenAmount, U1,
-    U2, nines, per_mode,
+    D0x153, D0x154u512, D0x307, D0x308u1024, D1x1, D1x1u8, D2x2, D153x0, D154x0u512, D307x0,
+    D308x0u1024, Decimal, Price, TokenAmount, U1, U2, nines, per_mode,
   };
   use crate::{RoundingMode, bigint};
 
@@ -4658,7 +4999,8 @@ mod with_serde {
     let price: Price = "64250.5".parse().unwrap();
     assert_eq!(serde_json::to_string(&price).unwrap(), "\"64250.5\"");
     assert_eq!(serde_json::from_str::<Price>("\"64250.5\"").unwrap(), price);
-    // The widest texts, 156 bytes each, and the integers with the most digits.
+    // The widest texts of 512 bits, 156 bytes each, and of 1024 bits, 310 bytes each, and the
+    // integers with the most digits.
     assert_eq!(
       serde_json::to_string(&D0x154u512::MAX).unwrap(),
       format!("\"0.{}\"", nines(154))
@@ -4690,6 +5032,38 @@ mod with_serde {
     );
     let json = serde_json::to_string(&D153x0::MIN).unwrap();
     assert_eq!(serde_json::from_str::<D153x0>(&json).unwrap(), D153x0::MIN);
+
+    assert_eq!(
+      serde_json::to_string(&D0x308u1024::MAX).unwrap(),
+      format!("\"0.{}\"", nines(308))
+    );
+    assert_eq!(
+      serde_json::to_string(&D0x307::MIN).unwrap(),
+      format!("\"-0.{}\"", nines(307))
+    );
+    assert_eq!(
+      serde_json::to_string(&D308x0u1024::MAX).unwrap(),
+      format!("\"{}\"", nines(308))
+    );
+    assert_eq!(
+      serde_json::to_string(&D307x0::MIN).unwrap(),
+      format!("\"-{}\"", nines(307))
+    );
+    for value in [D0x308u1024::MAX, D0x308u1024::ZERO] {
+      let json = serde_json::to_string(&value).unwrap();
+      assert_eq!(serde_json::from_str::<D0x308u1024>(&json).unwrap(), value);
+    }
+    for value in [D0x307::MIN, D0x307::MAX] {
+      let json = serde_json::to_string(&value).unwrap();
+      assert_eq!(serde_json::from_str::<D0x307>(&json).unwrap(), value);
+    }
+    let json = serde_json::to_string(&D308x0u1024::MAX).unwrap();
+    assert_eq!(
+      serde_json::from_str::<D308x0u1024>(&json).unwrap(),
+      D308x0u1024::MAX
+    );
+    let json = serde_json::to_string(&D307x0::MIN).unwrap();
+    assert_eq!(serde_json::from_str::<D307x0>(&json).unwrap(), D307x0::MIN);
   }
 
   /// A JSON number would pass through `f64`, which holds `16.7` only approximately.

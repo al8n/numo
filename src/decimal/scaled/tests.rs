@@ -12,14 +12,16 @@ use std::{
   string::{String, ToString},
 };
 
-use typenum::{U0, U1, U2, U4, U8, U10, U11, U12, U16, U18, U20, U22, U36, U40, U153, U154};
+use typenum::{
+  U0, U1, U2, U4, U8, U10, U11, U12, U16, U18, U20, U22, U36, U40, U153, U154, U307, U308,
+};
 
 use super::Scaled;
 use crate::{
   ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalAssign,
   DecimalFloat, DecimalOne, DivRound, DivideError, ExactMul, FixedDecimal, FromFloatError,
   ParseError, ParseErrorKind, QuantizeError, RoundingMode, SignedFixedDecimal,
-  UnsignedFixedDecimal, WidenTo, bigint::MODES, dec, i256, i512, u256, u512,
+  UnsignedFixedDecimal, WidenTo, bigint::MODES, dec, i256, i512, i1024, u256, u512, u1024,
 };
 
 /// 20 integral and 18 fraction digits in an `i128`.
@@ -301,6 +303,14 @@ fn parse_at_the_storage_limits() {
   assert_eq!(*widest.value(), Decimal::<U154, U0, u512>::MAX);
   let min = format!("-0.{}{}", "9".repeat(153), "0".repeat(65382));
   assert_text(&value::<D0x153i512>(&min), &min, 65535);
+  type D308u1024 = Scaled<Decimal<U308, U0, u1024>>;
+  type D0x307i1024 = Scaled<Decimal<U0, U307, i1024>>;
+  let max = format!("{}.{}", "9".repeat(308), "0".repeat(65535));
+  let widest: D308u1024 = value(&max);
+  assert_text(&widest, &max, 65535);
+  assert_eq!(*widest.value(), Decimal::<U308, U0, u1024>::MAX);
+  let min = format!("-0.{}{}", "9".repeat(307), "0".repeat(65228));
+  assert_text(&value::<D0x307i1024>(&min), &min, 65535);
   let small: Scaled<Decimal<U1, U1, u8>> = value("9.90");
   assert_text(&small, "9.90", 2);
   let fraction_only: Scaled<Decimal<U0, U2>> = value("-0.50");
@@ -329,13 +339,15 @@ where
 }
 
 /// Scales that a byte does not count, up to the largest, write their text and parse back, for a
-/// narrow type and for the widest.
+/// narrow type and for the widest of 512 and of 1024 bits.
 #[test]
 fn scales_above_255_parse_back() {
   for scale in [256, 300, 65535] {
     check_scale_above_the_fraction::<Decimal<U1, U1, i8>>(scale);
     check_scale_above_the_fraction::<Decimal<U154, U0, u512>>(scale);
     check_scale_above_the_fraction::<Decimal<U0, U153, i512>>(scale);
+    check_scale_above_the_fraction::<Decimal<U308, U0, u1024>>(scale);
+    check_scale_above_the_fraction::<Decimal<U0, U307, i1024>>(scale);
   }
 }
 
@@ -1388,8 +1400,8 @@ mod with_serde {
   };
 
   use super::{
-    ConstFixedDecimal, Decimal, FixedDecimal, Narrow, NarrowS, Scaled, U0, U1, U153, U154, WideS,
-    assert_text, i512, u512, value,
+    ConstFixedDecimal, Decimal, FixedDecimal, Narrow, NarrowS, Scaled, U0, U1, U153, U154, U307,
+    U308, WideS, assert_text, i512, i1024, u512, u1024, value,
   };
 
   #[test]
@@ -1452,6 +1464,26 @@ mod with_serde {
     );
     let bytes = postcard::to_stdvec(&widest).unwrap();
     let read: Scaled<Decimal<U153, U0, i512>> = postcard::from_bytes(&bytes).unwrap();
+    assert_text(&read, &text, 255);
+
+    // 308 integral digits, or a sign and 307, and the same fraction digits.
+    let text = format!("{}.{}", "9".repeat(308), "0".repeat(255));
+    let widest = Scaled::new(Decimal::<U308, U0, u1024>::MAX, 255);
+    assert_eq!(
+      serde_json::to_string(&widest).unwrap(),
+      format!("\"{text}\"")
+    );
+    let read: Scaled<Decimal<U308, U0, u1024>> =
+      serde_json::from_str(&format!("\"{text}\"")).unwrap();
+    assert_text(&read, &text, 255);
+    let text = format!("-{}.{}", "9".repeat(307), "0".repeat(255));
+    let widest = Scaled::new(Decimal::<U307, U0, i1024>::MIN, 255);
+    assert_eq!(
+      serde_json::to_string(&widest).unwrap(),
+      format!("\"{text}\"")
+    );
+    let bytes = postcard::to_stdvec(&widest).unwrap();
+    let read: Scaled<Decimal<U307, U0, i1024>> = postcard::from_bytes(&bytes).unwrap();
     assert_text(&read, &text, 255);
   }
 
@@ -1616,22 +1648,25 @@ mod with_serde {
 
   /// A scale of at most the fraction digits of the type is written through a buffer, with
   /// `serialize_str`, and a larger one through `collect_str`, and JSON and postcard write the same
-  /// bytes for both as for the text itself: for a native and for two wide storages. The two widest
-  /// types write their longest texts through the buffer.
+  /// bytes for both as for the text itself: for a native and for four wide storages. The widest
+  /// types of 512 and of 1024 bits write their longest texts through the buffer.
   #[test]
   fn both_paths_write_the_text() {
     check_both_paths::<Narrow>();
     check_both_paths::<Decimal<U0, U153, i512>>();
     check_both_paths::<Decimal<U0, U154, u512>>();
+    check_both_paths::<Decimal<U0, U307, i1024>>();
+    check_both_paths::<Decimal<U0, U308, u1024>>();
   }
 
   /// Scales that a byte does not count, up to the largest, through JSON and postcard, for a narrow
-  /// type and for the widest.
+  /// type and for the widest of 512 and of 1024 bits.
   #[test]
   fn scales_above_255_through_json_and_postcard() {
     for scale in [256, 300, 65535] {
       check_formats::<Decimal<U1, U1, i8>>(scale);
       check_formats::<Decimal<U154, U0, u512>>(scale);
+      check_formats::<Decimal<U308, U0, u1024>>(scale);
     }
   }
 

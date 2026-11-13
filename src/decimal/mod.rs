@@ -471,8 +471,10 @@ mod tests;
 /// binary value rounds to `2.67` and its text to `2.68`. The shortest text of an `f32` is its own.
 ///
 /// NaN and the infinities are errors, and `-0.0` is zero. A decimal is always within the range of
-/// `f64`; `to_f32` gives an infinity for a magnitude that rounds beyond the largest `f32`, and a
-/// subnormal float or a zero for one that rounds below the smallest normal one.
+/// `f64`, and `to_f64` gives a subnormal float only for the two smallest values above zero of a
+/// type with 308 fraction digits, `10^-308` and `2 * 10^-308`; `to_f32` gives an infinity for a
+/// magnitude that rounds beyond the largest `f32`, and a subnormal float or a zero for one that
+/// rounds below the smallest normal one.
 ///
 /// ```
 /// use numo::{

@@ -40,7 +40,8 @@ use std::{
 use num_bigint::{BigInt, Sign};
 use typenum::{
   U0, U1, U2, U4, U5, U8, U9, U10, U17, U18, U19, U22, U25, U26, U28, U38, U39, U40, U53, U54, U58,
-  U76, U77, U78, U96, U97, U116, U135, U149, U153, U154,
+  U76, U77, U78, U96, U97, U116, U135, U149, U153, U154, U155, U173, U174, U192, U193, U211, U212,
+  U231, U232, U250, U251, U269, U270, U288, U289, U307, U308,
 };
 
 use crate::{
@@ -51,9 +52,9 @@ use crate::{
     tier,
   },
   decimal::float,
-  i192, i256, i320, i384, i448, i512,
+  i192, i256, i320, i384, i448, i512, i576, i640, i704, i768, i832, i896, i960, i1024,
   int::float::FloatParts,
-  u192, u256, u320, u384, u448, u512,
+  u192, u256, u320, u384, u448, u512, u576, u640, u704, u768, u832, u896, u960, u1024,
 };
 
 // One type of each storage, most of them at the digit limit of the storage, among them types
@@ -70,6 +71,15 @@ type Di320 = Decimal<U96, U0, i320>;
 type Di384 = Decimal<U97, U18, i384>;
 type Di448 = Decimal<U116, U18, i448>;
 type Di512 = Decimal<U135, U18, i512>;
+type Di576 = Decimal<U155, U18, i576>;
+type Di640 = Decimal<U174, U18, i640>;
+type Di704 = Decimal<U193, U18, i704>;
+type Di768 = Decimal<U212, U18, i768>;
+type Di832 = Decimal<U232, U18, i832>;
+type Di896 = Decimal<U251, U18, i896>;
+type Di960 = Decimal<U270, U18, i960>;
+type Di1024 = Decimal<U289, U18, i1024>;
+type D0x307 = Decimal<U0, U307, i1024>;
 type Du8 = Decimal<U1, U1, u8>;
 type Du16 = Decimal<U2, U2, u16>;
 type Du32 = Decimal<U0, U9, u32>;
@@ -82,6 +92,15 @@ type Du384 = Decimal<U97, U18, u384>;
 type Du448 = Decimal<U116, U18, u448>;
 type Du512 = Decimal<U154, U0, u512>;
 type D0x154 = Decimal<U0, U154, u512>;
+type Du576 = Decimal<U173, U0, u576>;
+type Du640 = Decimal<U192, U0, u640>;
+type Du704 = Decimal<U211, U0, u704>;
+type Du768 = Decimal<U231, U0, u768>;
+type Du832 = Decimal<U250, U0, u832>;
+type Du896 = Decimal<U269, U0, u896>;
+type Du960 = Decimal<U288, U0, u960>;
+type Du1024 = Decimal<U308, U0, u1024>;
+type D0x308 = Decimal<U0, U308, u1024>;
 // The two storages whose float scratch has a limb more than their coefficient, with every digit
 // after the point: from 32 fraction digits on, `to_f64` computes in the third limb, and from 33 on,
 // `round_from_f64`.
@@ -619,6 +638,8 @@ fn subnormals_and_zeros<T: FixedDecimal>(conversions: &Conversions<T>) {
 fn decimals_below_the_smallest_normal_f32_give_subnormals_and_zeros() {
   subnormals_and_zeros(&conversions!(BelowOne));
   subnormals_and_zeros(&conversions!(D0x154));
+  subnormals_and_zeros(&conversions!(D0x307));
+  subnormals_and_zeros(&conversions!(D0x308));
   let ones: Vec<f32> = (0..24)
     .map(|count| f32::from_bits((1 << count) - 1))
     .collect();
@@ -679,12 +700,12 @@ fn to_floats_match_the_parsed_text<T: FixedDecimal>(conversions: &Conversions<T>
   }
 }
 
-/// `to_f64` and `to_f32` of one type of each storage give the float that the standard library
-/// parses from the text of the decimal, at zero, the limits, a few units of the last digit and
-/// random values: the glue of each storage, which widens the magnitude to the float scratch of the
-/// storage, and of `i128` and `u128` also with 38 fraction digits, where the scratch has a limb
-/// more than the coefficient; under Miri, of a signed native, an unsigned native and a wide
-/// storage, at the fixed values. And `64250.5`, `0.1` and `-0.1` as literals.
+/// `to_f64` and `to_f32` of one type of each storage, from 8 to 1024 bits, give the float that the
+/// standard library parses from the text of the decimal, at zero, the limits, a few units of the
+/// last digit and random values: the glue of each storage, which widens the magnitude to the float
+/// scratch of the storage, and of `i128` and `u128` also with 38 fraction digits, where the scratch
+/// has a limb more than the coefficient; under Miri, of a signed native, an unsigned native and a
+/// wide storage, at the fixed values. And `64250.5`, `0.1` and `-0.1` as literals.
 #[test]
 fn floats_of_every_storage_match_the_parsed_text() {
   for_each_type!(to_floats_match_the_parsed_text: Di8, Du64, Di256);
@@ -692,10 +713,12 @@ fn floats_of_every_storage_match_the_parsed_text() {
     return;
   }
   for_each_type!(to_floats_match_the_parsed_text:
-    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, D0x38,
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, Di576, Di640, Di704, Di768, Di832,
+    Di896, Di960, Di1024, D0x307, D0x38,
   );
   for_each_type!(to_floats_match_the_parsed_text:
-    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154, D0x38u128,
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154, Du576, Du640, Du704,
+    Du768, Du832, Du896, Du960, Du1024, D0x308, D0x38u128,
   );
 
   type Price = Decimal<U10, U8>;
@@ -734,7 +757,7 @@ fn integers_agree<T: FixedDecimal>(
 
 /// A decimal without fraction digits converts as its coefficient does: as `as` converts a native
 /// integer, and as the wide integers convert, for a native and a wide storage of each sign and for
-/// the widest type, whose `MAX` is an infinity as an `f32`.
+/// the widest types of 512 and 1024 bits, whose `MAX` is an infinity as an `f32`.
 #[test]
 fn decimals_without_fraction_digits_convert_as_their_integers() {
   integers_agree(&conversions!(Decimal<U18, U0, i64>), |repr| {
@@ -746,6 +769,7 @@ fn decimals_without_fraction_digits_convert_as_their_integers() {
   integers_agree(&conversions!(Di320), |repr| (repr.to_f64(), repr.to_f32()));
   integers_agree(&conversions!(Du256), |repr| (repr.to_f64(), repr.to_f32()));
   integers_agree(&conversions!(Du512), |repr| (repr.to_f64(), repr.to_f32()));
+  integers_agree(&conversions!(Du1024), |repr| (repr.to_f64(), repr.to_f32()));
 }
 
 /// The modes in which the readings of a float into each storage are checked: all eight; under
@@ -981,6 +1005,14 @@ fn the_core_in_the_float_scratch_of_each_storage() {
   core_in_the_scratch::<5>(96);
   core_in_the_scratch::<6>(115);
   core_in_the_scratch::<7>(134);
+  core_in_the_scratch::<9>(173);
+  core_in_the_scratch::<10>(192);
+  core_in_the_scratch::<11>(211);
+  core_in_the_scratch::<12>(231);
+  core_in_the_scratch::<13>(250);
+  core_in_the_scratch::<14>(269);
+  core_in_the_scratch::<15>(288);
+  core_in_the_scratch::<16>(308);
 }
 
 /// Checks that `round_from_f32` of each float of `floats` gives in `T` what `round_from_f64`
@@ -1077,8 +1109,10 @@ fn zero_or_one_unit<T: FixedDecimal>(
 /// fraction digits, where each is below half a unit and gives zero, or one unit with the sign of
 /// the float under `Up`, `Up05`, `Ceiling` of a positive float and `Floor` of a negative one,
 /// which is `NegOverflow` for the unsigned type; in a type with 38 fraction digits, which reads
-/// the larger subnormal `f32`s like any other value; and in two with 149 and 154 fraction digits,
-/// the first of which holds the smallest `f32` exactly, so that it reads as itself in every mode.
+/// the larger subnormal `f32`s like any other value; and in three with 149, 154 and 308 fraction
+/// digits, the first of which holds the smallest `f32` exactly, so that it reads as itself in every
+/// mode, and the last of which reads the largest subnormal `f64` and the smallest normal one as two
+/// or three units.
 #[test]
 fn tiny_floats_round_to_zero_or_to_one_unit() {
   type Cents = Decimal<U10, U2, u64>;
@@ -1088,6 +1122,7 @@ fn tiny_floats_round_to_zero_or_to_one_unit() {
   tiny_floats_round(&conversions!(Decimal<U0, U38>));
   tiny_floats_round(&conversions!(Subnormal));
   tiny_floats_round(&conversions!(D0x154));
+  tiny_floats_round(&conversions!(D0x308));
   for mode in MODES {
     for x in tiny_floats::<f64>() {
       let negative = x.is_sign_negative();
@@ -1340,15 +1375,15 @@ fn rounding_mode_table(
   }
 }
 
-/// `round_from_f64` and `round_from_f32` of one type of each storage, and of `i128` and `u128` also
-/// with 38 fraction digits, where the product of a float computes in the third limb of the scratch,
-/// round the exact binary value of a float once with each mode, as the rational in `num-bigint`
-/// does, and report a value outside the range on the side of its sign: at the floats next to the
-/// limits, the halves of the type, zero, `-0.0` and random floats, and at the largest `f64`; under
-/// Miri, of a signed native, an unsigned native and a wide storage, at four floats in two modes.
-/// And the literals: the binary value of `0.1_f64` to 28 fraction digits and of `0.1_f32` in every
-/// mode, which holds it exactly, `2.675` of each format, which is below 2.675, the largest `f32` in
-/// every mode, and the table of the docs of `RoundingMode`.
+/// `round_from_f64` and `round_from_f32` of one type of each storage, from 8 to 1024 bits, and of
+/// `i128` and `u128` also with 38 fraction digits, where the product of a float computes in the
+/// third limb of the scratch, round the exact binary value of a float once with each mode, as the
+/// rational in `num-bigint` does, and report a value outside the range on the side of its sign: at
+/// the floats next to the limits, the halves of the type, zero, `-0.0` and random floats, and at
+/// the largest `f64`; under Miri, of a signed native, an unsigned native and a wide storage, at
+/// four floats in two modes. And the literals: the binary value of `0.1_f64` to 28 fraction digits
+/// and of `0.1_f32` in every mode, which holds it exactly, `2.675` of each format, which is below
+/// 2.675, the largest `f32` in every mode, and the table of the docs of `RoundingMode`.
 #[test]
 fn floats_round_into_every_storage_in_every_mode() {
   type Fine = Decimal<U10, U28>;
@@ -1387,10 +1422,12 @@ fn floats_round_into_every_storage_in_every_mode() {
     return;
   }
   for_each_type!(binary_readings_round:
-    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, D0x38,
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, Di576, Di640, Di704, Di768, Di832,
+    Di896, Di960, Di1024, D0x307, D0x38,
   );
   for_each_type!(binary_readings_round:
-    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154, D0x38u128,
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154, Du576, Du640, Du704,
+    Du768, Du832, Du896, Du960, Du1024, D0x308, D0x38u128,
   );
 }
 
@@ -1765,10 +1802,12 @@ fn shortest_texts_match_the_display_text() {
     return;
   }
   for_each_type!(text_readings_round:
-    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512,
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, Di576, Di640, Di704, Di768, Di832,
+    Di896, Di960, Di1024, D0x307,
   );
   for_each_type!(text_readings_round:
-    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154,
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154, Du576, Du640, Du704,
+    Du768, Du832, Du896, Du960, Du1024, D0x308,
   );
 }
 
