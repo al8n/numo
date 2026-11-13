@@ -223,8 +223,10 @@ FEATURES
     integers, `core::num::ParseIntError`, with its kinds in the native order: a byte that is not a
     digit is `InvalidDigit`, unless the digits before it already pass the range of `Bits`, which is
     `PosOverflow` or `NegOverflow`, whatever the storage holds. A radix outside 2 to 36 panics in
-    every build, reporting the caller. In a constant, a width above the default storages, or above
-    about 16384 bits in `u8` limbs, may need `#[allow(long_running_const_eval)]`.
+    every build, reporting the caller. In a constant, the work grows with the digits and with the
+    limbs of the storage: a text that fills 65536 bits in `[u64; 1024]`, or 16384 bits in
+    `[u8; 2048]`, can exceed the compiler's default limit for evaluating a constant, which may then
+    need `#[allow(long_running_const_eval)]`.
   - The radix formats `Binary`, `Octal`, `LowerHex` and `UpperHex`, which write the digits of a
     `Uint` and the two's complement of the `Bits` bits of an `Int`, whatever the storage holds
     above them, and the exponent formats `LowerExp` and `UpperExp`, whose precision rounds the

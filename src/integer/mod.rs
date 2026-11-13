@@ -352,8 +352,10 @@ mod traits;
 /// is `PosOverflow`. The range is that of `Bits`, not of the storage, so `"200"` overflows
 /// [`u7`](crate::u7) although its `u8` holds 200, and zero bits read every spelling of zero, such
 /// as `"0"`, `"+0"` and `"00"`, and nothing else. A radix outside 2 to 36 panics in every build,
-/// reporting the caller. In a constant, a width above the default storages, or above about 16384
-/// bits in `u8` limbs, may need `#[allow(long_running_const_eval)]` on the constant.
+/// reporting the caller. In a constant, the work grows with the number of digits and with the
+/// number of limbs of the storage. A text that fills 65536 bits in `[u64; 1024]`, or 16384 bits in
+/// `[u8; 2048]`, can exceed the compiler's default limit for evaluating a constant, so such a
+/// constant may need `#[allow(long_running_const_eval)]`.
 ///
 /// `Display` and `Debug` write decimal, `Debug` also under `{:x?}` and `{:X?}`, whose flags the
 /// standard library does not expose. The radix formats `Binary`, `Octal`, `LowerHex` and
