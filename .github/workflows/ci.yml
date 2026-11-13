@@ -355,8 +355,21 @@ jobs:
           key: ${{ runner.os }}-coverage-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-coverage-cargo-
+      # A build that exhausts the memory of the runner stops the runner without a message, so the
+      # runner gets more swap space, and the next step keeps a record of the memory in use.
+      - name: Add swap space
+        run: |
+          free -h
+          df -h / /mnt
+          sudo fallocate -l 16G /mnt/numo-swap
+          sudo chmod 600 /mnt/numo-swap
+          sudo mkswap /mnt/numo-swap
+          sudo swapon /mnt/numo-swap
+          free -h
       - name: Run LLVM coverage
-        run: cargo +nightly llvm-cov --workspace --all-features --doctests --lcov --output-path lcov.info
+        run: |
+          (while sleep 30; do free -m | awk '/^Mem:/ { used = $3 } /^Swap:/ { print "memory in use: " used " MiB, swap in use: " $3 " MiB" }'; done) &
+          cargo +nightly llvm-cov --workspace --all-features --doctests --lcov --output-path lcov.info
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v7
         with:
