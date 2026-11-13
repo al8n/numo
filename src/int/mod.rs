@@ -47,7 +47,7 @@ pub(crate) mod slice;
 pub(crate) mod unsigned;
 
 macro_rules! native {
-  (unsigned $uint:ident => $int:ident) => {
+  (unsigned $uint:ident => $int:ident, $limbs:ident) => {
     #[doc = concat!("Lower layer for `", stringify!($uint), "`.")]
     pub(crate) mod $uint {
       use core::{cmp::Ordering, num::ParseIntError};
@@ -220,6 +220,62 @@ macro_rules! native {
         } else {
           (difference, overflow)
         }
+      }
+
+      /// `lhs * rhs + carry + add` as two values of `BITS` bits, the low one first, as the limb
+      /// layer of the same width computes it. It is at most `2^(2 * BITS) - 1`, so it does not
+      /// overflow.
+      #[inline]
+      pub(crate) const fn carrying_mul_add(
+        lhs: $uint,
+        rhs: $uint,
+        carry: $uint,
+        add: $uint,
+      ) -> ($uint, $uint) {
+        super::unsigned::$limbs::carrying_mul_add(lhs, rhs, carry, add)
+      }
+
+      /// The value of `2 * BITS` bits whose halves are `low` and `high`, the low one first, split
+      /// at bit `bits`: the value modulo `2^bits`, and the value divided by `2^bits`, rounded down.
+      /// Requires `bits <= BITS` and the value to be below `2^(2 * bits)`, or to have `2 * bits`
+      /// bits in two's complement, whose quotient the second half then holds in two's complement.
+      #[inline]
+      pub(crate) const fn split_bits(low: $uint, high: $uint, bits: u32) -> ($uint, $uint) {
+        // An unbounded shift by `BITS` bits gives zero, so neither zero bits nor the full width
+        // needs a case of its own.
+        (
+          zero_extend(low, bits),
+          low.unbounded_shr(bits) | high.unbounded_shl($uint::BITS - bits),
+        )
+      }
+
+      /// `lhs * rhs + carry` as two values of `bits` bits, the low one first: the sum modulo
+      /// `2^bits`, and the sum divided by `2^bits`. Requires `bits <= BITS` and the three values
+      /// below `2^bits`, so that the sum is below `2^(2 * bits)`.
+      #[inline]
+      pub(crate) const fn carrying_mul_bits(
+        lhs: $uint,
+        rhs: $uint,
+        carry: $uint,
+        bits: u32,
+      ) -> ($uint, $uint) {
+        let (low, high) = carrying_mul_add(lhs, rhs, carry, 0);
+        split_bits(low, high, bits)
+      }
+
+      /// `lhs * rhs + carry + add` as two values of `bits` bits, as [`carrying_mul_bits`] gives
+      /// `lhs * rhs + carry`. Requires `bits <= BITS` and the four values below `2^bits`, so that
+      /// the sum is below `2^(2 * bits)`.
+      #[inline]
+      pub(crate) const fn carrying_mul_add_bits(
+        lhs: $uint,
+        rhs: $uint,
+        carry: $uint,
+        add: $uint,
+        bits: u32,
+      ) -> ($uint, $uint) {
+        let (low, high) = carrying_mul_add(lhs, rhs, carry, add);
+        split_bits(low, high, bits)
       }
 
       /// The quotient and the remainder of `lhs / rhs`, and `false`, which no unsigned quotient
@@ -990,6 +1046,110 @@ macro_rules! native {
         }
       }
 
+      /// `lhs + rhs + carry` wrapped to `bits` bits, and whether the exact sum is outside the range
+      /// of `bits` bits. Requires `bits <= BITS` and both values within that range.
+      #[inline]
+      pub(crate) const fn carrying_add_bits(
+        lhs: $int,
+        rhs: $int,
+        carry: bool,
+        bits: u32,
+      ) -> ($int, bool) {
+        let (sum, overflow) = overflowing_add_bits(lhs, rhs, bits);
+        if !carry {
+          return (sum, overflow);
+        }
+        // Zero bits hold neither one nor minus one, so a carry is outside their range, as in the
+        // lower layer.
+        if bits == 0 {
+          return (sum, true);
+        }
+        // One more is minus one less, and minus one is within the range from one bit.
+        let (sum, stepped) = overflowing_sub_bits(sum, -1, bits);
+        // The exact sum is outside the range exactly when one of the two steps is: both are only
+        // for a sum of `MIN - 1`, which wraps to `MAX`, and one more is `MIN`.
+        (sum, overflow != stepped)
+      }
+
+      /// `lhs - rhs - borrow` wrapped to `bits` bits, and whether the exact difference is outside
+      /// the range of `bits` bits. Requires `bits <= BITS` and both values within that range.
+      #[inline]
+      pub(crate) const fn borrowing_sub_bits(
+        lhs: $int,
+        rhs: $int,
+        borrow: bool,
+        bits: u32,
+      ) -> ($int, bool) {
+        let (difference, overflow) = overflowing_sub_bits(lhs, rhs, bits);
+        if !borrow {
+          return (difference, overflow);
+        }
+        // Zero bits hold neither one nor minus one, so a borrow is outside their range, as in the
+        // lower layer.
+        if bits == 0 {
+          return (difference, true);
+        }
+        // One less is minus one more, and minus one is within the range from one bit.
+        let (difference, stepped) = overflowing_add_bits(difference, -1, bits);
+        // The exact difference is outside the range exactly when one of the two steps is: both
+        // are only for a difference of `MAX + 1`, which wraps to `MIN`, and one less is `MAX`.
+        (difference, overflow != stepped)
+      }
+
+      /// The value of `2 * BITS` bits in two's complement whose halves are `low` and `high`, the
+      /// low one first, with `addend` sign-extended to them and added. Requires the sum to be
+      /// within the range of `2 * BITS` bits.
+      #[inline]
+      const fn add_to_pair(low: $uint, high: $uint, addend: $int) -> ($uint, $uint) {
+        let (low, carry) = low.overflowing_add(addend.cast_unsigned());
+        // The high half of a negative addend is all ones, minus one.
+        (low, high.wrapping_add(carry as $uint).wrapping_sub((addend < 0) as $uint))
+      }
+
+      /// `lhs * rhs + carry + add` as two values of `bits` bits, the low one first: the sum modulo
+      /// `2^bits`, unsigned, and the sum divided by `2^bits`, rounded down, within the range of
+      /// `bits` bits. Requires `bits <= BITS` and the four values within that range, so that the
+      /// sum is within the range of `2 * bits` bits.
+      pub(crate) const fn carrying_mul_add_bits(
+        lhs: $int,
+        rhs: $int,
+        carry: $int,
+        add: $int,
+        bits: u32,
+      ) -> ($uint, $int) {
+        let (low, mut high) =
+          super::$uint::carrying_mul_add(lhs.cast_unsigned(), rhs.cast_unsigned(), 0, 0);
+        // A pattern read without a sign is its value plus `2^BITS` if it is negative, so the
+        // product of the patterns is that of the values plus `2^BITS` times the pattern of an
+        // operand for each negative other operand, modulo `2^(2 * BITS)`: each correction
+        // subtracts the other operand, as it is, from the high half.
+        if lhs < 0 {
+          high = high.wrapping_sub(rhs.cast_unsigned());
+        }
+        if rhs < 0 {
+          high = high.wrapping_sub(lhs.cast_unsigned());
+        }
+        let (low, high) = add_to_pair(low, high, carry);
+        let (low, high) = add_to_pair(low, high, add);
+        // The sum has `2 * bits` bits in two's complement, so the bits that the split takes from
+        // index `bits` up are the quotient sign-extended.
+        let (low, high) = super::$uint::split_bits(low, high, bits);
+        (low, high.cast_signed())
+      }
+
+      /// `lhs * rhs + carry` as two values of `bits` bits, as [`carrying_mul_add_bits`] gives
+      /// `lhs * rhs + carry + add`. Requires `bits <= BITS` and the three values within the range
+      /// of `bits` bits.
+      #[inline]
+      pub(crate) const fn carrying_mul_bits(
+        lhs: $int,
+        rhs: $int,
+        carry: $int,
+        bits: u32,
+      ) -> ($uint, $int) {
+        carrying_mul_add_bits(lhs, rhs, carry, 0, bits)
+      }
+
       /// The quotient and the remainder of `lhs / rhs` rounded toward zero, the remainder with the
       /// sign of `lhs`, and whether the quotient is outside the range of `bits` bits, as it is only
       /// for `MIN / -1`, whose quotient wraps to `MIN` with the remainder zero; or `None` if `rhs`
@@ -1746,11 +1906,11 @@ macro_rules! native {
   };
 }
 
-native!(unsigned u8 => i8);
-native!(unsigned u16 => i16);
-native!(unsigned u32 => i32);
-native!(unsigned u64 => i64);
-native!(unsigned u128 => i128);
+native!(unsigned u8 => i8, b8);
+native!(unsigned u16 => i16, b16);
+native!(unsigned u32 => i32, b32);
+native!(unsigned u64 => i64, b64);
+native!(unsigned u128 => i128, b128);
 
 native!(signed i8 => u8);
 native!(signed i16 => u16);

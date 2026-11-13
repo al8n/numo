@@ -13,7 +13,7 @@ use super::limb_layer::limb_layer;
 /// `a * b + carry + add` as two limbs, the low one first. It is at most
 /// `(2^64 - 1)^2 + 2 * (2^64 - 1) = 2^128 - 1`, so it does not overflow.
 #[inline]
-const fn carrying_mul_add(a: u64, b: u64, carry: u64, add: u64) -> (u64, u64) {
+pub(crate) const fn carrying_mul_add(a: u64, b: u64, carry: u64, add: u64) -> (u64, u64) {
   let wide = a as u128 * b as u128 + carry as u128 + add as u128;
   (wide as u64, (wide >> 64) as u64)
 }
