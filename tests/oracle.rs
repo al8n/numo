@@ -339,13 +339,14 @@ fn oracle_parse(
   if mantissa.sign() == Sign::NoSign {
     return Ok(BigInt::ZERO);
   }
-  // A nonzero mantissa has at most `input.len()` digits, so scaled by an exponent beyond this
-  // bound it is at least `10^200` or below `10^-200`: out of range, or inexact for every type.
-  let bound = BigInt::from(input.len() + 200);
-  if exponent > bound {
+  // A nonzero mantissa has at most `input.len()` digits, so scaled by an exponent above
+  // `input.len() + integral` it has more than `integral` integral digits, out of range, and by an
+  // exponent below `-(input.len() + fraction)` it is below `10^-fraction`, inexact.
+  let len = BigInt::from(input.len());
+  if exponent > &len + integral {
     return Err(ParseErrorKind::OutOfRange);
   }
-  if exponent < -bound {
+  if exponent < -(len + fraction) {
     return Err(ParseErrorKind::Inexact);
   }
 

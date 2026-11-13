@@ -325,6 +325,10 @@ where
   D: ConstFixedDecimal,
   Scaled<D>: FixedDecimal,
 {
+  assert!(
+    u32::from(scale) > D::FRACTION,
+    "the scale {scale} is not above the fraction digits of the type"
+  );
   for decimal in [D::MIN, D::MAX] {
     let text = Scaled::new(decimal, scale).to_string();
     let fraction = text.split_once('.').map_or(0, |(_, digits)| digits.len());
@@ -347,6 +351,9 @@ fn scales_above_255_parse_back() {
     check_scale_above_the_fraction::<Decimal<U154, U0, u512>>(scale);
     check_scale_above_the_fraction::<Decimal<U0, U153, i512>>(scale);
     check_scale_above_the_fraction::<Decimal<U308, U0, u1024>>(scale);
+  }
+  // This type has 307 fraction digits, above 256 and 300, so it takes scales above 307.
+  for scale in [308, 400, 65535] {
     check_scale_above_the_fraction::<Decimal<U0, U307, i1024>>(scale);
   }
 }
