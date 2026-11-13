@@ -1,0 +1,12 @@
+error[E0368]: binary assignment operation `+=` cannot be applied to type `T`
+ --> tests/ui/fixed_decimal_has_no_compound_assignment.rs:6:3
+  |
+6 |   total += value;
+  |   -----^^^^^^^^^
+  |   |
+  |   cannot use `+=` on type `T`
+  |
+help: consider further restricting type parameter `T` with trait `AddAssign`
+  |
+5 | fn accumulate<T: FixedDecimal + std::ops::AddAssign>(mut total: T, value: T) -> T {
+  |                               +++++++++++++++++++++

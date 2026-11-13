@@ -1,0 +1,13 @@
+error[E0369]: cannot multiply `Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>` by `Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>`
+ --> tests/ui/decimal_has_no_mul_operator.rs:8:25
+  |
+8 |   let _product = D::MAX * D::MAX;
+  |                  ------ ^ ------ Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>
+  |                  |
+  |                  Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>
+  |
+note: `Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>` does not implement `Mul`
+ --> src/decimal/mod.rs
+  |
+  | pub struct Decimal<Integral, Fraction, Repr = <Sum<Integral, Fraction> as DigitCount>::Signed> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>` is defined in another crate

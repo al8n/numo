@@ -50,7 +50,7 @@ error[E0277]: the storage `Repr` cannot hold `Integral + Fraction` decimal digit
 note: required by a bound in `numo::ConstFixedDecimal::ZERO`
   --> src/decimal/traits/mod.rs
    |
-   | pub trait ConstFixedDecimal: FixedDecimal + Copy {
+   | pub trait ConstFixedDecimal: FixedDecimal + Copy + AddAssign + SubAssign {
    |                              ^^^^^^^^^^^^ required by this bound in `ConstFixedDecimal::ZERO`
    |   /// Zero.
    |   const ZERO: Self;
