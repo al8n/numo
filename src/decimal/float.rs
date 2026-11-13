@@ -4,9 +4,14 @@
 //! power of five in eight limbs, which hold every coefficient, and rounds the quotient once, to
 //! the bits of the nearest float. `round_coefficient` reads a float the other way: its value times
 //! `10^Fraction` is `significand * 5^Fraction * 2^(exponent + Fraction)`, a product shifted by a
-//! power of two, which it rounds once to the magnitude of a coefficient.
+//! power of two, which it rounds once to the magnitude of a coefficient. `shortest` reads the
+//! digits of the shortest text of a float, which the formatter of the standard library writes, so
+//! that it alone is not `const`.
 
-use core::cmp::Ordering;
+use core::{
+  cmp::Ordering,
+  fmt::{self, Write},
+};
 
 use crate::{
   int::{
@@ -193,4 +198,90 @@ pub(super) const fn round_coefficient(
   } else {
     Some(quotient)
   }
+}
+
+/// The text of a float in 32 bytes, more than the formatter writes for any float: a sign, the 17
+/// digits of its own buffer, the point, `e`, `-` and the five digits of a `u16` are 26 bytes.
+struct Text {
+  bytes: [u8; 32],
+  len: usize,
+}
+
+impl Write for Text {
+  /// Appends `text`, or fails if the bytes do not hold it.
+  fn write_str(&mut self, text: &str) -> fmt::Result {
+    let end = match self.len.checked_add(text.len()) {
+      Some(end) if end <= self.bytes.len() => end,
+      _ => return Err(fmt::Error),
+    };
+    self.bytes[self.len..end].copy_from_slice(text.as_bytes());
+    self.len = end;
+    Ok(())
+  }
+}
+
+/// The digits of the shortest text of `value`, a finite float, and the exponent of the last of
+/// them: the value is `digits * 10^exponent`.
+pub(super) fn shortest<T: fmt::LowerExp>(value: T) -> (u64, i32) {
+  let mut text = Text {
+    bytes: [0; 32],
+    len: 0,
+  };
+  // Without a precision, `{:e}` writes the shortest digits that parse back to the float in its own
+  // format, with an exponent, and reads no alternate flag. NaN and the infinities have no such
+  // text, which the callers rule out with the parts of the float.
+  if write!(text, "{value:e}").is_err() {
+    unreachable!("the text `{value:e}` of a float passes 32 bytes");
+  }
+  match read_exponent_text(&text.bytes[..text.len]) {
+    Some(read) => read,
+    None => unreachable!("the text `{value:e}` of a float is not in the form of `{{:e}}`"),
+  }
+}
+
+/// The digits that `text` writes in the form of `{:e}` and the exponent of the last of them, or
+/// `None` for a text of any other form. That form is an optional `-`, digits with at most one
+/// point, `e`, an optional `-` or `+` and the digits of the exponent, which may begin with zeros,
+/// with at most 19 digits before `e`, which a `u64` holds, and an exponent that an `i32` holds.
+pub(super) fn read_exponent_text(text: &[u8]) -> Option<(u64, i32)> {
+  // The callers take the sign from the parts of the float.
+  let text = text.strip_prefix(b"-").unwrap_or(text);
+  let split = text.iter().position(|&byte| byte == b'e')?;
+  let (mantissa, exponent) = (&text[..split], &text[split + 1..]);
+  let mut digits: u64 = 0;
+  let mut count: i32 = 0;
+  // The number of digits before the point, for a mantissa that has one.
+  let mut point = None;
+  for &byte in mantissa {
+    match byte {
+      b'0'..=b'9' if count < 19 => {
+        digits = digits * 10 + u64::from(byte - b'0');
+        count += 1;
+      }
+      b'.' if point.is_none() => point = Some(count),
+      _ => return None,
+    }
+  }
+  let (negative, exponent) = match exponent {
+    [b'-', rest @ ..] => (true, rest),
+    [b'+', rest @ ..] => (false, rest),
+    _ => (false, exponent),
+  };
+  if count == 0 || exponent.is_empty() {
+    return None;
+  }
+  let mut written: i32 = 0;
+  for &byte in exponent {
+    if !byte.is_ascii_digit() {
+      return None;
+    }
+    written = written
+      .checked_mul(10)?
+      .checked_add(i32::from(byte - b'0'))?;
+  }
+  let written = if negative { -written } else { written };
+  // The last digit is as many places below the written exponent as there are digits after the
+  // point.
+  let exponent = written.checked_sub(count - point.unwrap_or(count))?;
+  Some((digits, exponent))
 }

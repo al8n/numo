@@ -1294,7 +1294,8 @@ macro_rules! storage_decimal {
 
       /// Converts the exact binary value of `value`, rounded once with `mode` to the fraction
       /// digits of the type. `-0.0` converts to zero, and a negative value that rounds to zero
-      /// converts to zero.
+      /// converts to zero. [`from_f64_shortest`](Self::from_f64_shortest) reads the shortest text
+      /// of the float instead.
       ///
       /// For interchange and display, not for arithmetic that must be exact.
       ///

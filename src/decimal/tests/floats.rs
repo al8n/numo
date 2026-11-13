@@ -3,11 +3,13 @@
 //! parsing of the text of the decimal, and the reading of the binary value of a float against the
 //! exact rational in `num-bigint`. The decimals between adjacent floats, built in `num-bigint` from
 //! the parts of the lower float, are checked against the rule of ties to even, over six ranges of
-//! `f32` and random `f64`s, over which an `f32` is also read as the `f64` of the same value; then
-//! the families of values where the rounding changes its case: the boundaries of the binades, the
-//! infinity of `f32`, its subnormal floats and its zeros, the tiny floats and the edge of the eight
-//! limbs; and the inherent `const fn`s of every storage, against the parsed text of the decimal
-//! and against the exact rational in every mode, those of a type without fraction digits against
+//! `f32` and random `f64`s, over which an `f32` is also read as the `f64` of the same value, and
+//! every float is read by its shortest text and converted back to itself; then the families of
+//! values where the rounding changes its case: the boundaries of the binades, the infinity of
+//! `f32`, its subnormal floats and its zeros, the tiny floats, the edge of the eight limbs and the
+//! longest texts; the parser of the shortest text; and the inherent functions of every storage,
+//! against the parsed text of the decimal, against the exact rational and against the rational of
+//! the text that `Display` writes, in every mode, those of a type without fraction digits against
 //! the integers' own conversions, the special values and the constant contexts. Every float is
 //! compared by its bits, so that `-0.0` and the infinities count.
 //!
@@ -19,8 +21,15 @@
 //! tier of the build sizes every sweep, and every random value comes from a generator with a seed
 //! written here, so that a failure replays.
 
-use core::{any::type_name, f64::consts::LOG2_10, num::ParseFloatError, str::FromStr};
+use core::{
+  any::type_name,
+  f64::consts::LOG2_10,
+  fmt::{Display, LowerExp},
+  num::ParseFloatError,
+  str::FromStr,
+};
 use std::{
+  boxed::Box,
   collections::BTreeSet,
   format,
   string::{String, ToString},
@@ -29,8 +38,8 @@ use std::{
 
 use num_bigint::{BigInt, Sign};
 use typenum::{
-  U0, U1, U2, U4, U5, U8, U9, U10, U17, U18, U19, U25, U26, U28, U38, U39, U40, U54, U58, U76, U77,
-  U78, U96, U97, U116, U135, U149, U153, U154,
+  U0, U1, U2, U4, U5, U8, U9, U10, U17, U18, U19, U22, U25, U26, U28, U38, U39, U40, U53, U54, U58,
+  U76, U77, U78, U96, U97, U116, U135, U149, U153, U154,
 };
 
 use crate::{
@@ -82,18 +91,31 @@ type AboveOne = Decimal<U39, U25, i256>;
 type Top = Decimal<U39, U0, i192>;
 
 /// A type that holds the midpoint of two adjacent `f64`s whose lowest bit is at `2^-70` or above,
-/// up to `2^251`.
+/// up to `2^251`, and the shortest text of every random `f64`.
 type Wide = Decimal<U77, U76, i512>;
 
-/// What the checks need of a float beyond [`TestFloat`]: the standard library's parsing of a text,
-/// and the conversions of a decimal type with this format through [`Conversions`].
-trait Float: TestFloat + FromStr<Err = ParseFloatError> {
+/// A type that holds the shortest text of every finite `f32` exactly: it has at most 39 integral
+/// digits, and its last digit is at `10^-53` or above.
+type Texts = Decimal<U39, U53, i320>;
+
+/// What the checks need of a float beyond [`TestFloat`]: the standard library's parsing of a text
+/// and its `Display` and `{:e}` texts, and the conversions of a decimal type with this format
+/// through [`Conversions`].
+trait Float: TestFloat + Display + LowerExp + FromStr<Err = ParseFloatError> {
   /// The conversion of `value` to this format, through the inherent function of its type.
   fn of_decimal<T>(conversions: &Conversions<T>, value: &T) -> Self;
 
   /// The reading of the binary value of `value` into `T` with `mode`, through the inherent
   /// function of `T`.
   fn round_into<T>(
+    conversions: &Conversions<T>,
+    value: Self,
+    mode: RoundingMode,
+  ) -> Result<T, FromFloatError>;
+
+  /// The reading of the shortest text of `value` into `T` with `mode`, through the inherent
+  /// function of `T`.
+  fn shortest_into<T>(
     conversions: &Conversions<T>,
     value: Self,
     mode: RoundingMode,
@@ -112,6 +134,14 @@ impl Float for f64 {
   ) -> Result<T, FromFloatError> {
     (conversions.round_from_f64)(value, mode)
   }
+
+  fn shortest_into<T>(
+    conversions: &Conversions<T>,
+    value: Self,
+    mode: RoundingMode,
+  ) -> Result<T, FromFloatError> {
+    (conversions.from_f64_shortest)(value, mode)
+  }
 }
 
 impl Float for f32 {
@@ -126,6 +156,14 @@ impl Float for f32 {
   ) -> Result<T, FromFloatError> {
     (conversions.round_from_f32)(value, mode)
   }
+
+  fn shortest_into<T>(
+    conversions: &Conversions<T>,
+    value: Self,
+    mode: RoundingMode,
+  ) -> Result<T, FromFloatError> {
+    (conversions.from_f32_shortest)(value, mode)
+  }
 }
 
 /// The inherent conversions of the decimal type `T` with the floats, which a check generic over the
@@ -135,9 +173,11 @@ struct Conversions<T> {
   to_f32: fn(&T) -> f32,
   round_from_f64: fn(f64, RoundingMode) -> Result<T, FromFloatError>,
   round_from_f32: fn(f32, RoundingMode) -> Result<T, FromFloatError>,
+  from_f64_shortest: fn(f64, RoundingMode) -> Result<T, FromFloatError>,
+  from_f32_shortest: fn(f32, RoundingMode) -> Result<T, FromFloatError>,
 }
 
-/// The [`Conversions`] of the decimal type `$ty`: its inherent `const fn`s.
+/// The [`Conversions`] of the decimal type `$ty`: its inherent functions.
 macro_rules! conversions {
   ($ty:ty) => {
     Conversions::<$ty> {
@@ -145,6 +185,8 @@ macro_rules! conversions {
       to_f32: <$ty>::to_f32,
       round_from_f64: <$ty>::round_from_f64,
       round_from_f32: <$ty>::round_from_f32,
+      from_f64_shortest: <$ty>::from_f64_shortest,
+      from_f32_shortest: <$ty>::from_f32_shortest,
     }
   };
 }
@@ -1283,8 +1325,9 @@ fn special_values<F: Float, T: FixedDecimal>(
 /// NaN is `Nan` and each infinity `Infinite`, `-0.0` is zero, a value below half a unit of the
 /// last digit is zero or one unit, a value beyond the range is the overflow of its sign, and a
 /// negative value is zero in an unsigned storage if it rounds to zero, and `NegOverflow`
-/// otherwise: through the readings of the binary value of both formats, for a signed and an
-/// unsigned type. Zero converts to `+0.0`, and the largest `f32` is beyond 38 integral digits.
+/// otherwise: through the readings of the binary value and of the shortest text of both formats,
+/// for a signed and an unsigned type. Zero converts to `+0.0`, and the largest `f32` is beyond 38
+/// integral digits.
 #[test]
 fn nan_and_the_infinities_are_errors_and_negative_zero_is_zero() {
   type Unsigned = Decimal<U10, U2, u64>;
@@ -1292,6 +1335,10 @@ fn nan_and_the_infinities_are_errors_and_negative_zero_is_zero() {
   special_values::<f32, Di64>(Di64::round_from_f32);
   special_values::<f64, Unsigned>(Unsigned::round_from_f64);
   special_values::<f32, Unsigned>(Unsigned::round_from_f32);
+  special_values::<f64, Di64>(Di64::from_f64_shortest);
+  special_values::<f32, Di64>(Di64::from_f32_shortest);
+  special_values::<f64, Unsigned>(Unsigned::from_f64_shortest);
+  special_values::<f32, Unsigned>(Unsigned::from_f32_shortest);
   assert_eq!(
     (Di64::ZERO.to_f64().to_bits(), Di64::ZERO.to_f32().to_bits()),
     (0, 0)
@@ -1373,4 +1420,341 @@ fn conversions_in_constant_contexts() {
     [Ok(value("2.67")), Err(FromFloatError::NegOverflow)]
   );
   assert_eq!(FROM_WIDE, (Ok(large("-2.5")), Ok(value("0.75"))));
+}
+
+/// What the reading of the shortest text of `x` into `T` with `mode` gives, from the text that
+/// `Display` writes, read as an exact rational in `num-bigint` and rounded: the error of NaN and of
+/// an infinity, and otherwise the rounded coefficient, or the error of the side of the range that
+/// it passes.
+fn rounded_text<T: FixedDecimal, F: Float>(x: F, mode: RoundingMode) -> Result<T, FromFloatError> {
+  x.parts()?;
+  let text = x.to_string();
+  let (negative, magnitude) = match text.strip_prefix('-') {
+    Some(magnitude) => (true, magnitude),
+    None => (false, text.as_str()),
+  };
+  let (integral, fraction) = magnitude.split_once('.').unwrap_or((magnitude, ""));
+  let digits: BigInt = format!("{integral}{fraction}").parse().expect("digits");
+  let digits = if negative { -digits } else { digits };
+  // The value is `digits / 10^places`, and its coefficient in `T` that times `10^Fraction`.
+  let places = fraction.len() as u32;
+  let (value, divisor) = if T::FRACTION >= places {
+    (
+      digits * bigint::pow10(T::FRACTION - places),
+      BigInt::from(1u8),
+    )
+  } else {
+    (digits, bigint::pow10(places - T::FRACTION))
+  };
+  in_type(&bigint::round(&value, &divisor, mode))
+}
+
+/// The digits of the text that `Display` writes for `x`, without leading and trailing zeros, and
+/// the exponent of the last of them: the shortest digits of `x` and their place. Zero of either
+/// sign is `(0, 0)`.
+fn display_digits<F: Float>(x: F) -> (u64, i32) {
+  let text = x.to_string();
+  let magnitude = text.trim_start_matches('-');
+  let (integral, fraction) = magnitude.split_once('.').unwrap_or((magnitude, ""));
+  let joined = format!("{integral}{fraction}");
+  let significant = joined.trim_start_matches('0');
+  let digits = significant.trim_end_matches('0');
+  if digits.is_empty() {
+    return (0, 0);
+  }
+  let zeros = significant.len() - digits.len();
+  let exponent = zeros as i32 - fraction.len() as i32;
+  (digits.parse().expect("at most 17 digits"), exponent)
+}
+
+/// Checks the reading of the shortest text of each float of [`storage_floats`] of `F` into `T`,
+/// in each mode, against the rational of the `Display` text and the range of `T`.
+#[inline(never)]
+fn text_readings<F: Float, T: FixedDecimal>(conversions: &Conversions<T>, words: &mut Words) {
+  for x in storage_floats::<F, T>(words) {
+    for &mode in modes() {
+      assert_eq!(
+        F::shortest_into(conversions, x, mode),
+        rounded_text::<T, F>(x, mode),
+        "{:#x}, {mode} into {}",
+        x.to_raw(),
+        type_name::<T>()
+      );
+    }
+  }
+}
+
+/// Checks `from_f64_shortest` and `from_f32_shortest` into `T` at the floats of
+/// [`storage_floats`] of each format, and at the largest `f64` of either sign, beyond every range.
+#[inline(never)]
+fn text_readings_round<T: FixedDecimal>(conversions: &Conversions<T>) {
+  let mut words = Words::new(seed::<T>(0x5eed_7e47));
+  text_readings::<f64, T>(conversions, &mut words);
+  text_readings::<f32, T>(conversions, &mut words);
+  for &mode in modes() {
+    for (x, error) in [
+      (f64::MAX, FromFloatError::PosOverflow),
+      (-f64::MAX, FromFloatError::NegOverflow),
+    ] {
+      assert_eq!(
+        (conversions.from_f64_shortest)(x, mode),
+        Err(error),
+        "{x:e}, {mode} into {}",
+        type_name::<T>()
+      );
+    }
+  }
+}
+
+/// Checks `shortest` at each float of `floats` against the digits of its `Display` text, and its
+/// reading into [`Wide`] in every mode against the rational of that text.
+#[inline(never)]
+fn texts_of<F: Float>(floats: &[F], conversions: &Conversions<Wide>) {
+  for &x in floats {
+    assert_eq!(float::shortest(x), display_digits(x), "{x:e}");
+    for mode in MODES {
+      assert_eq!(
+        F::shortest_into(conversions, x, mode),
+        rounded_text::<Wide, F>(x, mode),
+        "{x:e}, {mode}"
+      );
+    }
+  }
+}
+
+/// `from_f64_shortest` and `from_f32_shortest` of one type of each storage read the shortest text
+/// of a float, which `Display` writes too, and round it once with each mode, as the rational of
+/// that text in `num-bigint` does, and report a value outside the range on the side of its sign;
+/// under Miri, of a signed native, an unsigned native and a wide storage, at four floats in two
+/// modes. Then the random `f64`s, each in one mode; `shortest` at the longest texts of each format,
+/// its smallest subnormal float, the text of 17 digits of `0.1 + 0.2` and the first `f32` above
+/// `1000.0` whose text has nine digits, against the digits of the `Display` text; `shortest` and
+/// the readings at the values of the docs; and the table of the docs of `RoundingMode`.
+#[test]
+fn shortest_texts_match_the_display_text() {
+  for (x, read) in [
+    (0.1, (1, -1)),
+    (f64::from(0.1_f32), (10_000_000_149_011_612, -17)),
+    (1e21, (1, 21)),
+    (64250.5, (642_505, -1)),
+    (-0.0, (0, 0)),
+    (f64::MAX, (17_976_931_348_623_157, 292)),
+  ] {
+    assert_eq!(float::shortest(x), read, "{x:e}");
+  }
+  for (x, read) in [(0.1_f32, (1, -1)), (f32::MAX, (34_028_235, 31))] {
+    assert_eq!(float::shortest(x), read, "{x:e}");
+  }
+
+  // The longest texts, of the smallest normal floats negated, have 24 and 14 bytes.
+  assert_eq!(format!("{:e}", -f64::MIN_POSITIVE).len(), 24);
+  assert_eq!(format!("{:e}", -f32::MIN_POSITIVE).len(), 14);
+  let sum = 0.1 + 0.2;
+  assert_eq!(display_digits(sum).0.ilog10(), 16, "{sum:e}");
+  let mut nine = 1000.0_f32;
+  while display_digits(nine).0.ilog10() != 8 {
+    nine = f32::from_bits(nine.to_bits() + 1);
+  }
+  let wide = conversions!(Wide);
+  texts_of(&[-f64::MIN_POSITIVE, f64::from_bits(1), sum], &wide);
+  texts_of(&[-f32::MIN_POSITIVE, f32::from_bits(1), nine], &wide);
+  for (index, x) in random_f64s().into_iter().enumerate() {
+    let mode = MODES[index % MODES.len()];
+    assert_eq!(
+      Wide::from_f64_shortest(x, mode),
+      rounded_text::<Wide, f64>(x, mode),
+      "{:#x}, {mode}",
+      x.to_bits()
+    );
+  }
+
+  type Fine = Decimal<U10, U28>;
+  type Cents = Decimal<U10, U2>;
+  type Unsigned = Decimal<U10, U2, u64>;
+  let even = RoundingMode::HalfEven;
+  assert_eq!(Fine::from_f64_shortest(0.1, even), Ok(value("0.1")));
+  assert_eq!(
+    Fine::from_f64_shortest(0.1 + 0.2, even),
+    Ok(value("0.30000000000000004"))
+  );
+  assert_eq!(
+    Cents::from_f64_shortest(2.675, RoundingMode::HalfUp),
+    Ok(value("2.68"))
+  );
+  assert_eq!(
+    Di64::from_f64_shortest(64250.5, RoundingMode::Down),
+    Ok(value("64250.5"))
+  );
+  assert_eq!(
+    Cents::from_f64_shortest(f64::INFINITY, RoundingMode::Down),
+    Err(FromFloatError::Infinite)
+  );
+  assert_eq!(Fine::from_f32_shortest(0.1, even), Ok(value("0.1")));
+  assert_eq!(
+    Fine::from_f64_shortest(f64::from(0.1_f32), even),
+    Ok(value("0.10000000149011612"))
+  );
+  assert_eq!(
+    Decimal::<U22, U0>::from_f64_shortest(1e21, RoundingMode::Down),
+    Ok(value("1000000000000000000000"))
+  );
+  assert_eq!(
+    Decimal::<U22, U0>::from_f64_shortest(1e22, RoundingMode::Down),
+    Err(FromFloatError::PosOverflow)
+  );
+  assert_eq!(
+    Top::from_f32_shortest(f32::MAX, RoundingMode::Down),
+    Ok(value("340282350000000000000000000000000000000"))
+  );
+  assert_eq!(
+    Unsigned::from_f64_shortest(-0.001, even),
+    Ok(Unsigned::ZERO)
+  );
+  assert_eq!(
+    Unsigned::from_f64_shortest(-0.5, even),
+    Err(FromFloatError::NegOverflow)
+  );
+  assert_eq!(
+    Decimal::<U1, U1>::from_f64_shortest(10.0, RoundingMode::Down),
+    Err(FromFloatError::PosOverflow)
+  );
+  rounding_mode_table(
+    Decimal::<U1, U0>::from_f64_shortest,
+    Decimal::<U2, U0>::from_f64_shortest,
+  );
+
+  for_each_type!(text_readings_round: Di8, Du64, Di256);
+  if tier().is_miri() {
+    return;
+  }
+  for_each_type!(text_readings_round:
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512,
+  );
+  for_each_type!(text_readings_round:
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154,
+  );
+}
+
+/// Checks that each float of `floats`, read by its shortest text into `T` in one mode taken in
+/// turn, converts back to its own bits: `T` holds every such text exactly, so that the mode is not
+/// read. Zero of either sign reads as the one zero of a decimal, which converts back to `+0.0`.
+#[inline(never)]
+fn round_trips<F: Float, T: FixedDecimal>(floats: &[F], conversions: &Conversions<T>) {
+  for (index, &x) in floats.iter().enumerate() {
+    let mode = MODES[index % MODES.len()];
+    let name = type_name::<T>();
+    let decimal = F::shortest_into(conversions, x, mode)
+      .unwrap_or_else(|error| panic!("{:#x}, {mode} into {name}: {error}", x.to_raw()));
+    let zero = x.parts().is_ok_and(|parts| parts.significand == 0);
+    let expected = if zero { F::narrow(0.0) } else { x };
+    assert_eq!(
+      F::of_decimal(conversions, &decimal).to_raw(),
+      expected.to_raw(),
+      "{:#x}, {mode} into {name}",
+      x.to_raw()
+    );
+  }
+}
+
+/// Every float of the six ranges of `f32` and every random `f64`, read by its shortest text into a
+/// type that holds that text exactly, converts back to itself: this holds the digits of the
+/// formatter, the reading of its text and the conversion back to a float together, with no
+/// oracle.
+#[test]
+fn floats_survive_the_round_trip_through_their_shortest_text() {
+  let ranges = ranges();
+  let floats = [
+    ranges.below_one,
+    ranges.around_one,
+    ranges.above_one,
+    ranges.top,
+  ]
+  .concat();
+  round_trips(&floats, &conversions!(Texts));
+  round_trips(&random_f64s(), &conversions!(Wide));
+}
+
+/// The parser of the shortest text reads the form that `{:e}` writes, an optional `-`, digits with
+/// at most one point, `e` and the exponent, also with a `+` or leading zeros in the exponent, and
+/// gives the digits and the exponent of the last of them; it reads no other text.
+#[test]
+fn the_parser_of_the_shortest_text_reads_one_form() {
+  for (text, read) in [
+    ("1.5e3", (15, 2)),
+    ("-2e0", (2, 0)),
+    ("0e0", (0, 0)),
+    ("-2.2250738585072014e-308", (22_250_738_585_072_014, -324)),
+    ("1e+21", (1, 21)),
+    ("1e-07", (1, -7)),
+  ] {
+    assert_eq!(
+      float::read_exponent_text(text.as_bytes()),
+      Some(read),
+      "{text}"
+    );
+  }
+  for text in [
+    "1E5",
+    "+1e5",
+    "1.2.3e4",
+    "1e",
+    "e5",
+    "15",
+    "1e5x",
+    "NaN",
+    "inf",
+    "12345678901234567890e0",
+    "1e99999999999",
+    "",
+  ] {
+    assert_eq!(float::read_exponent_text(text.as_bytes()), None, "{text}");
+  }
+}
+
+/// The example of `from_f64_shortest` in its docs, which no local build compiles: the same
+/// statements, with `crate::` for `numo::`.
+#[test]
+fn the_example_of_from_f64_shortest_in_the_docs() -> Result<(), Box<dyn core::error::Error>> {
+  type Fine = Decimal<U10, U28>;
+  type Cents = Decimal<U10, U2>;
+
+  assert_eq!(
+    Fine::from_f64_shortest(0.1, RoundingMode::HalfEven)?.to_string(),
+    "0.1"
+  );
+  let sum = Fine::from_f64_shortest(0.1 + 0.2, RoundingMode::HalfEven)?;
+  assert_eq!(sum.to_string(), "0.30000000000000004");
+
+  // The text of `2.675_f64` is `2.675`, while its binary value is below 2.675.
+  assert_eq!(
+    Cents::from_f64_shortest(2.675, RoundingMode::HalfUp)?.to_string(),
+    "2.68"
+  );
+  assert_eq!(
+    Cents::round_from_f64(2.675, RoundingMode::HalfUp)?.to_string(),
+    "2.67"
+  );
+
+  // A text with at most `Fraction` fraction digits converts exactly, whatever the mode.
+  let price = Decimal::<U10, U8>::from_f64_shortest(64250.5, RoundingMode::Down)?;
+  assert_eq!(price.to_string(), "64250.5");
+
+  let infinite = Cents::from_f64_shortest(f64::INFINITY, RoundingMode::Down);
+  assert_eq!(infinite, Err(FromFloatError::Infinite));
+  Ok(())
+}
+
+/// The example of `from_f32_shortest` in its docs, which no local build compiles: the same
+/// statements, with `crate::` for `numo::`.
+#[test]
+fn the_example_of_from_f32_shortest_in_the_docs() -> Result<(), Box<dyn core::error::Error>> {
+  type Fine = Decimal<U10, U28>;
+
+  assert_eq!(
+    Fine::from_f32_shortest(0.1, RoundingMode::HalfEven)?.to_string(),
+    "0.1"
+  );
+  let widened = Fine::from_f64_shortest(f64::from(0.1_f32), RoundingMode::HalfEven)?;
+  assert_eq!(widened.to_string(), "0.10000000149011612");
+  Ok(())
 }

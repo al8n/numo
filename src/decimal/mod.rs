@@ -19,12 +19,12 @@ pub use traits::{
 };
 
 use crate::{
-  int,
+  FromFloatError, int,
   layout::{
     DigitCount, DivIntermediate, Layout, LayoutDigits, Pick, Storage, StorageCore, Token, Widen,
     WidenRepr,
   },
-  rounding::RoundingMode,
+  rounding::{self, RoundingMode},
 };
 
 mod error;
@@ -908,6 +908,155 @@ where
       }
       _ => Err(DivideError::OutOfRange),
     }
+  }
+
+  /// The value `digits * 10^exponent`, negated if `negative`, rounded once with `mode` to the
+  /// fraction digits of the type, or the error of a rounded value outside the range of the type:
+  /// the overflow of the sign, which every negative value but zero is for an unsigned storage.
+  fn from_shortest(
+    negative: bool,
+    digits: u64,
+    exponent: i32,
+    mode: RoundingMode,
+  ) -> Result<Self, FromFloatError> {
+    let overflow = if negative {
+      FromFloatError::NegOverflow
+    } else {
+      FromFloatError::PosOverflow
+    };
+    // Zero, of either sign and in every mode, has no digit count, and this block has no zero of
+    // its storage but the one of a `u64`.
+    if digits == 0 {
+      return Ok(Decimal::from_coeff(0u64.convert::<R>(Token::new())));
+    }
+    // The place of the last digit in units of the last digit of the type. It and the count of
+    // digits below are computed in `i64`, which holds every sum of them.
+    let places = i64::from(Self::FRACTION) + i64::from(exponent);
+    let magnitude: R = if places >= 0 {
+      // The coefficient is `digits * 10^places`, which has as many digits as `digits` and
+      // `places` more: the count decides the range before any arithmetic, and a coefficient in
+      // range is below `10^DIGITS`, which the storage holds, so the product does not overflow.
+      let count = i64::from(digits.ilog10()) + 1;
+      if count + places > i64::from(Self::DIGITS) {
+        return Err(overflow);
+      }
+      match digits.checked_convert::<R>(Token::new()) {
+        Some(digits) => digits.mul_pow10(places as u32, Token::new()),
+        None => return Err(overflow),
+      }
+    } else {
+      // A `u64` holds `10^19` and no higher power of ten.
+      let rounded = match u32::try_from(-places) {
+        Ok(dropped) if dropped <= 19 => {
+          let divisor = 10u64.pow(dropped);
+          let (quotient, remainder) = (digits / divisor, digits % divisor);
+          quotient + int::u64::rounds_away(quotient, remainder, divisor, negative, mode) as u64
+        }
+        // `digits < 2^64 < 5 * 10^19`, so the quotient is zero, which ends in 0, and the
+        // remainder is below half the divisor.
+        _ => rounding::increments(mode, negative, false, Ordering::Less, false, true) as u64,
+      };
+      match rounded.checked_convert::<R>(Token::new()) {
+        Some(coeff) if coeff.within_digits(Self::DIGITS, Token::new()) => coeff,
+        _ => return Err(overflow),
+      }
+    };
+    if !negative {
+      return Ok(Decimal::from_coeff(magnitude));
+    }
+    // The sign comes last, so that a negative value that rounds to zero is zero in every
+    // storage: an unsigned storage refuses every other negative value.
+    match magnitude.checked_neg(Token::new()) {
+      Some(coeff) => Ok(Decimal::from_coeff(coeff)),
+      None => Err(FromFloatError::NegOverflow),
+    }
+  }
+
+  // The two readings of the shortest text are not `const`, unlike those of the binary value:
+  // the text is written by the formatter of the standard library.
+
+  /// Converts the decimal that the shortest text of `value` names, rounded once with `mode` to the
+  /// fraction digits of the type. The shortest text is the one with the fewest digits that parses
+  /// back to the same float, which `Display` of the float writes: `0.1_f64` reads as `0.1`, where
+  /// its binary value begins `0.1000000000000000055511`. A text with at most `Fraction` fraction
+  /// digits converts exactly, whatever `mode`. This is not the rule of rust-decimal's `from_f64`,
+  /// which rounds half up to 15 or 16 digits: `0.1 + 0.2` reads as `0.30000000000000004` here.
+  ///
+  /// For interchange and display, not for arithmetic that must be exact.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`FromFloatError::Nan`] for NaN, [`Infinite`](FromFloatError::Infinite) for an
+  /// infinity, and for a rounded value outside the range of the type,
+  /// [`PosOverflow`](FromFloatError::PosOverflow) above [`MAX`](Self::MAX) and
+  /// [`NegOverflow`](FromFloatError::NegOverflow) below [`MIN`](Self::MIN), as every negative
+  /// rounded value is for an unsigned storage.
+  ///
+  /// ```
+  /// use numo::{
+  ///   Decimal, FromFloatError, RoundingMode,
+  ///   typenum::{U2, U8, U10, U28},
+  /// };
+  ///
+  /// type Fine = Decimal<U10, U28>;
+  /// type Cents = Decimal<U10, U2>;
+  ///
+  /// assert_eq!(Fine::from_f64_shortest(0.1, RoundingMode::HalfEven)?.to_string(), "0.1");
+  /// let sum = Fine::from_f64_shortest(0.1 + 0.2, RoundingMode::HalfEven)?;
+  /// assert_eq!(sum.to_string(), "0.30000000000000004");
+  ///
+  /// // The text of `2.675_f64` is `2.675`, while its binary value is below 2.675.
+  /// assert_eq!(Cents::from_f64_shortest(2.675, RoundingMode::HalfUp)?.to_string(), "2.68");
+  /// assert_eq!(Cents::round_from_f64(2.675, RoundingMode::HalfUp)?.to_string(), "2.67");
+  ///
+  /// // A text with at most `Fraction` fraction digits converts exactly, whatever the mode.
+  /// let price = Decimal::<U10, U8>::from_f64_shortest(64250.5, RoundingMode::Down)?;
+  /// assert_eq!(price.to_string(), "64250.5");
+  ///
+  /// let infinite = Cents::from_f64_shortest(f64::INFINITY, RoundingMode::Down);
+  /// assert_eq!(infinite, Err(FromFloatError::Infinite));
+  /// # Ok::<(), Box<dyn core::error::Error>>(())
+  /// ```
+  #[doc(alias = "from_f64")]
+  pub fn from_f64_shortest(value: f64, mode: RoundingMode) -> Result<Self, FromFloatError> {
+    // The parts first: they report NaN and the infinities, which have no text of digits, and give
+    // the sign, which the text of `-0.0` keeps and its digits do not.
+    let parts = int::float::float_parts_f64(value)?;
+    let (digits, exponent) = float::shortest(value);
+    Self::from_shortest(parts.negative, digits, exponent, mode)
+  }
+
+  /// Converts the decimal that the shortest text of `value` names, as
+  /// [`from_f64_shortest`](Self::from_f64_shortest) does for an `f64`. The shortest text of an
+  /// `f32` is its own: `0.1_f32` reads as `0.1`, while the `f64` of the same value reads as
+  /// `0.10000000149011612`.
+  ///
+  /// For interchange and display, not for arithmetic that must be exact.
+  ///
+  /// # Errors
+  ///
+  /// Returns the errors of `from_f64_shortest`.
+  ///
+  /// ```
+  /// use numo::{
+  ///   Decimal, RoundingMode,
+  ///   typenum::{U10, U28},
+  /// };
+  ///
+  /// type Fine = Decimal<U10, U28>;
+  ///
+  /// assert_eq!(Fine::from_f32_shortest(0.1, RoundingMode::HalfEven)?.to_string(), "0.1");
+  /// let widened = Fine::from_f64_shortest(f64::from(0.1_f32), RoundingMode::HalfEven)?;
+  /// assert_eq!(widened.to_string(), "0.10000000149011612");
+  /// # Ok::<(), Box<dyn core::error::Error>>(())
+  /// ```
+  #[doc(alias = "from_f32")]
+  pub fn from_f32_shortest(value: f32, mode: RoundingMode) -> Result<Self, FromFloatError> {
+    let parts = int::float::float_parts_f32(value)?;
+    // The text of the `f32` itself: that of its `f64` has the digits that tell the value from the
+    // other `f64`s, 17 for `0.1_f32`.
+    let (digits, exponent) = float::shortest(value);
+    Self::from_shortest(parts.negative, digits, exponent, mode)
   }
 }
 
