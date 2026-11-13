@@ -392,7 +392,7 @@
 //! impls are written against `serde_core`, whose traits `serde` re-exports from version 1.0.220 on,
 //! so they need a build whose `serde` is 1.0.220 or later; an older `serde` defines traits of its
 //! own. The feature enables `serde_core` without its default features and nothing else, so it turns
-//! on no feature in any other crate of a build, and it needs no allocation.
+//! on no feature in any other crate of a build, and it needs no allocation in numo.
 //!
 //! A decimal is written as a string, the text that `Display` writes, and read from a string in the
 //! syntax of [`parse`](Decimal::parse), in every format, human-readable or binary. Reading

@@ -191,8 +191,8 @@ implemented for it over any decimal, so generic code takes a `Scaled` and a bare
 sum takes the larger scale, an exact product the sum of the scales, a value of `round_to` or a
 quotient the fraction digits of its target type, and a value read from a float those of the type or,
 by its shortest text, those of the text. The operators `+`, `-`, `+=` and `-=` and `Sum` work as for
-a decimal, and their result takes the larger scale. A scale above 255 is `ScaleTooLarge`, which only
-the `parse` of `Scaled` reports. A literal of `dec!` keeps its scale too: `dec!(1.50)` writes
+a decimal, and their result takes the larger scale. A scale above 65535 is `ScaleTooLarge`, which
+only the `parse` of `Scaled` reports. A literal of `dec!` keeps its scale too: `dec!(1.50)` writes
 `1.50`.
 
 ```rust

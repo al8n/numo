@@ -91,7 +91,7 @@ FEATURES
   showed, for code that must write a text back as it came.
   - A `const fn` `parse` for each storage and `FromStr` read the grammar of `Decimal::parse` and
     keep the scale: the fraction digits written, not counting `_`, minus the exponent, and at least
-    0, which may exceed the fraction digits of the decimal. A scale above 255 is the new
+    0, which may exceed the fraction digits of the decimal. A scale above 65535 is the new
     `ParseErrorKind::ScaleTooLarge`, which only a text that `Decimal::parse` accepts can give, and
     which `Decimal::parse` never reports. `dec!` reads a literal of a `Scaled` and keeps its scale.
   - `Display` writes at least as many fraction digits as the scale, or the precision where it is
@@ -106,11 +106,11 @@ FEATURES
     traits, `DecimalOne`, `ConstDecimalOne` and `DecimalFloat`, and `ExactMul`, `WidenTo`,
     `ConvertTo` and `DivRound` between `Scaled` types, with no mixed implementations. Sums,
     differences and remainders take the larger scale, also where they saturate to a limit, exact
-    products the sum of the scales, saturating at 255, quantized values the scale of the step,
+    products the sum of the scales, saturating at 65535, quantized values the scale of the step,
     widened and exactly converted values their own, values of `round_to` and quotients the fraction
     digits of their target type, and zero, the limits, one and a value made from a coefficient
     scale 0. `trunc`, `floor` and `ceil` give scale 0, `fract` keeps the scale, `round_significant`
-    gives the scale that the significant digits of its result need, at most 255, and `is_integer`
+    gives the scale that the significant digits of its result need, at most 65535, and `is_integer`
     and the digits of a value are those of the value, whatever the scale. A value read from the
     binary value of a float takes the fraction digits of the type, and one read from its shortest
     text the fraction digits of that text, at most those of the type. A concrete
@@ -141,12 +141,14 @@ FEATURES
     of the truncated result is 0 or 5. Its name is `up05` and its predicate `is_up05`.
 - The `serde` feature: `Decimal` is written as its text and read from a string, never from a number,
   in every format, `Scaled` likewise with the scale of its text, and `RoundingMode` as its lowercase
-  name, read leniently, without allocation. No error that numo builds names the input: every input
-  but a string gets the fixed message `expected a decimal value as a string`, which also replaces a
-  format error built from numo's description of the expected input; an error that a format builds
-  without numo's description of the expected input passes through as the format wrote it, and every
-  other format error keeps its category. The impls use `serde_core`, so they need `serde` 1.0.220 or
-  later in the build; the feature enables no feature of any other crate.
+  name, read leniently, without allocation in numo. A `Scaled` whose scale is above the fraction
+  digits of its decimal is written through `collect_str`, as an integer above 128 bits is, and any
+  other through a buffer on the stack, as a `Decimal` is. No error that numo builds names the input:
+  every input but a string gets the fixed message `expected a decimal value as a string`, which also
+  replaces a format error built from numo's description of the expected input; an error that a
+  format builds without numo's description of the expected input passes through as the format wrote
+  it, and every other format error keeps its category. The impls use `serde_core`, so they need
+  `serde` 1.0.220 or later in the build; the feature enables no feature of any other crate.
 - The `serde` feature implements `Serialize` and `Deserialize` for `Uint`, `Int`, `NonZeroUint` and
   `NonZeroInt`, at every width and in every storage, without allocation in numo. A value of up to
   128 bits is written as a number through the method of the smallest native integer of its sign

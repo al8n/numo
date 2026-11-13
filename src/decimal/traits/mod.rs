@@ -619,7 +619,7 @@ pub trait DecimalFloat: FixedDecimal {
 /// are. It implements [`FixedDecimal`], so generic code with that trait in scope computes with the
 /// product without a bound of its own. As for [`Mul`](core::ops::Mul), `Rhs` defaults to `Self`.
 /// Two [`Scaled`] values multiply into a `Scaled` with the product of their decimals and the sum
-/// of their scales, saturating at 255.
+/// of their scales, saturating at 65535.
 ///
 /// ```
 /// use numo::{

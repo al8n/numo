@@ -13,8 +13,8 @@ pub(super) struct Digits {
   /// `10^scale`.
   pub(super) scale: u32,
   /// The scale of the text: the number of fraction digits written, not counting `_`, minus the
-  /// exponent, and at least 0; `None` if it is above 255.
-  pub(super) text_scale: Option<u8>,
+  /// exponent, and at least 0; `None` if it is above 65535.
+  pub(super) text_scale: Option<u16>,
 }
 
 /// Validates `input` for a decimal with `integral` integral and `fraction` fraction digits, and
@@ -135,10 +135,10 @@ pub(super) const fn scan(
   } else {
     exponent as i128
   };
-  // A saturated exponent gives a scale above 255 or below 0 as the exact one would.
+  // A saturated exponent gives a scale above 65535 or below 0 as the exact one would.
   let text_scale = match (digits - integral_digits) as i128 - exponent {
     scale if scale <= 0 => Some(0),
-    scale if scale <= u8::MAX as i128 => Some(scale as u8),
+    scale if scale <= u16::MAX as i128 => Some(scale as u16),
     _ => None,
   };
 

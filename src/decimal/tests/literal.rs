@@ -491,7 +491,7 @@ fn a_literal_with_too_many_fraction_digits() {
 }
 
 #[test]
-#[should_panic(expected = "the decimal literal has more than 255 fraction digits")]
-fn a_literal_with_a_scale_above_255() {
+#[should_panic(expected = "the decimal literal has more than 65535 fraction digits")]
+fn a_literal_with_a_scale_above_65535() {
   reject(ParseErrorKind::ScaleTooLarge);
 }

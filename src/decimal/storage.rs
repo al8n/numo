@@ -70,9 +70,9 @@ macro_rules! storage_decimal {
       /// # Errors
       ///
       /// The kinds that `Decimal::parse` reports, in its order, and then
-      /// [`ScaleTooLarge`](crate::ParseErrorKind::ScaleTooLarge) if the scale is above 255. The
-      /// value is decided first, so a text with more than 255 fraction digits that the type cannot
-      /// hold reports why it cannot.
+      /// [`ScaleTooLarge`](crate::ParseErrorKind::ScaleTooLarge) if the scale is above 65535. The
+      /// value is decided first, so a text with more than 65535 fraction digits that the type
+      /// cannot hold reports why it cannot.
       ///
       /// # Examples
       ///
@@ -89,8 +89,8 @@ macro_rules! storage_decimal {
       ///
       /// let kind = |text: &str| S::parse(text).map_err(|err| err.kind());
       /// assert_eq!(kind("1e1"), Err(ParseErrorKind::OutOfRange));
-      /// assert_eq!(kind(&format!("0.{}", "0".repeat(255))).map(|zero| zero.scale()), Ok(255));
-      /// assert_eq!(kind(&format!("0.{}", "0".repeat(256))), Err(ParseErrorKind::ScaleTooLarge));
+      /// assert_eq!(kind(&format!("0.{}", "0".repeat(65535))).map(|zero| zero.scale()), Ok(65535));
+      /// assert_eq!(kind(&format!("0.{}", "0".repeat(65536))), Err(ParseErrorKind::ScaleTooLarge));
       /// # Ok::<(), numo::ParseError>(())
       /// ```
       pub const fn parse(s: &str) -> Result<Self, ParseError> {
