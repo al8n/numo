@@ -21,6 +21,13 @@ use crate::{
   width::{Array, ArraySize, FillsRepr, TypenumNumber},
 };
 
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
+mod heap;
+
 /// The digit buffer of the storage `R`, of the length of the digits of its widest magnitude: the
 /// buffer that its row `write_digits` takes.
 pub(crate) type DigitBuf<R> = Array<u8, <R as InlineCore>::DigitLen>;
@@ -267,13 +274,24 @@ mod sealed {
 /// [`u768`](crate::u768), [`u832`](crate::u832), [`u896`](crate::u896), [`u960`](crate::u960) and
 /// [`u1024`](crate::u1024). A decimal with an unsigned storage is never negative.
 ///
+/// With the `std` or the `alloc` feature, a wide integer of 192 to 1024 bits whose limbs are in a
+/// `Box`, an `Rc` or an `Arc`, as in `Uint<U256, Box<[u64; 4]>>`, is a storage too, and so is one
+/// whose limbs are in a `triomphe::Arc`, with the `triomphe` feature: a [`Uint`](crate::Uint) or an
+/// [`Int`](crate::Int) whose width fills an array of 64-bit limbs, from `Uint<U192, P<[u64; 3]>>`
+/// to `Int<U1024, P<[u64; 16]>>` for each pointer `P`. A decimal over such a heap storage has the
+/// size of a pointer.
+///
 /// `R: Storage` gives generic code `Clone`, the comparisons and the hash of `Decimal<I, F, R>`.
-/// Each of these storages holds the coefficient inline and in place, and is its own
-/// [`Inline`](Self::Inline) storage: it implements [`InlineStorage`], which gives `Copy` too, and
-/// [`MutableStorage`]. This trait is sealed and cannot be implemented outside this crate.
+/// Each inline storage, a native or a wide integer, holds the coefficient inline and in place, and
+/// is its own [`Inline`](Self::Inline) storage: it implements [`InlineStorage`], which gives `Copy`
+/// too, and [`MutableStorage`]. A heap storage is not `Copy`, and its `Inline` storage is the wide
+/// integer of the same width and sign, as [`u256`](crate::u256) is for
+/// `Uint<U256, Box<[u64; 4]>>`, in which the decimal computes. This trait is sealed and cannot be
+/// implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Decimal`",
-  note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `i576`, `i640`, `i704`, `i768`, `i832`, `i896`, `i960`, `i1024`, `u192`, `u256`, `u320`, `u384`, `u448`, `u512`, `u576`, `u640`, `u704`, `u768`, `u832`, `u896`, `u960` or `u1024`"
+  note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `i576`, `i640`, `i704`, `i768`, `i832`, `i896`, `i960`, `i1024`, `u192`, `u256`, `u320`, `u384`, `u448`, `u512`, `u576`, `u640`, `u704`, `u768`, `u832`, `u896`, `u960` or `u1024`",
+  note = "with the `std` or the `alloc` feature, `Decimal` also stores a wide integer whose limbs are in a `Box`, an `Rc` or an `Arc`, as in `Uint<U256, Box<[u64; 4]>>`, and with the `triomphe` feature one whose limbs are in a `triomphe::Arc`"
 )]
 pub trait Storage: StorageCore<Twin = <Self as Storage>::Inline> + Clone + Ord + Hash {
   /// The inline storage of the same width and sign, in which the coefficients of this storage are
@@ -283,22 +301,27 @@ pub trait Storage: StorageCore<Twin = <Self as Storage>::Inline> + Clone + Ord +
 
 /// A [`Storage`] that holds the coefficient inline, so that the decimal is `Copy`.
 ///
-/// Implemented for every storage of `Storage`: the native integers and the wide integers. It
-/// implies [`MutableStorage`], so that generic code that bounds `R: InlineStorage` needs no second
-/// bound on the storage for the assignments `+=` and `-=`; it still needs the bound
+/// Implemented for the native integers and the wide integers, and not for a heap storage, a wide
+/// integer whose limbs are in a pointer, which computes in its [`Inline`](Storage::Inline) storage.
+/// It implies [`MutableStorage`], so that generic code that bounds `R: InlineStorage` needs no
+/// second bound on the storage for the assignments `+=` and `-=`; it still needs the bound
 /// `Decimal<I, F, R>: FixedDecimal`, as for the other items of the decimal. This trait is sealed
 /// and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not an inline storage of `Decimal`",
-  note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `i576`, `i640`, `i704`, `i768`, `i832`, `i896`, `i960`, `i1024`, `u192`, `u256`, `u320`, `u384`, `u448`, `u512`, `u576`, `u640`, `u704`, `u768`, `u832`, `u896`, `u960` or `u1024`"
+  note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `i576`, `i640`, `i704`, `i768`, `i832`, `i896`, `i960`, `i1024`, `u192`, `u256`, `u320`, `u384`, `u448`, `u512`, `u576`, `u640`, `u704`, `u768`, `u832`, `u896`, `u960` or `u1024`",
+  note = "a wide integer whose limbs are in a `Box`, an `Rc` or an `Arc` is a storage that is not inline: it computes in its inline storage, `Storage::Inline`"
 )]
 pub trait InlineStorage: MutableStorage + Storage<Inline = Self> + InlineCore + Copy {}
 
 /// A [`Storage`] that holds the coefficient in place, so that the decimal has `+=` and `-=`.
 ///
-/// Implemented for every storage of `Storage`, each of which holds its coefficient inline. With
-/// it, the decimal implements [`DecimalAssign`](crate::DecimalAssign), the assignments of generic
-/// code. This trait is sealed and cannot be implemented outside this crate.
+/// Implemented for every inline storage, and for a wide integer whose limbs are in a `Box`, which
+/// stores a coefficient in its allocation. With it, the decimal implements
+/// [`DecimalAssign`](crate::DecimalAssign), the assignments of generic code. A shared pointer, an
+/// `Rc`, an `Arc` or a `triomphe::Arc`, never writes the coefficient that it holds, which another
+/// owner may read, so a decimal over one has no `+=` and `-=`. This trait is sealed and cannot be
+/// implemented outside this crate.
 pub trait MutableStorage: Storage + InPlace {}
 
 /// Maps a type-level number of decimal digits to the smallest signed and the smallest unsigned

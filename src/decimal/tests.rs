@@ -5440,5 +5440,11 @@ mod with_serde {
 
 mod digits;
 mod floats;
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
+mod heap;
 mod literal;
 mod operators;
