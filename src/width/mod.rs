@@ -326,8 +326,9 @@ mod sealed {
     type NonZeroStorage;
 
     /// The storage that computes the values of this storage and holds one inline: the storage
-    /// itself for a native integer or an array of limbs, and the array of a heap storage.
-    type Inline: UintCore;
+    /// itself for a native integer or an array of limbs, and the array of a heap storage. It is
+    /// `Copy`, so generic code can compute on a copy of a lent value.
+    type Inline: UintCore + Copy;
 
     /// Lends the value, as its inline storage.
     fn inline(&self, token: Token) -> &Self::Inline;
@@ -392,6 +393,32 @@ mod sealed {
     /// `big_endian`, unsigned, as an integer of `bits` bits, or `None` if it is `2^bits` or more.
     /// Requires `bits` to be at most the bits of the storage.
     fn checked_read_bytes(bytes: &[u8], big_endian: bool, bits: u32, token: Token) -> Option<Self>;
+
+    /// The integer whose digits in `radix` are `digits`, most significant first if `big_endian` and
+    /// least significant first otherwise, as an integer of `bits` bits, or `None` if a digit is not
+    /// below `radix` or the integer is `2^bits` or more. No digits are zero. Requires
+    /// `2 <= radix <= 256` and `bits` to be at most the bits of the storage.
+    fn checked_read_digits(
+      digits: &[u8],
+      big_endian: bool,
+      radix: u32,
+      bits: u32,
+      token: Token,
+    ) -> Option<Self>;
+
+    /// `self * factor + addend` if it has `bits` bits, or `None` otherwise. Requires `bits` to be
+    /// at most the bits of the storage.
+    fn checked_mul_add_u64(
+      &self,
+      factor: u64,
+      addend: u64,
+      bits: u32,
+      token: Token,
+    ) -> Option<Self>;
+
+    /// Divides the value by `divisor` in place, and returns the remainder. Requires
+    /// `divisor != 0`.
+    fn div_rem_u64_assign(&mut self, divisor: u64, token: Token) -> u64;
 
     /// The integer in `bytes`, read as [`checked_read_bytes`](Self::checked_read_bytes) reads it,
     /// modulo `2^bits`. Requires `bits` to be at most the bits of the storage.
@@ -706,8 +733,9 @@ mod sealed {
     type NonZeroStorage;
 
     /// The storage that computes the values of this storage and holds one inline, as for
-    /// [`UintCore::Inline`].
-    type Inline: IntCore;
+    /// [`UintCore::Inline`]. Its magnitude is an inline unsigned storage, which is `Copy`, so
+    /// generic code can compute the magnitude of a lent value without a storage of its own.
+    type Inline: IntCore<Magnitude: UintCore + Copy>;
 
     /// Lends the value, as its inline storage.
     fn inline(&self, token: Token) -> &Self::Inline;
@@ -1496,6 +1524,27 @@ macro_rules! array_storage {
         _: Token,
       ) -> Option<Self> {
         unsigned::$lower::checked_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn checked_read_digits(
+        digits: &[u8],
+        big_endian: bool,
+        radix: u32,
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        unsigned::$lower::checked_read_digits(digits, big_endian, radix, bits)
+      }
+
+      #[inline]
+      fn checked_mul_add_u64(&self, factor: u64, addend: u64, bits: u32, _: Token) -> Option<Self> {
+        unsigned::$lower::append_chunk(self, factor, addend, bits, false)
+      }
+
+      #[inline]
+      fn div_rem_u64_assign(&mut self, divisor: u64, _: Token) -> u64 {
+        unsigned::$lower::div_rem_chunk_assign(self, divisor)
       }
 
       #[inline]
@@ -2487,6 +2536,27 @@ macro_rules! native_storage {
         _: Token,
       ) -> Option<Self> {
         int::$uint::checked_read_bytes(bytes, big_endian, bits)
+      }
+
+      #[inline]
+      fn checked_read_digits(
+        digits: &[u8],
+        big_endian: bool,
+        radix: u32,
+        bits: u32,
+        _: Token,
+      ) -> Option<Self> {
+        int::$uint::checked_read_digits(digits, big_endian, radix, bits)
+      }
+
+      #[inline]
+      fn checked_mul_add_u64(&self, factor: u64, addend: u64, bits: u32, _: Token) -> Option<Self> {
+        int::$uint::checked_mul_add_chunk(*self, factor, addend, bits)
+      }
+
+      #[inline]
+      fn div_rem_u64_assign(&mut self, divisor: u64, _: Token) -> u64 {
+        int::$uint::div_rem_chunk_assign(self, divisor)
       }
 
       #[inline]

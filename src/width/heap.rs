@@ -709,6 +709,39 @@ macro_rules! heap_storage {
       }
 
       #[inline]
+      fn checked_read_digits(
+        digits: &[u8],
+        big_endian: bool,
+        radix: u32,
+        bits: u32,
+        token: Token,
+      ) -> Option<Self> {
+        <[L; N] as UintCore>::checked_read_digits(digits, big_endian, radix, bits, token).map(uint)
+      }
+
+      #[inline]
+      fn checked_mul_add_u64(
+        &self,
+        factor: u64,
+        addend: u64,
+        bits: u32,
+        token: Token,
+      ) -> Option<Self> {
+        <[L; N] as UintCore>::checked_mul_add_u64(self.borrow(), factor, addend, bits, token)
+          .map(uint)
+      }
+
+      // The division writes a copy of the array, which `set_inline` stores as the kind does: a
+      // `Box` in its allocation, and a shared pointer in a new one, so that no other owner sees it.
+      #[inline]
+      fn div_rem_u64_assign(&mut self, divisor: u64, token: Token) -> u64 {
+        let mut value: [L; N] = *<Self as UintCore>::inline(self, Token::new());
+        let remainder = <[L; N] as UintCore>::div_rem_u64_assign(&mut value, divisor, token);
+        <Self as UintCore>::set_inline(self, value, Token::new());
+        remainder
+      }
+
+      #[inline]
       fn lend_nonzero<B>(nonzero: &Uint<B, Self>, _: Token) -> View<'_, Uint<B, Self>> {
         View::Lent(nonzero)
       }
