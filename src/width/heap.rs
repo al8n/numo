@@ -731,14 +731,11 @@ macro_rules! heap_storage {
           .map(uint)
       }
 
-      // The division writes a copy of the array, which `set_inline` stores as the kind does: a
-      // `Box` in its allocation, and a shared pointer in a new one, so that no other owner sees it.
       #[inline]
-      fn div_rem_u64_assign(&mut self, divisor: u64, token: Token) -> u64 {
-        let mut value: [L; N] = *<Self as UintCore>::inline(self, Token::new());
-        let remainder = <[L; N] as UintCore>::div_rem_u64_assign(&mut value, divisor, token);
-        <Self as UintCore>::set_inline(self, value, Token::new());
-        remainder
+      fn div_rem_u64(&self, divisor: u64, token: Token) -> (Self, u64) {
+        let (quotient, remainder) =
+          <[L; N] as UintCore>::div_rem_u64(self.borrow(), divisor, token);
+        (uint(quotient), remainder)
       }
 
       #[inline]

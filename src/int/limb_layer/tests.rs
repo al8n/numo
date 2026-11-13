@@ -1177,15 +1177,14 @@ macro_rules! limb_layer_tests {
       u64::MAX,
     ];
 
-    /// Checks `div_rem_chunk_assign` at the patterns of `bigint::bit_patterns_of` and each divisor
+    /// Checks `div_rem_chunk` at the patterns of `bigint::bit_patterns_of` and each divisor
     /// of [`CHUNK_DIVISORS`]: the remainder is below the divisor, the quotient times the divisor
     /// plus the remainder, through `mul_add_chunk`, is the value, and up to 128 bits both are those
     /// of `u128`.
     fn chunk_division<const N: usize>() {
       for pattern in bigint::bit_patterns_of::<Limb, N>(&widths::<N>()) {
         for divisor in CHUNK_DIVISORS {
-          let mut quotient = pattern;
-          let remainder = div_rem_chunk_assign(&mut quotient, divisor);
+          let (quotient, remainder) = div_rem_chunk(&pattern, divisor);
           let what = format!("{pattern:?} by {divisor}");
           assert!(remainder < divisor, "{what}");
           assert_eq!(
@@ -1214,9 +1213,8 @@ macro_rules! limb_layer_tests {
       chunk_division::<1>();
       chunk_division::<2>();
       chunk_division::<3>();
-      let mut none: [Limb; 0] = [];
       for divisor in CHUNK_DIVISORS {
-        assert_eq!(div_rem_chunk_assign(&mut none, divisor), 0);
+        assert_eq!(div_rem_chunk::<0>(&[], divisor), ([], 0));
       }
     }
 

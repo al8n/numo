@@ -326,9 +326,8 @@ mod sealed {
     type NonZeroStorage;
 
     /// The storage that computes the values of this storage and holds one inline: the storage
-    /// itself for a native integer or an array of limbs, and the array of a heap storage. It is
-    /// `Copy`, so generic code can compute on a copy of a lent value.
-    type Inline: UintCore + Copy;
+    /// itself for a native integer or an array of limbs, and the array of a heap storage.
+    type Inline: UintCore;
 
     /// Lends the value, as its inline storage.
     fn inline(&self, token: Token) -> &Self::Inline;
@@ -416,9 +415,8 @@ mod sealed {
       token: Token,
     ) -> Option<Self>;
 
-    /// Divides the value by `divisor` in place, and returns the remainder. Requires
-    /// `divisor != 0`.
-    fn div_rem_u64_assign(&mut self, divisor: u64, token: Token) -> u64;
+    /// The quotient and the remainder of the value divided by `divisor`. Requires `divisor != 0`.
+    fn div_rem_u64(&self, divisor: u64, token: Token) -> (Self, u64);
 
     /// The integer in `bytes`, read as [`checked_read_bytes`](Self::checked_read_bytes) reads it,
     /// modulo `2^bits`. Requires `bits` to be at most the bits of the storage.
@@ -733,9 +731,9 @@ mod sealed {
     type NonZeroStorage;
 
     /// The storage that computes the values of this storage and holds one inline, as for
-    /// [`UintCore::Inline`]. Its magnitude is an inline unsigned storage, which is `Copy`, so
-    /// generic code can compute the magnitude of a lent value without a storage of its own.
-    type Inline: IntCore<Magnitude: UintCore + Copy>;
+    /// [`UintCore::Inline`]. Its magnitude is an unsigned storage, so generic code can compute
+    /// the magnitude of a lent value without a storage of its own.
+    type Inline: IntCore<Magnitude: UintCore>;
 
     /// Lends the value, as its inline storage.
     fn inline(&self, token: Token) -> &Self::Inline;
@@ -1543,8 +1541,8 @@ macro_rules! array_storage {
       }
 
       #[inline]
-      fn div_rem_u64_assign(&mut self, divisor: u64, _: Token) -> u64 {
-        unsigned::$lower::div_rem_chunk_assign(self, divisor)
+      fn div_rem_u64(&self, divisor: u64, _: Token) -> (Self, u64) {
+        unsigned::$lower::div_rem_chunk(self, divisor)
       }
 
       #[inline]
@@ -2555,8 +2553,8 @@ macro_rules! native_storage {
       }
 
       #[inline]
-      fn div_rem_u64_assign(&mut self, divisor: u64, _: Token) -> u64 {
-        int::$uint::div_rem_chunk_assign(self, divisor)
+      fn div_rem_u64(&self, divisor: u64, _: Token) -> (Self, u64) {
+        int::$uint::div_rem_chunk(*self, divisor)
       }
 
       #[inline]

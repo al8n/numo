@@ -661,14 +661,12 @@ macro_rules! native {
         }
       }
 
-      /// Divides `value` by `divisor` in place, and returns the remainder. Requires
-      /// `divisor != 0`.
+      /// Quotient and remainder of `value / divisor`. Requires `divisor != 0`.
       #[inline]
-      pub(crate) const fn div_rem_chunk_assign(value: &mut $uint, divisor: u64) -> u64 {
-        let (wide, divisor) = (*value as u128, divisor as u128);
+      pub(crate) const fn div_rem_chunk(value: $uint, divisor: u64) -> ($uint, u64) {
+        let (wide, divisor) = (value as u128, divisor as u128);
         // The quotient is at most the value, and the remainder below the divisor.
-        *value = (wide / divisor) as $uint;
-        (wide % divisor) as u64
+        ((wide / divisor) as $uint, (wide % divisor) as u64)
       }
 
       /// `value` with the bit at `index` set if `set`, and cleared otherwise, or `None` for

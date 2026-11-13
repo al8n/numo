@@ -1789,7 +1789,7 @@ mod text {
 
   /// Checks the digit functions of the native layer `$uint` at its full width and at each width of
   /// 0, 1, 7 and 9 bits that it holds, at the values of `bigint::structured_patterns` of the
-  /// width: `div_rem_chunk_assign` and `checked_mul_add_chunk` against `u128` and `num-bigint`,
+  /// width: `div_rem_chunk` and `checked_mul_add_chunk` against `u128` and `num-bigint`,
   /// and `checked_read_digits` against the model at every sequence of the digits 0, 1,
   /// `radix - 1`, `radix` and 255 in the radixes 2 and 10, and 0, 1 and 255 in the radix 256, of
   /// up to `bigint::digit_sequence_len()` digits, in both orders.
@@ -1805,8 +1805,7 @@ mod text {
         for value in bigint::structured_patterns(width) {
           let x = value as $uint;
           for divisor in CHUNK_DIVISORS {
-            let mut quotient = x;
-            let remainder = int::$uint::div_rem_chunk_assign(&mut quotient, divisor);
+            let (quotient, remainder) = int::$uint::div_rem_chunk(x, divisor);
             let divisor = u128::from(divisor);
             assert_eq!(
               (quotient as u128, u128::from(remainder)),

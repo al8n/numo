@@ -622,20 +622,8 @@ where
     for (factor, addend) in [(0, 0), (0, 1), (1, 0), (10, 9), (u64::MAX, u64::MAX)] {
       row!(UintCore::checked_mul_add_u64(&x => a; factor, addend, bits));
     }
-    // The division writes the value as `set_inline` stores one: in place, or for a shared pointer
-    // in a new allocation.
     for divisor in [1, 10, u64::MAX] {
-      let mut quotient = *a;
-      let remainder = UintCore::div_rem_u64_assign(&mut quotient, divisor, Token::new());
-      let mut target = P::new(*a);
-      let (before, other) = (address(target.array()), witness(&target));
-      let what = format!("div_rem_u64_assign of {a:?} by {divisor}");
-      assert_eq!(
-        UintCore::div_rem_u64_assign(&mut target, divisor, Token::new()),
-        remainder,
-        "{what}"
-      );
-      written(&target, &quotient, before, other, a, &what);
+      row!(UintCore::div_rem_u64(&x => a; divisor));
     }
     let (before, other) = (address(x.array()), witness(&x));
     let cast = UintCore::cast_signed_bits(x, bits, Token::new());

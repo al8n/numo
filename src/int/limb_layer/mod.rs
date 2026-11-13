@@ -317,11 +317,14 @@ macro_rules! limb_layer {
       (quotient, remainder)
     }
 
-    /// Divides `value` by `divisor` in place, and returns the remainder. Requires `divisor != 0`.
-    pub(crate) const fn div_rem_chunk_assign<const N: usize>(
-      value: &mut [Limb; N],
+    /// Quotient and remainder of `value / divisor`, a divisor of up to 64 bits, which a limb
+    /// narrower than 64 bits does not hold. Requires `divisor != 0`.
+    #[inline]
+    pub(crate) const fn div_rem_chunk<const N: usize>(
+      value: &[Limb; N],
       divisor: u64,
-    ) -> u64 {
+    ) -> ([Limb; N], u64) {
+      let mut quotient = [0; N];
       let mut remainder: u64 = 0;
       let mut i = N;
       while i > 0 {
@@ -330,7 +333,7 @@ macro_rules! limb_layer {
         if Limb::BITS >= 64 {
           // A limb of 64 bits or more holds the divisor and the remainder.
           let (limb, rest) = $div_rem_wide(remainder as Limb, value[i], divisor as Limb);
-          value[i] = limb;
+          quotient[i] = limb;
           remainder = rest as u64;
         } else {
           // The shift by the bits of a narrow limb does not overflow; a wider one took the other
@@ -340,11 +343,11 @@ macro_rules! limb_layer {
             None => 0,
           };
           let wide = high | value[i] as u128;
-          value[i] = (wide / divisor as u128) as Limb;
+          quotient[i] = (wide / divisor as u128) as Limb;
           remainder = (wide % divisor as u128) as u64;
         }
       }
-      remainder
+      (quotient, remainder)
     }
 
     /// Quotient and remainder of `value / 10^exp`.
