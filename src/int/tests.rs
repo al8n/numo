@@ -834,6 +834,87 @@ mod arithmetic_bits {
     }
   }
 
+  /// Checks `carrying_add_bits` and `borrowing_sub_bits` of each width of `$widths` in the unsigned
+  /// layer `$uint`, without and with a carry or a borrow, against the steps that each replaces, an
+  /// addition and, with a carry, a subtraction of the largest value of the width, or the reverse,
+  /// and up to 64 bits against the exact sum and difference in `u128`: every value of up to
+  /// `$every` bits against every other, and otherwise the structured operands of the width against
+  /// each other. Under Miri, every 61st left operand and every 7th right one, with zero and the
+  /// largest value.
+  macro_rules! check_native_carries {
+    ($uint:ident, $widths:expr, $every:expr) => {{
+      let (left_step, right_step) = if cfg!(miri) { (61, 7) } else { (1, 1) };
+      for bits in $widths {
+        // Every value, or the structured operands.
+        let operands: Vec<u128> = if bits <= $every {
+          (0..1u128 << bits).collect()
+        } else {
+          bigint::structured_patterns(bits)
+        };
+        let ones = int::$uint::max_of_bits(bits);
+        let ends = [0, ones as u128];
+        let lefts = bigint::with_ends(operands.iter().copied().step_by(left_step), ends);
+        let rights = bigint::with_ends(operands.iter().copied().step_by(right_step), ends);
+        for &a in &lefts {
+          for &b in &rights {
+            let (x, y) = (a as $uint, b as $uint);
+            let (sum, overflow) = int::$uint::overflowing_add_bits(x, y, bits);
+            let (difference, underflow) = int::$uint::overflowing_sub_bits(x, y, bits);
+            // One more is the largest value less, and one less is the largest value more.
+            let (carried, borrow) = int::$uint::overflowing_sub_bits(sum, ones, bits);
+            let (borrowed, carry) = int::$uint::overflowing_add_bits(difference, ones, bits);
+            for (flag, added, subtracted) in [
+              (false, (sum, overflow), (difference, underflow)),
+              (
+                true,
+                (carried, overflow || !borrow),
+                (borrowed, underflow || !carry),
+              ),
+            ] {
+              let with_carry = int::$uint::carrying_add_bits(x, y, flag, bits);
+              let with_borrow = int::$uint::borrowing_sub_bits(x, y, flag, bits);
+              assert_eq!(with_carry, added, "{a} + {b} + {flag} in {bits} bits");
+              assert_eq!(with_borrow, subtracted, "{a} - {b} - {flag} in {bits} bits");
+              if bits <= 64 {
+                // `a` and `b` are below `2^64`, so the sum with a carry does not overflow `u128`.
+                let (mask, one) = ((1u128 << bits) - 1, u128::from(flag));
+                let exact = a + b + one;
+                assert_eq!(
+                  with_carry,
+                  ((exact & mask) as $uint, exact > mask),
+                  "{a} + {b} + {flag} in {bits} bits"
+                );
+                let exact = a.wrapping_sub(b).wrapping_sub(one);
+                assert_eq!(
+                  with_borrow,
+                  ((exact & mask) as $uint, a < b + one),
+                  "{a} - {b} - {flag} in {bits} bits"
+                );
+              }
+            }
+          }
+        }
+      }
+    }};
+  }
+
+  /// `carrying_add_bits` and `borrowing_sub_bits` of every unsigned native layer against the steps
+  /// that they replace, at the widths of the tests above, zero bits and one bit among them, and
+  /// in `u128` also at 64, 65, 127 and 128 bits.
+  #[test]
+  fn carries_and_borrows_match_their_steps() {
+    check_native_carries!(u8, 0..=8, 8);
+    let widths: Vec<u32> = if cfg!(miri) {
+      vec![0, 1, 7, 8, 9, 16]
+    } else {
+      (0..=16).collect()
+    };
+    check_native_carries!(u16, widths, 8);
+    check_native_carries!(u32, [0, 1, 2, 16, 31, 32], 0);
+    check_native_carries!(u64, [0, 1, 2, 32, 63, 64], 0);
+    check_native_carries!(u128, [0, 1, 2, 64, 65, 127, 128], 0);
+  }
+
   /// Checks the division functions of `bits` bits, at most 64, in the unsigned layer `$uint` and
   /// the signed layer `$int`, on the bit patterns `$a` and `$b` read with each sign, against
   /// `i128`: the division rounded toward zero, the Euclidean division, the quotient rounded down
@@ -1532,6 +1613,86 @@ mod bits {
     check_native!(u32, i32, wide_widths(32), wide_patterns);
     check_native!(u64, i64, wide_widths(64), wide_patterns);
     check_native!(u128, i128, wide_widths(128), wide_patterns);
+  }
+
+  /// Checks the saturating casts between the signs of the native layers `$uint` and `$int` at each
+  /// width of `$widths` and each pattern that `$patterns` gives for it, read unsigned and in two's
+  /// complement, against the steps that each replaces and against the bit model. The steps are
+  /// the cast of the value, or with its top bit set, for the signed target, the cast of the
+  /// complement of that bit, and for the unsigned one that of the value with every bit shifted
+  /// out; the model gives the pattern read with the other sign, or every bit below the top one and
+  /// zero.
+  macro_rules! check_saturating_casts {
+    ($uint:ident, $int:ident, $widths:expr, $patterns:expr) => {{
+      for width in $widths {
+        let patterns: Vec<u128> = $patterns(width);
+        let top = width.wrapping_sub(1);
+        for &a in &patterns {
+          let p = model::of_u128(a, width);
+          let (x, y) = (model::to_u128(&p) as $uint, model::to_i128(&p) as $int);
+          let signed_steps = if int::$uint::bit(x, top, width) {
+            let highest = int::$uint::isolate_highest_one_bits(x, width);
+            int::$uint::cast_signed_bits(int::$uint::not_bits(highest, width), width)
+          } else {
+            int::$uint::cast_signed_bits(x, width)
+          };
+          let unsigned_steps = if int::$int::bit(y, top, width) {
+            int::$int::cast_unsigned_bits(int::$int::unbounded_shl_bits(y, width, width), width)
+          } else {
+            int::$int::cast_unsigned_bits(y, width)
+          };
+          let (signed, unsigned) = if model::sign(&p) {
+            (
+              model::pattern(width, |i| i + 1 < width),
+              model::pattern(width, |_| false),
+            )
+          } else {
+            (p.clone(), p.clone())
+          };
+          assert_eq!(
+            [
+              int::$uint::saturating_cast_signed_bits(x, width),
+              signed_steps
+            ],
+            [model::to_i128(&signed) as $int; 2],
+            "{}",
+            model::text(&p)
+          );
+          assert_eq!(
+            [
+              int::$int::saturating_cast_unsigned_bits(y, width),
+              unsigned_steps
+            ],
+            [model::to_u128(&unsigned) as $uint; 2],
+            "{}",
+            model::text(&p)
+          );
+        }
+      }
+    }};
+  }
+
+  /// The saturating casts between the signs of every native layer against the steps that they
+  /// replace and the bit model, at the widths and the patterns of the tests above, zero bits and
+  /// one bit among them.
+  #[test]
+  fn saturating_casts_match_their_steps() {
+    let miri = bigint::tier().is_miri();
+    let widths: Vec<u32> = if miri {
+      vec![0, 1, 7, 8]
+    } else {
+      (0..=8).collect()
+    };
+    check_saturating_casts!(u8, i8, widths, narrow_patterns);
+    let widths: Vec<u32> = if miri {
+      vec![0, 1, 15, 16]
+    } else {
+      [0, 1, 7, 8].into_iter().chain(9..=16).collect()
+    };
+    check_saturating_casts!(u16, i16, widths, narrow_patterns);
+    check_saturating_casts!(u32, i32, wide_widths(32), wide_patterns);
+    check_saturating_casts!(u64, i64, wide_widths(64), wide_patterns);
+    check_saturating_casts!(u128, i128, wide_widths(128), wide_patterns);
   }
 }
 

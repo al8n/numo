@@ -2,8 +2,10 @@
 //! inline twin, the array that it holds: every row of the storage cores on a box against the row of
 //! the same name on its array, with the pointers of the rows that never allocate; the layout and
 //! the auto traits of the boxed integers; each way of building one; every trait and operator,
-//! compared through the limbs of the results; the allocations that the operations keep; the
-//! overflow of the operators and of the assignments; the non-zero integers; code generic over the
+//! compared through the limbs of the results, at sampled operands and at the limits, where the
+//! methods return `None`, saturate or wrap; the folds; the byte order; the allocations that the
+//! operations keep; the overflow of the operators and of the assignments, and the panics at the
+//! limits; the non-zero integers, with the constructors that reject zero; code generic over the
 //! storage traits; the widths of 4096 and 65536 bits; and serde.
 
 use core::{
@@ -20,11 +22,15 @@ use typenum::{U20, U300, U65536};
 use super::*;
 use crate::{
   ArrayInteger, BoundedCastFrom, ByteArray, CheckedCastFrom, FillsRepr, FixedNonZero,
-  FromByteArray, FromFloatError, FromLimbs, IntRepr, IntegerBytes, IntegerFloat, NonZeroInt,
-  NonZeroIntRepr, NonZeroLimits, NonZeroUint, NonZeroUintRepr, SignedNonZero, UintRepr,
-  UnsignedNonZero, WidenFrom,
+  FromByteArray, FromFloatError, FromLimbs, IntRepr, IntegerByteOrder, IntegerBytes, IntegerFloat,
+  NonZeroInt, NonZeroIntRepr, NonZeroLimits, NonZeroUint, NonZeroUintRepr, SignedNonZero, UintRepr,
+  UnsignedNonZero, WholeBytes, WidenFrom,
   bigint::floats,
-  int::float::{FloatFormat, FloatParts, float_parts_f64},
+  int::{
+    float::{FloatFormat, FloatParts, float_parts_f64},
+    parse_errors,
+  },
+  integer::cast::try_cast,
   layout::Token,
   width::{ArrayLimb, ArrayRepr, IntCore, UintCore, View},
 };
@@ -481,9 +487,10 @@ macro_rules! shared_rows {
 
 /// Checks every row of `UintCore` on `Box<[L; N]>` against the row of the same name on `[L; N]`,
 /// at the unsigned [`Samples`] of `bits` bits, with the patterns in `K` words of 64 bits: the rows
-/// of [`shared_rows!`], then those of `Uint` alone, with the cast to the signed storage, which
-/// stores its result in the allocation that it consumes, and the lent non-zero integer. The
-/// function is `#[inline(never)]`, so that its frame holds the values of this storage alone.
+/// of [`shared_rows!`], then those of `Uint` alone, with the addition with a carry and the
+/// subtraction with a borrow, the casts to the signed storage, the saturating one among them,
+/// which store their result in the allocation that they consume, and the lent non-zero integer.
+/// The function is `#[inline(never)]`, so that its frame holds the values of this storage alone.
 #[inline(never)]
 fn uint_rows<L, const N: usize, const K: usize>(bits: u32)
 where
@@ -509,6 +516,17 @@ where
       (UintCore::cast_signed_bits(*a, bits, Token::new()), before),
       "cast_signed_bits of {a:?}"
     );
+    let x = Box::new(*a);
+    let before = address(&x);
+    let cast = UintCore::saturating_cast_signed_bits(x, bits, Token::new());
+    assert_eq!(
+      (*cast, address(&cast)),
+      (
+        UintCore::saturating_cast_signed_bits(*a, bits, Token::new()),
+        before
+      ),
+      "saturating_cast_signed_bits of {a:?}"
+    );
     // The width of the integer does not matter to the lend.
     let integer = Uint::<(), Box<[L; N]>>::wrap(Box::new(*a));
     let View::Lent(lent) = <Box<[L; N]> as UintCore>::lend_nonzero(&integer, Token::new()) else {
@@ -520,13 +538,18 @@ where
     let (x, y) = (Box::new(*a), Box::new(*b));
     row!(UintCore::abs_diff(&x => a, &y => b));
     row!(UintCore::is_multiple_of(&x => a, &y => b));
+    for carry in [false, true] {
+      row!(UintCore::carrying_add_bits(&x => a, &y => b; carry, bits));
+      row!(UintCore::borrowing_sub_bits(&x => a, &y => b; carry, bits));
+    }
   }
 }
 
 /// Checks every row of `IntCore` on `Box<[L; N]>` against the row of the same name on `[L; N]`, as
 /// [`uint_rows`] does for `UintCore`, at the signed [`Samples`] of `bits` bits: the rows of
-/// [`shared_rows!`], then those of `Int` alone, with the cast to the unsigned storage, which stores
-/// its result in the allocation that it consumes, and the lent non-zero integer.
+/// [`shared_rows!`], then those of `Int` alone, with the casts to the unsigned storage, the
+/// saturating one among them, which store their result in the allocation that they consume, and
+/// the lent non-zero integer.
 #[inline(never)]
 fn int_rows<L, const N: usize, const K: usize>(bits: u32)
 where
@@ -554,6 +577,17 @@ where
       (*cast, address(&cast)),
       (IntCore::cast_unsigned_bits(*a, bits, Token::new()), before),
       "cast_unsigned_bits of {a:?}"
+    );
+    let x = Box::new(*a);
+    let before = address(&x);
+    let cast = IntCore::saturating_cast_unsigned_bits(x, bits, Token::new());
+    assert_eq!(
+      (*cast, address(&cast)),
+      (
+        IntCore::saturating_cast_unsigned_bits(*a, bits, Token::new()),
+        before
+      ),
+      "saturating_cast_unsigned_bits of {a:?}"
     );
     // The width of the integer does not matter to the lend.
     let integer = Int::<(), Box<[L; N]>>::wrap(Box::new(*a));
@@ -704,14 +738,15 @@ fn byte_reads<T: IntegerBytes + ArrayInteger>(bytes: &[u8]) -> [Reads<T::Array>;
 
 /// The results of the conversions of an integer from a float, as the limbs of the integers: the
 /// checked and the saturating conversion, the strict one where the checked one returns a value,
-/// the exact one, the checked one from the nearest `f32`, and the one rounded with each rounding
-/// mode.
+/// the exact one, the checked and the exact one from the nearest `f32`, and the one rounded with
+/// each rounding mode.
 type FloatReads<A> = (
   Option<A>,
   A,
   Option<A>,
   Result<A, FromFloatError>,
   Option<A>,
+  Result<A, FromFloatError>,
   Vec<Result<A, FromFloatError>>,
 );
 
@@ -731,6 +766,7 @@ fn float_reads<T: IntegerFloat + ArrayInteger>(value: f64) -> FloatReads<T::Arra
     strict,
     T::exact_from_f64(value).map(T::into_limbs),
     T::checked_from_f32(value as f32).map(T::into_limbs),
+    T::exact_from_f32(value as f32).map(T::into_limbs),
     rounded,
   )
 }
@@ -1684,6 +1720,372 @@ fn boxed_integers_agree_with_inline_integers() {
   }
 }
 
+/// The results of the arithmetic of `Uint` on `$a` and `$b`, with the amount `$n`: the families,
+/// the math functions and the methods of `Uint` alone, as the functions above give them.
+macro_rules! uint_limits {
+  ($a:expr, $b:expr, $n:expr) => {{
+    let (a, b, n) = ($a, $b, $n);
+    let mut results = arithmetic_families(a, b, n);
+    results.extend(math(a, b, n));
+    results.extend(unsigned_methods(a, b));
+    results
+  }};
+}
+
+/// The results of the arithmetic of `Int` on `$a` and `$b`, with the amount `$n`: the families,
+/// the math functions and the methods of `Int` alone, as the functions above give them.
+macro_rules! int_limits {
+  ($a:expr, $b:expr, $n:expr) => {{
+    let (a, b, n) = ($a, $b, $n);
+    let mut results = arithmetic_families(a, b, n);
+    results.extend(math(a, b, n));
+    results.extend(signed_methods(a));
+    results
+  }};
+}
+
+/// Emits a function that checks `$integer` of `B` bits in `Box<[L; N]>` against its twin in
+/// `[L; N]`, read in two's complement if `$signed`, through the arithmetic that `$results!` gives,
+/// at every pair of the [`pattern_ends`], the limits of both signs among them, with every amount
+/// of [`row_amounts`]: the operands at which a method returns `None`, saturates or wraps, whatever
+/// [`row_pairs`] takes. The function is `#[inline(never)]`, so that its frame holds the values of
+/// this storage alone.
+macro_rules! limits_agree {
+  ($name:ident, $integer:ident, $signed:literal, $results:ident) => {
+    #[inline(never)]
+    fn $name<B, L, const N: usize>()
+    where
+      B: FitsBits<[L; N]>,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr,
+    {
+      let bits = B::U32;
+      let values: Vec<[L; N]> = pattern_ends(bits)
+        .iter()
+        .map(|pattern| bigint::limbs_of_pattern(pattern, $signed))
+        .collect();
+      let twin = |array| <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+      let boxed = |array| <$integer<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(array);
+      for &x in &values {
+        for &y in &values {
+          let (a, b) = (twin(x).expect("in range"), twin(y).expect("in range"));
+          let (c, d) = (boxed(x).expect("in range"), boxed(y).expect("in range"));
+          for n in row_amounts(bits) {
+            assert_eq!(
+              $results!(&c, &d, n),
+              $results!(&a, &b, n),
+              "{x:?} and {y:?} at {bits} bits with {n}"
+            );
+          }
+        }
+      }
+    }
+  };
+}
+
+limits_agree!(uint_limits_agree, Uint, false, uint_limits);
+limits_agree!(int_limits_agree, Int, true, int_limits);
+
+/// At the limits, the arithmetic of `Uint` and `Int` in `Box<[L; N]>` gives what it gives on the
+/// inline twin: at every pair of zero, one, the top bit alone, every bit but the top one and every
+/// bit, with every amount of [`row_amounts`], through the families of the arithmetic, the math
+/// functions and the methods of each sign. There each checked method returns `None`, each
+/// saturating one saturates, and the carry, the borrow, `div_exact` and the saturating casts
+/// between the signs take each of their paths; at zero bits, at one bit, and at partial and full
+/// widths of the limbs. Under Miri, zero bits and one bit.
+#[test]
+fn boxed_integers_agree_at_the_limits() {
+  uint_limits_agree::<U0, u64, 0>();
+  int_limits_agree::<U0, u64, 0>();
+  uint_limits_agree::<U1, u64, 1>();
+  int_limits_agree::<U1, u64, 1>();
+  if tier().is_miri() {
+    return;
+  }
+  uint_limits_agree::<U65, u64, 2>();
+  int_limits_agree::<U65, u64, 2>();
+  uint_limits_agree::<U20, u8, 3>();
+  int_limits_agree::<U20, u8, 3>();
+  uint_limits_agree::<U64, u64, 1>();
+  int_limits_agree::<U64, u64, 1>();
+  uint_limits_agree::<U256, u64, 4>();
+  int_limits_agree::<U256, u64, 4>();
+  uint_limits_agree::<U129, u128, 2>();
+  int_limits_agree::<U129, u128, 2>();
+}
+
+/// The windows of limbs at which the folds of `bits` bits are checked, read in two's complement if
+/// `signed`: no item, and every window of one, two and three of the [`pattern_ends`], the limits
+/// among them; or under Miri every fifth of those, with every window of at most one item.
+fn fold_windows<L: bigint::Limb, const N: usize>(bits: u32, signed: bool) -> Vec<Vec<[L; N]>> {
+  let values: Vec<[L; N]> = pattern_ends(bits)
+    .iter()
+    .map(|pattern| bigint::limbs_of_pattern(pattern, signed))
+    .collect();
+  let mut windows = vec![Vec::new()];
+  // The windows of the length before, from which those of the next length grow.
+  let mut start = 0;
+  for _ in 0..3 {
+    let end = windows.len();
+    for k in start..end {
+      for &value in &values {
+        let mut window = windows[k].clone();
+        window.push(value);
+        windows.push(window);
+      }
+    }
+    start = end;
+  }
+  bigint::thin_by(windows, 5, |window| window.len() < 2)
+}
+
+/// What a fold gives: the limbs of its result, or the message of its panic.
+fn fold_outcome<T: ArrayInteger>(fold: impl FnOnce() -> T) -> Result<T::Array, String> {
+  let mut result = None;
+  match panic_of(|| result = Some(fold())) {
+    Some((message, _, _)) => Err(message),
+    None => Ok(limbs(result.expect("a result"))),
+  }
+}
+
+/// What `Sum` over `items` gives, of values and of references, as [`fold_outcome`] gives it.
+#[inline(never)]
+fn window_sums<T>(items: &[T]) -> String
+where
+  T: Clone + Sum + for<'x> Sum<&'x T> + ArrayInteger<Array: Debug>,
+{
+  format!(
+    "{:?}",
+    [
+      fold_outcome(|| items.iter().cloned().sum::<T>()),
+      fold_outcome(|| items.iter().sum::<T>()),
+    ]
+  )
+}
+
+/// What `Product` over `items` gives, of values and of references, as [`fold_outcome`] gives it.
+#[inline(never)]
+fn window_products<T>(items: &[T]) -> String
+where
+  T: Clone + Product + for<'x> Product<&'x T> + ArrayInteger<Array: Debug>,
+{
+  format!(
+    "{:?}",
+    [
+      fold_outcome(|| items.iter().cloned().product::<T>()),
+      fold_outcome(|| items.iter().product::<T>()),
+    ]
+  )
+}
+
+/// What a fold of `items` must give, of values and of references alike, from the overflowing
+/// method `step` of each of its steps, on `start`, what no item gives: the total, or, where a step
+/// overflows, the panic `message` of the native operator if the build `checks` for overflow, and
+/// the wrapped total if it does not.
+fn expected_fold<T>(
+  items: &[T],
+  start: T,
+  step: impl Fn(&T, &T) -> (T, bool),
+  message: &str,
+  checks: bool,
+) -> String
+where
+  T: ArrayInteger<Array: Debug>,
+{
+  let mut overflow = false;
+  let total = items.iter().fold(start, |total, item| {
+    let (total, flag) = step(&total, item);
+    overflow |= flag;
+    total
+  });
+  let outcome: Result<T::Array, String> = if overflow && checks {
+    Err(message.to_string())
+  } else {
+    Ok(limbs(total))
+  };
+  format!("{:?}", [&outcome, &outcome])
+}
+
+/// Emits two functions that check the folds of `$integer` of `B` bits in `Box<[L; N]>` and of its
+/// twin in `[L; N]`, read in two's complement if `$signed`, of values and of references, at the
+/// windows of [`fold_windows`]: `$sums` checks `Sum`, and `$products` checks `Product`, at a width
+/// of two bits or more, which `Int` needs for one. Each fold gives what [`expected_fold`] gives
+/// from the overflowing addition or multiplication of the twin. Each function is
+/// `#[inline(never)]`, so that its frame holds the values of this storage alone.
+macro_rules! folds_agree {
+  ($sums:ident, $products:ident, $integer:ident, $signed:literal) => {
+    #[inline(never)]
+    fn $sums<B, L, const N: usize>()
+    where
+      B: FitsBits<[L; N]>,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr,
+    {
+      let checks = overflow_checks();
+      let twin = |array| <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+      let boxed = |array| <$integer<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(array);
+      for window in fold_windows::<L, N>(B::U32, $signed) {
+        let twins: Vec<_> = window.iter().map(|&x| twin(x).expect("in range")).collect();
+        let boxes: Vec<_> = window
+          .iter()
+          .map(|&x| boxed(x).expect("in range"))
+          .collect();
+        let expected = expected_fold(
+          &twins,
+          FixedInteger::zero(),
+          |total, item| total.overflowing_add(item),
+          "attempt to add with overflow",
+          checks,
+        );
+        assert_eq!(
+          (window_sums(&boxes), window_sums(&twins)),
+          (expected.clone(), expected),
+          "the sum of {window:?}"
+        );
+      }
+    }
+
+    #[inline(never)]
+    fn $products<B, L, const N: usize>()
+    where
+      B: FitsBits<[L; N]> + NonZero + IsGreater<U1, Output = True>,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr,
+    {
+      let checks = overflow_checks();
+      let twin = |array| <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+      let boxed = |array| <$integer<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(array);
+      for window in fold_windows::<L, N>(B::U32, $signed) {
+        let twins: Vec<_> = window.iter().map(|&x| twin(x).expect("in range")).collect();
+        let boxes: Vec<_> = window
+          .iter()
+          .map(|&x| boxed(x).expect("in range"))
+          .collect();
+        let expected = expected_fold(
+          &twins,
+          IntegerOne::one(),
+          |total, item| total.overflowing_mul(item),
+          "attempt to multiply with overflow",
+          checks,
+        );
+        assert_eq!(
+          (window_products(&boxes), window_products(&twins)),
+          (expected.clone(), expected),
+          "the product of {window:?}"
+        );
+      }
+    }
+  };
+}
+
+folds_agree!(uint_sums_agree, uint_products_agree, Uint, false);
+folds_agree!(int_sums_agree, int_products_agree, Int, true);
+
+/// `Sum` and `Product` of boxed integers and of their inline twins, of values and of references,
+/// give what the overflowing addition and multiplication give step by step: over no item, zero or
+/// one, and over every window of one, two and three of zero, one, the top bit alone, every bit but
+/// the top one and every bit. Where a step overflows, a build that checks for overflow panics with
+/// the message of the native operator, and another returns the wrapped total. The sums at zero
+/// bits, at one bit and at wider widths, and the products from two bits, in both signs; under
+/// Miri, the sums at zero bits and at one bit and both folds at 65 bits.
+#[test]
+fn boxed_folds_agree_with_inline_folds() {
+  uint_sums_agree::<U0, u64, 0>();
+  int_sums_agree::<U0, u64, 0>();
+  uint_sums_agree::<U1, u64, 1>();
+  int_sums_agree::<U1, u64, 1>();
+  uint_sums_agree::<U65, u64, 2>();
+  int_sums_agree::<U65, u64, 2>();
+  uint_products_agree::<U65, u64, 2>();
+  int_products_agree::<U65, u64, 2>();
+  if tier().is_miri() {
+    return;
+  }
+  uint_products_agree::<U2, u8, 1>();
+  int_products_agree::<U2, u8, 1>();
+  uint_sums_agree::<U20, u8, 3>();
+  int_sums_agree::<U20, u8, 3>();
+  uint_products_agree::<U20, u8, 3>();
+  int_products_agree::<U20, u8, 3>();
+  uint_sums_agree::<U256, u64, 4>();
+  int_sums_agree::<U256, u64, 4>();
+  uint_products_agree::<U256, u64, 4>();
+  int_products_agree::<U256, u64, 4>();
+}
+
+/// The byte order of `a` through `IntegerByteOrder`, as the limbs of the integers that it returns.
+#[inline(never)]
+fn byte_order<T>(a: &T) -> String
+where
+  T: IntegerByteOrder + Clone + ArrayInteger<Array: Debug>,
+{
+  format!(
+    "{:?}",
+    [
+      limbs(a.swap_bytes()),
+      limbs(a.to_be()),
+      limbs(a.to_le()),
+      limbs(T::from_be(a.clone())),
+      limbs(T::from_le(a.clone())),
+    ]
+  )
+}
+
+/// Checks the byte order of `Uint` and `Int` of `B` bits, a width of whole bytes, in `Box<[L; N]>`
+/// against that of their twins in `[L; N]`, at the patterns of [`row_patterns`] in `K` words, and
+/// that `from_be` and `from_le` store their result in the allocation of the integer that they
+/// take, whichever of them swaps the bytes on the target. The function is `#[inline(never)]`, so
+/// that its frame holds the values of this storage alone.
+#[inline(never)]
+fn byte_order_agrees<B, L, const N: usize, const K: usize>()
+where
+  B: FitsBits<[L; N]> + WholeBytes,
+  L: ArrayLimb + bigint::Limb + Debug,
+  [L; N]: ArrayRepr,
+{
+  for signed in [false, true] {
+    for pattern in row_patterns::<K>(B::U32, signed) {
+      let array: [L; N] = bigint::limbs_of_pattern(&pattern, signed);
+      if signed {
+        let twin = <Int<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+        let boxed = <Int<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(array);
+        let (twin, boxed) = (twin.expect("in range"), boxed.expect("in range"));
+        assert_eq!(byte_order(&boxed), byte_order(&twin), "{array:?}");
+        let before = place(&boxed);
+        let stored = IntegerByteOrder::from_le(IntegerByteOrder::from_be(boxed));
+        assert_eq!(place(&stored), before, "{array:?}");
+      } else {
+        let twin = <Uint<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+        let boxed = <Uint<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(array);
+        let (twin, boxed) = (twin.expect("in range"), boxed.expect("in range"));
+        assert_eq!(byte_order(&boxed), byte_order(&twin), "{array:?}");
+        let before = place(&boxed);
+        let stored = IntegerByteOrder::from_le(IntegerByteOrder::from_be(boxed));
+        assert_eq!(place(&stored), before, "{array:?}");
+      }
+    }
+  }
+}
+
+/// The byte order of a boxed integer through `IntegerByteOrder`, `swap_bytes`, `to_be`, `to_le`,
+/// `from_be` and `from_le`, is that of its inline twin, and `from_be` and `from_le` store their
+/// result in the allocation of the integer that they take: at zero bits, and at widths of whole
+/// bytes that fill their limbs or leave a part of the top one, in limbs of each size. Under Miri,
+/// zero bits and 24 bits in two 16-bit limbs.
+#[test]
+fn boxed_byte_order_is_that_of_inline_integers() {
+  byte_order_agrees::<U0, u64, 0, 1>();
+  byte_order_agrees::<U24, u16, 2, 1>();
+  if tier().is_miri() {
+    return;
+  }
+  byte_order_agrees::<U64, u64, 1, 1>();
+  byte_order_agrees::<U128, u64, 2, 2>();
+  byte_order_agrees::<U200, u64, 4, 4>();
+  byte_order_agrees::<U256, u128, 2, 4>();
+  byte_order_agrees::<U200, u8, 25, 4>();
+}
+
 /// The address of the limbs of `value`, which an operation that stores in its allocation keeps.
 fn place<T: ArrayInteger>(value: &T) -> *const T::Array {
   value.as_limbs()
@@ -1713,8 +2115,10 @@ macro_rules! stored_in {
 /// operator with an owned operand stores its result in the allocation of that operand, the left
 /// one when both are owned, and `&a / nz` and `&a % nz` in that of the divisor; the casts between
 /// the signs, the non-zero `new`, `get`, `TryFrom`, `cast_signed` and `cast_unsigned`, and `From`
-/// into and out of the pointer keep it; and an assignment that panics, on a zero divisor or on
-/// overflow with overflow checks, leaves the value of its target.
+/// into and out of the pointer keep it; the saturating casts between the signs, also where they
+/// saturate, `from_be` and `from_le` store in the allocation of the integer that they take, and
+/// `Sum` and `Product` of values in that of their first item; and an assignment that panics, on
+/// a zero divisor or on overflow with overflow checks, leaves the value of its target.
 #[test]
 fn boxed_operations_keep_their_allocation() {
   type U = Uint<U256, Box<[u64; 4]>>;
@@ -1812,6 +2216,58 @@ fn boxed_operations_keep_their_allocation() {
   let pointer = Box::<[u64; 4]>::from(integer);
   assert_eq!(&*pointer as *const [u64; 4], before);
 
+  // The saturating casts store what they return, the bound of the other sign too, in the
+  // allocation that they take.
+  let x = U::max_value();
+  let before = place(&x);
+  let signed = x.saturating_cast_signed();
+  assert_eq!(
+    (place(&signed), signed.to_limbs()),
+    (before, i256::MAX.to_limbs())
+  );
+  let negative = !signed;
+  let before = place(&negative);
+  let unsigned = negative.saturating_cast_unsigned();
+  assert_eq!((place(&unsigned), unsigned.to_limbs()), (before, [0; 4]));
+  let signed = U::from(7u64).saturating_cast_signed();
+  let before = place(&signed);
+  let unsigned = signed.saturating_cast_unsigned();
+  assert_eq!(
+    (place(&unsigned), unsigned.to_limbs()),
+    (before, [7, 0, 0, 0])
+  );
+
+  // One of `from_be` and `from_le` swaps the bytes on every target, in the allocation that it
+  // takes, and the other returns its integer.
+  let x = U::from(0x0102u64);
+  let before = place(&x);
+  let swapped = U::from_le(U::from_be(x));
+  assert_eq!(
+    (place(&swapped), swapped.to_limbs()),
+    (before, u256::from(0x0102u64).swap_bytes().to_limbs())
+  );
+
+  // The folds of values store their total in the first item.
+  let items = [U::from(5u64), U::from(6u64), U::from(7u64)];
+  let before = place(&items[0]);
+  let sum: U = items.into_iter().sum();
+  assert_eq!((place(&sum), sum.to_limbs()), (before, [18, 0, 0, 0]));
+  let items = [U::from(5u64), U::from(6u64), U::from(7u64)];
+  let before = place(&items[0]);
+  let product: U = items.into_iter().product();
+  assert_eq!(
+    (place(&product), product.to_limbs()),
+    (before, [210, 0, 0, 0])
+  );
+  let items = [I::from(-5i64), I::from(6i64)];
+  let before = place(&items[0]);
+  let sum: I = items.into_iter().sum();
+  assert_eq!((place(&sum), sum.to_limbs()), (before, [1, 0, 0, 0]));
+  let items = [I::from(-5i64), I::from(6i64)];
+  let before = place(&items[0]);
+  let product: I = items.into_iter().product();
+  assert_eq!((place(&product), product), (before, I::from(-30i64)));
+
   // A panicking assignment leaves its target.
   let checks = overflow_checks();
   let mut target = U::from(1_000u64);
@@ -1894,6 +2350,120 @@ fn boxed_overflow_follows_the_checks() {
   panics_here!(t /= z.clone(), div);
   panics_here!(t %= &z, rem);
   assert_eq!(t.to_limbs(), [0, 1, 0, 0]);
+}
+
+/// The methods of a boxed integer that panic at the limits panic as those of its inline twin do,
+/// with the messages of the native integers, and report the line of the caller. In every build:
+/// the strict methods on overflow and on a zero divisor, `saturating_div` on a zero divisor,
+/// `div_exact` on a zero divisor and on `MIN / -1`, and `/` and `%` on two references. With
+/// overflow checks, without which they return the wrapped value: `abs`, `pow`, which reports a
+/// line of `core`, `+`, `-` and `*` on two references, and the negation of a reference, of an
+/// integer and of a non-zero integer. At a full and at a partial width of the limbs, at one signed
+/// bit, where -1 is `MIN`, and at zero bits, where `0^0` overflows and every divisor is zero.
+#[test]
+fn boxed_methods_panic_at_the_limits() {
+  type U = Uint<U256, Box<[u64; 4]>>;
+  type I = Int<U200, Box<[u64; 4]>>;
+  let add = "attempt to add with overflow".to_string();
+  let sub = "attempt to subtract with overflow".to_string();
+  let mul = "attempt to multiply with overflow".to_string();
+  let neg = "attempt to negate with overflow".to_string();
+  let power = "attempt to exponentiate with overflow".to_string();
+  let shl = "attempt to shift left with overflow".to_string();
+  let shr = "attempt to shift right with overflow".to_string();
+  let div = "attempt to divide with overflow".to_string();
+  let rem = "attempt to calculate the remainder with overflow".to_string();
+  let by_zero = "attempt to divide by zero".to_string();
+  let rem_by_zero = "attempt to calculate the remainder with a divisor of zero".to_string();
+  // The message of the native `pow` that overflows, which only a build with checks has.
+  let pow = panic_of(|| black_box(u8::MAX).pow(2)).map_or_else(String::new, |panic| panic.0);
+
+  let (m, o, z) = (U::max_value(), U::from(1u64), U::from(0u64));
+  let two = U::from(2u64);
+  panics_here!(m.strict_add(&o), add);
+  panics_here!(z.strict_sub(&o), sub);
+  panics_here!(m.strict_mul(&two), mul);
+  panics_here!(o.strict_neg(), neg);
+  panics_here!(m.strict_pow(2), power);
+  panics_here!(m.strict_shl(256), shl);
+  panics_here!(m.strict_shr(256), shr);
+  panics_here!(m.strict_div(&z), by_zero);
+  panics_here!(m.strict_rem(&z), rem_by_zero);
+  panics_here!(m.strict_div_euclid(&z), by_zero);
+  panics_here!(m.strict_rem_euclid(&z), rem_by_zero);
+  panics_here!(m.saturating_div(&z), by_zero);
+  panics_here!(m.div_exact(&z), rem_by_zero);
+  overflows_here!(m.pow(2), pow, o.clone(), in core);
+  overflows_here!(&m + &o, add, z.clone());
+  overflows_here!(&z - &o, sub, m.clone());
+  overflows_here!(&m * &two, mul, m.clone() - &o);
+  panics_here!(&m / &z, by_zero);
+  panics_here!(&m % &z, rem_by_zero);
+
+  let (min, max) = (I::min_value(), I::max_value());
+  let (zero, one, minus_one) = (I::from(0i64), I::from(1i64), I::from(-1i64));
+  panics_here!(max.strict_add(&one), add);
+  panics_here!(min.strict_sub(&one), sub);
+  panics_here!(min.strict_mul(&minus_one), mul);
+  panics_here!(min.strict_neg(), neg);
+  panics_here!(min.strict_abs(), neg);
+  panics_here!(min.strict_pow(2), power);
+  panics_here!(min.strict_shl(200), shl);
+  panics_here!(min.strict_shr(200), shr);
+  panics_here!(min.strict_div(&minus_one), div);
+  panics_here!(min.strict_rem(&minus_one), rem);
+  panics_here!(min.strict_div_euclid(&minus_one), div);
+  panics_here!(min.strict_rem_euclid(&minus_one), rem);
+  panics_here!(min.div_exact(&minus_one), rem);
+  panics_here!(min.strict_div(&zero), by_zero);
+  panics_here!(min.strict_rem_euclid(&zero), rem_by_zero);
+  panics_here!(min.saturating_div(&zero), by_zero);
+  panics_here!(min.div_exact(&zero), rem_by_zero);
+  assert_eq!(min.saturating_div(&minus_one), max);
+  overflows_here!(min.abs(), neg, min.clone());
+  overflows_here!(min.pow(2), pow, zero.clone(), in core);
+  overflows_here!(-&min, neg, min.clone());
+  overflows_here!(&max + &one, add, min.clone());
+  overflows_here!(&min - &one, sub, max.clone());
+  overflows_here!(&min * &minus_one, mul, min.clone());
+  panics_here!(&min / &minus_one, div);
+  panics_here!(&min % &minus_one, rem);
+  panics_here!(&min / &zero, by_zero);
+  panics_here!(&min % &zero, rem_by_zero);
+  let nonzero = NonZeroInt::<U200, Box<[u64; 4]>>::new(min.clone()).expect("not zero");
+  overflows_here!(nonzero.abs(), neg, nonzero.clone());
+  overflows_here!(-&nonzero, neg, nonzero.clone());
+  overflows_here!(-nonzero.clone(), neg, nonzero.clone());
+
+  // One bit holds only -1 and 0, so -1 is `MIN`, and its square and its quotient by itself, both
+  // one, overflow.
+  type Bit = Int<U1, Box<[u64; 1]>>;
+  let bit = Bit::min_value();
+  panics_here!(bit.strict_add(&bit), add);
+  panics_here!(bit.strict_mul(&bit), mul);
+  panics_here!(bit.strict_neg(), neg);
+  panics_here!(bit.strict_abs(), neg);
+  panics_here!(bit.strict_pow(2), power);
+  panics_here!(bit.strict_div(&bit), div);
+  panics_here!(bit.div_exact(&bit), rem);
+  overflows_here!(bit.abs(), neg, bit.clone());
+  overflows_here!(-&bit, neg, bit.clone());
+  overflows_here!(&bit + &bit, add, Bit::zero());
+  overflows_here!(&bit * &bit, mul, bit.clone());
+  let nonzero = NonZeroInt::<U1, Box<[u64; 1]>>::new(bit.clone()).expect("not zero");
+  overflows_here!(nonzero.abs(), neg, nonzero.clone());
+  overflows_here!(-&nonzero, neg, nonzero.clone());
+
+  // Zero bits hold only zero.
+  type Empty = Uint<U0, Box<[u64; 0]>>;
+  let (none, nothing) = (Empty::zero(), Empty::zero());
+  panics_here!(none.strict_pow(0), power);
+  panics_here!(none.strict_shl(0), shl);
+  panics_here!(none.strict_shr(0), shr);
+  panics_here!(none.strict_div(&nothing), by_zero);
+  panics_here!(none.div_exact(&nothing), rem_by_zero);
+  panics_here!(&none / &nothing, by_zero);
+  overflows_here!(none.pow(0), pow, nothing.clone(), in core);
 }
 
 /// The results of the methods of `FixedNonZero` on `a` and `b`, and on `a` with the exponent and
@@ -2198,6 +2768,199 @@ fn boxed_nonzero_integers() {
   );
 }
 
+/// Emits a function that checks `$nonzero` of `B` bits in `Box<[L; N]>` against its twin in
+/// `[L; N]`, read in two's complement if `$signed`, as [`limits_agree!`] checks the integers:
+/// through its traits, `$sign` giving the methods of its sign, at every pair of the
+/// [`pattern_ends`] that are not zero, the limits among them, with every amount of
+/// [`row_amounts`]. The function is `#[inline(never)]`, so that its frame holds the values of this
+/// storage alone.
+macro_rules! nonzero_limits_agree {
+  ($name:ident, $nonzero:ident, $integer:ident, $signed:literal, $sign:ident) => {
+    #[inline(never)]
+    fn $name<B, L, const N: usize>()
+    where
+      B: FitsBits<[L; N]> + NonZero,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr
+        + NonZeroUintRepr<Integer = [L; N], Signed = [L; N]>
+        + NonZeroIntRepr<Integer = [L; N], Unsigned = [L; N]>,
+    {
+      let bits = B::U32;
+      let values: Vec<[L; N]> = pattern_ends(bits)
+        .iter()
+        .map(|pattern| bigint::limbs_of_pattern(pattern, $signed))
+        .collect();
+      let twin = |array| <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+      let boxed = |array| <$integer<B, Box<[L; N]>> as ArrayInteger>::checked_from_limbs(array);
+      let nonzero = |array| twin(array).and_then(<$nonzero<B, [L; N]> as FixedNonZero>::new);
+      let boxed_nonzero =
+        |array| boxed(array).and_then(<$nonzero<B, Box<[L; N]>> as FixedNonZero>::new);
+      for &x in &values {
+        for &y in &values {
+          let (Some(a), Some(b)) = (nonzero(x), nonzero(y)) else {
+            continue;
+          };
+          let (c, d) = (
+            boxed_nonzero(x).expect("not zero"),
+            boxed_nonzero(y).expect("not zero"),
+          );
+          for n in row_amounts(bits) {
+            let mut results = nonzero_methods(&c, &d, n);
+            results.extend($sign!(&c, &d));
+            let mut twin_results = nonzero_methods(&a, &b, n);
+            twin_results.extend($sign!(&a, &b));
+            assert_eq!(
+              results, twin_results,
+              "{x:?} and {y:?} at {bits} bits with {n}"
+            );
+          }
+        }
+      }
+    }
+  };
+}
+
+nonzero_limits_agree!(
+  nonzero_uint_limits_agree,
+  NonZeroUint,
+  Uint,
+  false,
+  unsigned_nonzero
+);
+nonzero_limits_agree!(
+  nonzero_int_limits_agree,
+  NonZeroInt,
+  Int,
+  true,
+  signed_nonzero
+);
+
+/// At the limits, the non-zero integers over a box give what their twins over the array give, as
+/// [`boxed_integers_agree_at_the_limits`] checks the integers: at every pair of one, the top bit
+/// alone, every bit but the top one and every bit, where they are not zero, with every amount of
+/// [`row_amounts`], through the traits of the non-zero integers. There the checked product, power
+/// and sum return `None` and the saturating ones saturate, and at `MIN` the negation and the
+/// absolute value of `NonZeroInt` return `None`, saturate and wrap; at one bit, where `NonZeroInt`
+/// holds only -1, and at partial and full widths of the limbs. Under Miri, one bit.
+#[test]
+fn boxed_nonzero_integers_agree_at_the_limits() {
+  nonzero_uint_limits_agree::<U1, u64, 1>();
+  nonzero_int_limits_agree::<U1, u64, 1>();
+  if tier().is_miri() {
+    return;
+  }
+  nonzero_uint_limits_agree::<U65, u64, 2>();
+  nonzero_int_limits_agree::<U65, u64, 2>();
+  nonzero_uint_limits_agree::<U20, u8, 3>();
+  nonzero_int_limits_agree::<U20, u8, 3>();
+  nonzero_uint_limits_agree::<U256, u64, 4>();
+  nonzero_int_limits_agree::<U256, u64, 4>();
+}
+
+/// What the parsers of the non-zero integer `T` give for `text`, `FromStr` and `from_str_radix` in
+/// hexadecimal, as the limbs of the integers.
+fn nonzero_reads<T>(text: &str) -> String
+where
+  T: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
+{
+  let value = |x: T| limbs(x.get());
+  format!(
+    "{:?}",
+    (
+      text.parse::<T>().map(value),
+      T::from_str_radix(text, 16).map(value),
+    )
+  )
+}
+
+/// Checks that the parsers of the non-zero integer `T`, over a box, give what those of `U`, its
+/// twin over the array, give, at the spellings of zero, at texts that are no number, and at
+/// numbers inside and outside the width.
+#[inline(never)]
+fn nonzero_reads_agree<T, U>()
+where
+  T: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
+  U: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
+{
+  for text in [
+    "0", "+0", "00", "-0", "", "-", "x", "1", "-1", "7f", "-80", "10000", "-fffff",
+  ] {
+    assert_eq!(nonzero_reads::<T>(text), nonzero_reads::<U>(text), "{text}");
+  }
+}
+
+/// The constructors of a boxed non-zero integer that take a value which may be zero reject zero
+/// as those of its inline twin do, and build every other value of the width: the parsers, with
+/// the error of the kind `Zero` after every error of the integer; the checked cast, which returns
+/// `None`, and `try_cast`, with the error of the kind `Zero`, from native integers, from an
+/// inline integer and from a borrowed boxed one; and the strict cast, which panics in every build
+/// and reports the caller. In both signs, at one bit, and at zero bits, which hold no value that
+/// is not zero.
+#[test]
+fn boxed_nonzero_constructors_reject_zero() {
+  nonzero_reads_agree::<NonZeroUint<U65, Box<[u64; 2]>>, NonZeroUint<U65, [u64; 2]>>();
+  nonzero_reads_agree::<NonZeroInt<U65, Box<[u64; 2]>>, NonZeroInt<U65, [u64; 2]>>();
+  nonzero_reads_agree::<NonZeroUint<U20, Box<[u8; 3]>>, NonZeroUint<U20, [u8; 3]>>();
+  nonzero_reads_agree::<NonZeroInt<U20, Box<[u8; 3]>>, NonZeroInt<U20, [u8; 3]>>();
+  nonzero_reads_agree::<NonZeroUint<U1, Box<[u64; 1]>>, NonZeroUint<U1, [u64; 1]>>();
+  nonzero_reads_agree::<NonZeroInt<U1, Box<[u64; 1]>>, NonZeroInt<U1, [u64; 1]>>();
+  nonzero_reads_agree::<NonZeroUint<U0, Box<[u64; 0]>>, NonZeroUint<U0, [u64; 0]>>();
+  nonzero_reads_agree::<NonZeroInt<U0, Box<[u64; 0]>>, NonZeroInt<U0, [u64; 0]>>();
+  type Nz = NonZeroUint<U65, Box<[u64; 2]>>;
+  let read = |text: &str| text.parse::<Nz>().map(|x| limbs(x.get()));
+  assert_eq!(read("0"), Err(parse_errors::ZERO));
+  assert_eq!(read("36893488147419103231"), Ok([u64::MAX, 1]));
+
+  // The checked cast and `try_cast` of each of `$sources` into `$nonzero` of `$width` in a box of
+  // `$array` and into its twin in the array, as the limbs of the integers.
+  macro_rules! casts_agree {
+    ($nonzero:ident<$width:ty, $array:ty>: $($source:expr),+ $(,)?) => {{
+      type Boxed = $nonzero<$width, Box<$array>>;
+      type Twin = $nonzero<$width, $array>;
+      $(
+        assert_eq!(
+          Boxed::checked_cast_from($source).map(|x| limbs(x.get())),
+          Twin::checked_cast_from($source).map(|x| limbs(x.get())),
+          "{} into {}",
+          stringify!($source),
+          stringify!($nonzero<$width, $array>)
+        );
+        assert_eq!(
+          try_cast::<_, Boxed>($source).map(|x| limbs(x.get())),
+          try_cast::<_, Twin>($source).map(|x| limbs(x.get())),
+          "{} into {}",
+          stringify!($source),
+          stringify!($nonzero<$width, $array>)
+        );
+      )+
+    }};
+  }
+  let (inline, boxed) = (u256::ZERO, Uint::<U256, Box<[u64; 4]>>::zero());
+  let negative = Int::<U200, Box<[u64; 4]>>::from(-7i64);
+  casts_agree!(NonZeroUint<U256, [u64; 4]>: 0u8, 7u64, u128::MAX, -1i8, inline, &boxed, &negative);
+  casts_agree!(NonZeroInt<U200, [u64; 4]>: 0i64, -7i64, i128::MIN, u128::MAX, &boxed, &negative);
+  casts_agree!(NonZeroUint<U65, [u64; 2]>: 0u64, u64::MAX, u128::MAX, i128::MIN, &boxed, &negative);
+  casts_agree!(NonZeroInt<U20, [u8; 3]>: 0u8, -1i8, 1u32 << 19, -(1i32 << 19), inline, &negative);
+  casts_agree!(NonZeroInt<U1, [u64; 1]>: 0i8, -1i8, 1i8, -2i8, &boxed);
+  casts_agree!(NonZeroUint<U0, [u64; 0]>: 0u8, 1u8, &boxed);
+  type Wide = NonZeroUint<U256, Box<[u64; 4]>>;
+  type Signed = NonZeroInt<U200, Box<[u64; 4]>>;
+  assert_eq!(Wide::checked_cast_from(0u8).map(|x| limbs(x.get())), None);
+  assert_eq!(
+    Wide::checked_cast_from(7u8).map(|x| limbs(x.get())),
+    Some([7, 0, 0, 0])
+  );
+  assert_eq!(
+    Signed::checked_cast_from(&negative).map(|x| limbs(x.get())),
+    Some(negative.to_limbs())
+  );
+  let zero = "number would be zero for non-zero type".to_string();
+  panics_here!(Wide::strict_cast_from(0u64), zero);
+  panics_here!(Wide::strict_cast_from(&boxed), zero);
+  panics_here!(Signed::strict_cast_from(0i8), zero);
+  assert_eq!(limbs(Wide::strict_cast_from(7u8).get()), [7, 0, 0, 0]);
+}
+
 /// The sum of `values`, in code generic over the storage trait alone, through `Sum` of references.
 fn total<B: FitsBits<R>, R: UintRepr>(values: &[Uint<B, R>]) -> Uint<B, R> {
   values.iter().sum()
@@ -2418,7 +3181,7 @@ serde_of!(int_serde, Int, NonZeroInt, true);
 
 /// A boxed integer writes in JSON and in postcard what its inline twin writes, and reads back from
 /// both, at 7, 64, 100, 128, 200 and 4096 bits and at zero bits, in both signs, and so do the
-/// non-zero integers.
+/// non-zero integers, which read zero as their twins do, with an error.
 #[cfg(feature = "serde")]
 #[test]
 fn boxed_integers_serde_as_inline_integers() {
@@ -2436,4 +3199,18 @@ fn boxed_integers_serde_as_inline_integers() {
   int_serde::<U200, u64, 4, 4>();
   uint_serde::<U4096, u64, 64, 64>();
   int_serde::<U4096, u64, 64, 64>();
+
+  // Zero is no value of a non-zero integer, in a box as in the array.
+  type Nz = NonZeroInt<U200, Box<[u64; 4]>>;
+  type Twin = NonZeroInt<U200, [u64; 4]>;
+  for json in ["0", "\"0\"", "\"-0\""] {
+    let boxed = serde_json::from_str::<Nz>(json).map(|x| limbs(x.get()));
+    let twin = serde_json::from_str::<Twin>(json).map(|x| limbs(x.get()));
+    assert!(boxed.is_err(), "{json}");
+    assert_eq!(
+      boxed.map_err(|error| error.to_string()),
+      twin.map_err(|error| error.to_string()),
+      "{json}"
+    );
+  }
 }

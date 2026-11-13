@@ -713,6 +713,94 @@ macro_rules! limb_layer_tests {
       arithmetic_bits_against_big_integers::<3>();
     }
 
+    /// Checks `carrying_add_bits` and `borrowing_sub_bits` of each width of `N` limbs, without and
+    /// with a carry or a borrow, against the steps that each replaces: an addition and, with a
+    /// carry, a subtraction of the largest value of the width, or the reverse. With a carry or a
+    /// borrow, also against `num-bigint`: the result wrapped to the width, the flag, and that the
+    /// result has the width.
+    fn carries_bits_against_big_integers<const N: usize>() {
+      let mut rng = Rng(0xca22_5eed ^ N as u64);
+      for bits in bigint::arithmetic_widths(B, N) {
+        let (min, max) = (bigint::min(bits, false), bigint::max(bits, false));
+        // No limbs hold only zero, from which nothing random is drawn.
+        let samples = bigint::arithmetic_samples(bits, B, &min, &max, || match N {
+          0 => BigInt::ZERO,
+          _ => bigint::from_limbs(&rng.limbs::<N>(), false),
+        });
+        let limbs: Vec<[Limb; N]> = samples
+          .iter()
+          .map(|value| bigint::to_limbs_of(value, false).expect("in range"))
+          .collect();
+        let ones = max_of_bits::<N>(bits);
+        // `exact` is `lhs op rhs op 1`, and `computed` its result in the layer.
+        let check = |exact: BigInt, computed: ([Limb; N], bool), lhs: &BigInt, op, rhs: &BigInt| {
+          let (result, overflow) = computed;
+          assert_eq!(
+            bigint::from_limbs(&result, false),
+            bigint::wrap(&exact, bits, &min),
+            "{lhs} {op} {rhs} {op} 1 in {bits} bits"
+          );
+          assert_eq!(
+            overflow,
+            exact < min || max < exact,
+            "{lhs} {op} {rhs} {op} 1 in {bits} bits"
+          );
+          assert!(
+            fits_bits(&result, bits),
+            "{lhs} {op} {rhs} {op} 1 in {bits} bits"
+          );
+        };
+        for (a, limbs_a) in samples.iter().zip(&limbs) {
+          for (b, limbs_b) in samples.iter().zip(&limbs) {
+            let (sum, overflow) = overflowing_add_bits(limbs_a, limbs_b, bits);
+            let (difference, underflow) = overflowing_sub_bits(limbs_a, limbs_b, bits);
+            assert_eq!(
+              carrying_add_bits(limbs_a, limbs_b, false, bits),
+              (sum, overflow),
+              "{a} + {b} in {bits} bits"
+            );
+            assert_eq!(
+              borrowing_sub_bits(limbs_a, limbs_b, false, bits),
+              (difference, underflow),
+              "{a} - {b} in {bits} bits"
+            );
+            // One more is the largest value less, and one less is the largest value more.
+            let (carried, borrow) = overflowing_sub_bits(&sum, &ones, bits);
+            let (borrowed, carry) = overflowing_add_bits(&difference, &ones, bits);
+            let with_carry = carrying_add_bits(limbs_a, limbs_b, true, bits);
+            let with_borrow = borrowing_sub_bits(limbs_a, limbs_b, true, bits);
+            assert_eq!(
+              with_carry,
+              (carried, overflow || !borrow),
+              "{a} + {b} + 1 in {bits} bits"
+            );
+            assert_eq!(
+              with_borrow,
+              (borrowed, underflow || !carry),
+              "{a} - {b} - 1 in {bits} bits"
+            );
+            check(a + b + 1u8, with_carry, a, '+', b);
+            check(a - b - 1u8, with_borrow, a, '-', b);
+          }
+        }
+      }
+    }
+
+    /// `carrying_add_bits` and `borrowing_sub_bits` against the steps that they replace and
+    /// against `num-bigint`, at the widths and the operands of the arithmetic of a width, zero
+    /// bits and one bit among them, at no limbs to three.
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn carrying_add_and_borrowing_sub_match_their_steps() {
+      carries_bits_against_big_integers::<0>();
+      carries_bits_against_big_integers::<1>();
+      carries_bits_against_big_integers::<2>();
+      carries_bits_against_big_integers::<3>();
+    }
+
     fn digits_into_a_slice<const N: usize>() {
       // Above 4096 bits, which only limbs of more than 64 bits reach here, the values take no
       // path that narrower ones do not, and the time grows faster than the width.
@@ -1074,6 +1162,46 @@ macro_rules! limb_layer_tests {
     }
 
     limb_layer_tests!(@bits false, cast_signed_bits);
+
+    /// Checks `saturating_cast_signed_bits` at each width of `widths::<N>()` and each pattern of
+    /// `bigint::bit_patterns_of` cut to the width, against the steps that it replaces, the cast of
+    /// the value or, with its top bit set, of the complement of that bit, and against the bit
+    /// model: the pattern read in two's complement, or every bit below the top one.
+    fn saturating_cast_against_its_steps<const N: usize>() {
+      let widths = widths::<N>();
+      for pattern in bigint::bit_patterns_of::<Limb, N>(&widths) {
+        for &width in &widths {
+          let p = bigint::pattern_of_limbs(&pattern, width);
+          let x = bigint::limbs_of_pattern::<Limb, N>(&p, false);
+          let steps = if bit(&x, width.wrapping_sub(1), width) {
+            cast_signed_bits(&not_bits(&isolate_highest_one_bits(&x, width), width), width)
+          } else {
+            cast_signed_bits(&x, width)
+          };
+          let saturated = if model::sign(&p) {
+            model::pattern(width, |i| i + 1 < width)
+          } else {
+            p.clone()
+          };
+          assert_eq!(
+            [saturating_cast_signed_bits(&x, width), steps],
+            [bigint::limbs_of_pattern::<Limb, N>(&saturated, true); 2],
+            "{}",
+            model::text(&p)
+          );
+        }
+      }
+    }
+
+    /// `saturating_cast_signed_bits` against the steps that it replaces and the bit model, at the
+    /// widths of the bit operations, zero bits and one bit among them, at no limbs to three.
+    #[test]
+    fn saturating_cast_signed_matches_its_steps() {
+      saturating_cast_against_its_steps::<0>();
+      saturating_cast_against_its_steps::<1>();
+      saturating_cast_against_its_steps::<2>();
+      saturating_cast_against_its_steps::<3>();
+    }
 
     /// The decimal digits of `value`, as the integer core writes them.
     fn decimal_text<const N: usize>(value: &[Limb; N]) -> Vec<u8> {
@@ -1917,6 +2045,46 @@ macro_rules! limb_layer_tests {
     }
 
     limb_layer_tests!(@bits true, cast_unsigned_bits);
+
+    /// Checks `saturating_cast_unsigned_bits` at each width of `widths::<N>()` and each pattern
+    /// of `bigint::bit_patterns_of` cut to the width, against the steps that it replaces, the cast
+    /// of the value or, if it is negative, of the value with every bit shifted out, and against
+    /// the bit model: the pattern read unsigned, or zero.
+    fn saturating_cast_against_its_steps<const N: usize>() {
+      let widths = widths::<N>();
+      for pattern in bigint::bit_patterns_of::<Limb, N>(&widths) {
+        for &width in &widths {
+          let p = bigint::pattern_of_limbs(&pattern, width);
+          let x = bigint::limbs_of_pattern::<Limb, N>(&p, true);
+          let steps = if bit(&x, width.wrapping_sub(1), width) {
+            cast_unsigned_bits(&unbounded_shl_bits(&x, width, width), width)
+          } else {
+            cast_unsigned_bits(&x, width)
+          };
+          let saturated = if model::sign(&p) {
+            model::pattern(width, |_| false)
+          } else {
+            p.clone()
+          };
+          assert_eq!(
+            [saturating_cast_unsigned_bits(&x, width), steps],
+            [bigint::limbs_of_pattern::<Limb, N>(&saturated, false); 2],
+            "{}",
+            model::text(&p)
+          );
+        }
+      }
+    }
+
+    /// `saturating_cast_unsigned_bits` against the steps that it replaces and the bit model, at
+    /// the widths of the bit operations, zero bits and one bit among them, at no limbs to three.
+    #[test]
+    fn saturating_cast_unsigned_matches_its_steps() {
+      saturating_cast_against_its_steps::<0>();
+      saturating_cast_against_its_steps::<1>();
+      saturating_cast_against_its_steps::<2>();
+      saturating_cast_against_its_steps::<3>();
+    }
 
     /// The decimal digits of the unsigned integer in `value`, as the integer core writes them.
     fn unsigned_decimal<const N: usize>(value: &[Limb; N]) -> Vec<u8> {
