@@ -28,6 +28,7 @@ use crate::{
 };
 
 mod error;
+mod float;
 mod format;
 mod literal;
 mod ops;

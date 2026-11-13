@@ -5,7 +5,7 @@ use typenum::NonZero;
 use super::{
   ConstDecimalOne, ConstFixedDecimal, ConvertError, Decimal, DecimalLiteral, DecimalOne,
   FixedDecimal, LiteralText, ParseError, ParseErrorKind, QuantizeError, Scaled, SignedFixedDecimal,
-  UnsignedFixedDecimal, literal, parse,
+  UnsignedFixedDecimal, float, literal, parse,
 };
 use crate::{
   i192, i256, i320, i384, i448, i512, int, layout::Layout, rounding::RoundingMode, u192, u256,
@@ -15,8 +15,8 @@ use crate::{
 /// Implements the constants, `const fn` methods and traits that depend only on the storage, for
 /// each listed storage with its sign, `signed` or `unsigned`, and its kind, `native` or `wide`,
 /// and the parsing and the literal of a [`Scaled`] over a decimal of the storage. The kind selects
-/// how a coefficient goes to the storage's module in `int`, and how the examples import the
-/// storage and spell its coefficients.
+/// how a coefficient goes to the storage's module in `int`, how the conversions with the floats
+/// take its limbs, and how the examples import the storage and spell its coefficients.
 macro_rules! storage_decimal {
   ($($repr:ident: $sign:ident $kind:ident),+ $(,)?) => {$(
     storage_decimal!(@by $sign $repr $kind);
@@ -638,6 +638,19 @@ macro_rules! storage_decimal {
       pub const fn abs(&self) -> Self {
         Self::from_coeff(int::$repr::abs($($by)* self.repr))
       }
+
+      /// The bits of the float of `format` nearest to the value, which the float module computes
+      /// from the magnitude and the sign of the coefficient, lent as limbs.
+      const fn float_bits(&self, format: int::float::FloatFormat) -> u64 {
+        // The limbs are in two's complement: a native coefficient is extended by its sign.
+        let limbs = storage_decimal!(@limbs $kind $repr self.repr);
+        float::float_bits(
+          &int::signed::b64::unsigned_abs(limbs),
+          Self::FRACTION,
+          int::signed::b64::is_negative(limbs),
+          format,
+        )
+      }
     }
 
     storage_decimal!(@shared $repr [$($by)*]);
@@ -934,6 +947,19 @@ macro_rules! storage_decimal {
         let (_, remainder) = int::$repr::div_rem($($by)* self.repr, $($by)* step.repr);
         int::$repr::is_zero($($by)* remainder)
       }
+
+      /// The bits of the float of `format` nearest to the value, which the float module computes
+      /// from the coefficient, lent as limbs.
+      const fn float_bits(&self, format: int::float::FloatFormat) -> u64 {
+        // The coefficient is its own magnitude. Read in two's complement, the 154 digits of a
+        // `u512` could set the top bit.
+        float::float_bits(
+          storage_decimal!(@limbs $kind $repr self.repr),
+          Self::FRACTION,
+          false,
+          format,
+        )
+      }
     }
 
     storage_decimal!(@shared $repr [$($by)*]);
@@ -1173,6 +1199,34 @@ macro_rules! storage_decimal {
           Err(ConvertError::OutOfRange)
         }
       }
+
+      /// Converts the value to the nearest `f64`, ties to even, rounded once: the float that
+      /// parsing the text of the decimal gives. Zero gives `+0.0`. A decimal other than zero is
+      /// between `10^-154` and `10^154` in magnitude, inside the normal range of `f64`, so the
+      /// result is never an infinity or a subnormal float.
+      ///
+      /// For interchange and display, not for arithmetic that must be exact.
+      #[must_use]
+      #[inline]
+      pub const fn to_f64(&self) -> f64 {
+        f64::from_bits(Self::float_bits(self, int::float::FloatFormat::F64))
+      }
+
+      /// Converts the value to the nearest `f32`, ties to even, rounded once, as
+      /// [`to_f64`](Self::to_f64) converts it to an `f64`; `x.to_f64() as f32` rounds twice and
+      /// can differ. A magnitude that rounds to `2^128` or more, which only a type with at least 39
+      /// integral digits holds, gives the infinity of the sign of the value. A magnitude that
+      /// rounds below `2^-126`, which only a type with at least 38 fraction digits holds, gives a
+      /// subnormal float, and one of at most `2^-150` a zero with the sign of the value, `-0.0`
+      /// for a negative value. Zero gives `+0.0`.
+      ///
+      /// For interchange and display, not for arithmetic that must be exact.
+      #[must_use]
+      #[inline]
+      pub const fn to_f32(&self) -> f32 {
+        // The bits of an `f32` are the low 32, its sign bit among them.
+        f32::from_bits(Self::float_bits(self, int::float::FloatFormat::F32) as u32)
+      }
     }
   };
 
@@ -1193,6 +1247,15 @@ macro_rules! storage_decimal {
   };
   (@coeff wide $coeff:literal) => {
     concat!(".repr().to_string(), \"", $coeff, "\"")
+  };
+
+  // The limbs of a coefficient, which the float module reads: a native coefficient converts to
+  // two limbs, in two's complement for a signed storage, and a wide one lends its own.
+  (@limbs native $repr:ident $coeff:expr) => {
+    &int::$repr::to_limbs($coeff)
+  };
+  (@limbs wide $repr:ident $coeff:expr) => {
+    $coeff.as_limbs()
   };
 }
 
