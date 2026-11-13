@@ -8,8 +8,8 @@ use super::{
   UnsignedFixedDecimal, float, literal, parse,
 };
 use crate::{
-  i192, i256, i320, i384, i448, i512, int, layout::Layout, rounding::RoundingMode, u192, u256,
-  u320, u384, u448, u512,
+  FromFloatError, i192, i256, i320, i384, i448, i512, int, layout::Layout, rounding::RoundingMode,
+  u192, u256, u320, u384, u448, u512,
 };
 
 /// Implements the constants, `const fn` methods and traits that depend only on the storage, for
@@ -651,6 +651,41 @@ macro_rules! storage_decimal {
           format,
         )
       }
+
+      /// The value whose coefficient has the magnitude `magnitude`, negated for a negative float,
+      /// or the error of a magnitude outside the range of the type, on the side of the sign:
+      /// `None` is a magnitude beyond 512 bits.
+      const fn place_magnitude(
+        magnitude: Option<[u64; 8]>,
+        negative: bool,
+      ) -> Result<Self, FromFloatError> {
+        let overflow = if negative {
+          FromFloatError::NegOverflow
+        } else {
+          FromFloatError::PosOverflow
+        };
+        let magnitude = match magnitude {
+          Some(magnitude) => magnitude,
+          None => return Err(overflow),
+        };
+        // A negative float that rounds to zero converts to the one zero of a decimal.
+        if int::unsigned::b64::is_zero(&magnitude) {
+          return Ok(Self::ZERO);
+        }
+        // Compared in eight limbs, before the narrowing to the storage, which truncates.
+        if !int::unsigned::b64::le(&magnitude, &int::unsigned::b64::max_magnitude(Self::DIGITS)) {
+          return Err(overflow);
+        }
+        // The magnitude is unsigned in eight limbs, so the unsigned layer narrows it, and only
+        // its negation is in two's complement, in the limbs of the storage.
+        let limbs = int::unsigned::b64::resize(&magnitude);
+        let limbs = if negative {
+          int::signed::b64::neg(&limbs)
+        } else {
+          limbs
+        };
+        Ok(Self::from_coeff(int::$repr::from_limbs(limbs)))
+      }
     }
 
     storage_decimal!(@shared $repr [$($by)*]);
@@ -960,6 +995,35 @@ macro_rules! storage_decimal {
           format,
         )
       }
+
+      /// The value whose coefficient is `magnitude`, or the error of a magnitude outside the
+      /// range of the type: the overflow of the sign of the float for `None`, a magnitude beyond
+      /// 512 bits, `NegOverflow` for a negative float that does not round to zero, and
+      /// `PosOverflow` above `MAX`.
+      const fn place_magnitude(
+        magnitude: Option<[u64; 8]>,
+        negative: bool,
+      ) -> Result<Self, FromFloatError> {
+        let magnitude = match magnitude {
+          Some(magnitude) => magnitude,
+          None if negative => return Err(FromFloatError::NegOverflow),
+          None => return Err(FromFloatError::PosOverflow),
+        };
+        // A negative float that rounds to zero converts to zero.
+        if int::unsigned::b64::is_zero(&magnitude) {
+          return Ok(Self::ZERO);
+        }
+        if negative {
+          return Err(FromFloatError::NegOverflow);
+        }
+        // Compared in eight limbs, before the narrowing to the storage, which truncates.
+        if !int::unsigned::b64::le(&magnitude, &int::unsigned::b64::max_magnitude(Self::DIGITS)) {
+          return Err(FromFloatError::PosOverflow);
+        }
+        Ok(Self::from_coeff(int::$repr::from_limbs(
+          int::unsigned::b64::resize(&magnitude),
+        )))
+      }
     }
 
     storage_decimal!(@shared $repr [$($by)*]);
@@ -1226,6 +1290,51 @@ macro_rules! storage_decimal {
       pub const fn to_f32(&self) -> f32 {
         // The bits of an `f32` are the low 32, its sign bit among them.
         f32::from_bits(Self::float_bits(self, int::float::FloatFormat::F32) as u32)
+      }
+
+      /// Converts the exact binary value of `value`, rounded once with `mode` to the fraction
+      /// digits of the type. `-0.0` converts to zero, and a negative value that rounds to zero
+      /// converts to zero.
+      ///
+      /// For interchange and display, not for arithmetic that must be exact.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`FromFloatError::Nan`](crate::FromFloatError::Nan) for NaN,
+      /// [`Infinite`](crate::FromFloatError::Infinite) for an infinity, and for a rounded value
+      /// outside the range of the type, [`PosOverflow`](crate::FromFloatError::PosOverflow) above
+      /// [`MAX`](Self::MAX) and [`NegOverflow`](crate::FromFloatError::NegOverflow) below
+      /// [`MIN`](Self::MIN), as every negative rounded value is for an unsigned storage.
+      #[inline]
+      pub const fn round_from_f64(value: f64, mode: RoundingMode) -> Result<Self, FromFloatError> {
+        match int::float::float_parts_f64(value) {
+          Ok(parts) => Self::place_magnitude(
+            float::round_coefficient(parts, Self::FRACTION, mode),
+            parts.negative,
+          ),
+          Err(error) => Err(error),
+        }
+      }
+
+      /// Converts the exact binary value of `value`, as [`round_from_f64`](Self::round_from_f64)
+      /// converts the `f64` of the same value, which every `f32` has.
+      ///
+      /// For interchange and display, not for arithmetic that must be exact.
+      ///
+      /// # Errors
+      ///
+      /// Returns the errors of `round_from_f64`.
+      #[inline]
+      pub const fn round_from_f32(value: f32, mode: RoundingMode) -> Result<Self, FromFloatError> {
+        // The parts of the `f32` itself, which name the value of its `f64` with a shorter
+        // significand.
+        match int::float::float_parts_f32(value) {
+          Ok(parts) => Self::place_magnitude(
+            float::round_coefficient(parts, Self::FRACTION, mode),
+            parts.negative,
+          ),
+          Err(error) => Err(error),
+        }
       }
     }
   };

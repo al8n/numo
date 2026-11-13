@@ -1,12 +1,15 @@
-//! The conversions of `Decimal` to `f64` and `f32`. The core of the float module is checked at
-//! every fraction count from 0 to 154 against the standard library's parsing of the text of the
-//! decimal; the decimals between adjacent floats, built in `num-bigint` from the parts of the
-//! lower float, against the rule of ties to even, over six ranges of `f32` and random `f64`s; the
-//! families of values where the rounding changes its case, the boundaries of the binades, the
-//! infinity of `f32`, its subnormal floats and its zeros; and the inherent `const fn`s of every
-//! storage against the parsed text of the decimal, and those of a type without fraction digits
-//! against the integers' own conversions. Every float is compared by its bits, so that `-0.0` and
-//! the infinities count.
+//! The conversions of `Decimal` with `f64` and `f32`. The core of the float module is checked at
+//! every fraction count from 0 to 154: the conversion to a float against the standard library's
+//! parsing of the text of the decimal, and the reading of the binary value of a float against the
+//! exact rational in `num-bigint`. The decimals between adjacent floats, built in `num-bigint` from
+//! the parts of the lower float, are checked against the rule of ties to even, over six ranges of
+//! `f32` and random `f64`s, over which an `f32` is also read as the `f64` of the same value; then
+//! the families of values where the rounding changes its case: the boundaries of the binades, the
+//! infinity of `f32`, its subnormal floats and its zeros, the tiny floats and the edge of the eight
+//! limbs; and the inherent `const fn`s of every storage, against the parsed text of the decimal
+//! and against the exact rational in every mode, those of a type without fraction digits against
+//! the integers' own conversions, the special values and the constant contexts. Every float is
+//! compared by its bits, so that `-0.0` and the infinities count.
 //!
 //! The checks are generic over the float, through `TestFloat` and the local trait [`Float`], and
 //! call the inherent functions of a decimal type through the pointers of [`Conversions`], which
@@ -16,7 +19,7 @@
 //! tier of the build sizes every sweep, and every random value comes from a generator with a seed
 //! written here, so that a failure replays.
 
-use core::{any::type_name, num::ParseFloatError, str::FromStr};
+use core::{any::type_name, f64::consts::LOG2_10, num::ParseFloatError, str::FromStr};
 use std::{
   collections::BTreeSet,
   format,
@@ -24,21 +27,23 @@ use std::{
   vec::Vec,
 };
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, Sign};
 use typenum::{
-  U0, U1, U2, U4, U5, U8, U9, U10, U18, U19, U25, U26, U39, U54, U58, U76, U77, U78, U96, U97,
-  U116, U135, U153, U154,
+  U0, U1, U2, U4, U5, U8, U9, U10, U17, U18, U19, U25, U26, U28, U38, U39, U40, U54, U58, U76, U77,
+  U78, U96, U97, U116, U135, U149, U153, U154,
 };
 
 use crate::{
-  Decimal, FixedDecimal,
+  Decimal, FixedDecimal, FromFloatError, RoundingMode,
   bigint::{
-    self, Tier,
-    floats::{TestFloat, Words, pow2, pow2_f32},
+    self, MODES, Tier,
+    floats::{self, TestFloat, Words, pow2, pow2_f32},
     tier,
   },
   decimal::float,
-  i192, i256, i320, i384, i448, i512, u192, u256, u320, u384, u448, u512,
+  i192, i256, i320, i384, i448, i512,
+  int::float::FloatParts,
+  u192, u256, u320, u384, u448, u512,
 };
 
 // One type of each storage, most of them at the digit limit of the storage, among them types
@@ -81,21 +86,45 @@ type Top = Decimal<U39, U0, i192>;
 type Wide = Decimal<U77, U76, i512>;
 
 /// What the checks need of a float beyond [`TestFloat`]: the standard library's parsing of a text,
-/// and the conversion of a decimal to this format through [`Conversions`].
+/// and the conversions of a decimal type with this format through [`Conversions`].
 trait Float: TestFloat + FromStr<Err = ParseFloatError> {
   /// The conversion of `value` to this format, through the inherent function of its type.
   fn of_decimal<T>(conversions: &Conversions<T>, value: &T) -> Self;
+
+  /// The reading of the binary value of `value` into `T` with `mode`, through the inherent
+  /// function of `T`.
+  fn round_into<T>(
+    conversions: &Conversions<T>,
+    value: Self,
+    mode: RoundingMode,
+  ) -> Result<T, FromFloatError>;
 }
 
 impl Float for f64 {
   fn of_decimal<T>(conversions: &Conversions<T>, value: &T) -> Self {
     (conversions.to_f64)(value)
   }
+
+  fn round_into<T>(
+    conversions: &Conversions<T>,
+    value: Self,
+    mode: RoundingMode,
+  ) -> Result<T, FromFloatError> {
+    (conversions.round_from_f64)(value, mode)
+  }
 }
 
 impl Float for f32 {
   fn of_decimal<T>(conversions: &Conversions<T>, value: &T) -> Self {
     (conversions.to_f32)(value)
+  }
+
+  fn round_into<T>(
+    conversions: &Conversions<T>,
+    value: Self,
+    mode: RoundingMode,
+  ) -> Result<T, FromFloatError> {
+    (conversions.round_from_f32)(value, mode)
   }
 }
 
@@ -104,6 +133,8 @@ impl Float for f32 {
 struct Conversions<T> {
   to_f64: fn(&T) -> f64,
   to_f32: fn(&T) -> f32,
+  round_from_f64: fn(f64, RoundingMode) -> Result<T, FromFloatError>,
+  round_from_f32: fn(f32, RoundingMode) -> Result<T, FromFloatError>,
 }
 
 /// The [`Conversions`] of the decimal type `$ty`: its inherent `const fn`s.
@@ -112,6 +143,8 @@ macro_rules! conversions {
     Conversions::<$ty> {
       to_f64: <$ty>::to_f64,
       to_f32: <$ty>::to_f32,
+      round_from_f64: <$ty>::round_from_f64,
+      round_from_f32: <$ty>::round_from_f32,
     }
   };
 }
@@ -664,4 +697,680 @@ fn decimals_without_fraction_digits_convert_as_their_integers() {
   integers_agree(&conversions!(Di320), |repr| (repr.to_f64(), repr.to_f32()));
   integers_agree(&conversions!(Du256), |repr| (repr.to_f64(), repr.to_f32()));
   integers_agree(&conversions!(Du512), |repr| (repr.to_f64(), repr.to_f32()));
+}
+
+/// The modes in which the readings of a float into each storage are checked: all eight; under
+/// Miri, two.
+fn modes() -> &'static [RoundingMode] {
+  if tier().is_miri() {
+    &[RoundingMode::HalfEven, RoundingMode::Up05]
+  } else {
+    &MODES
+  }
+}
+
+/// The value of `T` whose coefficient is `coefficient`, a float rounded with a mode, or the error
+/// of a coefficient outside the range of `T`: the overflow of its sign beyond `10^DIGITS - 1` in
+/// magnitude, and `NegOverflow` for a negative coefficient of an unsigned storage.
+fn in_type<T: FixedDecimal>(coefficient: &BigInt) -> Result<T, FromFloatError> {
+  let negative = coefficient.sign() == Sign::Minus;
+  let beyond = coefficient.magnitude() >= bigint::pow10(T::DIGITS).magnitude();
+  match (beyond || (negative && !T::SIGNED), negative) {
+    (false, _) => Ok(of_coefficient(coefficient)),
+    (true, true) => Err(FromFloatError::NegOverflow),
+    (true, false) => Err(FromFloatError::PosOverflow),
+  }
+}
+
+/// The coefficient of the exact binary value of `parts` at `fraction` fraction digits, rounded to
+/// an integer with `mode` in `num-bigint`: the quotient of
+/// `±significand * 10^fraction * 2^max(exponent, 0)` by `2^max(-exponent, 0)`.
+fn exact_coefficient(parts: FloatParts, fraction: u32, mode: RoundingMode) -> BigInt {
+  let mut value = BigInt::from(parts.significand) * bigint::pow10(fraction);
+  let mut divisor = BigInt::from(1u8);
+  if parts.exponent >= 0 {
+    value <<= parts.exponent.unsigned_abs();
+  } else {
+    divisor <<= parts.exponent.unsigned_abs();
+  }
+  if parts.negative {
+    value = -value;
+  }
+  bigint::round(&value, &divisor, mode)
+}
+
+/// What `round_from_f64` or `round_from_f32` of `x` with `mode` gives in `T`, from the exact
+/// rational: the error of NaN and of an infinity, and otherwise the rounded coefficient, or the
+/// error of the side of the range that it passes.
+fn rounded_binary<T: FixedDecimal, F: TestFloat>(
+  x: F,
+  mode: RoundingMode,
+) -> Result<T, FromFloatError> {
+  in_type(&exact_coefficient(x.parts()?, T::FRACTION, mode))
+}
+
+/// The floats at which `round_coefficient` is checked in the format of `F`: in the Debug tier, the
+/// 32 finite floats of `floats::samples` without a width or a random float, zero, its eleven seeds
+/// from `0.0001` to `6.5`, the smallest and the largest subnormal float, the smallest normal float
+/// and the largest float, each of either sign; in the Full tier, the finite floats of `samples` at
+/// the widths 1, 24, 53, 64, 128 and 511 with 32 random ones; under Miri, every eighth float of the
+/// Debug tier.
+fn core_floats<F: TestFloat>() -> Vec<F> {
+  let samples = if tier().is_full() {
+    floats::samples::<F>(&[1, 24, 53, 64, 128, 511], 32)
+  } else {
+    floats::samples::<F>(&[], 0)
+  };
+  // `samples` gives NaN and the infinities too, and the pattern after an infinity is a NaN.
+  let finite = samples.into_iter().filter(|x| x.parts().is_ok());
+  if tier().is_miri() {
+    finite.step_by(8).collect()
+  } else {
+    finite.collect()
+  }
+}
+
+/// Checks `round_coefficient` in the format of `F` at every fraction count against the magnitude
+/// of [`exact_coefficient`], or `None` where it has more than 512 bits, at each float of
+/// [`core_floats`]: in every mode in the Full tier, and otherwise in one mode taken in turn by the
+/// index of the float and the fraction count, so that over the counts every float meets every
+/// mode.
+#[inline(never)]
+fn core_rounds_the_exact_value<F: TestFloat>() {
+  let floats = core_floats::<F>();
+  for fraction in fraction_counts() {
+    for (index, &x) in floats.iter().enumerate() {
+      let parts = x.parts().expect("a finite float");
+      let turn = [MODES[(index + fraction as usize) % MODES.len()]];
+      let chosen: &[RoundingMode] = if tier().is_full() { &MODES } else { &turn };
+      for &mode in chosen {
+        let exact = BigInt::from(exact_coefficient(parts, fraction, mode).magnitude().clone());
+        assert_eq!(
+          float::round_coefficient(parts, fraction, mode),
+          bigint::to_limbs::<8>(&exact, false),
+          "{:#x} at {fraction} fraction digits, {mode}",
+          x.to_raw()
+        );
+      }
+    }
+  }
+}
+
+/// `round_coefficient`, the core of `round_from_f64` and `round_from_f32`, rounds the exact binary
+/// value of a float times `10^fraction` once, as the rational in `num-bigint` does, at every
+/// fraction count and in both formats, and reports a magnitude beyond 512 bits.
+#[test]
+fn the_core_rounds_the_exact_value_at_every_fraction_count() {
+  core_rounds_the_exact_value::<f64>();
+  core_rounds_the_exact_value::<f32>();
+}
+
+/// Checks that `round_from_f32` of each float of `floats` gives in `T` what `round_from_f64`
+/// gives for the `f64` of the same value, in one mode taken in turn.
+#[inline(never)]
+fn f32_reads_as_its_f64<T: FixedDecimal>(floats: &[f32], conversions: &Conversions<T>) {
+  for (index, &x) in floats.iter().enumerate() {
+    let mode = MODES[index % MODES.len()];
+    assert_eq!(
+      (conversions.round_from_f32)(x, mode),
+      (conversions.round_from_f64)(f64::from(x), mode),
+      "{:#x}, {mode} into {}",
+      x.to_bits(),
+      type_name::<T>()
+    );
+  }
+}
+
+/// `round_from_f32` gives what `round_from_f64` gives for the `f64` of the same value, over the
+/// six ranges of `f32`, in the types that hold their midpoints: the parts of an `f32` and of its
+/// `f64` differ, a shorter significand at a higher exponent, but name the same number.
+#[test]
+fn an_f32_rounds_as_the_f64_of_the_same_value() {
+  let ranges = ranges();
+  f32_reads_as_its_f64(&ranges.below_one, &conversions!(BelowOne));
+  f32_reads_as_its_f64(&ranges.around_one, &conversions!(AroundOne));
+  f32_reads_as_its_f64(&ranges.above_one, &conversions!(AboveOne));
+  f32_reads_as_its_f64(&ranges.top, &conversions!(Top));
+}
+
+/// The smallest and the largest subnormal float and the smallest normal one of the format of `F`,
+/// of either sign.
+fn tiny_floats<F: TestFloat>() -> [F; 6] {
+  // The bits of the fraction, which the largest subnormal float sets.
+  let fraction = (1u64 << (F::FORMAT.precision() - 1)) - 1;
+  let [smallest, largest, normal] = [1, fraction, fraction + 1].map(F::from_raw);
+  [
+    smallest,
+    largest,
+    normal,
+    smallest.negate(),
+    largest.negate(),
+    normal.negate(),
+  ]
+}
+
+/// Checks the reading of the binary value of each tiny float of `F` into `T`, in every mode,
+/// against the exact rational and the range of `T`.
+#[inline(never)]
+fn tiny_floats_read<F: Float, T: FixedDecimal>(conversions: &Conversions<T>) {
+  for x in tiny_floats::<F>() {
+    for mode in MODES {
+      assert_eq!(
+        F::round_into(conversions, x, mode),
+        rounded_binary::<T, F>(x, mode),
+        "{:#x}, {mode} into {}",
+        x.to_raw(),
+        type_name::<T>()
+      );
+    }
+  }
+}
+
+/// Checks `round_from_f64` and `round_from_f32` into `T` at the tiny floats of each format.
+#[inline(never)]
+fn tiny_floats_round<T: FixedDecimal>(conversions: &Conversions<T>) {
+  tiny_floats_read::<f64, T>(conversions);
+  tiny_floats_read::<f32, T>(conversions);
+}
+
+/// What a float below half a unit of the last digit of `T` gives with `mode`: zero, or one unit
+/// with the sign of the float where `mode` rounds it away from zero, which is `NegOverflow` below
+/// zero for an unsigned storage.
+fn zero_or_one_unit<T: FixedDecimal>(
+  negative: bool,
+  mode: RoundingMode,
+) -> Result<T, FromFloatError> {
+  let away = match mode {
+    RoundingMode::Up | RoundingMode::Up05 => true,
+    RoundingMode::Ceiling => !negative,
+    RoundingMode::Floor => negative,
+    _ => false,
+  };
+  match (away, negative) {
+    (false, _) => Ok(T::zero()),
+    (true, false) => Ok(of_coefficient(&BigInt::from(1u8))),
+    (true, true) if T::SIGNED => Ok(of_coefficient(&BigInt::from(-1i8))),
+    (true, true) => Err(FromFloatError::NegOverflow),
+  }
+}
+
+/// The smallest and the largest subnormal float and the smallest normal one of each format and
+/// each sign round as the exact rational does, in every mode: in two types with eight and two
+/// fraction digits, where each is below half a unit and gives zero, or one unit with the sign of
+/// the float under `Up`, `Up05`, `Ceiling` of a positive float and `Floor` of a negative one,
+/// which is `NegOverflow` for the unsigned type; in a type with 38 fraction digits, which reads
+/// the larger subnormal `f32`s like any other value; and in two with 149 and 154 fraction digits,
+/// the first of which holds the smallest `f32` exactly, so that it reads as itself in every mode.
+#[test]
+fn tiny_floats_round_to_zero_or_to_one_unit() {
+  type Cents = Decimal<U10, U2, u64>;
+  type Subnormal = Decimal<U0, U149, u512>;
+  tiny_floats_round(&conversions!(Di64));
+  tiny_floats_round(&conversions!(Cents));
+  tiny_floats_round(&conversions!(Decimal<U0, U38>));
+  tiny_floats_round(&conversions!(Subnormal));
+  tiny_floats_round(&conversions!(D0x154));
+  for mode in MODES {
+    for x in tiny_floats::<f64>() {
+      let negative = x.is_sign_negative();
+      let (signed, unsigned) = (
+        Di64::round_from_f64(x, mode),
+        Cents::round_from_f64(x, mode),
+      );
+      assert_eq!(
+        signed,
+        zero_or_one_unit::<Di64>(negative, mode),
+        "{x:e}, {mode}"
+      );
+      assert_eq!(
+        unsigned,
+        zero_or_one_unit::<Cents>(negative, mode),
+        "{x:e}, {mode}"
+      );
+    }
+    for x in tiny_floats::<f32>() {
+      let negative = x.is_sign_negative();
+      let (signed, unsigned) = (
+        Di64::round_from_f32(x, mode),
+        Cents::round_from_f32(x, mode),
+      );
+      assert_eq!(
+        signed,
+        zero_or_one_unit::<Di64>(negative, mode),
+        "{x:e}, {mode}"
+      );
+      assert_eq!(
+        unsigned,
+        zero_or_one_unit::<Cents>(negative, mode),
+        "{x:e}, {mode}"
+      );
+    }
+    let smallest: Subnormal = of_coefficient(&power_of_two(-149, 149));
+    assert_eq!(
+      Subnormal::round_from_f32(f32::from_bits(1), mode),
+      Ok(smallest),
+      "{mode}"
+    );
+  }
+}
+
+/// Checks that `round_coefficient` gives the coefficient of `2^exponent` in the format of `F` at
+/// `fraction` fraction digits, which has exactly 512 bits, and `None` for `2^(exponent + 1)`, in
+/// every mode.
+fn the_edge_of_the_limbs<F: Float>(fraction: u32, exponent: i32) {
+  let at = F::narrow(pow2(exponent)).parts().expect("a finite float");
+  let past = F::narrow(pow2(exponent + 1))
+    .parts()
+    .expect("a finite float");
+  let coefficient = power_of_two(exponent, fraction);
+  assert_eq!(
+    coefficient.bits(),
+    512,
+    "2^{exponent} at {fraction} fraction digits"
+  );
+  let limbs = bigint::to_limbs::<8>(&coefficient, false);
+  for mode in MODES {
+    assert_eq!(
+      float::round_coefficient(at, fraction, mode),
+      limbs,
+      "2^{exponent} at {fraction} fraction digits, {mode}, {}",
+      type_name::<F>()
+    );
+    assert_eq!(
+      float::round_coefficient(past, fraction, mode),
+      None,
+      "2^{} at {fraction} fraction digits, {mode}, {}",
+      exponent + 1,
+      type_name::<F>()
+    );
+  }
+}
+
+/// The coefficient of the float `2^k` at `F` fraction digits, `5^F * 2^(F + k)`, has
+/// `k + F + bits(5^F)` bits: `round_coefficient` gives it where that is 512, and `None` one power
+/// of two above, in every mode, at no fraction digits and at 77, which only an `f64` reaches, and
+/// at 116 and 154, which both formats reach. Through the API, the widest type holds `2^511` and
+/// not `2^512`, and one is beyond the range of 154 fraction digits by the comparison with the
+/// largest coefficient, within the 512 bits.
+#[test]
+fn floats_at_the_edge_of_the_scratch_overflow() {
+  for (fraction, exponent) in [(0u32, 511i32), (77, 256), (116, 126), (154, 0)] {
+    let power_bits = BigInt::from(5u8).pow(fraction).bits();
+    assert_eq!(
+      i64::from(exponent),
+      512 - i64::from(fraction) - power_bits as i64,
+      "{fraction} fraction digits"
+    );
+    the_edge_of_the_limbs::<f64>(fraction, exponent);
+    if exponent < 127 {
+      the_edge_of_the_limbs::<f32>(fraction, exponent);
+    }
+  }
+  let power: Du512 = of_coefficient(&(BigInt::from(1u8) << 511u32));
+  for mode in MODES {
+    assert_eq!(Du512::round_from_f64(pow2(511), mode), Ok(power), "{mode}");
+    for (x, error) in [
+      (pow2(512), FromFloatError::PosOverflow),
+      (-pow2(512), FromFloatError::NegOverflow),
+    ] {
+      assert_eq!(Du512::round_from_f64(x, mode), Err(error), "{x:e}, {mode}");
+    }
+    assert_eq!(
+      D0x154::round_from_f64(1.0, mode),
+      Err(FromFloatError::PosOverflow),
+      "{mode}"
+    );
+    assert_eq!(
+      D0x154::round_from_f32(1.0, mode),
+      Err(FromFloatError::PosOverflow),
+      "{mode}"
+    );
+  }
+}
+
+/// The floats of `F` at which the readings of a float into `T` are checked: the float nearest to
+/// `MAX` and the two beside it, and those of `MIN` for a signed storage; the halves of the type,
+/// `2^-(Fraction + 1)` times 1, 3 and 5, of either sign, where `F` holds them, which lie halfway
+/// between two values of the type; zero and `-0.0`; and random floats of either sign, from two
+/// decimal digits below one unit of the last digit to one digit above `MAX`, as far as the format
+/// reaches; of all of which the finite ones, 300 in the Full tier and 30 in the Debug tier; under
+/// Miri, the first four.
+fn storage_floats<F: Float, T: FixedDecimal>(words: &mut Words) -> Vec<F> {
+  let mut floats = Vec::new();
+  let mut limits = Vec::from([T::max_value()]);
+  if T::SIGNED {
+    limits.push(T::min_value());
+  }
+  for limit in limits {
+    let nearest: F = limit.to_string().parse().expect("a float");
+    let raw = nearest.to_raw();
+    floats.extend([F::from_raw(raw - 1), nearest, F::from_raw(raw + 1)]);
+  }
+  let half = pow2(-(T::FRACTION as i32) - 1);
+  for multiple in [1.0, 3.0, 5.0] {
+    for value in [half * multiple, -half * multiple] {
+      let x = F::narrow(value);
+      if x.wide().to_bits() == value.to_bits() {
+        floats.push(x);
+      }
+    }
+  }
+  floats.extend([F::narrow(0.0), F::narrow(-0.0)]);
+  floats.retain(|x| x.parts().is_ok());
+  // The binary exponents from `10^-(Fraction + 2)` to `10^(Integral + 1)`, within the format.
+  let max_exponent = (1i32 << (F::FORMAT.exponent_bits() - 1)) - 1;
+  let low = ((-f64::from(T::FRACTION) - 2.0) * LOG2_10).floor() as i32;
+  let high = ((f64::from(T::INTEGRAL) + 1.0) * LOG2_10).ceil() as i32;
+  let (low, high) = (low.max(F::MIN_EXPONENT), high.min(max_exponent));
+  let count = if tier().is_full() { 300 } else { 30 };
+  while floats.len() < count {
+    let exponent = low + (words.next() % (high - low + 1) as u64) as i32;
+    let magnitude = (1.0 + (words.next() >> 12) as f64 * pow2(-52)) * pow2(exponent);
+    let x = F::narrow(if words.next() & 1 == 1 {
+      -magnitude
+    } else {
+      magnitude
+    });
+    if x.parts().is_ok() {
+      floats.push(x);
+    }
+  }
+  if tier().is_miri() {
+    floats.truncate(4);
+  }
+  floats
+}
+
+/// Checks the reading of the binary value of each float of [`storage_floats`] of `F` into `T`, in
+/// each mode, against the exact rational and the range of `T`.
+#[inline(never)]
+fn binary_readings<F: Float, T: FixedDecimal>(conversions: &Conversions<T>, words: &mut Words) {
+  for x in storage_floats::<F, T>(words) {
+    for &mode in modes() {
+      assert_eq!(
+        F::round_into(conversions, x, mode),
+        rounded_binary::<T, F>(x, mode),
+        "{:#x}, {mode} into {}",
+        x.to_raw(),
+        type_name::<T>()
+      );
+    }
+  }
+}
+
+/// Checks `round_from_f64` and `round_from_f32` into `T` at the floats of [`storage_floats`] of
+/// each format, and at the largest `f64` of either sign, beyond every range.
+#[inline(never)]
+fn binary_readings_round<T: FixedDecimal>(conversions: &Conversions<T>) {
+  let mut words = Words::new(seed::<T>(0x5eed_b1a7));
+  binary_readings::<f64, T>(conversions, &mut words);
+  binary_readings::<f32, T>(conversions, &mut words);
+  for &mode in modes() {
+    for (x, error) in [
+      (f64::MAX, FromFloatError::PosOverflow),
+      (-f64::MAX, FromFloatError::NegOverflow),
+    ] {
+      assert_eq!(
+        (conversions.round_from_f64)(x, mode),
+        Err(error),
+        "{x:e}, {mode} into {}",
+        type_name::<T>()
+      );
+    }
+  }
+}
+
+/// The table of the docs of `RoundingMode`: each value, and the integer to which it rounds in each
+/// mode, in the order of `MODES`.
+const MODE_TABLE: [(f64, [i8; 8]); 12] = [
+  (5.5, [6, 5, 6, 5, 6, 5, 6, 6]),
+  (2.5, [3, 2, 3, 2, 3, 2, 2, 2]),
+  (1.6, [2, 1, 2, 1, 2, 2, 2, 1]),
+  (1.1, [2, 1, 2, 1, 1, 1, 1, 1]),
+  (1.0, [1, 1, 1, 1, 1, 1, 1, 1]),
+  (0.1, [1, 0, 1, 0, 0, 0, 0, 1]),
+  (-0.1, [-1, 0, 0, -1, 0, 0, 0, -1]),
+  (-1.0, [-1, -1, -1, -1, -1, -1, -1, -1]),
+  (-1.1, [-2, -1, -1, -2, -1, -1, -1, -1]),
+  (-1.6, [-2, -1, -1, -2, -2, -2, -2, -1]),
+  (-2.5, [-3, -2, -2, -3, -3, -2, -2, -2]),
+  (-5.5, [-6, -5, -5, -6, -6, -5, -6, -6]),
+];
+
+/// Checks that `read`, a reading of a float into a type of one integral digit and none of
+/// fraction, gives each cell of the table of the docs of `RoundingMode`, and that `read_two`, into
+/// two integral digits, rounds `0.5` and `-0.5` in each mode as that table rounds a half.
+fn rounding_mode_table(
+  read: fn(f64, RoundingMode) -> Result<Decimal<U1, U0>, FromFloatError>,
+  read_two: fn(f64, RoundingMode) -> Result<Decimal<U2, U0>, FromFloatError>,
+) {
+  for (x, results) in MODE_TABLE {
+    for (mode, result) in MODES.into_iter().zip(results) {
+      let expected = of_coefficient::<Decimal<U1, U0>>(&BigInt::from(result));
+      assert_eq!(read(x, mode), Ok(expected), "{x}, {mode}");
+    }
+  }
+  let halves: [(f64, [i8; 8]); 2] = [
+    (0.5, [1, 0, 1, 0, 1, 0, 0, 1]),
+    (-0.5, [-1, 0, 0, -1, -1, 0, 0, -1]),
+  ];
+  for (x, results) in halves {
+    for (mode, result) in MODES.into_iter().zip(results) {
+      let expected = of_coefficient::<Decimal<U2, U0>>(&BigInt::from(result));
+      assert_eq!(read_two(x, mode), Ok(expected), "{x}, {mode}");
+    }
+  }
+}
+
+/// `round_from_f64` and `round_from_f32` of one type of each storage round the exact binary value
+/// of a float once with each mode, as the rational in `num-bigint` does, and report a value
+/// outside the range on the side of its sign: at the floats next to the limits, the halves of the
+/// type, zero, `-0.0` and random floats, and at the largest `f64`; under Miri, of a signed native,
+/// an unsigned native and a wide storage, at four floats in two modes. And the literals: the
+/// binary value of `0.1_f64` to 28 fraction digits and of `0.1_f32` in every mode, which holds it
+/// exactly, `2.675` of each format, which is below 2.675, the largest `f32` in every mode, and the
+/// table of the docs of `RoundingMode`.
+#[test]
+fn floats_round_into_every_storage_in_every_mode() {
+  type Fine = Decimal<U10, U28>;
+  type Cents = Decimal<U10, U2>;
+  assert_eq!(
+    Fine::round_from_f64(0.1, RoundingMode::HalfEven),
+    Ok(value("0.1000000000000000055511151231"))
+  );
+  for mode in MODES {
+    assert_eq!(
+      Fine::round_from_f32(0.1, mode),
+      Ok(value("0.100000001490116119384765625")),
+      "{mode}"
+    );
+    assert_eq!(
+      Top::round_from_f32(f32::MAX, mode),
+      Ok(value("340282346638528859811704183484516925440")),
+      "{mode}"
+    );
+  }
+  assert_eq!(
+    Cents::round_from_f64(2.675, RoundingMode::HalfUp),
+    Ok(value("2.67"))
+  );
+  assert_eq!(
+    Cents::round_from_f32(2.675, RoundingMode::HalfUp),
+    Ok(value("2.67"))
+  );
+  rounding_mode_table(
+    Decimal::<U1, U0>::round_from_f64,
+    Decimal::<U2, U0>::round_from_f64,
+  );
+
+  for_each_type!(binary_readings_round: Di8, Du64, Di256);
+  if tier().is_miri() {
+    return;
+  }
+  for_each_type!(binary_readings_round:
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512,
+  );
+  for_each_type!(binary_readings_round:
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154,
+  );
+}
+
+/// Checks the special values in `T`, a type of ten integral digits and at most eight fraction
+/// digits, through `read`, a reading of the floats of `F` into `T`: NaN is `Nan` and each infinity
+/// `Infinite`, zero and `-0.0` are zero, the smallest positive float of either sign, below half a
+/// unit of the last digit, is zero or one unit, and `10^10` of either sign, beyond `MAX`, is the
+/// overflow of its sign, in every mode; and for an unsigned storage, `-0.001` rounds to zero with
+/// `HalfEven`, and `-0.5` is below the range.
+#[inline(never)]
+fn special_values<F: Float, T: FixedDecimal>(
+  read: fn(F, RoundingMode) -> Result<T, FromFloatError>,
+) {
+  let name = type_name::<T>();
+  for mode in MODES {
+    assert_eq!(
+      read(F::NAN, mode),
+      Err(FromFloatError::Nan),
+      "NaN, {mode} into {name}"
+    );
+    for infinity in [f64::INFINITY, f64::NEG_INFINITY] {
+      assert_eq!(
+        read(F::narrow(infinity), mode),
+        Err(FromFloatError::Infinite),
+        "{infinity}, {mode} into {name}"
+      );
+    }
+    for zero in [0.0, -0.0] {
+      assert_eq!(
+        read(F::narrow(zero), mode),
+        Ok(T::zero()),
+        "{zero:?}, {mode} into {name}"
+      );
+    }
+    let smallest = F::from_raw(1);
+    for (x, negative) in [(smallest, false), (smallest.negate(), true)] {
+      assert_eq!(
+        read(x, mode),
+        zero_or_one_unit::<T>(negative, mode),
+        "{:#x}, {mode} into {name}",
+        x.to_raw()
+      );
+    }
+    for (x, error) in [
+      (1e10, FromFloatError::PosOverflow),
+      (-1e10, FromFloatError::NegOverflow),
+    ] {
+      assert_eq!(
+        read(F::narrow(x), mode),
+        Err(error),
+        "{x:e}, {mode} into {name}"
+      );
+    }
+  }
+  if !T::SIGNED {
+    assert_eq!(
+      read(F::narrow(-0.001), RoundingMode::HalfEven),
+      Ok(T::zero()),
+      "-0.001 into {name}"
+    );
+    assert_eq!(
+      read(F::narrow(-0.5), RoundingMode::HalfEven),
+      Err(FromFloatError::NegOverflow),
+      "-0.5 into {name}"
+    );
+  }
+}
+
+/// NaN is `Nan` and each infinity `Infinite`, `-0.0` is zero, a value below half a unit of the
+/// last digit is zero or one unit, a value beyond the range is the overflow of its sign, and a
+/// negative value is zero in an unsigned storage if it rounds to zero, and `NegOverflow`
+/// otherwise: through the readings of the binary value of both formats, for a signed and an
+/// unsigned type. Zero converts to `+0.0`, and the largest `f32` is beyond 38 integral digits.
+#[test]
+fn nan_and_the_infinities_are_errors_and_negative_zero_is_zero() {
+  type Unsigned = Decimal<U10, U2, u64>;
+  special_values::<f64, Di64>(Di64::round_from_f64);
+  special_values::<f32, Di64>(Di64::round_from_f32);
+  special_values::<f64, Unsigned>(Unsigned::round_from_f64);
+  special_values::<f32, Unsigned>(Unsigned::round_from_f32);
+  assert_eq!(
+    (Di64::ZERO.to_f64().to_bits(), Di64::ZERO.to_f32().to_bits()),
+    (0, 0)
+  );
+  assert_eq!(
+    (
+      Unsigned::ZERO.to_f64().to_bits(),
+      Unsigned::ZERO.to_f32().to_bits()
+    ),
+    (0, 0)
+  );
+  for mode in MODES {
+    assert_eq!(
+      Decimal::<U38, U0>::round_from_f32(f32::MAX, mode),
+      Err(FromFloatError::PosOverflow),
+      "{mode}"
+    );
+  }
+}
+
+/// The conversions to a float and the readings of the binary value of a float are `const fn`s:
+/// they evaluate in `const` items, for a native and a wide storage of each sign.
+#[test]
+fn conversions_in_constant_contexts() {
+  type Fee = Decimal<U10, U2, u64>;
+  type Large = Decimal<U40, U17, i192>;
+  type Amount = Decimal<U39, U18, u192>;
+  const fn price(text: &str) -> Di64 {
+    match Di64::parse(text) {
+      Ok(price) => price,
+      Err(_) => panic!("a price"),
+    }
+  }
+  const fn large(text: &str) -> Large {
+    match Large::parse(text) {
+      Ok(large) => large,
+      Err(_) => panic!("a large value"),
+    }
+  }
+  const PRICE: Di64 = price("-64250.5");
+  const TO: (f64, f32, f64, f32) = (
+    PRICE.to_f64(),
+    PRICE.to_f32(),
+    large("-0.1").to_f64(),
+    Amount::MAX.to_f32(),
+  );
+  const FROM: [Result<Di64, FromFloatError>; 2] = [
+    Di64::round_from_f64(0.1, RoundingMode::HalfEven),
+    Di64::round_from_f32(f32::NAN, RoundingMode::Down),
+  ];
+  const FROM_UNSIGNED: [Result<Fee, FromFloatError>; 2] = [
+    Fee::round_from_f64(2.675, RoundingMode::HalfUp),
+    Fee::round_from_f32(-1.0, RoundingMode::Up),
+  ];
+  const FROM_WIDE: (
+    Result<Large, FromFloatError>,
+    Result<Amount, FromFloatError>,
+  ) = (
+    Large::round_from_f64(-2.5, RoundingMode::HalfEven),
+    Amount::round_from_f32(0.75, RoundingMode::Down),
+  );
+  assert_eq!(
+    (
+      TO.0.to_bits(),
+      TO.1.to_bits(),
+      TO.2.to_bits(),
+      TO.3.to_bits()
+    ),
+    (
+      (-64250.5f64).to_bits(),
+      (-64250.5f32).to_bits(),
+      (-0.1f64).to_bits(),
+      f32::INFINITY.to_bits()
+    )
+  );
+  assert_eq!(FROM, [Ok(price("0.1")), Err(FromFloatError::Nan)]);
+  assert_eq!(
+    FROM_UNSIGNED,
+    [Ok(value("2.67")), Err(FromFloatError::NegOverflow)]
+  );
+  assert_eq!(FROM_WIDE, (Ok(large("-2.5")), Ok(value("0.75"))));
 }

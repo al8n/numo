@@ -2,9 +2,19 @@
 //! computes those of the integers. A decimal is `c / 10^Fraction`, which is
 //! `c / 5^Fraction * 2^-Fraction`: `float_bits` divides the magnitude of the coefficient by the
 //! power of five in eight limbs, which hold every coefficient, and rounds the quotient once, to
-//! the bits of the nearest float.
+//! the bits of the nearest float. `round_coefficient` reads a float the other way: its value times
+//! `10^Fraction` is `significand * 5^Fraction * 2^(exponent + Fraction)`, a product shifted by a
+//! power of two, which it rounds once to the magnitude of a coefficient.
 
-use crate::int::{float::FloatFormat, unsigned::b64};
+use core::cmp::Ordering;
+
+use crate::{
+  int::{
+    float::{FloatFormat, FloatParts},
+    unsigned::b64,
+  },
+  rounding::{self, RoundingMode},
+};
 
 /// The number of bits of `value`, the index of its highest one plus one, or zero for zero.
 const fn bit_length(value: &[u64; 8]) -> u32 {
@@ -107,4 +117,80 @@ pub(super) const fn float_bits<const N: usize>(
     0
   };
   sign | ((biased << (precision - 1)) + kept + up as u64)
+}
+
+/// The magnitude of the value of `parts` times `10^fraction`, rounded to an integer with `mode` as
+/// `rounding::increments` rounds a quotient, or `None` if it has more than 512 bits.
+pub(super) const fn round_coefficient(
+  parts: FloatParts,
+  fraction: u32,
+  mode: RoundingMode,
+) -> Option<[u64; 8]> {
+  let FloatParts {
+    negative,
+    significand,
+    exponent,
+    precision,
+  } = parts;
+  // The value times `10^fraction` is `significand * 5^fraction * 2^(exponent + fraction)`.
+  let (power, _) = b64::overflowing_pow(&b64::from_u64(5), fraction);
+  let product = b64::mul(&b64::from_u64(significand), &power);
+  let length = bit_length(&product);
+  // The significand is below `2^precision` and `5^154` below `2^358`: below `2^411` for an `f64`
+  // and `2^382` for an `f32`.
+  debug_assert!(
+    length <= precision + 358,
+    "the product of the significand and the power of five passes its bound"
+  );
+  // The exponent reaches -1074 below zero, so the shift is signed.
+  let shift = exponent + fraction as i32;
+  if shift >= 0 {
+    // An integer, and exact. It is checked before the shift, which would cut a longer one without
+    // a word, and then find a small magnitude in range.
+    let shift = shift as u32;
+    if length + shift > 512 {
+      return None;
+    }
+    return Some(b64::shift_left(&product, shift));
+  }
+  let dropped = shift.unsigned_abs();
+  let (quotient, remainder_is_zero, half) = if dropped > length {
+    // The product is below `2^length <= 2^(dropped - 1)`, half of the divisor, so the quotient is
+    // zero and the remainder, the product itself, is below half. The bit below the quotient would
+    // lie above the product, beyond the limbs from 513 dropped bits on.
+    ([0; 8], b64::is_zero(&product), Ordering::Less)
+  } else {
+    // `dropped <= length <= 411`, so every bit that is read is inside the limbs.
+    let guard = dropped - 1;
+    let guard_set = (b64::word(&product, (guard / 64) as usize) >> (guard % 64)) & 1 == 1;
+    let lower_set = match b64::lowest_one(&product) {
+      Some(lowest) => lowest < guard,
+      None => false,
+    };
+    let half = match (guard_set, lower_set) {
+      (false, _) => Ordering::Less,
+      (true, false) => Ordering::Equal,
+      (true, true) => Ordering::Greater,
+    };
+    (
+      b64::shift_right(&product, dropped),
+      !guard_set && !lower_set,
+      half,
+    )
+  };
+  let away = rounding::increments(
+    mode,
+    negative,
+    remainder_is_zero,
+    half,
+    b64::word(&quotient, 0) & 1 == 1,
+    // Only `Up05` reads the last decimal digit, which a quotient of zero has: zero ends in 0.
+    matches!(mode, RoundingMode::Up05) && b64::div_rem_limb(&quotient, 5).1 == 0,
+  );
+  // The quotient is below `2^411`, so one more does not carry out of the limbs.
+  if away {
+    Some(b64::overflowing_add(&quotient, &b64::one()).0)
+  } else {
+    Some(quotient)
+  }
 }
