@@ -10,6 +10,8 @@
 //! storages of a build join: those in `tests/ui/inline` need a build without the `std`, the `alloc`
 //! and the `triomphe` features, as `--no-default-features` gives, and those in `tests/ui/heap` one
 //! with `std` or `alloc` and without `triomphe`. A build with `triomphe` takes neither.
+//! `tests/ui/heap` also holds the cases that implement a trait whose items the `std` or the `alloc`
+//! feature adds, which need those items to print one error.
 
 use std::process::Command;
 

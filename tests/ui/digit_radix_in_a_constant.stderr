@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: checked_from_radix_be: radix must lie in the range `[2, 256]`
+ --> tests/ui/digit_radix_in_a_constant.rs:4:28
+  |
+4 | const DIGITS: Option<u7> = u7::checked_from_radix_be(&[1], 257);
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `DIGITS` failed here

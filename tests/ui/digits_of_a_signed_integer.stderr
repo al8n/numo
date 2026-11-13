@@ -1,0 +1,20 @@
+error[E0277]: the digits in a base are those of an unsigned integer
+ --> tests/ui/digits_of_a_signed_integer.rs:9:18
+  |
+9 |   let _ = digits(&i7::new(-5));
+  |           ------ ^^^^^^^^^^^^ not a `Uint`
+  |           |
+  |           required by a bound introduced by this call
+  |
+  = help: the trait `UnsignedDigits` is not implemented for `numo::Int<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, i8>`
+  = note: an `Int` gives the digits of its magnitude through `unsigned_abs`, and those of its bits through `cast_unsigned`
+help: the trait `UnsignedDigits` is implemented for `Uint<B, R>`
+ --> src/integer/digits/mod.rs
+  |
+  | impl<B: FitsBits<R>, R: UintRepr> UnsignedDigits for Uint<B, R> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `digits`
+ --> tests/ui/digits_of_a_signed_integer.rs:4:14
+  |
+4 | fn digits<T: UnsignedDigits>(value: &T) -> Vec<u64> {
+  |              ^^^^^^^^^^^^^^ required by this bound in `digits`
