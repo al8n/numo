@@ -194,8 +194,9 @@ pub(super) const fn reject(kind: ParseErrorKind) -> ! {
 ///
 /// # Cost
 ///
-/// For the compiler, each literal is a type, an impl and one evaluation of `parse`. A table of
-/// thousands of values is better written as one text that is parsed once.
+/// For the compiler, each literal is a type, an impl and one evaluation of `parse`, and a literal
+/// with `as Type` is two of each. A table of thousands of values is better written as one text that
+/// is parsed once.
 #[macro_export]
 macro_rules! dec {
   (- $literal:literal $(as $ty:ty)?) => {
@@ -214,13 +215,16 @@ macro_rules! dec {
     <_ as $crate::__private::DecimalLiteral<__Literal>>::VALUE
   }};
   (@text $text:expr, $ty:ty) => {{
-    struct __Literal;
-    impl $crate::__private::LiteralText for __Literal {
-      const TEXT: &'static str = $text;
+    // The items of an expansion are not hygienic, so the type is named only out here, where no
+    // named item of the expansion is in scope: inside the inner blocks, a caller's `__Literal`
+    // would be the expansion's. A constant item is evaluated when the code is checked, where a
+    // constant that a function body names waits until the code of the function is generated:
+    // this is what `as Type` is for. The value comes from a struct expression and not from a
+    // call, which keeps a borrow of it promotable to `&'static`.
+    const _: $ty = $crate::dec!(@text $text);
+    $crate::__private::Typed::<$ty> {
+      value: $crate::dec!(@text $text),
     }
-    // A constant item is evaluated when the code is checked, where a constant that a function
-    // body names waits until the code of the function is generated: this is what `as Type` is for.
-    const __VALUE: $ty = <$ty as $crate::__private::DecimalLiteral<__Literal>>::VALUE;
-    __VALUE
+    .value
   }};
 }

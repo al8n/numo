@@ -573,4 +573,11 @@ pub mod __private {
   pub use core::{concat, stringify};
 
   pub use crate::decimal::{DecimalLiteral, LiteralText};
+
+  /// A value of type `T`. The expansion of `dec!` with `as Type` gives its value the type through
+  /// this struct, outside the block whose items would shadow a name in the type.
+  pub struct Typed<T> {
+    /// The value.
+    pub value: T,
+  }
 }

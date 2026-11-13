@@ -166,6 +166,37 @@ fn a_named_type_and_constant_functions() {
   assert_eq!(CENTS, parse::<Decimal<U2, U2, u16>>("12.34"));
   assert_eq!(QUOTED.to_string(), "1.50");
   assert_eq!(Price::tenth(), parse::<Price>("0.1"));
+  let promoted: &'static Price = &dec!(0.5 as Price);
+  assert_eq!(*promoted, HALF);
+}
+
+/// A type whose name in the test holds a constant.
+trait Pick {
+  type Type;
+}
+
+impl Pick for [u8; 2] {
+  type Type = Price;
+}
+
+/// The type after `as` resolves where the macro is called, even when it names `__Literal`, the
+/// name of a type that the expansion defines.
+#[test]
+fn a_type_after_as_named_like_the_literal_of_the_expansion() {
+  type __Literal = Price;
+  const LITERAL: Price = dec!(1.50 as __Literal);
+  const _: () = assert!(LITERAL.repr() == 150_000_000);
+  assert_eq!(LITERAL, parse::<Price>("1.50"));
+}
+
+/// The type after `as` resolves where the macro is called, even when a constant argument of it
+/// names `__VALUE`.
+#[test]
+fn a_type_after_as_with_a_constant_named_like_a_constant_of_the_expansion() {
+  const __VALUE: usize = 2;
+  const PICKED: Price = dec!(1.50 as <[u8; __VALUE] as Pick>::Type);
+  const _: () = assert!(PICKED.repr() == 150_000_000);
+  assert_eq!(PICKED, parse::<Price>("1.50"));
 }
 
 struct Holder {
