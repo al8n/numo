@@ -474,10 +474,10 @@ fn methods_in_constant_contexts() {
   };
   const AMOUNT_PARTS: [Amount; 2] = [AMOUNT.trunc(), AMOUNT.fract()];
   const AMOUNT_ROUNDED: [Result<Amount, ConvertError>; 2] = [AMOUNT.floor(), AMOUNT.ceil()];
-  const AMOUNT_INTEGER: bool = AMOUNT.is_integer();
+  const AMOUNT_INTEGERS: [bool; 2] = [AMOUNT.is_integer(), AMOUNT.trunc().is_integer()];
   assert_eq!(AMOUNT_PARTS, [value("2"), value("0.5")]);
   assert_eq!(AMOUNT_ROUNDED, [Ok(value("2")), Ok(value("3"))]);
-  assert!(!AMOUNT_INTEGER);
+  assert_eq!(AMOUNT_INTEGERS, [false, true]);
   const AMOUNT_DIGITS: (i32, u32, u32) = (
     AMOUNT.order_of_magnitude(),
     AMOUNT.significant_digits(),
