@@ -239,6 +239,34 @@ pub trait FixedDecimal:
   /// Returns `true` if `self` is a multiple of `step`, as [`Decimal::is_multiple_of`] describes.
   #[must_use]
   fn is_multiple_of(&self, step: &Self) -> bool;
+
+  /// Returns the integral part, rounded toward zero, as [`Decimal::trunc`] describes.
+  #[must_use]
+  fn trunc(&self) -> Self;
+
+  /// Returns the fraction, with the sign of `self`, as [`Decimal::fract`] describes.
+  #[must_use]
+  fn fract(&self) -> Self;
+
+  /// Returns the largest integer at most `self`, as [`Decimal::floor`] describes.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ConvertError::OutOfRange`] if that integer is outside the range of the type.
+  #[must_use = "this returns the rounded value, without modifying the original"]
+  fn floor(&self) -> Result<Self, ConvertError>;
+
+  /// Returns the smallest integer at least `self`, as [`Decimal::ceil`] describes.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ConvertError::OutOfRange`] if that integer is outside the range of the type.
+  #[must_use = "this returns the rounded value, without modifying the original"]
+  fn ceil(&self) -> Result<Self, ConvertError>;
+
+  /// Returns `true` if every fraction digit is zero.
+  #[must_use]
+  fn is_integer(&self) -> bool;
 }
 
 /// An exact fixed-point decimal number whose zero and limits are constants: [`Decimal`] over any

@@ -72,9 +72,9 @@ pub enum ParseErrorKind {
   ScaleTooLarge,
 }
 
-/// The error returned by [`Decimal::try_convert`](crate::Decimal::try_convert) and
-/// [`Decimal::round_to`](crate::Decimal::round_to), which returns only
-/// [`OutOfRange`](Self::OutOfRange).
+/// The error returned by [`Decimal::try_convert`](crate::Decimal::try_convert), and by
+/// [`Decimal::round_to`](crate::Decimal::round_to), [`Decimal::floor`](crate::Decimal::floor) and
+/// [`Decimal::ceil`](crate::Decimal::ceil), which return only [`OutOfRange`](Self::OutOfRange).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::IsVariant)]
 #[non_exhaustive]
 pub enum ConvertError {

@@ -414,6 +414,37 @@ where
   fn is_multiple_of(&self, step: &Self) -> bool {
     self.value.is_multiple_of(&step.value)
   }
+
+  /// Returns the integral part, rounded toward zero, with scale 0.
+  #[inline]
+  fn trunc(&self) -> Self {
+    Self::from(self.value.trunc())
+  }
+
+  /// Returns the fraction, with the sign of `self` and the same scale.
+  #[inline]
+  fn fract(&self) -> Self {
+    Self::new(self.value.fract(), self.scale)
+  }
+
+  /// Returns the largest integer at most `self`, with scale 0, or
+  /// [`ConvertError::OutOfRange`] if it is outside the range of `D`.
+  fn floor(&self) -> Result<Self, ConvertError> {
+    self.value.floor().map(Self::from)
+  }
+
+  /// Returns the smallest integer at least `self`, with scale 0, or
+  /// [`ConvertError::OutOfRange`] if it is outside the range of `D`.
+  fn ceil(&self) -> Result<Self, ConvertError> {
+    self.value.ceil().map(Self::from)
+  }
+
+  /// Returns `true` if every fraction digit of the value is zero, whatever the scale: `2.00` is
+  /// an integer.
+  #[inline]
+  fn is_integer(&self) -> bool {
+    self.value.is_integer()
+  }
 }
 
 impl<D> ConstFixedDecimal for Scaled<D>

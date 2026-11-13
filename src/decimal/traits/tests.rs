@@ -294,6 +294,56 @@ fn remainder_and_saturation_are_the_inherent_ones() {
   );
 }
 
+/// Asserts that `trunc`, `fract`, `floor`, `ceil` and `is_integer` of [`FixedDecimal`] are the
+/// inherent ones for each type, at every value of [`samples`]. Each type checks in a function of
+/// its own, as in `assert_remainder_and_saturation!`.
+macro_rules! assert_parts {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      for value in &samples::<T>() {
+        assert_eq!(FixedDecimal::trunc(value), value.trunc(), "{value}");
+        assert_eq!(FixedDecimal::fract(value), value.fract(), "{value}");
+        assert_eq!(FixedDecimal::floor(value), value.floor(), "{value}");
+        assert_eq!(FixedDecimal::ceil(value), value.ceil(), "{value}");
+        assert_eq!(FixedDecimal::is_integer(value), value.is_integer(), "{value}");
+      }
+    }
+    storage();
+  })+};
+}
+
+#[test]
+fn parts_are_the_inherent_ones() {
+  assert_parts!(
+    Decimal<U1, U1, i8>,
+    Decimal<U0, U2, i8>,
+    Decimal<U2, U2, i16>,
+    Decimal<U5, U4, i32>,
+    Decimal<U10, U8, i64>,
+    Decimal<U19, U19, i128>,
+    Decimal<U40, U17, i192>,
+    Decimal<U38, U38, i256>,
+    Decimal<U78, U18, i320>,
+    Decimal<U97, U18, i384>,
+    Decimal<U116, U18, i448>,
+    Decimal<U135, U18, i512>,
+    Decimal<U1, U1, u8>,
+    Decimal<U0, U2, u8>,
+    Decimal<U2, U2, u16>,
+    Decimal<U5, U4, u32>,
+    Decimal<U10, U9, u64>,
+    Decimal<U19, U19, u128>,
+    Decimal<U40, U17, u192>,
+    Decimal<U59, U18, u256>,
+    Decimal<U78, U18, u320>,
+    Decimal<U97, U18, u384>,
+    Decimal<U116, U18, u448>,
+    Decimal<U154, U0, u512>,
+  );
+}
+
 /// Uses only what the bound `T: FixedDecimal` gives: `Clone`, `Default`, `FromStr`, `Display`,
 /// `Debug`, `Hash`, `Ord`, zero and the limits. A value that is used again is borrowed or cloned,
 /// never copied.

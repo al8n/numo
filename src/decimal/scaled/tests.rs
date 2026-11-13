@@ -785,6 +785,57 @@ fn remainders_and_saturated_results_take_the_larger_scale() {
   check_remainder_and_saturation::<Decimal<U40, U36, u256>>();
 }
 
+/// Checks, for a `Scaled` over `D`, that `trunc`, `fract`, `floor`, `ceil` and `is_integer` give
+/// the value of the decimal's method, or its error: `trunc`, `floor` and `ceil` with scale 0, and
+/// `fract` with the scale of the value. At zero, the limits, `1.5` and `0.25`, each with a few
+/// scales.
+#[inline(never)]
+fn check_parts<D>()
+where
+  D: ConstFixedDecimal,
+  Scaled<D>: FixedDecimal,
+{
+  let decimals: [D; 5] = [D::ZERO, D::MIN, D::MAX, value("1.5"), value("0.25")];
+  for a in decimals {
+    for scale in [0u8, 3, 255] {
+      let x = Scaled::new(a, scale);
+      assert_eq!(x.trunc().into_parts(), (a.trunc(), 0), "trunc of {a}");
+      assert_eq!(x.fract().into_parts(), (a.fract(), scale), "fract of {a}");
+      assert_eq!(
+        x.floor().map(Scaled::into_parts),
+        a.floor().map(|floor| (floor, 0)),
+        "floor of {a}"
+      );
+      assert_eq!(
+        x.ceil().map(Scaled::into_parts),
+        a.ceil().map(|ceil| (ceil, 0)),
+        "ceil of {a}"
+      );
+      assert_eq!(x.is_integer(), a.is_integer(), "{a}");
+    }
+  }
+}
+
+/// `trunc`, `floor` and `ceil` give scale 0, `fract` keeps the scale, and `is_integer` reads the
+/// value, whatever the scale.
+#[test]
+fn parts_take_their_scales() {
+  let x: Price = value("-1.90");
+  assert_text(&x.trunc(), "-1", 0);
+  assert_text(&x.fract(), "-0.90", 2);
+  assert_text(&x.floor().unwrap(), "-2", 0);
+  assert_text(&x.ceil().unwrap(), "-1", 0);
+  assert!(!x.is_integer());
+  assert!(value::<Price>("2.00").is_integer());
+  assert_eq!(Price::MAX.ceil(), Err(ConvertError::OutOfRange));
+  assert_eq!(Price::MIN.floor(), Err(ConvertError::OutOfRange));
+
+  check_parts::<Decimal<U2, U2>>();
+  check_parts::<Narrow>();
+  check_parts::<Decimal<U40, U36, i256>>();
+  check_parts::<Decimal<U40, U36, u256>>();
+}
+
 /// The operators take the larger scale of their operands, as `checked_add` and `checked_sub` do,
 /// and a sum over an iterator the largest scale of its items, or scale 0 without an item.
 #[test]

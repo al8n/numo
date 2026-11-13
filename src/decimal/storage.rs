@@ -3,8 +3,8 @@ use core::{ops::Neg, str::FromStr};
 use typenum::NonZero;
 
 use super::{
-  ConstDecimalOne, ConstFixedDecimal, Decimal, DecimalLiteral, DecimalOne, FixedDecimal,
-  LiteralText, ParseError, ParseErrorKind, QuantizeError, Scaled, SignedFixedDecimal,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, Decimal, DecimalLiteral, DecimalOne,
+  FixedDecimal, LiteralText, ParseError, ParseErrorKind, QuantizeError, Scaled, SignedFixedDecimal,
   UnsignedFixedDecimal, literal, parse,
 };
 use crate::{
@@ -209,6 +209,31 @@ macro_rules! storage_decimal {
       #[inline]
       fn is_multiple_of(&self, step: &Self) -> bool {
         Self::is_multiple_of(self, step)
+      }
+
+      #[inline]
+      fn trunc(&self) -> Self {
+        Self::trunc(self)
+      }
+
+      #[inline]
+      fn fract(&self) -> Self {
+        Self::fract(self)
+      }
+
+      #[inline]
+      fn floor(&self) -> Result<Self, ConvertError> {
+        Self::floor(self)
+      }
+
+      #[inline]
+      fn ceil(&self) -> Result<Self, ConvertError> {
+        Self::ceil(self)
+      }
+
+      #[inline]
+      fn is_integer(&self) -> bool {
+        Self::is_integer(self)
       }
     }
 
@@ -945,6 +970,84 @@ macro_rules! storage_decimal {
           None if int::$repr::is_positive($($by)* rhs.repr) => Self::MIN,
           None => Self::MAX,
         }
+      }
+
+      /// The coefficient of the integral part, toward zero, and the remainder, the coefficient of
+      /// the fraction, which has the sign of the value.
+      const fn split_integral(&self) -> ($repr, $repr) {
+        let (quotient, remainder) = int::$repr::div_rem($($by)* self.repr, $($by)* Self::SCALE);
+        // The integral part is at most the value in magnitude, so the product is in range.
+        (int::$repr::mul_pow10($($by)* quotient, Self::FRACTION), remainder)
+      }
+
+      /// Returns the integral part, rounded toward zero: `-1.9` gives `-1`. Never fails, because
+      /// the integral part is at most the value in magnitude.
+      #[must_use]
+      #[inline]
+      pub const fn trunc(&self) -> Self {
+        Self::from_coeff(self.split_integral().0)
+      }
+
+      /// Returns the fraction, `self` less [`trunc`](Self::trunc), with the sign of `self`: `-1.9`
+      /// gives `-0.9`. Never fails.
+      #[must_use]
+      #[inline]
+      pub const fn fract(&self) -> Self {
+        Self::from_coeff(self.split_integral().1)
+      }
+
+      /// Returns the largest integer at most `self`: `1.9` gives `1` and `-1.9` gives `-2`.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`ConvertError::OutOfRange`] if that integer is outside the range of the type:
+      /// for a negative value with a fraction whose integral digits are all `9`, whose floor is
+      /// `-10^Integral`, and in a type without integral digits for every negative value. An
+      /// unsigned storage has no negative value, so its `floor` never fails.
+      #[must_use = "this returns the rounded value, without modifying the original"]
+      pub const fn floor(&self) -> Result<Self, ConvertError> {
+        let (integral, remainder) = self.split_integral();
+        // The remainder has the sign of the value: only a negative value with a fraction steps
+        // down from its integral part.
+        if int::$repr::is_zero($($by)* remainder) || int::$repr::is_positive($($by)* remainder) {
+          return Ok(Self::from_coeff(integral));
+        }
+        // The result is at most `10^(Integral + Fraction)` in magnitude, which the storage holds:
+        // only the range of the type rejects it.
+        match int::$repr::checked_sub($($by)* integral, $($by)* Self::SCALE) {
+          Some(coeff) if Self::in_range($($by)* coeff) => Ok(Self::from_coeff(coeff)),
+          _ => Err(ConvertError::OutOfRange),
+        }
+      }
+
+      /// Returns the smallest integer at least `self`: `1.9` gives `2` and `-1.9` gives `-1`.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`ConvertError::OutOfRange`] if that integer is outside the range of the type:
+      /// for a positive value with a fraction whose integral digits are all `9`, whose ceiling is
+      /// `10^Integral`, and in a type without integral digits for every positive value.
+      #[must_use = "this returns the rounded value, without modifying the original"]
+      pub const fn ceil(&self) -> Result<Self, ConvertError> {
+        let (integral, remainder) = self.split_integral();
+        // The remainder has the sign of the value: only a positive value with a fraction steps up
+        // from its integral part.
+        if !int::$repr::is_positive($($by)* remainder) {
+          return Ok(Self::from_coeff(integral));
+        }
+        // The result is at most `10^(Integral + Fraction)` in magnitude, which the storage holds:
+        // only the range of the type rejects it.
+        match int::$repr::checked_add($($by)* integral, $($by)* Self::SCALE) {
+          Some(coeff) if Self::in_range($($by)* coeff) => Ok(Self::from_coeff(coeff)),
+          _ => Err(ConvertError::OutOfRange),
+        }
+      }
+
+      /// Returns `true` if every fraction digit is zero: `2` and `-2` are integers, `1.9` is not.
+      #[must_use]
+      #[inline]
+      pub const fn is_integer(&self) -> bool {
+        int::$repr::is_zero($($by)* self.split_integral().1)
       }
     }
   };
