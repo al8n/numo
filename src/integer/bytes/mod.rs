@@ -14,7 +14,10 @@
 use super::{Int, NonZeroInt, NonZeroUint, Uint, nonzero::Parts, traits::Sealed};
 use crate::{
   layout::Token,
-  width::{FitsBits, IntRepr, LimbArray, NonZeroIntRepr, NonZeroUintRepr, UintRepr, WholeBytes},
+  width::{
+    FitsBits, IntCore, IntRepr, LimbArray, NonZeroIntRepr, NonZeroUintRepr, UintCore, UintRepr,
+    WholeBytes,
+  },
 };
 
 /// The number of bytes of a value of `bits` bits, `ceil(bits / 8)`, which `BYTES` holds.
@@ -828,7 +831,8 @@ pub trait IntegerByteOrder: Sealed + Sized {
 /// Implements the byte traits for [`Uint`] and [`Int`], written `Integer: Repr`, with the sealed
 /// methods of the storage trait `Repr`, which neither need `Copy` nor read a constant of a value.
 /// [`IntegerByteOrder`] also needs `Repr: Clone`, to return the value itself where the order is
-/// that of the target.
+/// that of the target; `from_be` and `from_le` take their value, and store its reversed bytes in
+/// its storage.
 // Trait methods cannot be `const`.
 macro_rules! byte_traits {
   ($($integer:ident: $repr:ident),+ $(,)?) => {$(
@@ -1034,18 +1038,22 @@ macro_rules! byte_traits {
       }
 
       #[inline]
-      fn from_be(x: Self) -> Self {
+      fn from_be(mut x: Self) -> Self {
         if cfg!(target_endian = "big") {
           x
         } else {
-          IntegerByteOrder::swap_bytes(&x)
+          let swapped = x.repr.inline(Token::new()).swap_bytes_bits(B::U32, Token::new());
+          x.repr.set_inline(swapped, Token::new());
+          x
         }
       }
 
       #[inline]
-      fn from_le(x: Self) -> Self {
+      fn from_le(mut x: Self) -> Self {
         if cfg!(target_endian = "big") {
-          IntegerByteOrder::swap_bytes(&x)
+          let swapped = x.repr.inline(Token::new()).swap_bytes_bits(B::U32, Token::new());
+          x.repr.set_inline(swapped, Token::new());
+          x
         } else {
           x
         }

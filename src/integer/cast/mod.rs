@@ -8,7 +8,8 @@
 //! value in two's complement, `CastSource`, and a target builds a value from such words,
 //! `CheckedTarget` and `BoundedTarget`: [`Uint`] and [`Int`] through the sealed `word` and
 //! `from_words` of their storage, the non-zero integers through those of the storage of their
-//! integer, which `with_nonzero` lends and `to_nonzero` checks for zero, and the native integers
+//! integer, which `with_nonzero` lends, and of its inline storage, which holds the words until
+//! they are known not to make zero, before a storage is built, and the native integers
 //! and their `NonZero` through `u128` and `i128`. A non-zero integer is a checked target, which
 //! takes no value of zero, and not a bounded one, as a wrapped or saturated value may be zero. A
 //! value is in the range of a target when it is not negative or the target is signed, and its bits
@@ -861,8 +862,8 @@ impl MinWidth for isize {
 /// Implements the sealed traits of the casts for [`NonZeroUint`] and [`NonZeroInt`] over every
 /// storage of their storage traits, written `Name: Repr, Integer, Core, Sign, signed;`, through the
 /// sealed methods of the storage of their integer, `Core`: a source reads the words of the integer
-/// that `with_nonzero` lends, and a target builds the integer of the words with `from_words` and
-/// keeps it unless `to_nonzero` finds it zero.
+/// that `with_nonzero` lends, and a target computes the inline storage of the words with
+/// `from_words`, and builds its storage from it unless it is zero.
 macro_rules! nonzero_participants {
   ($($name:ident: $repr:ident, $integer:ident, $core:ident, $sign:ident, $signed:literal;)+) => {$(
     impl<B: FitsBits<R::Integer>, R: $repr> CastSource for $name<B, R> {
@@ -885,9 +886,14 @@ macro_rules! nonzero_participants {
 
       #[inline]
       fn from_words(word: impl Fn(usize) -> u64) -> Option<Self> {
-        let integer = <R::Integer as $core>::from_words(word, B::U32, Token::new());
-        <R::Integer as $core>::to_nonzero(integer, Token::new()).map(|repr| Self {
-          value: $integer::wrap(repr),
+        let integer =
+          <<R::Integer as $core>::Inline as $core>::from_words(word, B::U32, Token::new());
+        if integer.is_zero(Token::new()) {
+          return None;
+        }
+        let repr = <R::Integer as $core>::from_inline(integer, Token::new());
+        Some(Self {
+          value: $integer::wrap(repr.known_nonzero(Token::new())),
         })
       }
 

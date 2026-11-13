@@ -858,6 +858,46 @@ macro_rules! limb_layer {
       (zero_extend(&raw, bits), borrow || !fits_bits(&raw, bits))
     }
 
+    /// `lhs + rhs + carry` modulo `2^bits`, and whether the sum is `2^bits` or more. Requires
+    /// `bits <= B * N` and both values below `2^bits`.
+    pub(crate) const fn carrying_add_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      carry: bool,
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let (sum, overflow) = overflowing_add_bits(lhs, rhs, bits);
+      if carry {
+        // Adding one subtracts `2^bits - 1`, which is `-1` modulo `2^bits`, and overflows exactly
+        // when the sum is `2^bits - 1`, which is when the subtraction does not borrow. At zero
+        // bits, which hold no one, a carry always overflows.
+        let (sum, borrow) = overflowing_sub_bits(&sum, &max_of_bits(bits), bits);
+        (sum, overflow || !borrow)
+      } else {
+        (sum, overflow)
+      }
+    }
+
+    /// `lhs - rhs - borrow` modulo `2^bits`, and whether the difference is negative. Requires
+    /// `bits <= B * N` and both values below `2^bits`.
+    pub(crate) const fn borrowing_sub_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      borrow: bool,
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let (difference, overflow) = overflowing_sub_bits(lhs, rhs, bits);
+      if borrow {
+        // Subtracting one adds `2^bits - 1`, which is `-1` modulo `2^bits`, and overflows exactly
+        // when the difference is zero, which is when the addition does not carry. At zero bits,
+        // which hold no one, a borrow always overflows.
+        let (difference, carry) = overflowing_add_bits(&difference, &max_of_bits(bits), bits);
+        (difference, overflow || !carry)
+      } else {
+        (difference, overflow)
+      }
+    }
+
     /// `lhs & rhs`.
     pub(crate) const fn and<const N: usize>(lhs: &[Limb; N], rhs: &[Limb; N]) -> [Limb; N] {
       let mut result = [0; N];
@@ -1192,6 +1232,22 @@ macro_rules! limb_layer {
         or(value, &xor(&max_of_bits(bits), &[Limb::MAX; N]))
       } else {
         *value
+      }
+    }
+
+    /// `value` as the two's complement integer of `bits` bits, or the largest one,
+    /// `2^(bits - 1) - 1`, if `value` is above it, which is when bit `bits - 1` is set; zero bits
+    /// hold only zero. Requires `bits <= B * N` and `value < 2^bits`.
+    pub(crate) const fn saturating_cast_signed_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> [Limb; N] {
+      if bit(value, bits.wrapping_sub(1), bits) {
+        // The largest value in two's complement has every bit below the sign bit: the complement
+        // of the sign bit alone, which is the highest one of `value`.
+        cast_signed_bits(&not_bits(&isolate_highest_one_bits(value, bits), bits), bits)
+      } else {
+        cast_signed_bits(value, bits)
       }
     }
 
@@ -3043,6 +3099,21 @@ macro_rules! limb_layer {
       bits: u32,
     ) -> [Limb; N] {
       $unsigned::zero_extend(value, bits)
+    }
+
+    /// `value` as an unsigned integer of `bits` bits, or zero if `value` is negative, which is
+    /// when bit `bits - 1` is set. Requires `bits <= B * N` and `value` within the range of `bits`
+    /// bits.
+    pub(crate) const fn saturating_cast_unsigned_bits<const N: usize>(
+      value: &[Limb; N],
+      bits: u32,
+    ) -> [Limb; N] {
+      if bit(value, bits.wrapping_sub(1), bits) {
+        // A negative value saturates to zero.
+        [0; N]
+      } else {
+        cast_unsigned_bits(value, bits)
+      }
     }
 
     /// The bit at `index` of `value`, or `false` for `index >= bits`, which reads no copy of the

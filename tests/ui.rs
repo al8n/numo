@@ -5,7 +5,11 @@
 //! the test checks nothing and passes.
 //!
 //! Regenerate the snapshots with `TRYBUILD=overwrite cargo +stable test --test ui` after reviewing
-//! a change in the compiler output. The cases in `tests/ui/serde` need `--features serde`.
+//! a change in the compiler output. The cases in `tests/ui/serde` need `--features serde`. The
+//! cases in `tests/ui/inline` and `tests/ui/heap` print lists of implementors, which the heap
+//! storages of a build join: those in `tests/ui/inline` need a build without the `std` and the
+//! `alloc` features, as `--no-default-features` gives, and those in `tests/ui/heap` one with
+//! either of them.
 
 use std::process::Command;
 
@@ -20,6 +24,11 @@ fn ui() {
     // features, and the serde cases fail on `numo::serde`, which needs `serde`.
     #[cfg(feature = "serde")]
     cases.compile_fail("tests/ui/serde/*.rs");
+    // A list of implementors includes the heap storages in a build that has them.
+    #[cfg(not(any(feature = "std", feature = "alloc")))]
+    cases.compile_fail("tests/ui/inline/*.rs");
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    cases.compile_fail("tests/ui/heap/*.rs");
   }
 }
 

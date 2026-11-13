@@ -1196,6 +1196,37 @@ fn nonzero_text_of_zero_bits() {
   );
 }
 
+/// One signed bit holds only -1 that is not zero: `"-1"` is the only text of a value, the
+/// spellings of zero are `Zero`, and any other number is outside the range, as the integer reads
+/// it; in native and array storages, through the inherent `const fn`, `FixedNonZero` and
+/// `FromStr`.
+#[test]
+fn nonzero_text_of_one_signed_bit() {
+  macro_rules! one_bit {
+    ($($ty:ty),+ $(,)?) => {$({
+      type T = $ty;
+      for (text, expected) in [
+        ("-1", Ok(T::MIN)),
+        ("0", Err(IntErrorKind::Zero)),
+        ("+0", Err(IntErrorKind::Zero)),
+        ("-0", Err(IntErrorKind::Zero)),
+        ("1", Err(IntErrorKind::PosOverflow)),
+        ("-2", Err(IntErrorKind::NegOverflow)),
+        ("", Err(IntErrorKind::Empty)),
+      ] {
+        assert_eq!(kind(T::from_str_radix(text, 10)), expected, "{text}");
+        assert_eq!(kind(<T as FixedNonZero>::from_str_radix(text, 10)), expected, "{text}");
+        assert_eq!(kind(text.parse::<T>()), expected, "{text}");
+      }
+    })+};
+  }
+  one_bit!(
+    NonZeroInt<U1>,
+    NonZeroInt<U1, NonZero<i8>>,
+    NonZeroInt<U1, [u8; 1]>,
+  );
+}
+
 /// The error of zero is that of the native `NonZero` integers, with its kind and its message; the
 /// parsers of the non-zero integers give it in constant contexts too, and a radix outside 2 to 36
 /// panics, through the inherent `const fn` and `FixedNonZero`, reporting the caller.

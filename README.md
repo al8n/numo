@@ -31,8 +31,8 @@ traits do.
 | Family | Status |
 |---|---|
 | `Decimal<Integral, Fraction, Repr>`: exact fixed-point decimal numbers | Available |
-| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, the conversions with `f64` and `f32`, truncating, saturating, rounded by a mode or exact, with `From` where lossless, serde, as numbers up to 128 bits and decimal strings above, with helpers for decimal strings, Ethereum quantities, fixed-width hexadecimal, reading by type, bytes in either order and ruint's form, and generic traits |
-| `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, `TryFrom` of the integer, the conversions with the native `NonZero` integers by direction, the casts into any integer and, checking for zero, from any integer, serde as their integers, and generic traits |
+| `Uint<Bits, Repr>` and `Int<Bits, Repr>`: integers of any bit width | Any width in a native integer of up to 128 bits or in limbs of 8, 16, 32, 64 or 128 bits, and with the `std` or the `alloc` feature in a `Box`, updated in place, with a default storage, the aliases `u0`–`u1024` and `i0`–`i1024`, constants, checked construction, also from slices of limbs, comparison, also with the native integers both ways, hashing, the text of the native integers, parsed in every radix and written in decimal, binary, octal, hexadecimal and scientific notation, the bytes in either order, in arrays whose length is part of the type or in slices and buffers, with the byte order of whole bytes, the arithmetic of the native integers in every overflow form with the operators, division, powers, roots and logarithms included, the bit operations and shifts with their operators, the casts between any widths and signs and with the native integers, with `From` and `TryFrom` by direction, the conversions with `f64` and `f32`, truncating, saturating, rounded by a mode or exact, with `From` where lossless, serde, as numbers up to 128 bits and decimal strings above, with helpers for decimal strings, Ethereum quantities, fixed-width hexadecimal, reading by type, bytes in either order and ruint's form, and generic traits |
+| `NonZeroUint<Bits, Repr>` and `NonZeroInt<Bits, Repr>`: non-zero integers of any bit width | Any width in the native `NonZero` of a native integer, whose niche makes `Option` free, or in limbs, or over a heap storage, whose pointer keeps `Option` free, with the aliases `NonZeroU1`–`NonZeroU1024` and `NonZeroI1`–`NonZeroI1024`, the methods of the native `NonZero` integers, the byte order of whole bytes, the division of `Uint` by `NonZeroUint`, which cannot panic, `TryFrom` of the integer, the conversions with the native `NonZero` integers by direction, the casts into any integer and, checking for zero, from any integer, serde as their integers, and generic traits |
 | Floating-point types for standard formats such as `f16`, `bf16` and `f128` | Planned |
 | Atomic versions of the integer types | Planned |
 
@@ -41,6 +41,21 @@ traits do.
 ```sh
 cargo add numo
 ```
+
+## Features
+
+| Feature | Description |
+|---|---|
+| `std` (default) | Links the standard library, and turns on the default features of `thiserror`; gives the heap storages |
+| `alloc` | Gives the heap storages to a `no_std` build, through the `alloc` crate |
+| `serde` | `Serialize` and `Deserialize`, through `serde_core`; turns on no feature of another crate |
+| `arbitrary` | `Arbitrary` for fuzzing; the `arbitrary` crate uses `std` |
+| `proptest` | `Arbitrary` and strategies for property tests, with the `std` feature of `proptest` |
+| `quickcheck` | `Arbitrary` for property tests; the `quickcheck` crate uses `std` |
+
+With no feature the crate is `no_std` and does not allocate. `std` and `alloc` are independent:
+either one gives the heap storage `Box<[L; N]>`, and neither turns the other on. No feature of an
+optional dependency turns on `std` or `alloc`.
 
 ## Example
 
@@ -208,6 +223,35 @@ have the aliases `NonZeroUN` and `NonZeroIN` for the same widths, such as `NonZe
 native widths, whose names `core::num` has. Any other width or storage is written out, such as
 `Uint<U8192>` or `Uint<U24, [u8; 3]>`, and a width that `typenum` has no constant for is computed,
 as in `Uint<Sum<U1024, U476>>` for 1500 bits.
+
+With the `std` or the `alloc` feature, `Uint`, `Int`, `NonZeroUint` and `NonZeroInt` also take an
+array of limbs in a `Box<[L; N]>`, for limbs `L` from `u8` to `u128`, at every width that the array
+holds, such as `Uint<U4096, Box<[u64; 64]>>`. Such an integer has the size of a pointer, is not
+`Copy`, and has no constants and no `const fn`s: its API is the traits, with `FixedInteger::zero`,
+`min_value` and `max_value` and `IntegerOne::one` for the constants. An operator on two references
+allocates its result, a compound assignment of `Uint` or `Int` computes in place, and an operator
+with an owned operand stores its result in the allocation of that operand, the left one of two. A
+method builds only the integers that it returns, none when it returns `None` or an error, and one
+that takes its integer by value, as the casts between the signs do, stores its result in that
+allocation. Each operation computes in arrays on the stack before it stores, so a heap storage keeps
+the value off the stack and not the working space. `From` moves a `Box<[L; N]>` out of an integer,
+and into one whose width fills the array, without a copy, and `ArrayInteger` reads and builds the
+limbs. serde writes and reads a boxed integer as the inline integer of its width.
+
+```rust
+use numo::{FixedInteger, Uint, typenum::U4096};
+
+type U4096x64 = Uint<U4096, Box<[u64; 64]>>;
+
+let (a, b) = (U4096x64::from(3u64), U4096x64::from(5u64));
+let mut total = U4096x64::zero();
+total += &a; // in place
+let product = &a * &b; // a new allocation
+let sum = a.clone() + &b; // in the allocation of the clone
+assert_eq!(total.to_string(), "3");
+assert_eq!(product.to_string(), "15");
+assert_eq!(sum.to_string(), "8");
+```
 
 - `const` items and methods: `BITS`, `ZERO`, `MIN` and `MAX`, and `ONE` from one bit for `Uint`
   and from two bits for `Int`; for a native integer, `new`, which panics if the value does not fit,

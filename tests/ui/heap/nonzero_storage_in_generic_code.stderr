@@ -1,0 +1,30 @@
+error[E0277]: `String` is not a storage of `NonZeroUint`
+ --> tests/ui/heap/nonzero_storage_in_generic_code.rs:6:31
+  |
+6 |   FixedNonZero::leading_zeros(nonzero)
+  |   --------------------------- ^^^^^^^ the trait `NonZeroUintRepr` is not implemented for `String`
+  |   |
+  |   required by a bound introduced by this call
+  |
+  = note: `NonZeroUint` stores `core::num::NonZero<u8>` to `NonZero<u128>`, an array `[u8; N]` to `[u128; N]`, or such an array in a `Box`, with the `std` or the `alloc` feature
+  = help: the following other types implement trait `NonZeroUintRepr`:
+            Box<[L; N]>
+            [u128; N]
+            [u16; N]
+            [u32; N]
+            [u64; N]
+            [u8; N]
+            std::num::NonZero<u128>
+            std::num::NonZero<u16>
+          and $N others
+  = note: required for `NonZeroUint<B, String>` to implement `std::cmp::Ord`
+note: required by a bound in `numo::FixedNonZero::leading_zeros`
+ --> src/integer/traits/mod.rs
+  |
+  |   + Ord
+  |     ^^^ required by this bound in `FixedNonZero::leading_zeros`
+  |
+ ::: src/integer/nonzero/mod.rs
+  |
+  |       fn leading_zeros(&self) -> u32 {
+  |          ------------- required by a bound in this associated function

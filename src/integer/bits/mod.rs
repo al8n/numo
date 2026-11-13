@@ -158,9 +158,9 @@ macro_rules! cast_other {
 }
 
 /// Passes the bit methods of `Uint` alone to `$callback`, after the tokens of `$args`: the bit
-/// width and the casts to `Int`. The checked, saturating and strict casts read the sign bit of the
-/// result with `bit`, and build the bound of a saturation from the value, without a constant, so
-/// that every storage has them.
+/// width and the casts to `Int`. The checked and the strict cast read the sign bit of the result
+/// with `bit`, so that every storage has them, and the storage computes the saturating one, whose
+/// bound it builds only to return it.
 macro_rules! uint_bits_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -189,15 +189,8 @@ macro_rules! uint_bits_table {
       /// Saturating cast to the `Int` of the same width in a storage of the same size: `self`, or
       /// the `MAX` of that `Int` if it is above it, as the native `saturating_cast_signed` does,
       /// still unstable ([#154650](https://github.com/rust-lang/rust/issues/154650)).
-      fn saturating_cast_signed(self) -> cast_other!($args, Signed) {
-        if self.bit(Self::BITS.wrapping_sub(1)) {
-          // `MAX` of `Int` has every bit below the sign bit: the complement of the sign bit alone,
-          // which is the highest one of `self`.
-          self.isolate_highest_one().not().cast_signed()
-        } else {
-          self.cast_signed()
-        }
-      }
+      fn saturating_cast_signed(self) -> Self::Signed
+        = prim signed saturating_cast_signed_bits(self; Self::BITS);
 
       /// Strict cast to the `Int` of the same width in a storage of the same size: `self`, as the
       /// native `strict_cast_signed` does, still unstable
@@ -220,8 +213,8 @@ macro_rules! uint_bits_table {
 }
 
 /// Passes the bit methods of `Int` alone to `$callback`, after the tokens of `$args`: the casts to
-/// `Uint`. The checked, saturating and strict casts read the sign with `bit`, and build the zero of
-/// a saturation from the value, without a constant, so that every storage has them.
+/// `Uint`. The checked and the strict cast read the sign with `bit`, so that every storage has
+/// them, and the storage computes the saturating one, as for `uint_bits_table!`.
 macro_rules! int_bits_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -244,14 +237,8 @@ macro_rules! int_bits_table {
       /// Saturating cast to the `Uint` of the same width in a storage of the same size: `self`, or
       /// zero if it is negative, as the native `saturating_cast_unsigned` does, still unstable
       /// ([#154650](https://github.com/rust-lang/rust/issues/154650)).
-      fn saturating_cast_unsigned(self) -> cast_other!($args, Magnitude) {
-        if self.bit(Self::BITS.wrapping_sub(1)) {
-          // Zero, which a shift of every bit out of `self` gives.
-          self.unbounded_shl(Self::BITS).cast_unsigned()
-        } else {
-          self.cast_unsigned()
-        }
-      }
+      fn saturating_cast_unsigned(self) -> Self::Magnitude
+        = prim unsigned saturating_cast_unsigned_bits(self; Self::BITS);
 
       /// Strict cast to the `Uint` of the same width in a storage of the same size: `self`, as the
       /// native `strict_cast_unsigned` does, still unstable

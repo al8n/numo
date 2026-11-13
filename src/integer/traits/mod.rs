@@ -39,7 +39,7 @@ use super::{
   arithmetic::{signed_one, unsigned_one},
   bytes::strict_limbs_slice,
   cast::limit,
-  nonzero::{Parts, Saturated, parse_signed, parse_unsigned, zero, zero_value},
+  nonzero::{Absolute, Parts, Saturated, parse_signed, parse_unsigned, zero, zero_value},
   text::check_radix,
 };
 use crate::{
@@ -64,8 +64,8 @@ mod sealed {
   impl<B, R> Sealed for crate::NonZeroInt<B, R> {}
 }
 
-/// An integer of a fixed number of bits: [`Uint`] and [`Int`] over a native integer or an array of
-/// limbs.
+/// An integer of a fixed number of bits: [`Uint`] and [`Int`] over a native integer, an array of
+/// limbs or, with the `std` or the `alloc` feature, a box of such an array.
 ///
 /// [`zero`](Self::zero), [`min_value`](Self::min_value) and [`max_value`](Self::max_value) return
 /// zero and the limits, the values of the inherent constants `ZERO`, `MIN` and `MAX`, and have no
@@ -194,7 +194,8 @@ pub trait FixedInteger:
 }
 
 /// The compound assignments of an integer of a fixed number of bits: [`Uint`] and [`Int`] over a
-/// storage that holds the value in place, as a native integer and an array of limbs do.
+/// storage that holds the value in place, as a native integer, an array of limbs and a box of one
+/// do.
 ///
 /// The supertraits give generic code `+=`, `-=` and `*=`, which on overflow panic or wrap as
 /// `overflow-checks` decides, `/=` and `%=`, which panic on a zero divisor and on overflow in every
@@ -380,7 +381,7 @@ pub trait SignedFixedInteger: Sealed + Sized + Neg<Output = Self> {
 }
 
 /// An integer that holds one: [`Uint`] of at least one bit and [`Int`] of at least two bits, over a
-/// native integer or an array of limbs.
+/// native integer, an array of limbs or a box of one.
 ///
 /// [`one`](Self::one) returns one, the value of the inherent constant `ONE`, and has no inherent
 /// counterpart; a concrete type reaches `ONE` without this trait, also in constant contexts, and
@@ -494,14 +495,17 @@ pub trait NativeInteger: ConstFixedInteger {
 }
 
 /// An integer stored in an array of limbs, least significant first: [`Uint`] and [`Int`] over
-/// `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`.
+/// `[u8; N]`, `[u16; N]`, `[u32; N]`, `[u64; N]` or `[u128; N]`, and with the `std` or the `alloc`
+/// feature over such an array in a `Box`.
 ///
 /// [`Array`](Self::Array) is the array and [`Limb`](Self::Limb) the type of its limbs. The methods
-/// are the inherent items of the same names, which a concrete type reaches without this trait,
-/// also in constant contexts: the limbs, the checked conversion from them, and the conversions from
-/// a slice of limbs of any length, least significant first, checked, wrapping, overflowing,
-/// saturating and strict, which read it unsigned for `Uint` and in two's complement for `Int`, as
-/// the slices of bytes of [`IntegerBytes`](crate::IntegerBytes) do.
+/// are the limbs, the checked conversion from them, and the conversions from a slice of limbs of
+/// any length, least significant first, checked, wrapping, overflowing, saturating and strict,
+/// which read it unsigned for `Uint` and in two's complement for `Int`, as the slices of bytes of
+/// [`IntegerBytes`](crate::IntegerBytes) do. For an array, they are the inherent items of the same
+/// names, which a concrete type reaches without this trait, also in constant contexts. A box has no
+/// inherent items: its methods lend the array in the box, copy it out, or build an array and put it
+/// in an allocation of its own.
 ///
 /// ```
 /// use numo::{
@@ -529,7 +533,7 @@ pub trait NativeInteger: ConstFixedInteger {
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait ArrayInteger: Sealed + Sized {
-  /// The array of limbs, `Repr`.
+  /// The array of limbs: `Repr`, or the array of a heap storage.
   type Array;
 
   /// The type of a limb, `L` of the array `[L; N]`.
@@ -584,7 +588,8 @@ pub trait ArrayInteger: Sealed + Sized {
 }
 
 /// An integer stored in an array of limbs that its width fills, so that every bit pattern is a
-/// value: [`Uint`] and [`Int`] whose `Bits` implements [`FillsRepr`] for the array.
+/// value: [`Uint`] and [`Int`] whose `Bits` implements [`FillsRepr`] for the array, or for the box
+/// of one.
 ///
 /// ```
 /// use numo::{FromLimbs, Uint, u256, typenum::U24};
@@ -947,7 +952,7 @@ pub trait SignedBits: Sealed + Sized + IntegerMath {
 }
 
 /// A non-zero integer of a fixed number of bits: [`NonZeroUint`] and [`NonZeroInt`] over the
-/// `NonZero` of a native integer or an array of limbs.
+/// `NonZero` of a native integer, an array of limbs or a box of one.
 ///
 /// [`Integer`](Self::Integer) is the integer of the same width and storage that may be zero, which
 /// [`new`](Self::new) takes and [`get`](Self::get) returns. `BITS`, `new`, `get` and the methods of
@@ -1322,7 +1327,8 @@ impl<B: FitsBits<R>, R: UintRepr> UnsignedFixedInteger for Uint<B, R> {
   uint_sign_table!(generic_items![]);
 }
 
-// `overflowing_abs` returns the value itself where it is not negative, so the storage is `Clone`.
+// The absolute value of a value that is not negative is the value itself, and the wrapped one of
+// `MIN` is `MIN`, so the storage is `Clone`.
 impl<B: FitsBits<R>, R: IntRepr + Clone> SignedFixedInteger for Int<B, R> {
   type Unsigned = Uint<B, <R as IntRepr>::Unsigned>;
 
@@ -1536,8 +1542,8 @@ where
 
 /// The helpers of the rows of [`Uint`] and [`Int`] in the generic implementations of the traits,
 /// over every storage, which an inherent block of each storage defines as `const fn`s: those read
-/// the constants, copy the value and write the field, and the inherent items win over these in a
-/// `Self::` path.
+/// the constants, copy the value, write the field and test a storage for zero, and the inherent
+/// items win over these in a `Self::` path.
 pub(crate) trait Rows: Sized {
   /// The inline storage, which a row that sees raw storages computes.
   type Inline;
@@ -1556,6 +1562,9 @@ pub(crate) trait Rows: Sized {
 
   /// Stores `repr`, the inline storage that a row computes, in the storage of `self`.
   fn store(&mut self, repr: Self::Inline);
+
+  /// Returns `true` if `repr`, an inline storage that a row computes, holds zero.
+  fn holds_zero(repr: &Self::Inline) -> bool;
 }
 
 // The limits come from their words, without a constant. Only `duplicate` clones, and it alone needs
@@ -1586,6 +1595,11 @@ impl<B: FitsBits<R>, R: UintRepr> Rows for Uint<B, R> {
   fn store(&mut self, repr: R::Inline) {
     self.repr.set_inline(repr, Token::new());
   }
+
+  #[inline]
+  fn holds_zero(repr: &R::Inline) -> bool {
+    <R::Inline as UintCore>::is_zero(repr, Token::new())
+  }
 }
 
 impl<B: FitsBits<R>, R: IntRepr> Rows for Int<B, R> {
@@ -1612,6 +1626,11 @@ impl<B: FitsBits<R>, R: IntRepr> Rows for Int<B, R> {
   #[inline]
   fn store(&mut self, repr: R::Inline) {
     self.repr.set_inline(repr, Token::new());
+  }
+
+  #[inline]
+  fn holds_zero(repr: &R::Inline) -> bool {
+    <R::Inline as IntCore>::is_zero(repr, Token::new())
   }
 }
 
@@ -1709,8 +1728,9 @@ impl<B: FitsBits<R>, R: IntRepr> SignedBits for Int<B, R> {
 }
 
 // The constants and the construction are written out, and the rows come from the tables. The bodies
-// reach the storage through its sealed trait and the helpers of `Parts` and `Saturated`, which need
-// neither `Copy` nor a constant, so that every storage implements the traits.
+// reach the storage through its sealed trait and the helpers of `Parts`, `Saturated` and
+// `Absolute`, which need neither `Copy` nor a constant, so that every storage implements the
+// traits.
 impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> FixedNonZero for NonZeroUint<B, R> {
   type Integer = Uint<B, R::Integer>;
 

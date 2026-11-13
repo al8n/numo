@@ -6,19 +6,24 @@
 //! without an overflow prefix, such as the Euclidean and rounded division, the roots and the
 //! logarithms; the panics; and the operators, `Sum` and `Product`.
 //!
-//! Each storage computes the overflowing methods at the width `Bits`, and most other methods are
-//! derived from them. The tables pass their rows to the callbacks of `tables`, for the inherent
-//! `const fn`s of each storage and for the generic implementations of the traits, so their bodies
-//! name the panics by the full paths `$crate::integer::arithmetic::overflow` and
+//! Each storage computes the overflowing methods at the width `Bits`. The checked methods compute
+//! the same on the storage, and build a value only where it is in range; the wrapping methods are
+//! derived from the overflowing ones, and the saturating and the strict ones from the checked ones
+//! or, where a zero divisor must panic, from the division of the storage, so that a method builds
+//! only the integers that it returns. The tables pass their rows to the callbacks of `tables`, for
+//! the inherent `const fn`s of each storage and for the generic implementations of the traits, so
+//! their bodies name the panics by the full paths `$crate::integer::arithmetic::overflow` and
 //! `$crate::integer::arithmetic::domain`. The unchecked tables serve only the traits, whose bodies
 //! compute the overflowing or the checked method and check it with a debug assertion: they never
 //! call the inherent `unchecked_*` methods, which each storage writes out with their unsafe blocks.
-//! The operators are implemented once for every storage. On two references, `+`, `-`, `*` and the
-//! negation compute over `OverflowingOps`, repeating an overflow in a native operation, so that
-//! `overflow-checks` decides whether they panic, and `/` and `%` over `StrictOps`, which panic in
-//! every build, as for the native integers. With an owned operand, they compute the same with the
-//! sealed storage methods on the inline storages that the operands lend, and store the result in
-//! that operand, as a compound assignment stores it in its target.
+//! The operators are implemented once for every storage. `+`, `-`, `*` and the negation compute
+//! with the sealed storage methods on the inline storages that the operands lend, and repeat an
+//! overflow in a native operation, so that `overflow-checks` decides whether they panic: on two
+//! references they then allocate the result, and with an owned operand they store it in that
+//! operand, as a compound assignment stores it in its target. `/` and `%` on two references are
+//! the methods of `StrictOps`, which panic in every build, as for the native integers, and with an
+//! owned operand they compute the same on the inline storages and store the result in that
+//! operand.
 
 use core::{
   iter::{Product, Sum},
@@ -27,14 +32,16 @@ use core::{
 
 use typenum::{IsGreater, NonZero, True, U1};
 
-use super::{Int, OverflowingOps, StrictOps, Uint, nonzero};
+use super::{Int, StrictOps, Uint, nonzero};
 use crate::{
   layout::Token,
   width::{FitsBits, IntCore, IntRepr, IntReprMut, UintCore, UintRepr, UintReprMut},
 };
 
 /// Passes the overflowing methods of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
-// The inherent `unchecked_*` methods rely on the shape of these rows, as `checked_table!` explains.
+// The rows of `checked_table!` and the inherent `unchecked_*` methods make the calls of these
+// rows, so that `unchecked_*` returns the value of `wrapping_*`; the safety of `unchecked_*` rests
+// on the flags of those calls, as `checked_table!` explains.
 macro_rules! overflowing_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
@@ -146,55 +153,58 @@ macro_rules! overflowing_table {
 }
 
 /// Passes the checked methods of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
-// The safety argument of the inherent `unchecked_*` methods, in `integer`, relies on the shape of
-// these rows and of those of `overflowing_table!`: `checked_*` matches on the flag of
-// `overflowing_*`, which is `prim pair overflowing_*_bits(..)` and so passes `Self::BITS`.
-// `unchecked_*` passes the flag of the same `overflowing_*_bits` call to `assert_unchecked`, or at
-// the full width of a native integer calls the native `unchecked_*`, whose precondition is then
-// that flag: either way it assumes exactly what `checked_*` tests. This holds for the addition,
-// the subtraction, the multiplication, the negation and the shifts: `checked_shl` and
-// `checked_shr` match on the flag of `prim pair overflowing_shl_bits(self; rhs)` and
-// `prim pair overflowing_shr_bits(self; rhs)`, which pass `rhs` and then `Self::BITS`, and whose
-// flag is `rhs >= Bits`, set for every amount at zero bits. A change to either shape requires
-// revisiting those unsafe blocks.
+// The unsafe blocks of the inherent `unchecked_*` methods, in `integer`, rely on the shape of
+// these rows. `checked_add`, `checked_sub`, `checked_mul`, `checked_neg`, `checked_shl` and
+// `checked_shr` call `overflowing_*_bits` of the storage on the operands, with the amount of a
+// shift and then `Self::BITS`, and return `None` exactly when its flag is set; for the shifts the
+// flag is `rhs >= Bits`, set for every amount at zero bits. `unchecked_*` makes the same call on
+// the same storage and passes that flag to `assert_unchecked`, or at the full width of a native
+// integer calls the native `unchecked_*`, whose precondition is then that flag: either way it
+// assumes exactly what `checked_*` tests. `checked_div_exact` returns `Some` exactly when
+// `checked_div_exact_bits` does, and `unchecked_div_exact` unwraps that value. A change to the
+// call or to the flag of one of these rows requires revisiting those unsafe blocks.
 macro_rules! checked_table {
   ($callback:ident! $args:tt) => {
     $callback! { $args
       /// Checked addition: `self + rhs`, or `None` if the sum is outside the range of the type.
-      fn checked_add(&self, rhs: &Self) -> Option<Self> {
-        match self.overflowing_add(rhs) {
-          (sum, false) => Some(sum),
-          (_, true) => None,
+      fn checked_add(&self, rhs: &Self) -> Option<Self>
+        = prim overflowing_add_bits(self, rhs; Self::BITS) as sum {
+          match sum {
+            (sum, false) => Some(Self::of(sum)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked subtraction: `self - rhs`, or `None` if the difference is outside the range of
       /// the type.
-      fn checked_sub(&self, rhs: &Self) -> Option<Self> {
-        match self.overflowing_sub(rhs) {
-          (difference, false) => Some(difference),
-          (_, true) => None,
+      fn checked_sub(&self, rhs: &Self) -> Option<Self>
+        = prim overflowing_sub_bits(self, rhs; Self::BITS) as difference {
+          match difference {
+            (difference, false) => Some(Self::of(difference)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked multiplication: `self * rhs`, or `None` if the product is outside the range of
       /// the type.
-      fn checked_mul(&self, rhs: &Self) -> Option<Self> {
-        match self.overflowing_mul(rhs) {
-          (product, false) => Some(product),
-          (_, true) => None,
+      fn checked_mul(&self, rhs: &Self) -> Option<Self>
+        = prim overflowing_mul_bits(self, rhs; Self::BITS) as product {
+          match product {
+            (product, false) => Some(Self::of(product)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked negation: `-self`, or `None` if it is outside the range of the type: for `Uint`
       /// unless `self` is zero, and for `Int` if `self` is `MIN`, except at zero bits, where `MIN`
       /// is zero.
-      fn checked_neg(&self) -> Option<Self> {
-        match self.overflowing_neg() {
-          (negated, false) => Some(negated),
-          (_, true) => None,
+      fn checked_neg(&self) -> Option<Self>
+        = prim overflowing_neg_bits(self; Self::BITS) as negated {
+          match negated {
+            (negated, false) => Some(Self::of(negated)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked division: `self / rhs` rounded toward zero, or `None` if `rhs` is zero or the
       /// quotient is outside the range of the type, as it is only for `Int` when `self` is `MIN`
@@ -242,31 +252,34 @@ macro_rules! checked_table {
 
       /// Checked exponentiation: `self^exp`, or `None` if the power is outside the range of the
       /// type, as `self^0`, one, is at zero bits and for `Int` of one bit.
-      fn checked_pow(&self, exp: u32) -> Option<Self> {
-        match self.overflowing_pow(exp) {
-          (power, false) => Some(power),
-          (_, true) => None,
+      fn checked_pow(&self, exp: u32) -> Option<Self>
+        = prim overflowing_pow_bits(self; exp, Self::BITS) as power {
+          match power {
+            (power, false) => Some(Self::of(power)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked shift left: `self << rhs`, or `None` if `rhs` is `Bits` or more, as every amount
       /// is at zero bits. The bits shifted out at the top are lost, as for the native method;
       /// [`shl_exact`](crate::IntegerBits::shl_exact) returns `None` for them instead.
-      fn checked_shl(&self, rhs: u32) -> Option<Self> {
-        match self.overflowing_shl(rhs) {
-          (shifted, false) => Some(shifted),
-          (_, true) => None,
+      fn checked_shl(&self, rhs: u32) -> Option<Self>
+        = prim overflowing_shl_bits(self; rhs, Self::BITS) as shifted {
+          match shifted {
+            (shifted, false) => Some(Self::of(shifted)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked shift right: `self >> rhs`, arithmetic for `Int`, or `None` if `rhs` is `Bits`
       /// or more, as every amount is at zero bits.
-      fn checked_shr(&self, rhs: u32) -> Option<Self> {
-        match self.overflowing_shr(rhs) {
-          (shifted, false) => Some(shifted),
-          (_, true) => None,
+      fn checked_shr(&self, rhs: u32) -> Option<Self>
+        = prim overflowing_shr_bits(self; rhs, Self::BITS) as shifted {
+          match shifted {
+            (shifted, false) => Some(Self::of(shifted)),
+            (_, true) => None,
+          }
         }
-      }
 
       /// Checked next multiple: for a positive `rhs`, the smallest multiple of `rhs` at least
       /// `self`, and for a negative `rhs`, which only `Int` has, the largest multiple of `rhs` at
@@ -398,27 +411,27 @@ macro_rules! saturating_table {
       /// Saturating addition: `self + rhs`, or the bound of the range of the type that the sum
       /// passes.
       fn saturating_add(&self, rhs: &Self) -> Self {
-        match self.overflowing_add(rhs) {
-          (sum, false) => sum,
-          (_, true) => Self::bound(true),
+        match self.checked_add(rhs) {
+          Some(sum) => sum,
+          None => Self::bound(true),
         }
       }
 
       /// Saturating subtraction: `self - rhs`, or the bound of the range of the type that the
       /// difference passes.
       fn saturating_sub(&self, rhs: &Self) -> Self {
-        match self.overflowing_sub(rhs) {
-          (difference, false) => difference,
-          (_, true) => Self::bound(false),
+        match self.checked_sub(rhs) {
+          Some(difference) => difference,
+          None => Self::bound(false),
         }
       }
 
       /// Saturating multiplication: `self * rhs`, or the bound of the range of the type that the
       /// product passes.
       fn saturating_mul(&self, rhs: &Self) -> Self {
-        match self.overflowing_mul(rhs) {
-          (product, false) => product,
-          (_, true) => Self::bound(true),
+        match self.checked_mul(rhs) {
+          Some(product) => product,
+          None => Self::bound(true),
         }
       }
 
@@ -430,19 +443,21 @@ macro_rules! saturating_table {
       ///
       /// Panics if `rhs` is zero.
       #[track_caller]
-      fn saturating_div(&self, rhs: &Self) -> Self {
-        match self.overflowing_div(rhs) {
-          (quotient, false) => quotient,
-          (_, true) => Self::bound(true),
+      fn saturating_div(&self, rhs: &Self) -> Self
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, false)) => Self::of(quotient),
+            Some((_, _, true)) => Self::bound(true),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
         }
-      }
 
       /// Saturating exponentiation: `self^exp`, or the bound of the range of the type that the
       /// power passes.
       fn saturating_pow(&self, exp: u32) -> Self {
-        match self.overflowing_pow(exp) {
-          (power, false) => power,
-          (_, true) => Self::bound(true),
+        match self.checked_pow(exp) {
+          Some(power) => power,
+          None => Self::bound(true),
         }
       }
     }
@@ -452,10 +467,10 @@ macro_rules! saturating_table {
       /// Saturating addition: `self + rhs`, or the bound of the range of the type that the sum
       /// passes.
       fn saturating_add(&self, rhs: &Self) -> Self {
-        match self.overflowing_add(rhs) {
-          (sum, false) => sum,
+        match self.checked_add(rhs) {
+          Some(sum) => sum,
           // The sum passes `MIN` exactly when `rhs` is negative.
-          (_, true) => {
+          None => {
             if rhs.bit(Self::BITS.wrapping_sub(1)) {
               Self::bound(false)
             } else {
@@ -468,10 +483,10 @@ macro_rules! saturating_table {
       /// Saturating subtraction: `self - rhs`, or the bound of the range of the type that the
       /// difference passes.
       fn saturating_sub(&self, rhs: &Self) -> Self {
-        match self.overflowing_sub(rhs) {
-          (difference, false) => difference,
+        match self.checked_sub(rhs) {
+          Some(difference) => difference,
           // The difference passes `MAX` exactly when `rhs` is negative.
-          (_, true) => {
+          None => {
             if rhs.bit(Self::BITS.wrapping_sub(1)) {
               Self::bound(true)
             } else {
@@ -484,10 +499,10 @@ macro_rules! saturating_table {
       /// Saturating multiplication: `self * rhs`, or the bound of the range of the type that the
       /// product passes.
       fn saturating_mul(&self, rhs: &Self) -> Self {
-        match self.overflowing_mul(rhs) {
-          (product, false) => product,
+        match self.checked_mul(rhs) {
+          Some(product) => product,
           // An overflowing product passes `MIN` exactly when the operands differ in sign.
-          (_, true) => {
+          None => {
             let sign = Self::BITS.wrapping_sub(1);
             if self.bit(sign) != rhs.bit(sign) {
               Self::bound(false)
@@ -506,21 +521,23 @@ macro_rules! saturating_table {
       ///
       /// Panics if `rhs` is zero.
       #[track_caller]
-      fn saturating_div(&self, rhs: &Self) -> Self {
-        match self.overflowing_div(rhs) {
-          (quotient, false) => quotient,
-          (_, true) => Self::bound(true),
+      fn saturating_div(&self, rhs: &Self) -> Self
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, false)) => Self::of(quotient),
+            Some((_, _, true)) => Self::bound(true),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
         }
-      }
 
       /// Saturating exponentiation: `self^exp`, or the bound of the range of the type that the
       /// power passes.
       fn saturating_pow(&self, exp: u32) -> Self {
-        match self.overflowing_pow(exp) {
-          (power, false) => power,
+        match self.checked_pow(exp) {
+          Some(power) => power,
           // The power passes `MIN` exactly when it is negative: an odd power of a negative value.
           // At one bit `(-1)^0`, one, passes `MAX`, which is zero.
-          (_, true) => {
+          None => {
             if self.bit(Self::BITS.wrapping_sub(1)) && exp % 2 == 1 {
               Self::bound(false)
             } else {
@@ -545,9 +562,9 @@ macro_rules! strict_table {
       /// Panics if the sum is outside the range of the type.
       #[track_caller]
       fn strict_add(&self, rhs: &Self) -> Self {
-        match self.overflowing_add(rhs) {
-          (sum, false) => sum,
-          (_, true) => $crate::integer::arithmetic::overflow::add(),
+        match self.checked_add(rhs) {
+          Some(sum) => sum,
+          None => $crate::integer::arithmetic::overflow::add(),
         }
       }
 
@@ -559,9 +576,9 @@ macro_rules! strict_table {
       /// Panics if the difference is outside the range of the type.
       #[track_caller]
       fn strict_sub(&self, rhs: &Self) -> Self {
-        match self.overflowing_sub(rhs) {
-          (difference, false) => difference,
-          (_, true) => $crate::integer::arithmetic::overflow::sub(),
+        match self.checked_sub(rhs) {
+          Some(difference) => difference,
+          None => $crate::integer::arithmetic::overflow::sub(),
         }
       }
 
@@ -573,9 +590,9 @@ macro_rules! strict_table {
       /// Panics if the product is outside the range of the type.
       #[track_caller]
       fn strict_mul(&self, rhs: &Self) -> Self {
-        match self.overflowing_mul(rhs) {
-          (product, false) => product,
-          (_, true) => $crate::integer::arithmetic::overflow::mul(),
+        match self.checked_mul(rhs) {
+          Some(product) => product,
+          None => $crate::integer::arithmetic::overflow::mul(),
         }
       }
 
@@ -588,9 +605,9 @@ macro_rules! strict_table {
       /// zero, and for `Int` if `self` is `MIN`, except at zero bits, where `MIN` is zero.
       #[track_caller]
       fn strict_neg(&self) -> Self {
-        match self.overflowing_neg() {
-          (negated, false) => negated,
-          (_, true) => $crate::integer::arithmetic::overflow::neg(),
+        match self.checked_neg() {
+          Some(negated) => negated,
+          None => $crate::integer::arithmetic::overflow::neg(),
         }
       }
 
@@ -602,12 +619,14 @@ macro_rules! strict_table {
       /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
       /// only for `Int` when `self` is `MIN` and `rhs` is -1.
       #[track_caller]
-      fn strict_div(&self, rhs: &Self) -> Self {
-        match self.overflowing_div(rhs) {
-          (quotient, false) => quotient,
-          (_, true) => $crate::integer::arithmetic::overflow::div(),
+      fn strict_div(&self, rhs: &Self) -> Self
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, false)) => Self::of(quotient),
+            Some((_, _, true)) => $crate::integer::arithmetic::overflow::div(),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
         }
-      }
 
       /// Strict remainder: `self % rhs`, which has the sign of `self` and panics on overflow
       /// whatever the `overflow-checks` setting.
@@ -617,12 +636,14 @@ macro_rules! strict_table {
       /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
       /// only for `Int` when `self` is `MIN` and `rhs` is -1.
       #[track_caller]
-      fn strict_rem(&self, rhs: &Self) -> Self {
-        match self.overflowing_rem(rhs) {
-          (remainder, false) => remainder,
-          (_, true) => $crate::integer::arithmetic::overflow::rem(),
+      fn strict_rem(&self, rhs: &Self) -> Self
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((_, remainder, false)) => Self::of(remainder),
+            Some((_, _, true)) => $crate::integer::arithmetic::overflow::rem(),
+            None => $crate::integer::arithmetic::domain::rem_by_zero(),
+          }
         }
-      }
 
       /// Strict Euclidean division: the quotient `q` of `self = q * rhs + r` with
       /// `0 <= r < |rhs|`, which panics on overflow whatever the `overflow-checks` setting.
@@ -632,12 +653,14 @@ macro_rules! strict_table {
       /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
       /// only for `Int` when `self` is `MIN` and `rhs` is -1.
       #[track_caller]
-      fn strict_div_euclid(&self, rhs: &Self) -> Self {
-        match self.overflowing_div_euclid(rhs) {
-          (quotient, false) => quotient,
-          (_, true) => $crate::integer::arithmetic::overflow::div(),
+      fn strict_div_euclid(&self, rhs: &Self) -> Self
+        = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, _, false)) => Self::of(quotient),
+            Some((_, _, true)) => $crate::integer::arithmetic::overflow::div(),
+            None => $crate::integer::arithmetic::domain::div_by_zero(),
+          }
         }
-      }
 
       /// Strict Euclidean remainder: the remainder `r` of `self = q * rhs + r` with
       /// `0 <= r < |rhs|`, which panics on overflow whatever the `overflow-checks` setting.
@@ -647,12 +670,14 @@ macro_rules! strict_table {
       /// Panics if `rhs` is zero, or if the quotient is outside the range of the type, as it is
       /// only for `Int` when `self` is `MIN` and `rhs` is -1.
       #[track_caller]
-      fn strict_rem_euclid(&self, rhs: &Self) -> Self {
-        match self.overflowing_rem_euclid(rhs) {
-          (remainder, false) => remainder,
-          (_, true) => $crate::integer::arithmetic::overflow::rem(),
+      fn strict_rem_euclid(&self, rhs: &Self) -> Self
+        = prim div_rem_euclid_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((_, remainder, false)) => Self::of(remainder),
+            Some((_, _, true)) => $crate::integer::arithmetic::overflow::rem(),
+            None => $crate::integer::arithmetic::domain::rem_by_zero(),
+          }
         }
-      }
 
       /// Strict exponentiation: `self^exp`, which panics on overflow whatever the
       /// `overflow-checks` setting.
@@ -663,9 +688,9 @@ macro_rules! strict_table {
       /// and for `Int` of one bit.
       #[track_caller]
       fn strict_pow(&self, exp: u32) -> Self {
-        match self.overflowing_pow(exp) {
-          (power, false) => power,
-          (_, true) => $crate::integer::arithmetic::overflow::pow(),
+        match self.checked_pow(exp) {
+          Some(power) => power,
+          None => $crate::integer::arithmetic::overflow::pow(),
         }
       }
 
@@ -677,9 +702,9 @@ macro_rules! strict_table {
       /// Panics if `rhs` is `Bits` or more, as every amount is at zero bits.
       #[track_caller]
       fn strict_shl(&self, rhs: u32) -> Self {
-        match self.overflowing_shl(rhs) {
-          (shifted, false) => shifted,
-          (_, true) => $crate::integer::arithmetic::overflow::shl(),
+        match self.checked_shl(rhs) {
+          Some(shifted) => shifted,
+          None => $crate::integer::arithmetic::overflow::shl(),
         }
       }
 
@@ -691,9 +716,9 @@ macro_rules! strict_table {
       /// Panics if `rhs` is `Bits` or more, as every amount is at zero bits.
       #[track_caller]
       fn strict_shr(&self, rhs: u32) -> Self {
-        match self.overflowing_shr(rhs) {
-          (shifted, false) => shifted,
-          (_, true) => $crate::integer::arithmetic::overflow::shr(),
+        match self.checked_shr(rhs) {
+          Some(shifted) => shifted,
+          None => $crate::integer::arithmetic::overflow::shr(),
         }
       }
     }
@@ -707,33 +732,13 @@ macro_rules! uint_sign_table {
     $callback! { $args
       /// Addition with a carry: `self + rhs + carry` wrapped to the range of the type, and whether
       /// the exact sum is outside that range.
-      fn carrying_add(&self, rhs: &Self, carry: bool) -> (Self, bool) {
-        let (sum, overflow) = self.overflowing_add(rhs);
-        if carry {
-          // Adding one subtracts `MAX`, which is `-1` modulo `2^Bits`, and overflows exactly when
-          // the sum is `MAX`, which is when the subtraction does not borrow. At zero bits, which
-          // hold no one, a carry always overflows.
-          let (sum, borrow) = sum.overflowing_sub(&Self::bound(true));
-          (sum, overflow || !borrow)
-        } else {
-          (sum, overflow)
-        }
-      }
+      fn carrying_add(&self, rhs: &Self, carry: bool) -> (Self, bool)
+        = prim pair carrying_add_bits(self, rhs; carry);
 
       /// Subtraction with a borrow: `self - rhs - borrow` wrapped to the range of the type, and
       /// whether the exact difference is negative.
-      fn borrowing_sub(&self, rhs: &Self, borrow: bool) -> (Self, bool) {
-        let (difference, overflow) = self.overflowing_sub(rhs);
-        if borrow {
-          // Subtracting one adds `MAX`, which is `-1` modulo `2^Bits`, and overflows exactly when
-          // the difference is zero, which is when the addition does not carry. At zero bits, which
-          // hold no one, a borrow always overflows.
-          let (difference, carry) = difference.overflowing_add(&Self::bound(true));
-          (difference, overflow || !carry)
-        } else {
-          (difference, overflow)
-        }
-      }
+      fn borrowing_sub(&self, rhs: &Self, borrow: bool) -> (Self, bool)
+        = prim pair borrowing_sub_bits(self, rhs; borrow);
     }
   };
 }
@@ -746,9 +751,9 @@ macro_rules! int_sign_table {
       /// Saturating negation: `-self`, or `MAX` if the negation is outside the range of the type,
       /// as it is for `MIN`, except at zero bits, where `MIN` is zero.
       fn saturating_neg(&self) -> Self {
-        match self.overflowing_neg() {
-          (negated, false) => negated,
-          (_, true) => Self::bound(true),
+        match self.checked_neg() {
+          Some(negated) => negated,
+          None => Self::bound(true),
         }
       }
 
@@ -766,9 +771,10 @@ macro_rules! int_sign_table {
       /// Checked absolute value: `|self|`, or `None` if it is outside the range of the type, as it
       /// is for `MIN`, except at zero bits, where `MIN` is zero.
       fn checked_abs(&self) -> Option<Self> {
-        match self.overflowing_abs() {
-          (abs, false) => Some(abs),
-          (_, true) => None,
+        if self.is_negative() {
+          self.checked_neg()
+        } else {
+          Some(self.duplicate())
         }
       }
 
@@ -781,9 +787,9 @@ macro_rules! int_sign_table {
       /// Saturating absolute value: `|self|`, or `MAX` if it is outside the range of the type, as
       /// it is for `MIN`, except at zero bits, where `MIN` is zero.
       fn saturating_abs(&self) -> Self {
-        match self.overflowing_abs() {
-          (abs, false) => abs,
-          (_, true) => Self::bound(true),
+        match self.checked_abs() {
+          Some(abs) => abs,
+          None => Self::bound(true),
         }
       }
 
@@ -796,9 +802,9 @@ macro_rules! int_sign_table {
       /// except at zero bits, where `MIN` is zero.
       #[track_caller]
       fn strict_abs(&self) -> Self {
-        match self.overflowing_abs() {
-          (abs, false) => abs,
-          (_, true) => $crate::integer::arithmetic::overflow::neg(),
+        match self.checked_abs() {
+          Some(abs) => abs,
+          None => $crate::integer::arithmetic::overflow::neg(),
         }
       }
 
@@ -807,11 +813,12 @@ macro_rules! int_sign_table {
       /// `overflow-checks` decides for the native integers (see [Overflow](crate::Int#overflow)).
       #[track_caller]
       fn abs(&self) -> Self {
-        match self.overflowing_abs() {
-          (abs, false) => abs,
-          (abs, true) => {
+        match self.checked_abs() {
+          Some(abs) => abs,
+          // Only `MIN` overflows, and its wrapped absolute value is `MIN` itself.
+          None => {
             $crate::integer::arithmetic::overflow::forward_neg();
-            abs
+            self.duplicate()
           }
         }
       }
@@ -837,15 +844,16 @@ macro_rules! integer_math_table {
       /// then panics or returns the wrapped power, as `overflow-checks` decides for the native
       /// integers (see [Overflow](crate::Uint#overflow)), and in a constant it fails to compile in
       /// every build.
-      fn pow(&self, exp: u32) -> Self {
-        match self.overflowing_pow(exp) {
-          (power, false) => power,
-          (power, true) => {
-            $crate::integer::arithmetic::overflow::forward_pow();
-            power
+      fn pow(&self, exp: u32) -> Self
+        = prim overflowing_pow_bits(self; exp, Self::BITS) as power {
+          match power {
+            (power, false) => Self::of(power),
+            (power, true) => {
+              $crate::integer::arithmetic::overflow::forward_pow();
+              Self::of(power)
+            }
           }
         }
-      }
 
       /// Euclidean division: the quotient `q` of `self = q * rhs + r` with `0 <= r < |rhs|`, which
       /// for `Uint` is the quotient rounded toward zero.
@@ -939,17 +947,21 @@ macro_rules! integer_math_table {
       /// ([#139911](https://github.com/rust-lang/rust/issues/139911)); this method follows what it
       /// does, which computes `self % rhs` first, rather than its documentation.
       #[track_caller]
-      fn div_exact(&self, rhs: &Self) -> Option<Self> {
-        match self.checked_div_exact(rhs) {
-          Some(quotient) => Some(quotient),
-          // The remainder of a zero divisor and of `MIN / -1` panics, in every build, and any other
-          // division that is not exact leaves a remainder.
-          None => {
-            let _ = self.strict_rem(rhs);
-            None
+      fn div_exact(&self, rhs: &Self) -> Option<Self>
+        = prim div_rem_bits(self, rhs; Self::BITS) as division {
+          match division {
+            Some((quotient, remainder, false)) => {
+              if Self::holds_zero(&remainder) {
+                Some(Self::of(quotient))
+              } else {
+                None
+              }
+            }
+            // The remainder of `MIN / -1` and of a zero divisor panics, in every build.
+            Some((_, _, true)) => $crate::integer::arithmetic::overflow::rem(),
+            None => $crate::integer::arithmetic::domain::rem_by_zero(),
           }
         }
-      }
 
       /// Square root: `self` to the power one half, rounded down.
       ///
@@ -1435,13 +1447,13 @@ pub(super) mod domain {
 
 /// Implements the binary operator `$op` in its four forms of values and references, and its
 /// compound assignment `$assign` for a value and a reference, for every storage, `$repr`, and the
-/// assignments for a storage that holds the value in place, `$repr_mut`. The form on two references
-/// computes over `OverflowingOps`. The forms with an owned operand compute with the sealed storage
-/// method `$primitive` on the inline storages that the operands lend, and store the result in the
-/// owned operand, the left one when both are owned; the compound assignments compute in the same
-/// way and store the result in their target. On overflow, each repeats a native overflow with
-/// `$forward`, which panics or not as `overflow-checks` decides; without a panic, the result is the
-/// wrapped value. Each stores the result after `$forward`, so that a panic leaves the target of an
+/// assignments for a storage that holds the value in place, `$repr_mut`. Every form computes with
+/// the sealed storage method `$primitive` on the inline storages that the operands lend, and on
+/// overflow repeats a native overflow with `$forward`, which panics or not as `overflow-checks`
+/// decides; without a panic, the result is the wrapped value. The form on two references then
+/// allocates the result, the forms with an owned operand store it in that operand, the left one
+/// when both are owned, and the compound assignments store it in their target. Each builds or
+/// stores the result after `$forward`, so that a panic builds nothing and leaves the target of an
 /// assignment unchanged, as for the native integers.
 macro_rules! binary_operator {
   // The value of `$primitive` on the inline storages that `$lhs` and `$rhs` lend, at `$bits` bits,
@@ -1458,7 +1470,7 @@ macro_rules! binary_operator {
     $type:ident: $repr:ident, $repr_mut:ident;
     $op:ident $method:ident,
     $assign:ident $assign_method:ident,
-    $overflowing:ident, $primitive:ident, $forward:ident
+    $primitive:ident, $forward:ident
   ) => {
     impl<B: FitsBits<R>, R: $repr> $op for $type<B, R> {
       type Output = Self;
@@ -1505,11 +1517,9 @@ macro_rules! binary_operator {
       #[inline]
       #[track_caller]
       fn $method(self, rhs: &$type<B, R>) -> $type<B, R> {
-        let (value, overflow) = OverflowingOps::$overflowing(self, rhs);
-        if overflow {
-          overflow::$forward();
-        }
-        value
+        let bits = $type::<B, R>::BITS;
+        let value = binary_operator!(@compute self.repr, rhs.repr, bits, $primitive, $forward);
+        $type::wrap(R::from_inline(value, Token::new()))
       }
     }
 
@@ -1535,27 +1545,27 @@ macro_rules! binary_operator {
 
 binary_operator!(
   Uint: UintRepr, UintReprMut;
-  Add add, AddAssign add_assign, overflowing_add, overflowing_add_bits, forward_add
+  Add add, AddAssign add_assign, overflowing_add_bits, forward_add
 );
 binary_operator!(
   Uint: UintRepr, UintReprMut;
-  Sub sub, SubAssign sub_assign, overflowing_sub, overflowing_sub_bits, forward_sub
+  Sub sub, SubAssign sub_assign, overflowing_sub_bits, forward_sub
 );
 binary_operator!(
   Uint: UintRepr, UintReprMut;
-  Mul mul, MulAssign mul_assign, overflowing_mul, overflowing_mul_bits, forward_mul
+  Mul mul, MulAssign mul_assign, overflowing_mul_bits, forward_mul
 );
 binary_operator!(
   Int: IntRepr, IntReprMut;
-  Add add, AddAssign add_assign, overflowing_add, overflowing_add_bits, forward_add
+  Add add, AddAssign add_assign, overflowing_add_bits, forward_add
 );
 binary_operator!(
   Int: IntRepr, IntReprMut;
-  Sub sub, SubAssign sub_assign, overflowing_sub, overflowing_sub_bits, forward_sub
+  Sub sub, SubAssign sub_assign, overflowing_sub_bits, forward_sub
 );
 binary_operator!(
   Int: IntRepr, IntReprMut;
-  Mul mul, MulAssign mul_assign, overflowing_mul, overflowing_mul_bits, forward_mul
+  Mul mul, MulAssign mul_assign, overflowing_mul_bits, forward_mul
 );
 
 /// Implements the division operator `$op`, `/` or `%`, in its four forms of values and references,
@@ -1675,8 +1685,9 @@ division_operator!(
   Rem rem, RemAssign rem_assign, strict_rem; 1, rem_by_zero, rem
 );
 
-// As for the binary operators, the negation of a reference computes over `OverflowingOps`, and the
-// negation of a value computes on the inline storage that it lends and stores the result in it.
+// As for the binary operators, the negation computes on the inline storage that its operand lends
+// and repeats an overflow; the negation of a reference then allocates the result, and the negation
+// of a value stores it in that value.
 impl<B: FitsBits<R>, R: IntRepr> Neg for Int<B, R> {
   type Output = Self;
 
@@ -1701,68 +1712,127 @@ impl<B: FitsBits<R>, R: IntRepr> Neg for &Int<B, R> {
   #[inline]
   #[track_caller]
   fn neg(self) -> Int<B, R> {
-    let (value, overflow) = OverflowingOps::overflowing_neg(self);
+    let (value, overflow) = self
+      .repr
+      .inline(Token::new())
+      .overflowing_neg_bits(Int::<B, R>::BITS, Token::new());
     if overflow {
       overflow::forward_neg();
     }
-    value
+    Int::wrap(R::from_inline(value, Token::new()))
   }
 }
 
-/// One in the storage `R`: bit 0 alone, set in the inline zero, which `Product` starts from and
-/// `IntegerOne` returns. The width holds one, so that bit exists.
+/// One in the inline storage of `R`: bit 0 alone, set in the inline zero, which `Product` starts
+/// from. The width holds one, so that bit exists.
+#[inline]
+fn unsigned_inline_one<B: FitsBits<R>, R: UintRepr>() -> R::Inline {
+  match <R::Inline as UintCore>::zero(Token::new()).with_bit(0, true, B::U32, Token::new()) {
+    Some(one) => one,
+    None => nonzero::zero(),
+  }
+}
+
+/// One in the inline storage of `R`, as [`unsigned_inline_one`] gives it: the width has two bits
+/// or more, so that bit 0 alone is one, not -1.
+#[inline]
+fn signed_inline_one<B: FitsBits<R>, R: IntRepr>() -> R::Inline {
+  match <R::Inline as IntCore>::zero(Token::new()).with_bit(0, true, B::U32, Token::new()) {
+    Some(one) => one,
+    None => nonzero::zero(),
+  }
+}
+
+/// One in the storage `R`, which `IntegerOne` returns and `Product` gives for no item: the inline
+/// one, stored once.
 #[inline]
 pub(super) fn unsigned_one<B: FitsBits<R>, R: UintRepr>() -> Uint<B, R> {
-  match <R::Inline as UintCore>::zero(Token::new()).with_bit(0, true, B::U32, Token::new()) {
-    Some(one) => Uint::wrap(R::from_inline(one, Token::new())),
-    None => nonzero::zero(),
-  }
+  Uint::wrap(R::from_inline(unsigned_inline_one::<B, R>(), Token::new()))
 }
 
-/// One in the storage `R`, as [`unsigned_one`] gives it: the width has two bits or more, so that
-/// bit 0 alone is one, not -1.
+/// One in the storage `R`, as [`unsigned_one`] gives it.
 #[inline]
 pub(super) fn signed_one<B: FitsBits<R>, R: IntRepr>() -> Int<B, R> {
-  match <R::Inline as IntCore>::zero(Token::new()).with_bit(0, true, B::U32, Token::new()) {
-    Some(one) => Int::wrap(R::from_inline(one, Token::new())),
-    None => nonzero::zero(),
-  }
+  Int::wrap(R::from_inline(signed_inline_one::<B, R>(), Token::new()))
 }
 
-/// Implements `Sum`, which adds from zero with `+`, and `Product`, which multiplies from `$one()`
-/// with `*` for a width bounded by `$width`, for values and references, for every storage, `$repr`:
-/// zero is the sealed `zero`, and an operator with an owned left operand stores each step in the
-/// running value.
+/// Implements `Sum`, which adds from zero, and `Product`, which multiplies from one for a width
+/// bounded by `$width`, for values and references, for every storage, `$repr`, whose sealed trait
+/// is `$core`. Each computes on the inline storages that the items lend, with the sealed storage
+/// method of the operator, and repeats the overflow of a step as the operator does. A fold of
+/// values stores the result in the first item, and gives the sealed `zero`, or `$one()`, for no
+/// item; a fold of references builds the result once, from the inline zero or `$inline_one()`.
 macro_rules! folds {
-  ($type:ident: $repr:ident, $one:ident, $($width:tt)+) => {
+  // The running value `$total`, an inline storage, combined with the value that `$repr` lends by
+  // the sealed storage method `$primitive`, at `$bits` bits, after the overflow, which `$forward`
+  // repeats.
+  (@step $total:expr, $repr:expr, $bits:expr, $primitive:ident, $forward:ident) => {{
+    let (total, overflow) = $total.$primitive($repr.inline(Token::new()), $bits, Token::new());
+    if overflow {
+      overflow::$forward();
+    }
+    total
+  }};
+  ($type:ident: $repr:ident, $core:ident, $one:ident, $inline_one:ident, $($width:tt)+) => {
     impl<B: FitsBits<R>, R: $repr> Sum for $type<B, R> {
-      fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Self::wrap(R::zero(Token::new())), |sum, value| sum + value)
+      fn sum<I: Iterator<Item = Self>>(mut iter: I) -> Self {
+        let Some(mut first) = iter.next() else {
+          return Self::wrap(R::zero(Token::new()));
+        };
+        // Zero takes the value of the first item in a step that cannot overflow: the inline
+        // storage is not known to be `Copy`.
+        let zero = <R::Inline as $core>::zero(Token::new());
+        let mut total =
+          folds!(@step zero, first.repr, Self::BITS, overflowing_add_bits, forward_add);
+        for value in iter {
+          total = folds!(@step total, value.repr, Self::BITS, overflowing_add_bits, forward_add);
+        }
+        first.repr.set_inline(total, Token::new());
+        first
       }
     }
 
     impl<'a, B: FitsBits<R>, R: $repr> Sum<&'a $type<B, R>> for $type<B, R> {
       fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-        iter.fold(Self::wrap(R::zero(Token::new())), |sum, value| sum + value)
+        let mut total = <R::Inline as $core>::zero(Token::new());
+        for value in iter {
+          total = folds!(@step total, value.repr, Self::BITS, overflowing_add_bits, forward_add);
+        }
+        Self::wrap(R::from_inline(total, Token::new()))
       }
     }
 
     impl<B: FitsBits<R> + $($width)+, R: $repr> Product for $type<B, R> {
-      fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold($one(), |product, value| product * value)
+      fn product<I: Iterator<Item = Self>>(mut iter: I) -> Self {
+        let Some(mut first) = iter.next() else {
+          return $one();
+        };
+        // One takes the value of the first item, as zero does in the sum.
+        let one = $inline_one::<B, R>();
+        let mut total =
+          folds!(@step one, first.repr, Self::BITS, overflowing_mul_bits, forward_mul);
+        for value in iter {
+          total = folds!(@step total, value.repr, Self::BITS, overflowing_mul_bits, forward_mul);
+        }
+        first.repr.set_inline(total, Token::new());
+        first
       }
     }
 
     impl<'a, B: FitsBits<R> + $($width)+, R: $repr> Product<&'a $type<B, R>> for $type<B, R> {
       fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-        iter.fold($one(), |product, value| product * value)
+        let mut total = $inline_one::<B, R>();
+        for value in iter {
+          total = folds!(@step total, value.repr, Self::BITS, overflowing_mul_bits, forward_mul);
+        }
+        Self::wrap(R::from_inline(total, Token::new()))
       }
     }
   };
 }
 
-folds!(Uint: UintRepr, unsigned_one, NonZero);
-folds!(Int: IntRepr, signed_one, IsGreater<U1, Output = True>);
+folds!(Uint: UintRepr, UintCore, unsigned_one, unsigned_inline_one, NonZero);
+folds!(Int: IntRepr, IntCore, signed_one, signed_inline_one, IsGreater<U1, Output = True>);
 
 #[cfg(test)]
 mod tests;

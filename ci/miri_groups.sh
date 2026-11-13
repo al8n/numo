@@ -41,6 +41,7 @@ miri_groups=(
   "5 integer::arithmetic::tests::limbs::"
   "9 integer::arithmetic::tests::nonzero_casts::"
   "7 integer::arithmetic::tests::floats::"
+  "6 integer::arithmetic::tests::heap::"
   "1 integer::arithmetic::"
   "2 integer::tests::int_"
   "2 integer::tests::uint_"

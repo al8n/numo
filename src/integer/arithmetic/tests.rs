@@ -869,7 +869,8 @@ fn overflow_checks() -> bool {
 /// With overflow checks, as in a debug build, an operator that overflows panics with the message
 /// of the native integers, and without them, as in a release build, it returns the wrapped value,
 /// as the native operators do: in partial and full widths of native integers and arrays, through
-/// `abs`, `Sum` and `Product`. A panicking compound assignment leaves its target unchanged.
+/// `abs`, `Sum` and `Product`, on values and on two references, and at one signed bit. A panicking
+/// compound assignment leaves its target unchanged.
 #[test]
 fn operators_follow_overflow_checks() {
   let checks = overflow_checks();
@@ -975,6 +976,45 @@ fn operators_follow_overflow_checks() {
     i7::MIN
   );
 
+  // The operators on two references and the negation of a reference.
+  let (zero, one, max) = (&U200x4::ZERO, &U200x4::ONE, &U200x4::MAX);
+  overflows!(max + one, "attempt to add with overflow", U200x4::ZERO);
+  overflows!(zero - one, "attempt to subtract with overflow", U200x4::MAX);
+  overflows!(max * max, "attempt to multiply with overflow", U200x4::ONE);
+  let (min, one, minus_one) = (&i7::MIN, &i7::ONE, &-i7::ONE);
+  overflows!(min + minus_one, "attempt to add with overflow", i7::MAX);
+  overflows!(min - one, "attempt to subtract with overflow", i7::MAX);
+  overflows!(
+    min * minus_one,
+    "attempt to multiply with overflow",
+    i7::MIN
+  );
+  overflows!(-min, "attempt to negate with overflow", i7::MIN);
+  let wide = &i256::MIN;
+  overflows!(-wide, "attempt to negate with overflow", i256::MIN);
+  // `abs` through the trait, and at one signed bit, where -1 is `MIN`.
+  overflows!(
+    SignedFixedInteger::abs(min),
+    "attempt to negate with overflow",
+    i7::MIN
+  );
+  overflows!(
+    SignedFixedInteger::abs(wide),
+    "attempt to negate with overflow",
+    i256::MIN
+  );
+  type I1 = Int<U1, [u8; 1]>;
+  let bit = &I1::MIN;
+  overflows!(bit + bit, "attempt to add with overflow", I1::ZERO);
+  overflows!(bit * bit, "attempt to multiply with overflow", I1::MIN);
+  overflows!(-bit, "attempt to negate with overflow", I1::MIN);
+  overflows!(bit.abs(), "attempt to negate with overflow", I1::MIN);
+  overflows!(
+    SignedFixedInteger::abs(bit),
+    "attempt to negate with overflow",
+    I1::MIN
+  );
+
   let mut target = u7::MAX;
   let panic = panic_of(|| target += u7::ONE);
   assert_eq!(panic.is_some(), checks);
@@ -990,7 +1030,7 @@ fn operators_follow_overflow_checks() {
 }
 
 /// The strict methods panic on overflow in every build, with the messages of the native integers,
-/// through the inherent `const fn`s and the traits.
+/// through the inherent `const fn`s and the traits, at one signed bit too.
 #[test]
 fn strict_methods_always_panic() {
   let message = |panic: Option<Panic>| panic.map(|(message, _, _)| message);
@@ -1019,6 +1059,18 @@ fn strict_methods_always_panic() {
   );
   // Zero bits negate their only value, zero, to itself.
   assert_eq!(Int::<U0, i8>::MIN.strict_neg(), Int::<U0, i8>::ZERO);
+  // One signed bit holds only -1 and 0, so -1, which is `MIN`, has no sum with itself, no
+  // negation and no absolute value.
+  type I1 = Int<U1, [u8; 1]>;
+  assert_eq!(message(panic_of(|| I1::MIN.strict_add(&I1::MIN))), add);
+  assert_eq!(message(panic_of(|| I1::MIN.strict_neg())), neg);
+  assert_eq!(message(panic_of(|| I1::MIN.strict_abs())), neg);
+  let bit = Int::<U1, i8>::MIN;
+  assert_eq!(message(panic_of(|| StrictOps::strict_neg(&bit))), neg);
+  assert_eq!(
+    message(panic_of(|| SignedFixedInteger::strict_abs(&bit))),
+    neg
+  );
 }
 
 /// A panic of an operator or of a strict method reports the expression that overflowed, through
@@ -1049,9 +1101,13 @@ fn overflow_panics_report_the_caller() {
     location!(u7::MAX + u7::ONE),
     location!(&u7::MAX + &u7::ONE),
     location!(u256::ZERO - u256::ONE),
+    location!(&u256::ZERO - &u256::ONE),
     location!(i7::MIN * -i7::ONE),
+    location!(&i7::MIN * &-i7::ONE),
     location!(-i256::MIN),
+    location!(-&i256::MIN),
     location!(i7::MIN.abs()),
+    location!(SignedFixedInteger::abs(&i256::MIN)),
     location!(target += u7::ONE),
   ];
   for (location, line) in locations {
@@ -1070,7 +1126,8 @@ fn overflow_panics_report_the_caller() {
 /// `-` on values and references, and `Product` over values and references, give the results of
 /// `checked_neg` and `checked_mul` where these are `Some`, for every value and pair of 7 bits in a
 /// native integer and in an array of one byte, or under Miri every 7th value, with the ends that
-/// `every_value` keeps, against every value.
+/// `every_value` keeps, against every value. A fold of no item gives zero or one, and a fold of
+/// one item that item.
 #[test]
 fn negation_and_products_match_the_checked_methods() {
   let step = if cfg!(miri) { 7 } else { 1 };
@@ -1106,6 +1163,15 @@ fn negation_and_products_match_the_checked_methods() {
   assert_eq!(-Int::<U0, i8>::MIN, Int::<U0, i8>::ZERO);
   assert_eq!(core::iter::empty::<u7>().product::<u7>(), u7::ONE);
   assert_eq!(core::iter::empty::<&i256>().product::<i256>(), i256::ONE);
+  assert_eq!(core::iter::empty::<u7>().sum::<u7>(), u7::ZERO);
+  assert_eq!(core::iter::empty::<&i256>().sum::<i256>(), i256::ZERO);
+  // A fold of one item is that item, a limit too.
+  assert_eq!([u7::MAX].into_iter().sum::<u7>(), u7::MAX);
+  assert_eq!([i7::MIN].iter().sum::<i7>(), i7::MIN);
+  assert_eq!([u7::MAX].iter().product::<u7>(), u7::MAX);
+  assert_eq!([i7::MIN].into_iter().product::<i7>(), i7::MIN);
+  assert_eq!([i256::MIN].into_iter().sum::<i256>(), i256::MIN);
+  assert_eq!([u256::MAX].iter().product::<u256>(), u256::MAX);
 }
 
 /// The results of the families, of `is_one` and `is_zero`, of the strict methods, the operators,
@@ -2305,6 +2371,8 @@ mod casts;
 mod compare;
 mod division;
 mod floats;
+#[cfg(any(feature = "std", feature = "alloc"))]
+mod heap;
 mod limbs;
 mod nonzero;
 mod nonzero_casts;
