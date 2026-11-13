@@ -739,6 +739,48 @@ fn remainders_and_saturated_results_take_the_larger_scale() {
   check_remainder_and_saturation::<Decimal<U40, U36, u256>>();
 }
 
+/// The operators take the larger scale of their operands, as `checked_add` and `checked_sub` do,
+/// and a sum over an iterator the largest scale of its items, or scale 0 without an item.
+#[test]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn operators_and_sums_take_the_larger_scale() {
+  let short: WideS = value("0.001");
+  let padded: WideS = value("0.00100000");
+  assert_text(&(short + padded), "0.00200000", 8);
+  assert_text(&(padded + short), "0.00200000", 8);
+  assert_text(&(&short + &padded), "0.00200000", 8);
+  assert_text(&(short - padded), "0.00000000", 8);
+  assert_text(&(padded - short), "0.00000000", 8);
+  assert_text(&(&short - &padded), "0.00000000", 8);
+  assert_text(&(short + short), "0.002", 3);
+  let mut total = short;
+  total += padded;
+  assert_text(&total, "0.00200000", 8);
+  total -= short;
+  assert_text(&total, "0.00100000", 8);
+  let mut total = padded;
+  total -= short;
+  assert_text(&total, "0.00000000", 8);
+  total += short;
+  assert_text(&total, "0.00100000", 8);
+
+  let items: [WideS; 3] = [value("1.5"), value("-0.250"), value("2")];
+  assert_text(&items.into_iter().sum::<WideS>(), "3.250", 3);
+  assert_text(&items.iter().sum::<WideS>(), "3.250", 3);
+  assert_text(&[padded].into_iter().sum::<WideS>(), "0.00100000", 8);
+  assert_text(&[padded].iter().sum::<WideS>(), "0.00100000", 8);
+  assert_text(&core::iter::empty::<WideS>().sum::<WideS>(), "0", 0);
+  assert_text(&core::iter::empty::<&WideS>().sum::<WideS>(), "0", 0);
+
+  let fee: NarrowS = value("0.0010");
+  let amount: NarrowS = value("2.5");
+  assert_text(&(amount + fee), "2.5010", 4);
+  assert_text(&(amount - fee), "2.4990", 4);
+  assert_text(&(&amount - &fee), "2.4990", 4);
+  assert_text(&[amount, fee, amount].iter().sum::<NarrowS>(), "5.0010", 4);
+  assert_text(&core::iter::empty::<NarrowS>().sum::<NarrowS>(), "0", 0);
+}
+
 #[test]
 fn generic_code_takes_scaled_and_bare_decimals_alike() {
   fn total<T: FixedDecimal>(values: &[T]) -> Option<T> {

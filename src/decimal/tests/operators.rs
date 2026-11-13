@@ -1,13 +1,27 @@
-//! The remainder and the saturating sum and difference of `Decimal`: `checked_rem`,
-//! `saturating_add` and `saturating_sub` of every storage against the coefficients in
-//! `num-bigint`, at the limits and in constant contexts. Each type checks in a function of its
-//! own, whose frame holds the values of that type alone: the function is `#[inline(never)]`, since
-//! an optimized build would inline a function that has one call site, which would put every type
-//! in the frame of the test, beyond the stack of a test thread.
+//! The arithmetic of `Decimal` and `Scaled` within one type: `checked_rem`, `saturating_add` and
+//! `saturating_sub` of every storage against the coefficients in `num-bigint`, at the limits and
+//! in constant contexts, and the operators `+`, `-`, `+=` and `-=` and `Sum` against `checked_add`
+//! and `checked_sub`, with their panics on a result outside the range. Each type checks in a
+//! function of its own, whose frame holds the values of that type alone: the function is
+//! `#[inline(never)]`, since an optimized build would inline a function that has one call site,
+//! which would put every type in the frame of the test, beyond the stack of a test thread.
+//!
+//! The operators panic in every build, so these tests also run in an optimized build without
+//! overflow checks, and nothing that they expect depends on a build setting.
 
+use core::{
+  iter::Sum,
+  ops::{Add, Sub},
+};
 use std::{
+  boxed::Box,
+  cell::RefCell,
   format,
+  panic::{self, AssertUnwindSafe},
+  path::PathBuf,
   string::{String, ToString},
+  sync::Once,
+  thread_local,
   vec::Vec,
 };
 
@@ -17,8 +31,8 @@ use typenum::{
 };
 
 use crate::{
-  Decimal, FixedDecimal, Layout, Storage, bigint::tier, i192, i256, i320, i384, i448, i512, u192,
-  u256, u320, u384, u448, u512,
+  ConstFixedDecimal, Decimal, FixedDecimal, Layout, Scaled, Storage, bigint::tier, i192, i256,
+  i320, i384, i448, i512, u192, u256, u320, u384, u448, u512,
 };
 
 // One type of each storage, most of them at the digit limit of the storage, where a sum can leave
@@ -273,4 +287,338 @@ fn methods_in_constant_contexts() {
   let fraction: Option<String> = REMAINDER.map(|remainder| remainder.to_string());
   assert_eq!(fraction.as_deref(), Some("0.999999999999999999"));
   assert_eq!((SUM, DIFFERENCE), (Du320::MAX, Du320::ZERO));
+}
+
+/// A panic: its message, and the file and the line that it reports.
+type Panic = (String, String, u32);
+
+thread_local! {
+  /// The panic of this thread while `panic_of` captures it: `None` outside `panic_of`, and
+  /// `Some(None)` inside it until a panic.
+  static CAPTURED: RefCell<Option<Option<Panic>>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` and returns its panic, or `None` if it returns. The panic hook records the panic of
+/// this thread meanwhile instead of printing it, and passes the panics of other threads and of
+/// other code to the hook that it replaced.
+fn panic_of<T>(f: impl FnOnce() -> T) -> Option<Panic> {
+  static HOOK: Once = Once::new();
+  HOOK.call_once(|| {
+    let previous = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+      let recorded = CAPTURED.with(|captured| match captured.borrow_mut().as_mut() {
+        Some(slot) => {
+          let message = info.payload_as_str().unwrap_or_default().to_string();
+          let (file, line) = info
+            .location()
+            .map_or((String::new(), 0), |at| (at.file().to_string(), at.line()));
+          *slot = Some((message, file, line));
+          true
+        }
+        None => false,
+      });
+      if !recorded {
+        previous(info);
+      }
+    }));
+  });
+  CAPTURED.with(|captured| *captured.borrow_mut() = Some(None));
+  let result = panic::catch_unwind(AssertUnwindSafe(f));
+  let panic = CAPTURED
+    .with(|captured| captured.borrow_mut().take())
+    .flatten();
+  assert_eq!(result.is_err(), panic.is_some(), "a panic and its record");
+  panic
+}
+
+/// Asserts that `$value` panics with the message `$message` and reports the line of the outermost
+/// macro invocation that leads to it, in its file, as `line!` does, so that invocation must fit on
+/// one line.
+macro_rules! panics_here {
+  ($value:expr, $message:expr) => {{
+    let expected = Some(($message.clone(), file!().to_string(), line!()));
+    assert_eq!(panic_of(|| $value), expected, "{}", stringify!($value));
+  }};
+}
+
+/// The messages of the native `+` and `-` where they check for overflow, which the operators of a
+/// decimal panic with in every build.
+fn overflow_messages() -> (String, String) {
+  (
+    "attempt to add with overflow".to_string(),
+    "attempt to subtract with overflow".to_string(),
+  )
+}
+
+/// Checks the operators of `T` at every pair of its [`samples`] against `checked_add` and
+/// `checked_sub`. Where the checked method returns a value, `a + b`, `&a + &b` and `a += b` give
+/// it, and `a - b`, `&a - &b` and `a -= b` likewise. Where it returns `None`, as for an unsigned
+/// difference below zero, each form panics with the message of the native operator and reports its
+/// own line, and the assignment leaves its target unchanged.
+#[inline(never)]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn check_operators<T>()
+where
+  T: ConstFixedDecimal,
+  for<'a> &'a T: Add<&'a T, Output = T> + Sub<&'a T, Output = T>,
+{
+  let (add, sub) = overflow_messages();
+  let values = samples::<T>();
+  for &a in &values {
+    for &b in &values {
+      match a.checked_add(&b) {
+        Some(sum) => {
+          assert_eq!(a + b, sum, "{a} + {b}");
+          assert_eq!(&a + &b, sum, "&{a} + &{b}");
+          let mut target = a;
+          target += b;
+          assert_eq!(target, sum, "{a} += {b}");
+        }
+        None => {
+          panics_here!(a + b, add);
+          panics_here!(&a + &b, add);
+          let mut target = a;
+          panics_here!(target += b, add);
+          assert_eq!(target, a, "{a} += {b}");
+        }
+      }
+      match a.checked_sub(&b) {
+        Some(difference) => {
+          assert_eq!(a - b, difference, "{a} - {b}");
+          assert_eq!(&a - &b, difference, "&{a} - &{b}");
+          let mut target = a;
+          target -= b;
+          assert_eq!(target, difference, "{a} -= {b}");
+        }
+        None => {
+          panics_here!(a - b, sub);
+          panics_here!(&a - &b, sub);
+          let mut target = a;
+          panics_here!(target -= b, sub);
+          assert_eq!(target, a, "{a} -= {b}");
+        }
+      }
+    }
+  }
+}
+
+/// Checks `Sum` of `T` over values and over references against the fold of `checked_add` from
+/// zero: over no item, which gives zero, over one item, which gives the item, over each pair of
+/// the [`samples`], and over each pair followed by one of the first three samples. Where the fold
+/// returns `None`, at the first partial sum outside the range, the sum panics with the message of
+/// the native `+` and reports the fold of the library, in `file`, not its caller.
+#[inline(never)]
+fn check_sums<T>(file: &str)
+where
+  T: ConstFixedDecimal + for<'a> Sum<&'a T>,
+{
+  let (add, _) = overflow_messages();
+  let values = samples::<T>();
+  let check = |items: &[T]| {
+    let fold = items
+      .iter()
+      .try_fold(T::zero(), |sum, value| sum.checked_add(value));
+    match fold {
+      Some(total) => {
+        assert_eq!(items.iter().copied().sum::<T>(), total, "{items:?}");
+        assert_eq!(items.iter().sum::<T>(), total, "{items:?}");
+      }
+      None => {
+        let panics = [
+          panic_of(|| items.iter().copied().sum::<T>()),
+          panic_of(|| items.iter().sum::<T>()),
+        ];
+        for panic in panics {
+          let (message, at, _) = panic.expect("a panic");
+          assert_eq!(message, add, "{items:?}");
+          // The location names the file with the separator of the host, and paths compare by
+          // component.
+          assert_eq!(PathBuf::from(at), PathBuf::from(file), "{items:?}");
+        }
+      }
+    }
+  };
+  check(&[]);
+  assert_eq!(core::iter::empty::<T>().sum::<T>(), T::ZERO);
+  assert_eq!(core::iter::empty::<&T>().sum::<T>(), T::ZERO);
+  for &a in &values {
+    check(&[a]);
+    assert_eq!([a].into_iter().sum::<T>(), a, "{a}");
+    assert_eq!([a].iter().sum::<T>(), a, "{a}");
+    for &b in &values {
+      check(&[a, b]);
+      for &c in &values[..3] {
+        check(&[a, b, c]);
+      }
+    }
+  }
+}
+
+/// Checks the operators of each type of the list, a bare decimal, with [`check_operators`].
+macro_rules! operators_agree {
+  ($($ty:ty),+ $(,)?) => {$(
+    check_operators::<$ty>();
+  )+};
+}
+
+/// Checks the sums of each type of the list, a bare decimal, with [`check_sums`].
+macro_rules! sums_agree {
+  ($($ty:ty),+ $(,)?) => {$(
+    check_sums::<$ty>("src/decimal/ops.rs");
+  )+};
+}
+
+/// The operators of one type of each storage give the results of `checked_add` and `checked_sub`
+/// at every pair of the samples, and panic where those return `None`, at the line of the operator;
+/// under Miri, those of a signed native, an unsigned native and a wide storage.
+#[test]
+fn operators_match_the_checked_methods() {
+  operators_agree!(Di8, Du64, Di256);
+  if tier().is_miri() {
+    return;
+  }
+  operators_agree!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
+  operators_agree!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512
+  );
+}
+
+/// `Sum` of one type of each storage, over values and over references, gives the fold of
+/// `checked_add` from zero, and panics in the fold of the library where that returns `None`; under
+/// Miri, that of a signed native, an unsigned native and a wide storage.
+#[test]
+fn sums_match_the_fold_of_checked_add() {
+  sums_agree!(Di8, Du64, Di256);
+  if tier().is_miri() {
+    return;
+  }
+  sums_agree!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
+  sums_agree!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512
+  );
+}
+
+/// The operators and the sums of a `Scaled` over a signed native, an unsigned native and a wide
+/// storage give the results of its `checked_add` and `checked_sub`, and panic where those return
+/// `None`, an operator at its own line and a sum in the fold of the library.
+#[test]
+fn scaled_operators_and_sums_match_the_checked_methods() {
+  check_operators::<Scaled<Di64>>();
+  check_operators::<Scaled<Du64>>();
+  check_operators::<Scaled<Di256>>();
+  check_sums::<Scaled<Di64>>("src/decimal/scaled/mod.rs");
+  check_sums::<Scaled<Du64>>("src/decimal/scaled/mod.rs");
+  check_sums::<Scaled<Di256>>("src/decimal/scaled/mod.rs");
+}
+
+/// The operators and the sums on values that are written out, in a signed native storage and in
+/// an unsigned wide one.
+#[test]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn operators_add_and_subtract() {
+  let (a, b): (Di64, Di64) = ("1.5".parse().unwrap(), "-0.25".parse().unwrap());
+  assert_eq!((a + b).to_string(), "1.25");
+  assert_eq!((a - b).to_string(), "1.75");
+  assert_eq!((&a + &b).to_string(), "1.25");
+  assert_eq!((&a - &b).to_string(), "1.75");
+  let mut total = a;
+  total += b;
+  assert_eq!(total.to_string(), "1.25");
+  total -= a;
+  assert_eq!(total, b);
+  assert_eq!([a, b, a].into_iter().sum::<Di64>().to_string(), "2.75");
+  assert_eq!([a, b, a].iter().sum::<Di64>().to_string(), "2.75");
+
+  let (a, b): (Du320, Du320) = ("1.5".parse().unwrap(), "0.25".parse().unwrap());
+  assert_eq!((a + b).to_string(), "1.75");
+  assert_eq!((a - b).to_string(), "1.25");
+  assert_eq!((&a + &b).to_string(), "1.75");
+  assert_eq!((&a - &b).to_string(), "1.25");
+  let mut total = a;
+  total += b;
+  assert_eq!(total.to_string(), "1.75");
+  total -= a;
+  assert_eq!(total, b);
+  assert_eq!([a, b, a].into_iter().sum::<Du320>().to_string(), "3.25");
+  assert_eq!([a, b, a].iter().sum::<Du320>().to_string(), "3.25");
+}
+
+/// A sum above the range, a difference below it and an unsigned difference below zero panic with
+/// the messages of the native operators, at the line of the operator, in each form. A panicking
+/// assignment leaves its target, and for a `Scaled` the scale of its target.
+#[test]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn results_outside_the_range_panic_at_the_operator() {
+  let (add, sub) = overflow_messages();
+  let (min, max, one) = (Di64::MIN, Di64::MAX, Di64::ONE);
+  panics_here!(max + one, add);
+  panics_here!(&max + &one, add);
+  panics_here!(min - one, sub);
+  panics_here!(&min - &one, sub);
+  let mut target = max;
+  panics_here!(target += one, add);
+  assert_eq!(target, max);
+  let mut target = min;
+  panics_here!(target -= one, sub);
+  assert_eq!(target, min);
+
+  let (half, one): (Du64, Du64) = ("0.5".parse().unwrap(), Du64::ONE);
+  panics_here!(half - one, sub);
+  panics_here!(&half - &one, sub);
+  panics_here!(Du64::ZERO - Du64::MAX, sub);
+  panics_here!(Du64::MAX + half, add);
+  let mut target = half;
+  panics_here!(target -= one, sub);
+  assert_eq!(target, half);
+
+  let (min, max) = (Scaled::new(Di64::MIN, 3), Scaled::new(Di64::MAX, 3));
+  let one = Scaled::new(Di64::ONE, 7);
+  panics_here!(max + one, add);
+  panics_here!(&max + &one, add);
+  panics_here!(min - one, sub);
+  panics_here!(&min - &one, sub);
+  let mut target = max;
+  panics_here!(target += one, add);
+  assert_eq!(target.into_parts(), (Di64::MAX, 3));
+  let mut target = min;
+  panics_here!(target -= one, sub);
+  assert_eq!(target.into_parts(), (Di64::MIN, 3));
+}
+
+/// A sum over an iterator panics at the first partial sum outside the range, also where the whole
+/// sum is in range, with the message of the native `+`, and reports the fold of the library, not
+/// its caller: for a `Decimal` and for a `Scaled`, over values and over references.
+#[test]
+fn a_partial_sum_outside_the_range_panics_in_the_fold() {
+  let (add, _) = overflow_messages();
+  let items = [Di64::MAX, Di64::ONE, Di64::MIN];
+  let panics = [
+    panic_of(|| items.into_iter().sum::<Di64>()),
+    panic_of(|| items.iter().sum::<Di64>()),
+  ];
+  for panic in panics {
+    let (message, file, _) = panic.expect("a panic");
+    assert_eq!(message, add);
+    assert_ne!(file, file!());
+    assert_eq!(PathBuf::from(file), PathBuf::from("src/decimal/ops.rs"));
+  }
+  // In an order whose partial sums are in range, the same values add up.
+  let ordered = [Di64::MAX, Di64::MIN, Di64::ONE];
+  assert_eq!(ordered.into_iter().sum::<Di64>(), Di64::ONE);
+  assert_eq!(ordered.iter().sum::<Di64>(), Di64::ONE);
+
+  let items = items.map(Scaled::from);
+  let panics = [
+    panic_of(|| items.into_iter().sum::<Scaled<Di64>>()),
+    panic_of(|| items.iter().sum::<Scaled<Di64>>()),
+  ];
+  for panic in panics {
+    let (message, file, _) = panic.expect("a panic");
+    assert_eq!(message, add);
+    assert_ne!(file, file!());
+    assert_eq!(
+      PathBuf::from(file),
+      PathBuf::from("src/decimal/scaled/mod.rs")
+    );
+  }
 }

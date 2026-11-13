@@ -22,7 +22,7 @@
 use core::{
   fmt::{Debug, Display},
   hash::Hash,
-  ops::{Add, BitAnd, Neg, Sub},
+  ops::{Add, AddAssign, BitAnd, Neg, Sub, SubAssign},
   str::FromStr,
 };
 
@@ -127,7 +127,18 @@ mod sealed {
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait FixedDecimal:
-  Sealed + Clone + Eq + Ord + Hash + Debug + Display + Default + FromStr<Err = ParseError>
+  Sealed
+  + Clone
+  + Eq
+  + Ord
+  + Hash
+  + Debug
+  + Display
+  + Default
+  + FromStr<Err = ParseError>
+  + Add<Output = Self>
+  + Sub<Output = Self>
+  + core::iter::Sum
 {
   /// The number of integral digits, `Integral`.
   const INTEGRAL: u32;
@@ -253,7 +264,7 @@ pub trait FixedDecimal:
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait ConstFixedDecimal: FixedDecimal + Copy {
+pub trait ConstFixedDecimal: FixedDecimal + Copy + AddAssign + SubAssign {
   /// Zero.
   const ZERO: Self;
 

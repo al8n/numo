@@ -28,6 +28,7 @@ use crate::{
 
 mod error;
 mod format;
+mod ops;
 mod parse;
 mod scaled;
 mod storage;
