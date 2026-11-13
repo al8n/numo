@@ -104,7 +104,7 @@ pub(crate) fn tier() -> Tier {
 }
 
 /// Every rounding mode.
-pub(crate) const MODES: [RoundingMode; 7] = [
+pub(crate) const MODES: [RoundingMode; 8] = [
   RoundingMode::Up,
   RoundingMode::Down,
   RoundingMode::Ceiling,
@@ -112,13 +112,15 @@ pub(crate) const MODES: [RoundingMode; 7] = [
   RoundingMode::HalfUp,
   RoundingMode::HalfDown,
   RoundingMode::HalfEven,
+  RoundingMode::Up05,
 ];
 
 /// `value / divisor` rounded to an integer with `mode`, for `divisor > 0`.
 ///
 /// Picks between the integers below and above the exact quotient by their distances to it, and
-/// breaks a tie by direction or parity. The crate instead compares the remainder of a division
-/// toward zero with its distance to the divisor.
+/// breaks a tie by direction or parity. `Up05` has no distance: it reads the last digit of the
+/// integer toward zero. The crate instead compares the remainder of a division toward zero with its
+/// distance to the divisor.
 pub(crate) fn round(value: &BigInt, divisor: &BigInt, mode: RoundingMode) -> BigInt {
   // `floor * divisor <= value < (floor + 1) * divisor`; `/` rounds toward zero.
   let mut floor = value / divisor;
@@ -154,6 +156,8 @@ pub(crate) fn round(value: &BigInt, divisor: &BigInt, mode: RoundingMode) -> Big
         },
       }
     }
+    RoundingMode::Up05 if (&toward_zero % 5u8).sign() == Sign::NoSign => away_from_zero,
+    RoundingMode::Up05 => toward_zero,
   }
 }
 
@@ -1491,8 +1495,9 @@ pub(crate) mod floats {
 
   /// `value`, a finite float, rounded to an integer with `mode` by the functions of std: `trunc`
   /// for `Down`, `ceil` for `Ceiling`, `floor` for `Floor`, `round` for `HalfUp`, `round_ties_even`
-  /// for `HalfEven`, the magnitude rounded up for `Up`, which std has no function for, and for
-  /// `HalfDown` `round` but at a tie, which `trunc` rounds toward zero.
+  /// for `HalfEven`, the magnitude rounded up for `Up`, which std has no function for, for
+  /// `HalfDown` `round` but at a tie, which `trunc` rounds toward zero, and for `Up05` `trunc`,
+  /// stepped away from zero where the value is not an integer and its truncation ends in 0 or 5.
   pub(crate) fn round(value: f64, mode: RoundingMode) -> f64 {
     match mode {
       RoundingMode::Up => value.abs().ceil().copysign(value),
@@ -1504,6 +1509,16 @@ pub(crate) mod floats {
       RoundingMode::HalfDown if (value - value.trunc()).abs() == 0.5 => value.trunc(),
       RoundingMode::HalfDown => value.round(),
       RoundingMode::HalfEven => value.round_ties_even(),
+      // `%` of floats is exact, and a truncation of 2^53 or more is the value itself, so the step
+      // is exact too.
+      RoundingMode::Up05 => {
+        let truncated = value.trunc();
+        if truncated != value && truncated % 5.0 == 0.0 {
+          truncated + 1.0f64.copysign(value)
+        } else {
+          truncated
+        }
+      }
     }
   }
 

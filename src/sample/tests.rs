@@ -573,6 +573,7 @@ fn modes_list_every_mode_down_first() {
     RoundingMode::HalfUp => 4,
     RoundingMode::HalfDown => 5,
     RoundingMode::HalfEven => 6,
+    RoundingMode::Up05 => 7,
   };
   for (index, &mode) in MODES.iter().enumerate() {
     assert_eq!(position(mode), index, "{mode:?}");
@@ -582,7 +583,7 @@ fn modes_list_every_mode_down_first() {
 
 #[cfg(any(feature = "arbitrary", feature = "quickcheck"))]
 #[test]
-fn a_mode_is_one_choice_among_seven() {
+fn a_mode_is_one_choice_among_eight() {
   for (index, &mode) in MODES.iter().enumerate() {
     let mut script = Script {
       answers: &[index as u32],

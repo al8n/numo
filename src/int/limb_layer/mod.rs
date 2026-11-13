@@ -521,6 +521,7 @@ macro_rules! limb_layer {
         is_zero(remainder),
         cmp(remainder, &rest),
         quotient[0] % 2 == 1,
+        matches!(mode, RoundingMode::Up05) && div_rem_limb(quotient, 5).1 == 0,
       )
     }
 

@@ -177,7 +177,14 @@ pub(crate) const fn round_magnitude(parts: FloatParts, mode: RoundingMode) -> Ro
     let half = order::cmp_u128(remainder as u128, (divisor - remainder) as u128);
     (significand >> dropped, remainder == 0, half)
   };
-  let away = rounding::increments(mode, negative, remainder_is_zero, half, quotient % 2 == 1);
+  let away = rounding::increments(
+    mode,
+    negative,
+    remainder_is_zero,
+    half,
+    quotient % 2 == 1,
+    quotient % 5 == 0,
+  );
   // The quotient is below `2^(precision - dropped)`, so one more does not overflow.
   Rounded {
     negative,

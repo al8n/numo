@@ -4531,7 +4531,7 @@ mod with_serde {
     }
 
     // Anything else is rejected, and the error names the trimmed input and the written names.
-    let expected = "`up`, `down`, `ceiling`, `floor`, `halfup`, `halfdown`, `halfeven`";
+    let expected = "`up`, `down`, `ceiling`, `floor`, `halfup`, `halfdown`, `halfeven`, `up05`";
     for rejected in [
       "half",
       "halfeven2",

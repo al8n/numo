@@ -119,7 +119,14 @@ macro_rules! native {
         } else {
           Ordering::Equal
         };
-        rounding::increments(mode, negative, remainder == 0, half, quotient % 2 == 1)
+        rounding::increments(
+          mode,
+          negative,
+          remainder == 0,
+          half,
+          quotient % 2 == 1,
+          quotient % 5 == 0,
+        )
       }
 
       /// `value / divisor` rounded to an integer with `mode`, the remainder of the division

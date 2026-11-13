@@ -30,7 +30,7 @@ pub(crate) trait Source {
 
 /// Every rounding mode. `Down` comes first, so that shrinking moves toward it: it truncates, which
 /// separates a failure of the division or quantization from one of the rounding rule.
-pub(crate) static MODES: [RoundingMode; 7] = [
+pub(crate) static MODES: [RoundingMode; 8] = [
   RoundingMode::Down,
   RoundingMode::Up,
   RoundingMode::Ceiling,
@@ -38,6 +38,7 @@ pub(crate) static MODES: [RoundingMode; 7] = [
   RoundingMode::HalfUp,
   RoundingMode::HalfDown,
   RoundingMode::HalfEven,
+  RoundingMode::Up05,
 ];
 
 /// Returns a rounding mode chosen uniformly.

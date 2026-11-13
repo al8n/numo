@@ -58,6 +58,10 @@ pub enum RoundingMode {
   /// and the multiple with the even quotient for [`quantize`](crate::Decimal::quantize). Also known
   /// as banker's rounding.
   HalfEven,
+  /// Away from zero if the last digit of the result rounded toward zero is 0 or 5, and toward zero
+  /// otherwise: `ROUND_05UP` of the General Decimal Arithmetic specification.
+  #[is_variant(ignore)]
+  Up05,
 }
 
 impl RoundingMode {
@@ -72,7 +76,15 @@ impl RoundingMode {
       Self::HalfUp => "halfup",
       Self::HalfDown => "halfdown",
       Self::HalfEven => "halfeven",
+      Self::Up05 => "up05",
     }
+  }
+
+  /// Returns `true` if this value is of type `Up05`. Returns `false` otherwise
+  #[must_use]
+  #[inline]
+  pub const fn is_up05(&self) -> bool {
+    matches!(self, Self::Up05)
   }
 }
 
@@ -84,7 +96,8 @@ impl RoundingMode {
 /// the magnitude of the remainder `r` with its distance to the divisor `d`, `|r|` with `d - |r|`,
 /// which is twice the remainder against the divisor without overflow: `Less` puts the value nearer
 /// the quotient, `Greater` nearer the next one, and `Equal` halfway between. `quotient_is_odd` is
-/// the parity of the quotient's magnitude.
+/// the parity of the quotient's magnitude. `quotient_ends_in_0_or_5` tells whether the last decimal
+/// digit of the quotient's magnitude is 0 or 5; only [`RoundingMode::Up05`] reads it.
 ///
 /// For a divisor `10^k`, `half` is what decimal implementations read from the first dropped digit
 /// and whether any later dropped digit is nonzero; the comparison works for any divisor, which
@@ -96,6 +109,7 @@ pub(crate) const fn increments(
   remainder_is_zero: bool,
   half: Ordering,
   quotient_is_odd: bool,
+  quotient_ends_in_0_or_5: bool,
 ) -> bool {
   if remainder_is_zero {
     return false;
@@ -112,6 +126,7 @@ pub(crate) const fn increments(
       Ordering::Equal => quotient_is_odd,
       Ordering::Greater => true,
     },
+    RoundingMode::Up05 => quotient_ends_in_0_or_5,
   }
 }
 

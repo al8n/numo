@@ -497,7 +497,7 @@ where
 
 /// The names of the rounding modes, in the order of the variants.
 const MODE_NAMES: &[&str] = &[
-  "up", "down", "ceiling", "floor", "halfup", "halfdown", "halfeven",
+  "up", "down", "ceiling", "floor", "halfup", "halfdown", "halfeven", "up05",
 ];
 
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
@@ -516,6 +516,7 @@ impl Serialize for RoundingMode {
       Self::HalfUp => "halfup",
       Self::HalfDown => "halfdown",
       Self::HalfEven => "halfeven",
+      Self::Up05 => "up05",
     })
   }
 }
@@ -574,6 +575,13 @@ impl Visitor<'_> for ModeVisitor {
         || name.eq_ignore_ascii_case("half_even") =>
       {
         RoundingMode::HalfEven
+      }
+      () if name.eq_ignore_ascii_case("up05")
+        || name.eq_ignore_ascii_case("up 05")
+        || name.eq_ignore_ascii_case("up-05")
+        || name.eq_ignore_ascii_case("up_05") =>
+      {
+        RoundingMode::Up05
       }
       _ => return Err(E::unknown_variant(name, MODE_NAMES)),
     })
