@@ -1,4 +1,7 @@
-use numo::{FixedDecimal, Scaled};
+use numo::{
+  Decimal, FixedDecimal, Scaled,
+  typenum::{U0, U1},
+};
 
 // A `Scaled` over a type of another crate cannot be given the decimal traits by that crate: the
 // orphan rule stops the impl before the seal does.
@@ -12,6 +15,16 @@ impl FixedDecimal for Scaled<Local> {
   const SIGNED: bool = false;
 
   type Repr = u8;
+
+  type Inline = Scaled<Decimal<U1, U0, i8>>;
+
+  fn to_inline(&self) -> Scaled<Decimal<U1, U0, i8>> {
+    Scaled::new(Decimal::<U1, U0, i8>::ZERO, 0)
+  }
+
+  fn from_inline(_: Scaled<Decimal<U1, U0, i8>>) -> Self {
+    Scaled::new(Local, 0)
+  }
 
   fn repr(self) -> u8 {
     0

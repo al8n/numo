@@ -5,7 +5,10 @@ use core::{
   str::FromStr,
 };
 
-use numo::{ConvertError, FixedDecimal, ParseError, QuantizeError, RoundingMode};
+use numo::{
+  ConvertError, Decimal, FixedDecimal, ParseError, QuantizeError, RoundingMode,
+  typenum::{U0, U1},
+};
 
 // The seal of `FixedDecimal` holds even for a type with every supertrait and item.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
@@ -54,6 +57,16 @@ impl FixedDecimal for Local {
   const SIGNED: bool = false;
 
   type Repr = u8;
+
+  type Inline = Decimal<U1, U0, i8>;
+
+  fn to_inline(&self) -> Decimal<U1, U0, i8> {
+    Decimal::<U1, U0, i8>::ZERO
+  }
+
+  fn from_inline(_: Decimal<U1, U0, i8>) -> Self {
+    Self
+  }
 
   fn repr(self) -> u8 {
     0
