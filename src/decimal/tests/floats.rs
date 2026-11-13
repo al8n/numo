@@ -1,5 +1,6 @@
-//! The conversions of `Decimal` with `f64` and `f32`. The core of the float module is checked at
-//! every fraction count from 0 to 154: the conversion to a float against the standard library's
+//! The conversions of `Decimal` with `f64` and `f32`. The core of the float module is checked in
+//! eight limbs at every fraction count from 0 to 154, and in the float scratch of each storage up
+//! to the digits that its storages hold: the conversion to a float against the standard library's
 //! parsing of the text of the decimal, and the reading of the binary value of a float against the
 //! exact rational in `num-bigint`. The decimals between adjacent floats, built in `num-bigint` from
 //! the parts of the lower float, are checked against the rule of ties to even, over six ranges of
@@ -847,6 +848,135 @@ fn the_core_rounds_the_exact_value_at_every_fraction_count() {
   core_rounds_the_exact_value::<f32>();
 }
 
+/// The fraction counts at which the core is checked in the float scratch of the storages that hold
+/// `digits` digits: every count from 0 to `digits` in the Full tier; 0, 1, `digits / 2`,
+/// `digits - 1` and `digits` in the Debug tier; 0 and `digits` under Miri.
+fn scratch_fraction_counts(digits: u32) -> Vec<u32> {
+  if tier().is_full() {
+    (0..=digits).collect()
+  } else if tier().is_miri() {
+    Vec::from([0, digits])
+  } else {
+    Vec::from([0, 1, digits / 2, digits - 1, digits])
+  }
+}
+
+/// The magnitudes at which `float_bits` is checked in the float scratch of the storages that hold
+/// `digits` digits, at `fraction` fraction digits: one, which is shifted the farthest; the largest
+/// value below one, `10^fraction - 1`, but at no fraction digits, where it is zero; and the longest
+/// magnitude, `10^digits - 1`.
+fn scratch_magnitudes(fraction: u32, digits: u32) -> Vec<BigInt> {
+  let mut magnitudes = Vec::from([BigInt::from(1u8)]);
+  if fraction > 0 {
+    magnitudes.push(bigint::pow10(fraction) - 1u8);
+  }
+  magnitudes.push(bigint::pow10(digits) - 1u8);
+  magnitudes
+}
+
+/// Checks `float_bits` in `N` limbs, the float scratch of the storages that hold `digits` digits,
+/// in the format of `F`, against the float that the standard library parses from the text
+/// `{magnitude}e-{fraction}`, compared by the bits, at each magnitude of [`scratch_magnitudes`] and
+/// its negation, at the fraction counts of [`scratch_fraction_counts`].
+fn scratch_matches_the_parsed_text<F: Float, const N: usize>(digits: u32) {
+  let float_format = F::FORMAT;
+  for fraction in scratch_fraction_counts(digits) {
+    for magnitude in scratch_magnitudes(fraction, digits) {
+      let limbs = bigint::to_limbs::<N>(&magnitude, false).expect("in the limbs");
+      for sign in ["", "-"] {
+        let text = format!("{sign}{magnitude}e-{fraction}");
+        let parsed: F = text.parse().expect("a float");
+        assert_eq!(
+          float::float_bits(&limbs, fraction, sign == "-", float_format),
+          parsed.to_raw(),
+          "{text} in {N} limbs, {float_format:?}"
+        );
+      }
+    }
+  }
+}
+
+/// Checks `round_coefficient` in `N` limbs, the float scratch of the storages that hold `digits`
+/// digits, in the format of `F`, against the magnitude of [`exact_coefficient`], or `None` where it
+/// has more than `64 * N` bits, at each float of [`core_floats`], at 0, `digits / 2` and `digits`
+/// fraction digits: in every mode in the Full tier, and otherwise in one mode taken in turn.
+fn scratch_rounds_the_exact_value<F: TestFloat, const N: usize>(digits: u32) {
+  let floats = core_floats::<F>();
+  for fraction in [0, digits / 2, digits] {
+    for (index, &x) in floats.iter().enumerate() {
+      let parts = x.parts().expect("a finite float");
+      let turn = [MODES[(index + fraction as usize) % MODES.len()]];
+      let chosen: &[RoundingMode] = if tier().is_full() { &MODES } else { &turn };
+      for &mode in chosen {
+        let exact = BigInt::from(exact_coefficient(parts, fraction, mode).magnitude().clone());
+        assert_eq!(
+          float::round_coefficient::<N>(parts, fraction, mode),
+          bigint::to_limbs::<N>(&exact, false),
+          "{:#x} at {fraction} fraction digits in {N} limbs, {mode}",
+          x.to_raw()
+        );
+      }
+    }
+  }
+}
+
+/// Checks that `round_coefficient` in `N` limbs gives the coefficient of the float `2^k` of `F` at
+/// `fraction` fraction digits, `5^fraction * 2^(fraction + k)`, at the `k` where it has exactly
+/// `64 * N` bits, and `None` for `2^(k + 1)`, in every mode.
+fn scratch_edge<F: Float, const N: usize>(fraction: u32) {
+  let power_bits = BigInt::from(5u8).pow(fraction).bits();
+  let exponent = i32::try_from(64 * N as u64 - u64::from(fraction) - power_bits).expect("small");
+  let at = F::narrow(pow2(exponent)).parts().expect("a finite float");
+  let past = F::narrow(pow2(exponent + 1))
+    .parts()
+    .expect("a finite float");
+  let coefficient = power_of_two(exponent, fraction);
+  assert_eq!(coefficient.bits(), 64 * N as u64, "2^{exponent}");
+  let limbs = bigint::to_limbs::<N>(&coefficient, false);
+  for mode in MODES {
+    assert_eq!(
+      float::round_coefficient::<N>(at, fraction, mode),
+      limbs,
+      "2^{exponent} at {fraction} fraction digits in {N} limbs, {mode}, {}",
+      type_name::<F>()
+    );
+    assert_eq!(
+      float::round_coefficient::<N>(past, fraction, mode),
+      None,
+      "2^{} at {fraction} fraction digits in {N} limbs, {mode}, {}",
+      exponent + 1,
+      type_name::<F>()
+    );
+  }
+}
+
+/// Checks the core in `N` limbs, the float scratch of the storages that hold `digits` digits, in
+/// both formats: `float_bits` against the parsed text, `round_coefficient` against the exact
+/// rational, and the edge of the limbs at `digits` fraction digits.
+#[inline(never)]
+fn core_in_the_scratch<const N: usize>(digits: u32) {
+  scratch_matches_the_parsed_text::<f64, N>(digits);
+  scratch_matches_the_parsed_text::<f32, N>(digits);
+  scratch_rounds_the_exact_value::<f64, N>(digits);
+  scratch_rounds_the_exact_value::<f32, N>(digits);
+  scratch_edge::<f64, N>(digits);
+  scratch_edge::<f32, N>(digits);
+}
+
+/// The core computes in the float scratch of each storage, at the most digits that a storage of
+/// that scratch holds: two limbs for the native storages but `i128` and `u128`, three for those
+/// two and for `i192` and `u192`, and the limbs of each wider storage.
+#[test]
+fn the_core_in_the_float_scratch_of_each_storage() {
+  core_in_the_scratch::<2>(19);
+  core_in_the_scratch::<3>(38);
+  core_in_the_scratch::<3>(57);
+  core_in_the_scratch::<4>(77);
+  core_in_the_scratch::<5>(96);
+  core_in_the_scratch::<6>(115);
+  core_in_the_scratch::<7>(134);
+}
+
 /// Checks that `round_from_f32` of each float of `floats` gives in `T` what `round_from_f64`
 /// gives for the `f64` of the same value, in one mode taken in turn.
 #[inline(never)]
@@ -1019,7 +1149,7 @@ fn the_edge_of_the_limbs<F: Float>(fraction: u32, exponent: i32) {
       type_name::<F>()
     );
     assert_eq!(
-      float::round_coefficient(past, fraction, mode),
+      float::round_coefficient::<8>(past, fraction, mode),
       None,
       "2^{} at {fraction} fraction digits, {mode}, {}",
       exponent + 1,

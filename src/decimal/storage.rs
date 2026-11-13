@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
   FromFloatError, i192, i256, i320, i384, i448, i512, int,
-  layout::{Layout, StorageCore},
+  layout::{FloatScratch, Layout, StorageCore},
   rounding::RoundingMode,
   u192, u256, u320, u384, u448, u512,
 };
@@ -679,12 +679,16 @@ macro_rules! storage_decimal {
       }
 
       /// The bits of the float of `format` nearest to the value, which the float module computes
-      /// from the magnitude and the sign of the coefficient, lent as limbs.
+      /// from the magnitude and the sign of the coefficient, in the float scratch of the storage.
       const fn float_bits(&self, format: int::float::FloatFormat) -> u64 {
         // The limbs are in two's complement: a native coefficient is extended by its sign.
         let limbs = storage_decimal!(@limbs $kind $repr self.repr);
+        // The magnitude is widened to the scratch, which also holds the power of five and the
+        // shifted magnitude of every fraction count of a type over the storage.
+        let magnitude: FloatScratch<$repr> =
+          int::unsigned::b64::resize(&int::signed::b64::unsigned_abs(limbs));
         float::float_bits(
-          &int::signed::b64::unsigned_abs(limbs),
+          &magnitude,
           Self::FRACTION,
           int::signed::b64::is_negative(limbs),
           format,
@@ -693,9 +697,9 @@ macro_rules! storage_decimal {
 
       /// The value whose coefficient has the magnitude `magnitude`, negated for a negative float,
       /// or the error of a magnitude outside the range of the type, on the side of the sign:
-      /// `None` is a magnitude beyond 512 bits.
+      /// `None` is a magnitude beyond the float scratch of the storage.
       const fn place_magnitude(
-        magnitude: Option<[u64; 8]>,
+        magnitude: Option<FloatScratch<$repr>>,
         negative: bool,
       ) -> Result<Self, FromFloatError> {
         let overflow = if negative {
@@ -711,11 +715,11 @@ macro_rules! storage_decimal {
         if int::unsigned::b64::is_zero(&magnitude) {
           return Ok(Self::ZERO);
         }
-        // Compared in eight limbs, before the narrowing to the storage, which truncates.
+        // Compared in the scratch, before the narrowing to the storage, which truncates.
         if !int::unsigned::b64::le(&magnitude, &int::unsigned::b64::max_magnitude(Self::DIGITS)) {
           return Err(overflow);
         }
-        // The magnitude is unsigned in eight limbs, so the unsigned layer narrows it, and only
+        // The magnitude is unsigned in the scratch, so the unsigned layer narrows it, and only
         // its negation is in two's complement, in the limbs of the storage.
         let limbs = int::unsigned::b64::resize(&magnitude);
         let limbs = if negative {
@@ -1023,24 +1027,22 @@ macro_rules! storage_decimal {
       }
 
       /// The bits of the float of `format` nearest to the value, which the float module computes
-      /// from the coefficient, lent as limbs.
+      /// from the coefficient, in the float scratch of the storage.
       const fn float_bits(&self, format: int::float::FloatFormat) -> u64 {
         // The coefficient is its own magnitude. Read in two's complement, the 154 digits of a
-        // `u512` could set the top bit.
-        float::float_bits(
-          storage_decimal!(@limbs $kind $repr self.repr),
-          Self::FRACTION,
-          false,
-          format,
-        )
+        // `u512` could set the top bit. It is widened to the scratch, which also holds the power
+        // of five and the shifted magnitude of every fraction count of a type over the storage.
+        let magnitude: FloatScratch<$repr> =
+          int::unsigned::b64::resize(storage_decimal!(@limbs $kind $repr self.repr));
+        float::float_bits(&magnitude, Self::FRACTION, false, format)
       }
 
       /// The value whose coefficient is `magnitude`, or the error of a magnitude outside the
       /// range of the type: the overflow of the sign of the float for `None`, a magnitude beyond
-      /// 512 bits, `NegOverflow` for a negative float that does not round to zero, and
-      /// `PosOverflow` above `MAX`.
+      /// the float scratch of the storage, `NegOverflow` for a negative float that does not round
+      /// to zero, and `PosOverflow` above `MAX`.
       const fn place_magnitude(
-        magnitude: Option<[u64; 8]>,
+        magnitude: Option<FloatScratch<$repr>>,
         negative: bool,
       ) -> Result<Self, FromFloatError> {
         let magnitude = match magnitude {
@@ -1055,7 +1057,7 @@ macro_rules! storage_decimal {
         if negative {
           return Err(FromFloatError::NegOverflow);
         }
-        // Compared in eight limbs, before the narrowing to the storage, which truncates.
+        // Compared in the scratch, before the narrowing to the storage, which truncates.
         if !int::unsigned::b64::le(&magnitude, &int::unsigned::b64::max_magnitude(Self::DIGITS)) {
           return Err(FromFloatError::PosOverflow);
         }

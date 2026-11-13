@@ -14,19 +14,23 @@ use crate::{
   i192, i256, i320, i384, i448, i512, int,
   rounding::RoundingMode,
   u192, u256, u320, u384, u448, u512,
-  width::{Array, TypenumNumber},
+  width::{Array, ArraySize, TypenumNumber},
 };
 
 /// The digit buffer of the storage `R`, of the length of the digits of its widest magnitude: the
 /// buffer that its row `write_digits` takes.
 pub(crate) type DigitBuf<R> = Array<u8, <R as StorageCore>::DigitLen>;
 
+/// The float scratch of the storage `R`: the limbs in which its conversions with the floats
+/// compute.
+pub(crate) type FloatScratch<R> = <<R as StorageCore>::FloatLen as ArraySize>::ArrayType<u64>;
+
 mod sealed {
   use crate::{
     i192, i256, i320, i384, i448, i512,
     rounding::RoundingMode,
     u192, u256, u320, u384, u448, u512,
-    width::{Array, ArrayLength},
+    width::{Array, ArrayLength, ArraySize},
   };
 
   /// Taken by every method of [`StorageCore`] and [`ConvertFrom`]. A bound `R: Storage` makes the
@@ -85,6 +89,13 @@ mod sealed {
     /// The bytes of the longest text of a decimal over the storage: its digits, a sign or a zero
     /// before the point, and the point.
     type TextLen: ArrayLength;
+
+    /// The limbs in which the conversions of the storage with the floats compute: the fewest that
+    /// hold the limbs of a coefficient, two for a native storage, and `bits(5^d) + 55` bits for the
+    /// `d` digits that the storage holds, the bits of the largest power of five that divides a
+    /// magnitude, the 53 bits of an `f64` and two more. Only the code of one storage builds the
+    /// array, by resizing the limbs of a coefficient.
+    type FloatLen: ArraySize;
 
     /// Returns `true` if the value is negative, which an unsigned value never is.
     fn is_negative(&self, token: Token) -> bool;
@@ -411,18 +422,18 @@ pub trait WidenRepr<Target>: ReprWidensTo<Target> {}
 /// Implements [`StorageCore`] and [`Storage`] for the native storages, written `native`, whose
 /// methods copy the value to the storage's module in `int`, and for the wide storages, written
 /// `wide`, whose methods lend their limbs to the limb layer, `int::signed::b64` or
-/// `int::unsigned::b64`. Each storage is written with the `typenum` constant of its digit length,
-/// as `i64 [U19]`.
+/// `int::unsigned::b64`. Each storage is written with the `typenum` constants of the length of its
+/// digits and of its float scratch, as `i64 [U19, U2]`.
 macro_rules! impl_storage {
   (
-    native signed: $($int:ident [$int_digits:ident]),+;
-    unsigned: $($uint:ident [$uint_digits:ident]),+ $(,)?
+    native signed: $($int:ident [$int_digits:ident, $int_float:ident]),+;
+    unsigned: $($uint:ident [$uint_digits:ident, $uint_float:ident]),+ $(,)?
   ) => {
     $(
       impl StorageCore for $int {
         type IsUnsigned = B0;
 
-        impl_storage!(@lengths $int_digits);
+        impl_storage!(@lengths $int_digits, $int_float);
 
         #[inline]
         fn is_negative(&self, _: Token) -> bool {
@@ -461,7 +472,7 @@ macro_rules! impl_storage {
       impl StorageCore for $uint {
         type IsUnsigned = B1;
 
-        impl_storage!(@lengths $uint_digits);
+        impl_storage!(@lengths $uint_digits, $uint_float);
 
         #[inline]
         fn is_negative(&self, _: Token) -> bool {
@@ -494,14 +505,14 @@ macro_rules! impl_storage {
     )+
   };
   (
-    wide signed: $($int:ident [$int_digits:ident]),+;
-    unsigned: $($uint:ident [$uint_digits:ident]),+ $(,)?
+    wide signed: $($int:ident [$int_digits:ident, $int_float:ident]),+;
+    unsigned: $($uint:ident [$uint_digits:ident, $uint_float:ident]),+ $(,)?
   ) => {
     $(
       impl StorageCore for $int {
         type IsUnsigned = B0;
 
-        impl_storage!(@lengths $int_digits);
+        impl_storage!(@lengths $int_digits, $int_float);
 
         #[inline]
         fn is_negative(&self, _: Token) -> bool {
@@ -542,7 +553,7 @@ macro_rules! impl_storage {
       impl StorageCore for $uint {
         type IsUnsigned = B1;
 
-        impl_storage!(@lengths $uint_digits);
+        impl_storage!(@lengths $uint_digits, $uint_float);
 
         #[inline]
         fn is_negative(&self, _: Token) -> bool {
@@ -576,10 +587,12 @@ macro_rules! impl_storage {
       impl Storage for $uint {}
     )+
   };
-  // The lengths of the buffers of a storage: its digits, and its text, which has two bytes more.
-  (@lengths $digits:ident) => {
+  // The lengths of the buffers of a storage: its digits, its text, which has two bytes more, and
+  // its float scratch.
+  (@lengths $digits:ident, $float:ident) => {
     type DigitLen = typenum::consts::$digits;
     type TextLen = typenum::Sum<typenum::consts::$digits, typenum::consts::U2>;
+    type FloatLen = typenum::consts::$float;
   };
   (@native $repr:ident) => {
     #[inline]
@@ -686,12 +699,14 @@ macro_rules! impl_storage {
 }
 
 impl_storage!(
-  native signed: i8 [U3], i16 [U5], i32 [U10], i64 [U19], i128 [U39];
-  unsigned: u8 [U3], u16 [U5], u32 [U10], u64 [U20], u128 [U39],
+  native signed: i8 [U3, U2], i16 [U5, U2], i32 [U10, U2], i64 [U19, U2], i128 [U39, U3];
+  unsigned: u8 [U3, U2], u16 [U5, U2], u32 [U10, U2], u64 [U20, U2], u128 [U39, U3],
 );
 impl_storage!(
-  wide signed: i192 [U58], i256 [U77], i320 [U97], i384 [U116], i448 [U135], i512 [U154];
-  unsigned: u192 [U58], u256 [U78], u320 [U97], u384 [U116], u448 [U135], u512 [U155],
+  wide signed: i192 [U58, U3], i256 [U77, U4], i320 [U97, U5], i384 [U116, U6], i448 [U135, U7],
+    i512 [U154, U8];
+  unsigned: u192 [U58, U3], u256 [U78, U4], u320 [U97, U5], u384 [U116, U6], u448 [U135, U7],
+    u512 [U155, U8],
 );
 
 /// Implements [`ConvertFrom`] for every ordered pair of the listed storages, each written as

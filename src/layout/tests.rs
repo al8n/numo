@@ -486,3 +486,46 @@ fn buffer_lengths_of_every_storage() {
   check_buffer_lengths::<u448>(448);
   check_buffer_lengths::<u512>(512);
 }
+
+/// Checks, against `num-bigint`, that the float scratch of `R`, a storage of `bits` bits whose
+/// coefficient takes `limbs` limbs, is the fewest limbs, at least `limbs`, that hold
+/// `bits(5^d) + 55` bits, for the `d` digits that `R` holds.
+#[inline(never)]
+fn check_float_length<R: Value>(bits: u32, limbs: usize) {
+  let digits = bigint::max_exp(&bigint::max(bits, R::SIGNED));
+  let power_bits = BigInt::from(5u8).pow(digits).bits();
+  let fewest = (limbs..)
+    .find(|&count| power_bits + 55 <= 64 * count as u64)
+    .expect("a count of limbs");
+  assert_eq!(<R::FloatLen as Unsigned>::USIZE, fewest, "{digits} digits");
+}
+
+#[test]
+#[cfg_attr(
+  all(miri, target_pointer_width = "32"),
+  ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+)]
+fn float_lengths_of_every_storage() {
+  check_float_length::<i8>(8, 2);
+  check_float_length::<i16>(16, 2);
+  check_float_length::<i32>(32, 2);
+  check_float_length::<i64>(64, 2);
+  check_float_length::<i128>(128, 2);
+  check_float_length::<i192>(192, 3);
+  check_float_length::<i256>(256, 4);
+  check_float_length::<i320>(320, 5);
+  check_float_length::<i384>(384, 6);
+  check_float_length::<i448>(448, 7);
+  check_float_length::<i512>(512, 8);
+  check_float_length::<u8>(8, 2);
+  check_float_length::<u16>(16, 2);
+  check_float_length::<u32>(32, 2);
+  check_float_length::<u64>(64, 2);
+  check_float_length::<u128>(128, 2);
+  check_float_length::<u192>(192, 3);
+  check_float_length::<u256>(256, 4);
+  check_float_length::<u320>(320, 5);
+  check_float_length::<u384>(384, 6);
+  check_float_length::<u448>(448, 7);
+  check_float_length::<u512>(512, 8);
+}
