@@ -2493,6 +2493,124 @@ fn wide_from_repr_checks_the_decimal_range() {
   assert_eq!(D154x0u512::from_repr(u512::ZERO), Some(D154x0u512::ZERO));
 }
 
+/// The statements of the example of the bytes in the docs of `Decimal`.
+#[test]
+fn the_example_of_the_bytes_in_the_docs() {
+  type TokenAmount = Decimal<U60, U18, u320>;
+
+  let price: Price = "64250.5".parse().expect("valid");
+  let bytes: [u8; 8] = price.repr().to_le_bytes();
+  assert_eq!(Price::from_repr(i64::from_le_bytes(bytes)), Some(price));
+
+  let amount: TokenAmount = "1.5".parse().expect("valid");
+  let bytes: [u8; 40] = amount.repr().to_be_bytes();
+  assert_eq!(
+    TokenAmount::from_repr(u320::from_be_bytes(bytes)),
+    Some(amount)
+  );
+
+  // `u320::MAX` has 97 digits, more than `TokenAmount` holds.
+  assert_eq!(
+    TokenAmount::from_repr(u320::from_le_bytes([0xff; 40])),
+    None
+  );
+}
+
+/// Checks the bytes of one type of each storage at `MAX`, `MIN`, zero, one unit of the last digit
+/// and, for a signed storage, minus one unit: `to_le_bytes` of the coefficient has the size of the
+/// storage, reads in `num-bigint` as the coefficient that the text of the value gives, unsigned or
+/// in two's complement, and reads back through `from_repr` to the value, as do the bytes of
+/// `to_be_bytes`. The bytes of the largest integer of the storage, and of the smallest for a signed
+/// one, read back to `None`, and for a signed storage bytes that are all `0xff` to minus one unit.
+/// Each type checks in a function of its own.
+macro_rules! bytes_round_trip {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      type R = <T as crate::FixedDecimal>::Repr;
+      let unit: T = format!("1e-{}", T::FRACTION).parse().expect("in range");
+      let mut values = Vec::from([T::MAX, T::MIN, T::ZERO, unit]);
+      if T::SIGNED {
+        values.push(format!("-1e-{}", T::FRACTION).parse().expect("in range"));
+      }
+      for value in values {
+        let le = value.repr().to_le_bytes();
+        assert_eq!(le.len(), core::mem::size_of::<R>(), "{value}");
+        let read = if T::SIGNED {
+          BigInt::from_signed_bytes_le(&le)
+        } else {
+          BigInt::from_bytes_le(num_bigint::Sign::Plus, &le)
+        };
+        assert_eq!(read, bytes_coefficient(&value), "{value}");
+        assert_eq!(T::from_repr(R::from_le_bytes(le)), Some(value), "{value}");
+        let be = value.repr().to_be_bytes();
+        assert_eq!(T::from_repr(R::from_be_bytes(be)), Some(value), "{value}");
+      }
+      assert_eq!(T::from_repr(R::from_le_bytes(R::MAX.to_le_bytes())), None);
+      if T::SIGNED {
+        assert_eq!(T::from_repr(R::from_le_bytes(R::MIN.to_le_bytes())), None);
+        let mut ones = T::ZERO.repr().to_le_bytes();
+        ones.fill(0xff);
+        let minus_unit = format!("-1e-{}", T::FRACTION).parse().ok();
+        assert_eq!(T::from_repr(R::from_le_bytes(ones)), minus_unit);
+      }
+    }
+    storage();
+  })+};
+}
+
+/// The coefficient of `value`: the integer that its text with every fraction digit of the type
+/// writes, without the point.
+fn bytes_coefficient<I, F, R>(value: &Decimal<I, F, R>) -> BigInt
+where
+  R: Storage,
+  (I, F): Layout<R>,
+{
+  let digits = Decimal::<I, F, R>::FRACTION as usize;
+  format!("{value:.digits$}")
+    .replace('.', "")
+    .parse()
+    .expect("an integer")
+}
+
+/// The bytes of a decimal are those of its coefficient, for one type of each storage; under Miri,
+/// of a signed native, an unsigned native and a wide storage.
+#[test]
+fn bytes_are_those_of_the_coefficient() {
+  bytes_round_trip!(
+    Decimal<U1, U1, i8>,
+    Decimal<U10, U9, u64>,
+    Decimal<U58, U18, i256>
+  );
+  if bigint::tier().is_miri() {
+    return;
+  }
+  bytes_round_trip!(
+    Decimal<U0, U4, i16>,
+    Decimal<U5, U4, i32>,
+    Decimal<U10, U8, i64>,
+    Decimal<U19, U19, i128>,
+    Decimal<U39, U18, i192>,
+    Decimal<U96, U0, i320>,
+    Decimal<U97, U18, i384>,
+    Decimal<U116, U18, i448>,
+    Decimal<U135, U18, i512>,
+  );
+  bytes_round_trip!(
+    Decimal<U1, U1, u8>,
+    Decimal<U2, U2, u16>,
+    Decimal<U0, U9, u32>,
+    Decimal<U19, U19, u128>,
+    Decimal<U39, U18, u192>,
+    Decimal<U77, U0, u256>,
+    Decimal<U78, U18, u320>,
+    Decimal<U97, U18, u384>,
+    Decimal<U116, U18, u448>,
+    Decimal<U154, U0, u512>,
+  );
+}
+
 #[test]
 fn wide_checked_add_and_sub_at_the_storage_limit() {
   // 2 * (10^77 - 1) overflows `u256` itself.

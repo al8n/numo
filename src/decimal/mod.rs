@@ -340,6 +340,44 @@ mod tests;
 /// assert_eq!(format!("{price:e}").parse::<Price>()?, price);
 /// # Ok::<(), numo::ParseError>(())
 /// ```
+///
+/// # Bytes
+///
+/// The bytes of a decimal are those of its coefficient. [`repr`](Self::repr) returns the integer,
+/// and the integer has the byte methods: those of the standard library for a native storage, and
+/// those of this crate's integers for a wide one, which the [bytes of `Uint`](crate::Uint#bytes)
+/// describe. There are as many bytes as the storage has, and a signed storage writes its integer
+/// in two's complement. Back, [`from_repr`](Self::from_repr) takes the integer that the bytes
+/// hold: every array of bytes is an integer, but not every integer is a coefficient, and
+/// `from_repr` returns `None` outside the range of the type.
+///
+/// The bytes do not carry the number of fraction digits, which is in the type. The 16 bytes that
+/// `rust_decimal`'s `serialize` writes hold the sign and the scale in four bytes of flags beside a
+/// 96-bit integer; these hold the integer alone. So bytes that one type wrote are read by a type
+/// with the same `Fraction`, and read with another `Fraction` the value is off by a power of ten.
+///
+/// ```
+/// use numo::{
+///   Decimal,
+///   typenum::{U8, U10, U18, U60},
+///   u320,
+/// };
+///
+/// type Price = Decimal<U10, U8>;
+/// type TokenAmount = Decimal<U60, U18, u320>;
+///
+/// let price: Price = "64250.5".parse()?;
+/// let bytes: [u8; 8] = price.repr().to_le_bytes();
+/// assert_eq!(Price::from_repr(i64::from_le_bytes(bytes)), Some(price));
+///
+/// let amount: TokenAmount = "1.5".parse()?;
+/// let bytes: [u8; 40] = amount.repr().to_be_bytes();
+/// assert_eq!(TokenAmount::from_repr(u320::from_be_bytes(bytes)), Some(amount));
+///
+/// // `u320::MAX` has 97 digits, more than `TokenAmount` holds.
+/// assert_eq!(TokenAmount::from_repr(u320::from_le_bytes([0xff; 40])), None);
+/// # Ok::<(), numo::ParseError>(())
+/// ```
 #[repr(transparent)]
 pub struct Decimal<Integral, Fraction, Repr = <Sum<Integral, Fraction> as DigitCount>::Signed> {
   repr: Repr,
