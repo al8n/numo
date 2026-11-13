@@ -445,6 +445,49 @@ where
   fn is_integer(&self) -> bool {
     self.value.is_integer()
   }
+
+  /// Returns the order of magnitude of the value, whatever the scale.
+  #[inline]
+  fn order_of_magnitude(&self) -> i32 {
+    self.value.order_of_magnitude()
+  }
+
+  /// Returns the significant digits of the value, whatever the scale.
+  #[inline]
+  fn significant_digits(&self) -> u32 {
+    self.value.significant_digits()
+  }
+
+  /// Returns the fraction digits that the decimal writes for the value, whatever the scale: a
+  /// `Scaled` `2.50` has one fraction digit and scale 2.
+  #[inline]
+  fn fraction_digits(&self) -> u32 {
+    self.value.fraction_digits()
+  }
+
+  /// Rounds to `digits` significant digits with `mode`, or returns
+  /// [`ConvertError::OutOfRange`] if the result is outside the range of `D`. The result takes the
+  /// scale that `digits` significant digits of it need, `digits - 1 - order_of_magnitude` with
+  /// the order of magnitude of the result, at least 0 and at most 255, and 0 for zero:
+  /// `305.459` to four digits is `305.5` and to seven `305.4590`, and `999.96` to four digits is
+  /// `1000`. The scale of `self` plays no part.
+  fn round_significant(
+    &self,
+    digits: core::num::NonZero<u32>,
+    mode: RoundingMode,
+  ) -> Result<Self, ConvertError> {
+    let rounded = self.value.round_significant(digits, mode)?;
+    if rounded.is_zero() {
+      return Ok(Self::from(rounded));
+    }
+    // The count reaches `u32::MAX` and the order of magnitude is negative below one, so the
+    // difference is computed in a type that holds both.
+    let scale = i64::from(digits.get()) - 1 - i64::from(rounded.order_of_magnitude());
+    Ok(Self::new(
+      rounded,
+      u8::try_from(scale.max(0)).unwrap_or(u8::MAX),
+    ))
+  }
 }
 
 impl<D> ConstFixedDecimal for Scaled<D>

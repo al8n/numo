@@ -1,13 +1,15 @@
-//! The parts of a decimal, `trunc`, `fract`, `floor`, `ceil` and `is_integer`, of every storage
-//! against the coefficients in `num-bigint`, as literals, at the edges of the layouts and in
-//! constant contexts.
+//! The parts of a decimal, `trunc`, `fract`, `floor`, `ceil` and `is_integer`, and the digits of
+//! a value, `order_of_magnitude`, `significant_digits` and `fraction_digits`, with
+//! `round_significant`, of every storage against the coefficients in `num-bigint`, as literals, at
+//! the edges of the layouts and in constant contexts. The literals of rust-decimal's documentation
+//! are kept apart from this module's own.
 //!
 //! A sweep checks each type at values built from digit strings, which vary one at a time the
 //! number of digits, the digits themselves and the trailing zeros. Each type checks in a function
 //! of its own, whose frame holds the values of that type alone: the function is `#[inline(never)]`,
 //! since an optimized build would inline a function that has one call site, and the frame of the
 //! test would then hold the values of every type.
-
+use core::num::NonZero;
 use std::{
   format,
   string::{String, ToString},
@@ -16,7 +18,7 @@ use std::{
 
 use num_bigint::{BigInt, Sign};
 use typenum::{
-  U0, U1, U2, U4, U5, U8, U9, U10, U18, U19, U39, U58, U77, U78, U96, U97, U116, U135, U154,
+  U0, U1, U2, U4, U5, U8, U9, U10, U18, U19, U39, U58, U77, U78, U96, U97, U116, U135, U153, U154,
 };
 
 use crate::{
@@ -54,6 +56,15 @@ type D0x154 = Decimal<U0, U154, u512>;
 
 /// A type with room for the literals.
 type Price = Decimal<U10, U8>;
+
+// Counts of significant digits, written as constants.
+const ONE: NonZero<u32> = NonZero::<u32>::MIN;
+const TWO: NonZero<u32> = NonZero::new(2).unwrap();
+const THREE: NonZero<u32> = NonZero::new(3).unwrap();
+const FOUR: NonZero<u32> = NonZero::new(4).unwrap();
+const FIVE: NonZero<u32> = NonZero::new(5).unwrap();
+const SIX: NonZero<u32> = NonZero::new(6).unwrap();
+const SEVEN: NonZero<u32> = NonZero::new(7).unwrap();
 
 /// The value of `T` that `text` names, which must be in the range of `T`.
 fn value<T: FixedDecimal>(text: &str) -> T {
@@ -178,6 +189,148 @@ fn parts_match_the_coefficients() {
   );
 }
 
+/// The number of digits of `coefficient`, zero's one digit included, and the number of zeros that
+/// end them, from its digit string in `num-bigint`.
+fn digit_string(coefficient: &BigInt) -> (u32, u32) {
+  let digits = coefficient.magnitude().to_string();
+  let zeros = if digits == "0" {
+    0
+  } else {
+    digits.len() - digits.trim_end_matches('0').len()
+  };
+  (digits.len() as u32, zeros as u32)
+}
+
+/// Checks `order_of_magnitude`, `significant_digits` and `fraction_digits`, the inherent
+/// `const fn`s, of each type of the list at every value of its [`sweep`]: against the digit string
+/// of the coefficient in `num-bigint`, against the texts that the type writes, the exponent and the
+/// mantissa of `{:e}` and the fraction of `Display`, and against their identity, which holds for
+/// zero too. Each type checks in a function of its own.
+macro_rules! digits_agree {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      for (value, coefficient) in sweep::<T>() {
+        let order = value.order_of_magnitude();
+        let significant = value.significant_digits();
+        let fraction = value.fraction_digits();
+
+        let (digits, zeros) = digit_string(&coefficient);
+        if coefficient == BigInt::ZERO {
+          assert_eq!((order, significant, fraction), (0, 1, 0), "{value}");
+        } else {
+          assert_eq!(order, digits as i32 - 1 - T::FRACTION as i32, "{value}");
+          assert_eq!(significant, digits - zeros, "{value}");
+          assert_eq!(fraction, T::FRACTION.saturating_sub(zeros), "{value}");
+        }
+
+        let scientific = format!("{value:e}");
+        let (mantissa, exponent) = scientific.split_once('e').expect("an exponent");
+        assert_eq!(exponent.parse::<i32>(), Ok(order), "{value}");
+        let mantissa_digits = mantissa.chars().filter(char::is_ascii_digit).count();
+        assert_eq!(mantissa_digits, significant as usize, "{value}");
+        let text = value.to_string();
+        let shown = text.split_once('.').map_or(0, |(_, fraction)| fraction.len());
+        assert_eq!(shown, fraction as usize, "{value}");
+
+        let identity = (i64::from(significant) - 1 - i64::from(order)).max(0);
+        assert_eq!(i64::from(fraction), identity, "{value}");
+      }
+    }
+    storage();
+  })+};
+}
+
+/// The three methods on the digits of one type of each storage, at every value of the sweep;
+/// under Miri, of a signed native, an unsigned native and a wide storage.
+#[test]
+fn digits_match_the_digit_strings_and_the_texts() {
+  digits_agree!(Di8, Du64, Di256);
+  if tier().is_miri() {
+    return;
+  }
+  digits_agree!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
+  digits_agree!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154
+  );
+}
+
+/// The counts at which `round_significant` is checked for a coefficient of `digits` digits: 1, 2,
+/// one below, at and one above the digits, and `u32::MAX`, each once and none of them zero; under
+/// Miri, one and the digits.
+fn counts(digits: u32) -> Vec<NonZero<u32>> {
+  let candidates: &[u32] = if tier().is_miri() {
+    &[1, digits]
+  } else {
+    &[1, 2, digits - 1, digits, digits + 1, u32::MAX]
+  };
+  let mut counts = Vec::new();
+  for count in candidates.iter().copied().filter_map(NonZero::new) {
+    if !counts.contains(&count) {
+      counts.push(count);
+    }
+  }
+  counts
+}
+
+/// The modes in which `round_significant` is checked: all eight; under Miri, two.
+fn modes() -> &'static [RoundingMode] {
+  if tier().is_miri() {
+    &[RoundingMode::HalfEven, RoundingMode::Up05]
+  } else {
+    &bigint::MODES
+  }
+}
+
+/// Checks `round_significant`, the inherent `const fn`, of each type of the list at every value
+/// of its [`sweep`], at the [`counts`] of its coefficient and in the [`modes`], against the
+/// coefficient in `num-bigint` rounded by `10^k`, where `k` is the number of digits that the count
+/// drops, and the range of the type. Each type checks in a function of its own.
+macro_rules! rounding_agrees {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      for (value, coefficient) in sweep::<T>() {
+        let (len, _) = digit_string(&coefficient);
+        for &digits in &counts(len) {
+          for &mode in modes() {
+            let expected = match len.checked_sub(digits.get()) {
+              Some(place) if place > 0 => {
+                let step = bigint::pow10(place);
+                in_range::<T>(&(bigint::round(&coefficient, &step, mode) * &step))
+              }
+              _ => Ok(value),
+            };
+            assert_eq!(
+              value.round_significant(digits, mode),
+              expected,
+              "{value} to {digits} digits, {mode}"
+            );
+          }
+        }
+      }
+    }
+    storage();
+  })+};
+}
+
+/// `round_significant` of one type of each storage against the coefficients in `num-bigint`, at
+/// every value and count of the sweep, in the eight modes; under Miri, of a signed native, an
+/// unsigned native and a wide storage, with two counts and two modes.
+#[test]
+fn rounding_to_significant_digits_matches_the_coefficients() {
+  rounding_agrees!(Di8, Du64, Di256);
+  if tier().is_miri() {
+    return;
+  }
+  rounding_agrees!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
+  rounding_agrees!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154
+  );
+}
+
 /// The parts of values with and without a fraction, of either sign, and of the limits, whose
 /// `floor` or `ceil` is out of range.
 #[test]
@@ -267,9 +420,9 @@ fn parts_at_the_edges_of_the_layouts() {
   assert_eq!(Di192::MAX.floor(), Ok(Di192::MAX.trunc()));
 }
 
-/// The parts in constant contexts, in a signed native storage and in an unsigned wide one.
+/// The nine methods in constant contexts, in a signed native storage and in an unsigned wide one.
 #[test]
-fn parts_in_constant_contexts() {
+fn methods_in_constant_contexts() {
   const fn price(text: &str) -> Price {
     match Price::parse(text) {
       Ok(price) => price,
@@ -291,6 +444,25 @@ fn parts_in_constant_contexts() {
     ]
   );
   assert_eq!(INTEGERS, [false, true]);
+  const DIGITS: (i32, u32, u32) = (
+    CHANGE.order_of_magnitude(),
+    CHANGE.significant_digits(),
+    CHANGE.fraction_digits(),
+  );
+  const SIGNIFICANT: [Result<Price, ConvertError>; 3] = [
+    CHANGE.round_significant(FIVE, RoundingMode::HalfEven),
+    CHANGE.round_significant(TWO, RoundingMode::Down),
+    Price::MAX.round_significant(ONE, RoundingMode::HalfEven),
+  ];
+  assert_eq!(DIGITS, (4, 7, 2));
+  assert_eq!(
+    SIGNIFICANT,
+    [
+      Ok(price("-64251")),
+      Ok(price("-64000")),
+      Err(ConvertError::OutOfRange)
+    ]
+  );
 
   type Amount = Decimal<U39, U18, u192>;
   const AMOUNT: Amount = match Amount::parse("2.5") {
@@ -303,4 +475,181 @@ fn parts_in_constant_contexts() {
   assert_eq!(AMOUNT_PARTS, [value("2"), value("0.5")]);
   assert_eq!(AMOUNT_ROUNDED, [Ok(value("2")), Ok(value("3"))]);
   assert!(!AMOUNT_INTEGER);
+  const AMOUNT_DIGITS: (i32, u32, u32) = (
+    AMOUNT.order_of_magnitude(),
+    AMOUNT.significant_digits(),
+    AMOUNT.fraction_digits(),
+  );
+  const AMOUNT_SIGNIFICANT: [Result<Amount, ConvertError>; 2] = [
+    AMOUNT.round_significant(ONE, RoundingMode::HalfEven),
+    AMOUNT.round_significant(ONE, RoundingMode::Up),
+  ];
+  assert_eq!(AMOUNT_DIGITS, (0, 2, 1));
+  assert_eq!(AMOUNT_SIGNIFICANT, [Ok(value("2")), Ok(value("3"))]);
+}
+
+/// Asserts the order of magnitude, the significant digits and the fraction digits of `value`.
+#[track_caller]
+fn assert_digits<T: FixedDecimal>(value: &T, order: i32, significant: u32, fraction: u32) {
+  assert_eq!(
+    (
+      value.order_of_magnitude(),
+      value.significant_digits(),
+      value.fraction_digits()
+    ),
+    (order, significant, fraction),
+    "{value}"
+  );
+}
+
+/// The three methods on the digits of values with and without a fraction, below one, of zero, of
+/// one unit of the last digit and of the limits, in types with and without integral and fraction
+/// digits.
+#[test]
+fn digits_of_literals() {
+  assert_digits(&value::<Price>("64250.5"), 4, 6, 1);
+  assert_digits(&value::<Price>("-64250.5"), 4, 6, 1);
+  assert_digits(&value::<Price>("0.00012"), -4, 2, 5);
+  assert_digits(&value::<Price>("1500"), 3, 2, 0);
+  assert_digits(&Price::ZERO, 0, 1, 0);
+  assert_digits(&Price::ONE, 0, 1, 0);
+  assert_digits(&value::<Price>("0.00000001"), -8, 1, 8);
+  assert_digits(&Price::MAX, 9, 18, 8);
+
+  type Fraction = Decimal<U0, U2>;
+  assert_digits(&value::<Fraction>("0.1"), -1, 1, 1);
+  assert_digits(&value::<Fraction>("0.01"), -2, 1, 2);
+
+  assert_digits(&value::<D0x154>("1e-154"), -154, 1, 154);
+  assert_digits(&D0x154::MAX, -1, 154, 154);
+  assert_digits(&Du512::MAX, 153, 154, 0);
+  assert_digits(&value::<Du512>("1e153"), 153, 1, 0);
+  assert_digits(&Decimal::<U153, U0>::MIN, 152, 153, 0);
+}
+
+/// The results that rust-decimal documents for `round_sf` and `round_sf_with_strategy`, at its
+/// values: its strategies `MidpointNearestEven`, `ToZero` and `AwayFromZero` are `HalfEven`,
+/// `Down` and `Up` here.
+#[test]
+fn rounding_to_significant_digits_as_rust_decimal_documents() {
+  let x: Price = value("305.459");
+  for (digits, half_even, down) in [
+    (ONE, "300", "300"),
+    (TWO, "310", "300"),
+    (THREE, "305", "305"),
+    (FOUR, "305.5", "305.4"),
+    (FIVE, "305.46", "305.45"),
+    (SIX, "305.459", "305.459"),
+    (SEVEN, "305.459", "305.459"),
+  ] {
+    assert_eq!(
+      x.round_significant(digits, RoundingMode::HalfEven),
+      Ok(value(half_even))
+    );
+    assert_eq!(
+      x.round_significant(digits, RoundingMode::Down),
+      Ok(value(down))
+    );
+  }
+  let small: Price = value("0.012301");
+  assert_eq!(
+    small.round_significant(THREE, RoundingMode::HalfEven),
+    Ok(value("0.0123"))
+  );
+  assert_eq!(
+    small.round_significant(THREE, RoundingMode::Up),
+    Ok(value("0.0124"))
+  );
+}
+
+/// `round_significant` with `Up05`, with the modes that read the sign, after a carry, at ties, at
+/// the limits, where the carry leaves the type, and with more digits than any value has.
+#[test]
+fn rounding_to_significant_digits_of_literals() {
+  let x: Price = value("305.459");
+  for (digits, rounded) in [
+    (ONE, "300"),
+    (TWO, "310"),
+    (THREE, "306"),
+    (FOUR, "305.4"),
+    (FIVE, "305.46"),
+    (SIX, "305.459"),
+  ] {
+    assert_eq!(
+      x.round_significant(digits, RoundingMode::Up05),
+      Ok(value(rounded)),
+      "{digits}"
+    );
+  }
+
+  let negative: Price = value("-305.459");
+  for (mode, rounded) in [
+    (RoundingMode::Floor, "-310"),
+    (RoundingMode::Ceiling, "-300"),
+    (RoundingMode::Up, "-310"),
+    (RoundingMode::Down, "-300"),
+  ] {
+    assert_eq!(
+      negative.round_significant(TWO, mode),
+      Ok(value(rounded)),
+      "{mode}"
+    );
+  }
+
+  let carry: Price = value("999.96");
+  assert_eq!(
+    carry.round_significant(FOUR, RoundingMode::HalfEven),
+    Ok(value("1000"))
+  );
+  assert_eq!(
+    carry.round_significant(FOUR, RoundingMode::Down),
+    Ok(value("999.9"))
+  );
+
+  let half_even =
+    |text: &str, digits| value::<Price>(text).round_significant(digits, RoundingMode::HalfEven);
+  assert_eq!(half_even("2.5", ONE), Ok(value("2")));
+  assert_eq!(half_even("3.5", ONE), Ok(value("4")));
+  assert_eq!(half_even("125", TWO), Ok(value("120")));
+  assert_eq!(half_even("135", TWO), Ok(value("140")));
+
+  let out = Err(ConvertError::OutOfRange);
+  let seventeen = NonZero::new(17).expect("not zero");
+  assert_eq!(
+    Price::MAX.round_significant(ONE, RoundingMode::HalfEven),
+    out
+  );
+  assert_eq!(
+    Price::MAX.round_significant(ONE, RoundingMode::Down),
+    Ok(value("9000000000"))
+  );
+  assert_eq!(
+    Price::MAX.round_significant(seventeen, RoundingMode::HalfEven),
+    out
+  );
+  assert_eq!(
+    Price::MAX.round_significant(seventeen, RoundingMode::Down),
+    Ok(value("9999999999.9999999"))
+  );
+  assert_eq!(Price::MIN.round_significant(ONE, RoundingMode::Floor), out);
+  assert_eq!(
+    Price::MIN.round_significant(ONE, RoundingMode::Ceiling),
+    Ok(value("-9000000000"))
+  );
+
+  for x in [
+    Price::ZERO,
+    Price::MAX,
+    Price::MIN,
+    value("305.459"),
+    value("-0.00000001"),
+  ] {
+    for mode in bigint::MODES {
+      assert_eq!(
+        x.round_significant(NonZero::<u32>::MAX, mode),
+        Ok(x),
+        "{x}, {mode}"
+      );
+    }
+  }
 }

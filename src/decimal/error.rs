@@ -73,8 +73,10 @@ pub enum ParseErrorKind {
 }
 
 /// The error returned by [`Decimal::try_convert`](crate::Decimal::try_convert), and by
-/// [`Decimal::round_to`](crate::Decimal::round_to), [`Decimal::floor`](crate::Decimal::floor) and
-/// [`Decimal::ceil`](crate::Decimal::ceil), which return only [`OutOfRange`](Self::OutOfRange).
+/// [`Decimal::round_to`](crate::Decimal::round_to), [`Decimal::floor`](crate::Decimal::floor),
+/// [`Decimal::ceil`](crate::Decimal::ceil) and
+/// [`Decimal::round_significant`](crate::Decimal::round_significant), which return only
+/// [`OutOfRange`](Self::OutOfRange).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::IsVariant)]
 #[non_exhaustive]
 pub enum ConvertError {

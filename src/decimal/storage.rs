@@ -235,6 +235,30 @@ macro_rules! storage_decimal {
       fn is_integer(&self) -> bool {
         Self::is_integer(self)
       }
+
+      #[inline]
+      fn order_of_magnitude(&self) -> i32 {
+        Self::order_of_magnitude(self)
+      }
+
+      #[inline]
+      fn significant_digits(&self) -> u32 {
+        Self::significant_digits(self)
+      }
+
+      #[inline]
+      fn fraction_digits(&self) -> u32 {
+        Self::fraction_digits(self)
+      }
+
+      #[inline]
+      fn round_significant(
+        &self,
+        digits: core::num::NonZero<u32>,
+        mode: RoundingMode,
+      ) -> Result<Self, ConvertError> {
+        Self::round_significant(self, digits, mode)
+      }
     }
 
     impl<I, F> ConstFixedDecimal for Decimal<I, F, $repr>
@@ -1048,6 +1072,106 @@ macro_rules! storage_decimal {
       #[inline]
       pub const fn is_integer(&self) -> bool {
         int::$repr::is_zero($($by)* self.split_integral().1)
+      }
+
+      /// The number of digits of the magnitude of the coefficient, and the number of zeros that
+      /// end them. Zero is the one digit `0`, which no zero ends.
+      const fn coefficient_digits(&self) -> (u32, u32) {
+        let mut buf = [0; int::DIGIT_BUF_LEN];
+        let start = int::$repr::write_digits($($by)* self.repr, &mut buf);
+        let mut end = int::DIGIT_BUF_LEN;
+        while end - start > 1 && buf[end - 1] == b'0' {
+          end -= 1;
+        }
+        // At most 155 digits, so both counts fit.
+        ((int::DIGIT_BUF_LEN - start) as u32, (int::DIGIT_BUF_LEN - end) as u32)
+      }
+
+      /// Returns the exponent of the first significant digit, the exponent that `{:e}` writes:
+      /// `4` for `64250.5` and `-4` for `0.00012`. Zero gives 0.
+      ///
+      /// A value below one has a negative order of magnitude, down to `-Fraction` for one unit of
+      /// the last digit.
+      #[must_use]
+      #[inline]
+      pub const fn order_of_magnitude(&self) -> i32 {
+        if int::$repr::is_zero($($by)* self.repr) {
+          return 0;
+        }
+        // A coefficient has at most 155 digits and a type at most 154 fraction digits.
+        self.coefficient_digits().0 as i32 - 1 - Self::FRACTION as i32
+      }
+
+      /// Returns the number of significant digits, from the first digit that is not zero to the
+      /// last: the digits of the mantissa that `{:e}` writes. `64250.5` has 6 and `1500` has 2, in
+      /// every type. Zero gives 1, the digit that `{:e}` writes for it.
+      #[doc(alias = "digits")]
+      #[must_use]
+      #[inline]
+      pub const fn significant_digits(&self) -> u32 {
+        // Zero has one digit and no zero that ends it.
+        let (digits, zeros) = self.coefficient_digits();
+        digits - zeros
+      }
+
+      /// Returns the number of fraction digits that [`Display`](core::fmt::Display) writes for
+      /// the value, without trailing zeros: 1 for `64250.5`, and 0 for an integer and for zero.
+      ///
+      /// It is at most the constant [`FRACTION`](Self::FRACTION), the fraction digits of the
+      /// type. A [`Scaled`] has a third number beside these two, its
+      /// [`scale`](crate::Scaled::scale), the fraction digits of its text: a `Scaled` `2.50` has
+      /// one fraction digit and scale 2.
+      #[doc(alias = "fractional_digit_count")]
+      #[must_use]
+      #[inline]
+      pub const fn fraction_digits(&self) -> u32 {
+        if int::$repr::is_zero($($by)* self.repr) {
+          return 0;
+        }
+        Self::FRACTION.saturating_sub(self.coefficient_digits().1)
+      }
+
+      /// Rounds to `digits` significant digits with `mode`: to the multiple of
+      /// `10^(order_of_magnitude + 1 - digits)` that `mode` selects, as [`RoundingMode`]
+      /// describes, in the type of `self`. A value with at most `digits` significant digits, zero
+      /// among them, is returned unchanged, whatever the count. A carry into the next power of
+      /// ten keeps at most `digits` significant digits: `999.96` to four digits is `1000`.
+      ///
+      /// The count is a [`NonZero<u32>`](core::num::NonZero). A count that the code knows is a
+      /// constant, `const FIVE: NonZero<u32> = NonZero::new(5).unwrap();`, which the compiler
+      /// evaluates, so a zero there does not build. A count that comes from data is checked where
+      /// it is read, with `NonZero::new(count)`, which is `None` for zero, or by reading it as a
+      /// `NonZero<u32>`, and the code that reads it decides what a zero means.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`ConvertError::OutOfRange`] if the rounded value is outside the range of the
+      /// type, which only a carry into `10^Integral` can cause: `MAX` to one digit, with a mode
+      /// that rounds it up.
+      #[doc(alias("round_sf", "with_precision_round"))]
+      #[must_use = "this returns the rounded value, without modifying the original"]
+      pub const fn round_significant(
+        &self,
+        digits: core::num::NonZero<u32>,
+        mode: RoundingMode,
+      ) -> Result<Self, ConvertError> {
+        // The count reaches `u32::MAX`, so it is compared before anything is subtracted from it.
+        // Zero has one digit, so it is returned here too.
+        let (len, _) = self.coefficient_digits();
+        if digits.get() >= len {
+          return Ok(*self);
+        }
+        let place = len - digits.get();
+        let (rounded, _, _) =
+          int::$repr::round_div($($by)* self.repr, $($by)* int::$repr::pow10(place), mode);
+        // The product is at most `10^(Integral + Fraction)` in magnitude, which the storage holds:
+        // only the range of the type rejects a carry.
+        let coeff = int::$repr::mul_pow10($($by)* rounded, place);
+        if Self::in_range($($by)* coeff) {
+          Ok(Self::from_coeff(coeff))
+        } else {
+          Err(ConvertError::OutOfRange)
+        }
       }
     }
   };

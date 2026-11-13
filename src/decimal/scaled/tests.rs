@@ -2,6 +2,7 @@ use core::{
   cmp::Ordering,
   fmt::{self, Write as _},
   hash::BuildHasher,
+  num::NonZero,
   str::FromStr,
 };
 use std::{
@@ -834,6 +835,94 @@ fn parts_take_their_scales() {
   check_parts::<Narrow>();
   check_parts::<Decimal<U40, U36, i256>>();
   check_parts::<Decimal<U40, U36, u256>>();
+}
+
+/// Checks, for a `Scaled` over `D`, that the methods on the digits give the value of the
+/// decimal's method whatever the scale, and that `round_significant` gives the value of the
+/// decimal's method, or its error, with the scale that the digits of the result need. At zero,
+/// the limits, `1.5` and `0.25`, each with a few scales, at a few counts in two modes.
+#[inline(never)]
+fn check_digits<D>()
+where
+  D: ConstFixedDecimal,
+  Scaled<D>: FixedDecimal,
+{
+  let decimals: [D; 5] = [D::ZERO, D::MIN, D::MAX, value("1.5"), value("0.25")];
+  let counts = [1, 2, D::DIGITS, u32::MAX].map(|count| NonZero::new(count).expect("not zero"));
+  for a in decimals {
+    for scale in [0u8, 3, 255] {
+      let x = Scaled::new(a, scale);
+      assert_eq!(x.order_of_magnitude(), a.order_of_magnitude(), "{a}");
+      assert_eq!(x.significant_digits(), a.significant_digits(), "{a}");
+      assert_eq!(x.fraction_digits(), a.fraction_digits(), "{a}");
+      for digits in counts {
+        for mode in [RoundingMode::HalfEven, RoundingMode::Up] {
+          let expected = a.round_significant(digits, mode).map(|rounded| {
+            let scale = if rounded.is_zero() {
+              0
+            } else {
+              i64::from(digits.get()) - 1 - i64::from(rounded.order_of_magnitude())
+            };
+            (rounded, u8::try_from(scale.clamp(0, 255)).expect("a scale"))
+          });
+          assert_eq!(
+            x.round_significant(digits, mode).map(Scaled::into_parts),
+            expected,
+            "{a} to {digits} digits, {mode}"
+          );
+        }
+      }
+    }
+  }
+}
+
+/// The methods on the digits are the value's, whatever the scale, and `round_significant` takes
+/// the scale that the digits of its result need, after a carry too, and 0 for zero.
+#[test]
+fn digits_are_the_values_and_rounding_takes_the_scale_of_its_digits() {
+  let x: Price = value("2.50");
+  assert_eq!(x.scale(), 2);
+  assert_eq!(
+    (
+      x.significant_digits(),
+      x.order_of_magnitude(),
+      x.fraction_digits()
+    ),
+    (2, 0, 1)
+  );
+
+  let digits = |count: u32| NonZero::new(count).expect("not zero");
+  let round = |text: &str, count: u32| {
+    value::<Price>(text)
+      .round_significant(digits(count), RoundingMode::HalfEven)
+      .unwrap()
+  };
+  for (count, text, scale) in [
+    (1, "300", 0),
+    (2, "310", 0),
+    (3, "305", 0),
+    (4, "305.5", 1),
+    (5, "305.46", 2),
+    (6, "305.459", 3),
+    (7, "305.4590", 4),
+  ] {
+    assert_text(&round("305.459", count), text, scale);
+  }
+  assert_text(&round("999.96", 3), "1000", 0);
+  assert_text(&round("999.96", 4), "1000", 0);
+  assert_text(&round("999.96", 5), "999.96", 2);
+  assert_text(&round("0.012301", 3), "0.0123", 4);
+  assert_text(&round("1.5000", 1), "2", 0);
+  assert_text(&round("1.5000", 3), "1.50", 2);
+  assert_text(&round("0.000", 3), "0", 0);
+  let long = format!("1.5{}", "0".repeat(254));
+  assert_text(&round("1.5", 300), &long, 255);
+  assert_text(&round("1.5", u32::MAX), &long, 255);
+
+  check_digits::<Decimal<U2, U2>>();
+  check_digits::<Narrow>();
+  check_digits::<Decimal<U40, U36, i256>>();
+  check_digits::<Decimal<U40, U36, u256>>();
 }
 
 /// The operators take the larger scale of their operands, as `checked_add` and `checked_sub` do,

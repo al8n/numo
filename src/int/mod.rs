@@ -1713,7 +1713,7 @@ macro_rules! wide {
       "]`."
     )]
     pub(crate) mod $uint {
-      use super::unsigned::b64;
+      use super::{DigitBuf, unsigned::b64};
       use crate::{$uint, rounding::RoundingMode};
 
       wide!(@shared $uint, b64, $limbs);
@@ -1728,7 +1728,7 @@ macro_rules! wide {
       "]` in two's complement."
     )]
     pub(crate) mod $int {
-      use super::signed::b64;
+      use super::{DigitBuf, signed::b64};
       use crate::{$int, rounding::RoundingMode};
 
       wide!(@shared $int, b64, $limbs);
@@ -1825,6 +1825,13 @@ macro_rules! wide {
       let (rounded, remainder, away) =
         $layer::round_div(value.as_limbs(), divisor.as_limbs(), mode);
       ($ty::from_limbs(rounded), $ty::from_limbs(remainder), away)
+    }
+
+    /// Writes the decimal digits of `|value|` to the end of `buf`, without leading zeros (zero
+    /// is a single `0`), and returns the index of the first digit.
+    #[inline]
+    pub(crate) const fn write_digits(value: &$ty, buf: &mut DigitBuf) -> usize {
+      $layer::write_digits(value.as_limbs(), buf)
     }
 
     /// Appends the ASCII digits in `bytes[start..end]` to `value`, computing `value * 10 + d` for

@@ -1,4 +1,4 @@
-use core::hash::BuildHasher;
+use core::{hash::BuildHasher, num::NonZero};
 use std::{
   collections::hash_map::RandomState,
   format,
@@ -317,6 +317,73 @@ macro_rules! assert_parts {
 #[test]
 fn parts_are_the_inherent_ones() {
   assert_parts!(
+    Decimal<U1, U1, i8>,
+    Decimal<U0, U2, i8>,
+    Decimal<U2, U2, i16>,
+    Decimal<U5, U4, i32>,
+    Decimal<U10, U8, i64>,
+    Decimal<U19, U19, i128>,
+    Decimal<U40, U17, i192>,
+    Decimal<U38, U38, i256>,
+    Decimal<U78, U18, i320>,
+    Decimal<U97, U18, i384>,
+    Decimal<U116, U18, i448>,
+    Decimal<U135, U18, i512>,
+    Decimal<U1, U1, u8>,
+    Decimal<U0, U2, u8>,
+    Decimal<U2, U2, u16>,
+    Decimal<U5, U4, u32>,
+    Decimal<U10, U9, u64>,
+    Decimal<U19, U19, u128>,
+    Decimal<U40, U17, u192>,
+    Decimal<U59, U18, u256>,
+    Decimal<U78, U18, u320>,
+    Decimal<U97, U18, u384>,
+    Decimal<U116, U18, u448>,
+    Decimal<U154, U0, u512>,
+  );
+}
+
+/// Asserts that `order_of_magnitude`, `significant_digits`, `fraction_digits` and
+/// `round_significant` of [`FixedDecimal`] are the inherent ones for each type, at every value of
+/// [`samples`], and `round_significant` at the counts 1, 2 and `DIGITS` in every mode. Each type
+/// checks in a function of its own, as in `assert_remainder_and_saturation!`.
+macro_rules! assert_digits {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      let counts = [1, 2, T::DIGITS].map(|count| NonZero::new(count).expect("not zero"));
+      for value in &samples::<T>() {
+        assert_eq!(
+          FixedDecimal::order_of_magnitude(value),
+          value.order_of_magnitude(),
+          "{value}"
+        );
+        assert_eq!(
+          FixedDecimal::significant_digits(value),
+          value.significant_digits(),
+          "{value}"
+        );
+        assert_eq!(FixedDecimal::fraction_digits(value), value.fraction_digits(), "{value}");
+        for digits in counts {
+          for mode in MODES {
+            assert_eq!(
+              FixedDecimal::round_significant(value, digits, mode),
+              value.round_significant(digits, mode),
+              "{value} to {digits} digits, {mode}"
+            );
+          }
+        }
+      }
+    }
+    storage();
+  })+};
+}
+
+#[test]
+fn digits_are_the_inherent_ones() {
+  assert_digits!(
     Decimal<U1, U1, i8>,
     Decimal<U0, U2, i8>,
     Decimal<U2, U2, i16>,

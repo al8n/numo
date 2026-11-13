@@ -267,6 +267,38 @@ pub trait FixedDecimal:
   /// Returns `true` if every fraction digit is zero.
   #[must_use]
   fn is_integer(&self) -> bool;
+
+  /// Returns the exponent of the first significant digit, 0 for zero, as
+  /// [`Decimal::order_of_magnitude`] describes.
+  #[must_use]
+  fn order_of_magnitude(&self) -> i32;
+
+  /// Returns the number of significant digits, 1 for zero, as [`Decimal::significant_digits`]
+  /// describes.
+  #[doc(alias = "digits")]
+  #[must_use]
+  fn significant_digits(&self) -> u32;
+
+  /// Returns the number of fraction digits that `Display` writes for the value, as
+  /// [`Decimal::fraction_digits`] describes: at most [`FRACTION`](Self::FRACTION), the fraction
+  /// digits of the type.
+  #[doc(alias = "fractional_digit_count")]
+  #[must_use]
+  fn fraction_digits(&self) -> u32;
+
+  /// Rounds to `digits` significant digits with `mode`, as [`Decimal::round_significant`]
+  /// describes.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ConvertError::OutOfRange`] if the rounded value is outside the range of the type.
+  #[doc(alias("round_sf", "with_precision_round"))]
+  #[must_use = "this returns the rounded value, without modifying the original"]
+  fn round_significant(
+    &self,
+    digits: core::num::NonZero<u32>,
+    mode: RoundingMode,
+  ) -> Result<Self, ConvertError>;
 }
 
 /// An exact fixed-point decimal number whose zero and limits are constants: [`Decimal`] over any
