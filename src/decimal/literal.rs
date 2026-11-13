@@ -214,7 +214,7 @@ macro_rules! dec {
   (@text $text:expr) => {{
     struct __Literal;
     impl $crate::__private::LiteralText for __Literal {
-      const TEXT: &'static str = $text;
+      const TEXT: &'static $crate::__private::str = $text;
     }
     <_ as $crate::__private::DecimalLiteral<__Literal>>::VALUE
   }};

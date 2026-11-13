@@ -570,7 +570,7 @@ mod width;
 /// of the API, and may change in any release.
 #[doc(hidden)]
 pub mod __private {
-  pub use core::{concat, stringify};
+  pub use core::{concat, primitive::str, stringify};
 
   pub use crate::decimal::{DecimalLiteral, LiteralText};
 

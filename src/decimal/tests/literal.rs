@@ -170,6 +170,34 @@ fn a_named_type_and_constant_functions() {
   assert_eq!(*promoted, HALF);
 }
 
+/// A literal without a type reads where `str` names another type: the expansion names the
+/// primitive by its path.
+#[test]
+fn a_literal_where_str_names_another_type() {
+  #[allow(
+    non_camel_case_types,
+    reason = "the alias shadows the primitive under test"
+  )]
+  type str = Decimal<U1, U2>;
+  const INFERRED: str = dec!(1.25);
+  const _: () = assert!(INFERRED.repr() == 125);
+  assert_eq!(INFERRED, parse::<str>("1.25"));
+}
+
+/// A literal with `as Type` reads where `str` names another type, also when the type after `as`
+/// is that one.
+#[test]
+fn a_literal_with_as_where_str_names_another_type() {
+  #[allow(
+    non_camel_case_types,
+    reason = "the alias shadows the primitive under test"
+  )]
+  type str = Decimal<U1, U2>;
+  const NAMED: str = dec!(1.25 as str);
+  const _: () = assert!(NAMED.repr() == 125);
+  assert_eq!(NAMED, parse::<str>("1.25"));
+}
+
 /// A type whose name in the test holds a constant.
 trait Pick {
   type Type;
