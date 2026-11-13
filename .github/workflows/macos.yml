@@ -125,5 +125,5 @@ jobs:
         key: ${{ runner.os }}-coverage-dotcargo
     - name: Run test
       run: cargo hack test --each-feature
-    - name: Run the arithmetic tests without overflow checks and the Full tier of the integer serde tests
-      run: cargo test --release --lib --features serde integer::arithmetic
+    - name: Run the integer arithmetic and the decimal operators without overflow checks, and the Full tier of the integer serde tests
+      run: cargo test --release --lib --features serde -- integer::arithmetic decimal::tests::operators
