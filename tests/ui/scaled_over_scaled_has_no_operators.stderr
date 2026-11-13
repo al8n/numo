@@ -11,3 +11,15 @@ note: `Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>` does not i
    |
    | pub struct Scaled<D> {
    | ^^^^^^^^^^^^^^^^^^^^ `Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>` is defined in another crate
+
+error[E0600]: cannot apply unary operator `-` to type `Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>`
+  --> tests/ui/scaled_over_scaled_has_no_operators.rs:22:3
+   |
+22 |   -a
+   |   ^^ cannot apply unary operator `-`
+   |
+note: `Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>` does not implement `FromStr`
+  --> src/decimal/scaled/mod.rs
+   |
+   | pub struct Scaled<D> {
+   | ^^^^^^^^^^^^^^^^^^^^ `Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>` is defined in another crate

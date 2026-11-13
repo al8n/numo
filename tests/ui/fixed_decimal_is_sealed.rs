@@ -5,7 +5,7 @@ use core::{
   str::FromStr,
 };
 
-use numo::{FixedDecimal, ParseError, QuantizeError, RoundingMode};
+use numo::{ConvertError, FixedDecimal, ParseError, QuantizeError, RoundingMode};
 
 // The seal of `FixedDecimal` holds even for a type with every supertrait and item.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
@@ -109,6 +109,46 @@ impl FixedDecimal for Local {
 
   fn is_multiple_of(&self, _: &Self) -> bool {
     true
+  }
+
+  fn trunc(&self) -> Self {
+    Self
+  }
+
+  fn fract(&self) -> Self {
+    Self
+  }
+
+  fn floor(&self) -> Result<Self, ConvertError> {
+    Ok(Self)
+  }
+
+  fn ceil(&self) -> Result<Self, ConvertError> {
+    Ok(Self)
+  }
+
+  fn is_integer(&self) -> bool {
+    true
+  }
+
+  fn order_of_magnitude(&self) -> i32 {
+    0
+  }
+
+  fn significant_digits(&self) -> u32 {
+    1
+  }
+
+  fn fraction_digits(&self) -> u32 {
+    0
+  }
+
+  fn round_significant(
+    &self,
+    _: core::num::NonZero<u32>,
+    _: RoundingMode,
+  ) -> Result<Self, ConvertError> {
+    Ok(Self)
   }
 }
 

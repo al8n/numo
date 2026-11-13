@@ -34,13 +34,19 @@
 //! [`checked_sub`](Decimal::checked_sub) return `None`, for a result outside the range of the type,
 //! they panic, in every build, and [`saturating_add`](Decimal::saturating_add) and
 //! [`saturating_sub`](Decimal::saturating_sub) return the limit that the result passes. Rounding
-//! takes an explicit [`RoundingMode`]: [`round_to`](Decimal::round_to) converts to fewer fraction
-//! digits, [`quantize`](Decimal::quantize) rounds to a multiple of a step and
-//! [`div_round`](Decimal::div_round) divides into any decimal type, while
-//! [`is_multiple_of`](Decimal::is_multiple_of) checks a value against a step without rounding it.
-//! Parsing accepts decimal and exponent notation with `_` separators, including every form that
-//! `f64` parses, and rejects infinity, NaN, a negative number for an unsigned storage and digits
-//! that do not fit; formatting writes the shortest exact text. [`dec!`] writes a value in the
+//! is asked for by name: [`trunc`](Decimal::trunc), [`floor`](Decimal::floor) and
+//! [`ceil`](Decimal::ceil) round to an integer in their own direction, and the other roundings take
+//! an explicit [`RoundingMode`]: [`round_to`](Decimal::round_to) converts to fewer fraction digits,
+//! [`quantize`](Decimal::quantize) rounds to a multiple of a step,
+//! [`div_round`](Decimal::div_round) divides into any decimal type and
+//! [`round_significant`](Decimal::round_significant) rounds to a number of significant digits,
+//! while [`is_multiple_of`](Decimal::is_multiple_of) checks a value against a step without
+//! rounding it. A value also gives its parts, such as [`fract`](Decimal::fract) and
+//! [`is_integer`](Decimal::is_integer), and its digits, such as
+//! [`significant_digits`](Decimal::significant_digits). Parsing accepts decimal and exponent
+//! notation with `_` separators, including every form that `f64` parses, and rejects infinity,
+//! NaN, a negative number for an unsigned storage and digits that do not fit; formatting writes the
+//! shortest exact text, and engineering notation under `{:#e}`. [`dec!`] writes a value in the
 //! source as a literal, which `parse` reads when the crate is compiled, so a literal that the type
 //! does not hold fails to compile. See [`Decimal`] for the details.
 //!
@@ -65,9 +71,9 @@
 //! the grammar of [`parse`](Decimal::parse), writes at least as many fraction digits as its scale,
 //! and compares, orders and hashes by value only. Every decimal trait is implemented for it over
 //! any decimal, so generic code takes a `Scaled` and a bare decimal alike: a sum takes the larger
-//! scale, an exact product the sum of the scales, and a rounded value or a quotient the fraction
-//! digits of its target type. Code generic over the decimal `D` adds the bound
-//! `Scaled<D>: FixedDecimal`.
+//! scale, an exact product the sum of the scales, and a value rounded into another type or a
+//! quotient the fraction digits of its target type. Code generic over the decimal `D` adds the
+//! bound `Scaled<D>: FixedDecimal`.
 //!
 //! ```
 //! use numo::{

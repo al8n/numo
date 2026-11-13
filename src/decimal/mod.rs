@@ -201,11 +201,61 @@ mod tests;
 /// [`is_negative`](Self::is_negative). An unsigned `Repr` has none of them, and its `checked_sub`
 /// returns `None` below zero.
 ///
-/// Rounding happens only with an explicit [`RoundingMode`]: [`round_to`](Self::round_to) converts
-/// to a type with fewer fraction digits, [`div_round`](Self::div_round) divides and rounds the
-/// quotient to a type of the caller's choice, and [`quantize`](Self::quantize) rounds to a
-/// multiple of a step, such as a price to a tick size. [`is_multiple_of`](Self::is_multiple_of)
-/// checks a value against a step without rounding it.
+/// Rounding happens only where it is asked for. [`trunc`](Self::trunc), [`floor`](Self::floor) and
+/// [`ceil`](Self::ceil) round to an integer in the direction that their names give, and every other
+/// rounding takes an explicit [`RoundingMode`]: [`round_to`](Self::round_to) converts to a type
+/// with fewer fraction digits, [`div_round`](Self::div_round) divides and rounds the quotient to a
+/// type of the caller's choice, [`quantize`](Self::quantize) rounds to a multiple of a step, such
+/// as a price to a tick size, and [`round_significant`](Self::round_significant) rounds to a number
+/// of significant digits. [`is_multiple_of`](Self::is_multiple_of) checks a value against a step
+/// without rounding it.
+///
+/// The parts of a value are those that the methods of [`f64`] of the same names give, in the type
+/// of the value: [`trunc`](Self::trunc) is the integral part toward zero, [`fract`](Self::fract)
+/// the rest, with the sign of the value, and [`floor`](Self::floor) and [`ceil`](Self::ceil) the
+/// integers below and above it, which return [`ConvertError::OutOfRange`] where that integer is
+/// outside the range of the type, as the ceiling of `MAX` is. [`is_integer`](Self::is_integer)
+/// tells whether the fraction is zero. The digits of a value are those of the texts that the type
+/// writes: [`order_of_magnitude`](Self::order_of_magnitude) is the exponent of `{:e}`,
+/// [`significant_digits`](Self::significant_digits) the number of digits of its mantissa, and
+/// [`fraction_digits`](Self::fraction_digits) the number of fraction digits of `Display`.
+/// [`round_significant`](Self::round_significant) takes its count of digits as a
+/// [`NonZero<u32>`](core::num::NonZero): a constant, which does not build with zero, or a count
+/// from data, checked where it is read.
+///
+/// ```
+/// use core::num::NonZero;
+///
+/// use numo::{
+///   ConvertError, Decimal, RoundingMode,
+///   typenum::{U8, U10},
+/// };
+///
+/// type Price = Decimal<U10, U8>;
+///
+/// const FIVE: NonZero<u32> = NonZero::new(5).unwrap();
+///
+/// let change: Price = "-64250.75".parse()?;
+/// assert_eq!(change.trunc().to_string(), "-64250");
+/// assert_eq!(change.fract().to_string(), "-0.75");
+/// assert_eq!(change.floor()?.to_string(), "-64251");
+/// assert_eq!(change.ceil()?.to_string(), "-64250");
+/// assert!(!change.is_integer());
+/// assert_eq!(Price::MAX.ceil(), Err(ConvertError::OutOfRange));
+///
+/// assert_eq!(change.order_of_magnitude(), 4);
+/// assert_eq!(change.significant_digits(), 7);
+/// assert_eq!(change.fraction_digits(), 2);
+/// let rounded = change.round_significant(FIVE, RoundingMode::HalfEven)?;
+/// assert_eq!(rounded.to_string(), "-64251");
+///
+/// // A count read from data is checked where it is read.
+/// let count: u32 = 2;
+/// let digits = NonZero::new(count).ok_or("no digits")?;
+/// let rounded = change.round_significant(digits, RoundingMode::Down)?;
+/// assert_eq!(rounded.to_string(), "-64000");
+/// # Ok::<(), Box<dyn core::error::Error>>(())
+/// ```
 ///
 /// Conversions keep track of the sign. [`exact_mul`](Self::exact_mul) stores the product of two
 /// unsigned storages in an unsigned storage and any other product in a signed one;
@@ -287,10 +337,19 @@ mod tests;
 /// parses back into any type with at least as many integral and fraction digits, except that a
 /// negative value needs a signed `Repr`.
 ///
+/// With the alternate flag, `{:#e}` and `{:#E}` write engineering notation: the text of `{:e}` with
+/// an exponent that is a multiple of three and one to three digits before the point, and zeros
+/// where the significant digits end before it. `64250.5` is `64.2505e3`, `0.00012` is `120e-6`,
+/// `100` is `100e0` and zero is `0e0`, and the text parses back as that of `{:e}` does. This
+/// meaning of `#` is this crate's own: in the `e` formats of C and of Python, `#` keeps the point
+/// of a text that would have none, and the exponent formats of the primitive floats and of
+/// [`Uint`](crate::Uint) and [`Int`](crate::Int) ignore the flag, so neither meaning holds for a
+/// decimal. [`Display`](fmt::Display) and [`Debug`](fmt::Debug) ignore it.
+///
 /// The width, fill, alignment, `+` and `0` flags behave as they do for integers, and the width
 /// counts the whole text, exponent included. The precision is the minimum number of fraction
-/// digits, those of the mantissa for `{:e}` and `{:E}`: shorter fractions are padded with zeros,
-/// even beyond `Fraction`.
+/// digits, those of the mantissa for `{:e}` and `{:E}`, with `#` or without: shorter fractions are
+/// padded with zeros, even beyond `Fraction`.
 ///
 /// <div class="warning">
 ///
@@ -320,7 +379,7 @@ mod tests;
 /// # Ok::<(), numo::ParseError>(())
 /// ```
 ///
-/// Scientific notation takes the same flags and precision:
+/// Scientific and engineering notation take the same flags and precision:
 ///
 /// ```
 /// use numo::{
@@ -340,6 +399,12 @@ mod tests;
 /// assert_eq!(format!("{:012e}", -price), "-006.42505e4");
 /// assert_eq!(format!("{price:>12E}"), "   6.42505E4");
 /// assert_eq!(format!("{price:e}").parse::<Price>()?, price);
+///
+/// assert_eq!(format!("{price:#e}"), "64.2505e3");
+/// assert_eq!(format!("{:#e}", "0.00012".parse::<Price>()?), "120e-6");
+/// assert_eq!(format!("{:#E}", "12345678".parse::<Price>()?), "12.345678E6");
+/// assert_eq!(format!("{:#.2e}", "100".parse::<Price>()?), "100.00e0");
+/// assert_eq!(format!("{price:#e}").parse::<Price>()?, price);
 /// # Ok::<(), numo::ParseError>(())
 /// ```
 ///
@@ -940,6 +1005,12 @@ where
   /// as described on [`Decimal`]. Precision never rounds or truncates: unlike the primitive types
   /// and the integers of this crate, `{:.1e}` writes `1.25` as `1.25e0`, not `1.2e0`. Use
   /// [`round_to`](Self::round_to) or [`quantize`](Self::quantize) to round.
+  ///
+  /// The alternate flag, `#` as in `{:#e}`, selects engineering notation: an exponent that is a
+  /// multiple of three, and one to three digits before the point, as in `12.345678e6`. This
+  /// meaning of the flag is this crate's own. In the `e` formats of C and of Python, `#` keeps the
+  /// point of a text that would have none, and the exponent formats of the primitive floats and
+  /// of [`Uint`](crate::Uint) and [`Int`](crate::Int) ignore it, so neither meaning holds here.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut buf = [0; int::DIGIT_BUF_LEN];
     let start = self.repr.write_digits(&mut buf, Token::new());
@@ -962,6 +1033,12 @@ where
   /// as described on [`Decimal`]. Precision never rounds or truncates: unlike the primitive types
   /// and the integers of this crate, `{:.1E}` writes `1.25` as `1.25E0`, not `1.2E0`. Use
   /// [`round_to`](Self::round_to) or [`quantize`](Self::quantize) to round.
+  ///
+  /// The alternate flag, `#` as in `{:#E}`, selects engineering notation: an exponent that is a
+  /// multiple of three, and one to three digits before the point, as in `12.345678E6`. This
+  /// meaning of the flag is this crate's own. In the `e` formats of C and of Python, `#` keeps the
+  /// point of a text that would have none, and the exponent formats of the primitive floats and
+  /// of [`Uint`](crate::Uint) and [`Int`](crate::Int) ignore it, so neither meaning holds here.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut buf = [0; int::DIGIT_BUF_LEN];
     let start = self.repr.write_digits(&mut buf, Token::new());

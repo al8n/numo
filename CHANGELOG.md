@@ -16,6 +16,10 @@ FEATURES
     `exact_mul` and `div_round`.
   - `const fn` `checked_rem`, the exact remainder with the sign of the dividend, and
     `saturating_add` and `saturating_sub`, which return the limit that the result passes.
+  - `const fn` `trunc`, `fract`, `floor` and `ceil`, the parts of a value in its type, where
+    `floor` and `ceil` report a result out of range as `ConvertError::OutOfRange`, and
+    `is_integer`, `order_of_magnitude`, `significant_digits` and `fraction_digits`, the digits of a
+    value as `{:e}` and `Display` write them.
   - `exact_mul`, `widen` and `try_convert` between decimal types.
   - Exact parsing through `FromStr`, and the shortest exact text through `Display` and `Debug`.
   - Parsing accepts the numeric strings of the General Decimal Arithmetic specification, every
@@ -26,9 +30,12 @@ FEATURES
     names: `dec!(0.01)`, `dec!(-2.5e-3 as Price)`.
   - Scientific notation through `LowerExp` and `UpperExp`, `{:e}` and `{:E}`: the significant
     digits with the point after the first, and the exponent, as in `6.42505e4`, with zero as `0e0`.
-    The flags work as for `Display`, and the precision is the minimum number of mantissa fraction
-    digits, so it never rounds, unlike the precision of the primitive types and of `Uint` and
-    `Int`.
+    The flags work as for `Display`, but for `#`: `{:#e}` and `{:#E}` write engineering notation,
+    as in `12.345678e6`, with an exponent that is a multiple of three and one to three digits
+    before the point. The alternate flag has this meaning for a decimal alone: the exponent formats
+    of the floats of the standard library and of `Uint` and `Int` ignore it. The precision is the
+    minimum number of mantissa fraction digits, so it never rounds, unlike the precision of the
+    primitive types and of `Uint` and `Int`.
   - Unsigned storages from `u8` to `u128`, named explicitly (`u64` holds 19 digits, one more than
     `i64`): values are never negative, parsing reports a negative number as
     `ParseErrorKind::Negative`, and `checked_sub` returns `None` below zero. The product of two
@@ -54,7 +61,9 @@ FEATURES
     storage. The general layer requires `Clone` but not `Copy`: `FixedDecimal`, with the digit
     counts, `SIGNED`, the storage as `Repr`, `repr`, `from_repr`, `zero`, `max_value`,
     `min_value`, `is_zero`, `is_positive`, `checked_add`, `checked_sub`, `checked_rem`,
-    `saturating_add`, `saturating_sub`, `quantize` and `is_multiple_of`, `SignedFixedDecimal`,
+    `saturating_add`, `saturating_sub`, `quantize`, `is_multiple_of`, `trunc`, `fract`, `floor`,
+    `ceil`, `is_integer`, `order_of_magnitude`, `significant_digits`, `fraction_digits` and
+    `round_significant`, `SignedFixedDecimal`,
     which also requires `Neg` and has `is_negative`, `neg` and `abs`, `UnsignedFixedDecimal`, and
     `DecimalOne`, with `one` where `Integral` is nonzero. Its functions `zero`, `max_value`,
     `min_value` and `one` return the inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The const
@@ -87,13 +96,16 @@ FEATURES
     `DivRound` between `Scaled` types, with no mixed implementations. Sums, differences and
     remainders take the larger scale, also where they saturate to a limit, exact products the sum
     of the scales, saturating at 255, quantized values the scale of the step, widened and exactly
-    converted values their own, rounded values and quotients the fraction digits of their target
-    type, and zero, the limits, one and a value made from a coefficient scale 0. A concrete
+    converted values their own, values of `round_to` and quotients the fraction digits of their
+    target type, and zero, the limits, one and a value made from a coefficient scale 0. `trunc`,
+    `floor` and `ceil` give scale 0, `fract` keeps the scale, `round_significant` gives the scale
+    that the significant digits of its result need, at most 255, and `is_integer` and the digits of
+    a value are those of the value, whatever the scale. A concrete
     `Scaled<Decimal<I, F, R>>` needs no bound; code generic over the decimal `D` adds the bound
     `Scaled<D>: FixedDecimal`.
 - `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`,
-  `HalfEven` and `Up05`. Rounding happens only where a mode is given, for native and wide
-  storages alike:
+  `HalfEven` and `Up05`. Rounding happens only where a mode is given, but for `trunc`, `floor` and
+  `ceil`, which round in their own direction, for native and wide storages alike:
   - `round_to` converts to any decimal type as `try_convert` does, but rounds dropped fraction
     digits with the mode instead of failing. It reports `OutOfRange` if the rounded value does not
     fit, so a negative value converts to an unsigned storage only when it rounds to zero.
@@ -105,6 +117,9 @@ FEATURES
     never gives zero, and `OutOfRange` for a quotient outside the target's range. The intermediate
     is sized at the type level; one of more than 153 digits fails to compile, and 154 is allowed
     only when both storages are unsigned.
+  - `const fn` `round_significant` rounds to a number of significant digits with the mode, in the
+    type of the value, and reports `OutOfRange` where a carry leaves the range. The count is a
+    `NonZero<u32>`, so a count of zero cannot be written.
   - `const fn` `is_multiple_of` checks a value against a step without rounding it.
   - `Up05` is the `ROUND_05UP` of the General Decimal Arithmetic: away from zero if the last digit
     of the truncated result is 0 or 5. Its name is `up05` and its predicate `is_up05`.

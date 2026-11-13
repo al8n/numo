@@ -239,6 +239,66 @@ pub trait FixedDecimal:
   /// Returns `true` if `self` is a multiple of `step`, as [`Decimal::is_multiple_of`] describes.
   #[must_use]
   fn is_multiple_of(&self, step: &Self) -> bool;
+
+  /// Returns the integral part, rounded toward zero, as [`Decimal::trunc`] describes.
+  #[must_use]
+  fn trunc(&self) -> Self;
+
+  /// Returns the fraction, with the sign of `self`, as [`Decimal::fract`] describes.
+  #[must_use]
+  fn fract(&self) -> Self;
+
+  /// Returns the largest integer at most `self`, as [`Decimal::floor`] describes.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ConvertError::OutOfRange`] if that integer is outside the range of the type.
+  #[must_use = "this returns the rounded value, without modifying the original"]
+  fn floor(&self) -> Result<Self, ConvertError>;
+
+  /// Returns the smallest integer at least `self`, as [`Decimal::ceil`] describes.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ConvertError::OutOfRange`] if that integer is outside the range of the type.
+  #[must_use = "this returns the rounded value, without modifying the original"]
+  fn ceil(&self) -> Result<Self, ConvertError>;
+
+  /// Returns `true` if every fraction digit is zero.
+  #[must_use]
+  fn is_integer(&self) -> bool;
+
+  /// Returns the exponent of the first significant digit, 0 for zero, as
+  /// [`Decimal::order_of_magnitude`] describes.
+  #[must_use]
+  fn order_of_magnitude(&self) -> i32;
+
+  /// Returns the number of significant digits, 1 for zero, as [`Decimal::significant_digits`]
+  /// describes.
+  #[doc(alias = "digits")]
+  #[must_use]
+  fn significant_digits(&self) -> u32;
+
+  /// Returns the number of fraction digits that `Display` writes for the value, as
+  /// [`Decimal::fraction_digits`] describes: at most [`FRACTION`](Self::FRACTION), the fraction
+  /// digits of the type.
+  #[doc(alias = "fractional_digit_count")]
+  #[must_use]
+  fn fraction_digits(&self) -> u32;
+
+  /// Rounds to `digits` significant digits with `mode`, as [`Decimal::round_significant`]
+  /// describes.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ConvertError::OutOfRange`] if the rounded value is outside the range of the type.
+  #[doc(alias("round_sf", "with_precision_round"))]
+  #[must_use = "this returns the rounded value, without modifying the original"]
+  fn round_significant(
+    &self,
+    digits: core::num::NonZero<u32>,
+    mode: RoundingMode,
+  ) -> Result<Self, ConvertError>;
 }
 
 /// An exact fixed-point decimal number whose zero and limits are constants: [`Decimal`] over any

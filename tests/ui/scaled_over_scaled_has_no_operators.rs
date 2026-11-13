@@ -12,4 +12,14 @@ fn add_nested(a: Scaled<Scaled<D>>, b: Scaled<Scaled<D>>) -> Scaled<Scaled<D>> {
   a + b
 }
 
+// The same for the unary minus: a `Scaled` over a signed decimal has it.
+fn neg(a: Scaled<D>) -> Scaled<D> {
+  -a
+}
+
+// A `Scaled` over a `Scaled` has none.
+fn neg_nested(a: Scaled<Scaled<D>>) -> Scaled<Scaled<D>> {
+  -a
+}
+
 fn main() {}

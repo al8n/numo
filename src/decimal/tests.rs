@@ -1355,7 +1355,8 @@ fn exp_zero_is_0e0_for_every_layout() {
 fn exp_flags_match_integers() {
   // The primitive types round a precision below the fraction digits of their mantissa and
   // `Decimal` never does, so a precision is compared only at and above those digits, which the
-  // primitive's own shortest text counts.
+  // primitive's own shortest text counts. Under `#` a decimal writes engineering notation, which
+  // the primitive types do not, so no spec here has the flag.
   macro_rules! assert_same {
     (@specs $decimal:ident, $value:ident, $($spec:tt),+ $(,)?) => {$(
       assert_eq!(
@@ -1399,8 +1400,6 @@ fn exp_flags_match_integers() {
         "{:*>45E}",
         "{:+045e}",
         "{:045E}",
-        "{:#e}",
-        "{:#012E}",
       );
 
       let shortest = format!("{value:e}");
@@ -1490,9 +1489,9 @@ fn exp_flags_with_fraction_digits() {
   assert_eq!(format!("{:+e}", D2x2::ZERO), "+0e0");
   assert_eq!(format!("{:+.1e}", D2x2::ZERO), "+0.0e0");
 
-  // `#` is ignored, as for the primitive types.
-  assert_eq!(format!("{positive:#e}"), "1.23e1");
-  assert_eq!(format!("{positive:#010E}"), "00001.23E1");
+  // `#` selects engineering notation, whose exponent is a multiple of three.
+  assert_eq!(format!("{positive:#e}"), "12.3e0");
+  assert_eq!(format!("{positive:#010E}"), "000012.3E0");
 
   for spec_width in [70, 200] {
     let padded = format!("{positive:0spec_width$e}");
@@ -4841,5 +4840,6 @@ mod with_serde {
   }
 }
 
+mod digits;
 mod literal;
 mod operators;
