@@ -343,7 +343,7 @@ macro_rules! digit_methods {
 /// base outside its range panics, reporting the caller.
 ///
 /// ```
-/// use numo::{BitWidth, Uint, UnsignedDigits, u7};
+/// use numo::{UnsignedDigits, u7};
 ///
 /// // The value of digits in a base, read back from those of the value.
 /// fn again<T: UnsignedDigits>(value: &T, base: u64) -> Option<T> {

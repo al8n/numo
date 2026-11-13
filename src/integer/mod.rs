@@ -358,7 +358,9 @@ mod traits;
 /// reporting the caller. In a constant, the work grows with the number of digits and with the
 /// number of limbs of the storage. A text or a digit sequence that fills 65536 bits in
 /// `[u64; 1024]`, or 16384 bits in `[u8; 2048]`, can exceed the compiler's default limit for
-/// evaluating a constant, so such a constant may need `#[allow(long_running_const_eval)]`.
+/// evaluating a constant, so such a constant may need `#[allow(long_running_const_eval)]`. Where
+/// an evaluation runs far beyond that limit, the compiler still prints a warning that it is taking
+/// a long time, whatever the level of the lint, as it does for a text that fills 65536 bits.
 ///
 /// `Display` and `Debug` write decimal, `Debug` also under `{:x?}` and `{:X?}`, whose flags the
 /// standard library does not expose. The radix formats `Binary`, `Octal`, `LowerHex` and

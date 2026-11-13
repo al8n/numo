@@ -313,9 +313,10 @@ assert_eq!(sum.to_string(), "8");
   the storage holds. `Display` and `Debug` write decimal, `{:b}`, `{:o}`, `{:x}` and `{:X}` write
   the digits of a `Uint` and the two's complement of the `Bits` bits of an `Int`, and `{:e}` and
   `{:E}` write scientific notation, rounding half to even at a precision, all with the flags of the
-  native integers and without allocation. With a heap feature, `to_str_radix` returns the text that
-  `from_str_radix` reads back, in the radixes 2 to 36, with `-` and the digits of the magnitude of
-  a negative `Int`, where `{:x}` writes its bits: `-1` and `7f` for `i7` -1.
+  native integers and without allocation. With the `std` or the `alloc` feature, `to_str_radix`
+  returns the text that `from_str_radix` reads back, in the radixes 2 to 36, with `-` and the
+  digits of the magnitude of a negative `Int`, where `{:x}` writes its bits: `-1` and `7f` for
+  `i7` -1.
 - The bytes of the native integers at the width `Bits`, the low `BYTES` bytes of the storage, in
   two's complement for `Int`: `to_le_bytes`, `to_be_bytes` and `to_ne_bytes` return an array whose
   length is part of its type, up to 8192 bits, and `checked_from_le_bytes` and the other orders read
@@ -325,16 +326,17 @@ assert_eq!(sum.to_string(), "8");
   `strict_from_le_slice` read a slice of any length, `copy_le_bytes_to` writes the bytes to a
   buffer at any width, and `byte` reads one byte. At a width of whole bytes, `swap_bytes`,
   `to_be`, `to_le`, `from_be` and `from_le` convert the byte order as the native integers do, by
-  value rather than by layout. With a heap feature, `to_le_bytes_vec` and `to_be_bytes_vec` return
-  the bytes at any width, and `to_le_bytes_trimmed_vec` and `to_be_bytes_trimmed_vec` the shortest
-  bytes that the slices read back: none for zero, and the shortest two's complement of an `Int`.
+  value rather than by layout. With the `std` or the `alloc` feature, `to_le_bytes_vec` and
+  `to_be_bytes_vec` return the bytes at any width, and `to_le_bytes_trimmed_vec` and
+  `to_be_bytes_trimmed_vec` the shortest bytes that the slices read back: none for zero, and the
+  shortest two's complement of an `Int`.
 - The digits of a `Uint` in any base, through `UnsignedDigits`: `checked_from_radix_be` and
   `checked_from_radix_le`, `const fn`s, read digits in bytes in a radix from 2 to 256, and
   `checked_from_base_be` and `checked_from_base_le` read digits in `u64` from an iterator in any
   base from 2, each with `None` for a digit outside the base or a value outside the width;
-  `to_base_le` writes the digits as an iterator without allocation, and with a heap feature
-  `to_base_be`, `to_radix_be` and `to_radix_le` write them into a `Vec`, as in a base-58 text of
-  a `u256`: `u256::checked_from_radix_be(&x.to_radix_be(58), 58) == Some(x)`.
+  `to_base_le` writes the digits as an iterator without allocation, and with the `std` or the
+  `alloc` feature `to_base_be`, `to_radix_be` and `to_radix_le` write them into a `Vec`, as in a
+  base-58 text of a `u256`: `u256::checked_from_radix_be(&x.to_radix_be(58), 58) == Some(x)`.
 - The casts of the native integers, still unstable, between any widths and signs: `checked_cast`,
   `wrapping_cast`, `saturating_cast`, `strict_cast` and the `unsafe` `unchecked_cast` into a
   `Uint`, an `Int` or a native integer, the checked, strict and unchecked ones also into a non-zero

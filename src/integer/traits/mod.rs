@@ -1082,7 +1082,7 @@ pub trait FixedNonZero:
 
   /// The text of the value in `radix`, from 2 to 36, which `from_str_radix` reads back, as the
   /// inherent `to_str_radix` writes it: `-` before the digits of the magnitude of a negative
-  /// value, lowercase letters, and `"0"` for zero.
+  /// value, and lowercase letters.
   ///
   /// # Panics
   ///
