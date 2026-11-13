@@ -1,0 +1,124 @@
+error[E0080]: evaluation panicked: the decimal literal has more fraction digits than the type
+ --> src/decimal/storage.rs
+  |
+  |           Err(error) => literal::reject(error.kind()),
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `numo::decimal::storage::<impl numo::__private::DecimalLiteral<_::__Literal> for numo::Decimal<numo::typenum::UInt<numo::typenum::UTerm, numo::typenum::B1>, numo::typenum::UInt<numo::typenum::UTerm, numo::typenum::B1>, i8>>::VALUE` failed here
+...
+  | / storage_decimal!(
+  | |   i8: signed native,
+  | |   i16: signed native,
+  | |   i32: signed native,
+... |
+  | |   u512: unsigned wide,
+  | | );
+  | |_- in this macro invocation
+  |
+  = note: this error originates in the macro `storage_decimal` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/dec_bad_literals.rs:13:14
+   |
+13 | const _: D = dec!(0.25);
+   |              ^^^^^^^^^^
+   |
+   = note: this note originates in the macro `$crate::dec` which comes from the expansion of the macro `dec` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0080]: evaluation panicked: the decimal literal is out of range of the type
+ --> src/decimal/storage.rs
+  |
+  |           Err(error) => literal::reject(error.kind()),
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `numo::decimal::storage::<impl numo::__private::DecimalLiteral<_::__Literal> for numo::Decimal<numo::typenum::UInt<numo::typenum::UTerm, numo::typenum::B1>, numo::typenum::UInt<numo::typenum::UTerm, numo::typenum::B1>, i8>>::VALUE` failed here
+...
+  | / storage_decimal!(
+  | |   i8: signed native,
+  | |   i16: signed native,
+  | |   i32: signed native,
+... |
+  | |   u512: unsigned wide,
+  | | );
+  | |_- in this macro invocation
+  |
+  = note: this error originates in the macro `storage_decimal` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/dec_bad_literals.rs:14:14
+   |
+14 | const _: D = dec!(10);
+   |              ^^^^^^^^
+   |
+   = note: this note originates in the macro `$crate::dec` which comes from the expansion of the macro `dec` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0080]: evaluation panicked: the decimal literal is negative, and the type is unsigned
+ --> src/decimal/storage.rs
+  |
+  |           Err(error) => literal::reject(error.kind()),
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `numo::decimal::storage::<impl numo::__private::DecimalLiteral<_::__Literal> for numo::Decimal<numo::typenum::UInt<numo::typenum::UTerm, numo::typenum::B1>, numo::typenum::UInt<numo::typenum::UTerm, numo::typenum::B1>, u8>>::VALUE` failed here
+...
+  | / storage_decimal!(
+  | |   i8: signed native,
+  | |   i16: signed native,
+  | |   i32: signed native,
+... |
+  | |   u512: unsigned wide,
+  | | );
+  | |_- in this macro invocation
+  |
+  = note: this error originates in the macro `storage_decimal` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/dec_bad_literals.rs:15:14
+   |
+15 | const _: U = dec!(-0.5);
+   |              ^^^^^^^^^^
+   |
+   = note: this note originates in the macro `$crate::dec` which comes from the expansion of the macro `dec` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0080]: evaluation panicked: the literal is not a decimal number
+ --> src/decimal/storage.rs
+  |
+  |           Err(error) => literal::reject(error.kind()),
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `numo::decimal::storage::<impl numo::__private::DecimalLiteral<_::__Literal> for numo::Decimal<numo::typenum::UInt<numo::typenum::UTerm, numo::typenum::B1>, numo::typenum::UInt<numo::typenum::UTerm, numo::typenum::B1>, i8>>::VALUE` failed here
+...
+  | / storage_decimal!(
+  | |   i8: signed native,
+  | |   i16: signed native,
+  | |   i32: signed native,
+... |
+  | |   u512: unsigned wide,
+  | | );
+  | |_- in this macro invocation
+  |
+  = note: this error originates in the macro `storage_decimal` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/dec_bad_literals.rs:16:14
+   |
+16 | const _: D = dec!(0x10);
+   |              ^^^^^^^^^^
+   |
+   = note: this note originates in the macro `$crate::dec` which comes from the expansion of the macro `dec` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0080]: evaluation panicked: the literal is not a decimal number
+ --> src/decimal/storage.rs
+  |
+  |           Err(error) => literal::reject(error.kind()),
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `numo::decimal::storage::<impl numo::__private::DecimalLiteral<_::__Literal> for numo::Decimal<numo::typenum::UInt<numo::typenum::UTerm, numo::typenum::B1>, numo::typenum::UInt<numo::typenum::UTerm, numo::typenum::B1>, u8>>::VALUE` failed here
+...
+  | / storage_decimal!(
+  | |   i8: signed native,
+  | |   i16: signed native,
+  | |   i32: signed native,
+... |
+  | |   u512: unsigned wide,
+  | | );
+  | |_- in this macro invocation
+  |
+  = note: this error originates in the macro `storage_decimal` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/dec_bad_literals.rs:17:14
+   |
+17 | const _: U = dec!(1.5f32);
+   |              ^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `$crate::dec` which comes from the expansion of the macro `dec` (in Nightly builds, run with -Z macro-backtrace for more info)

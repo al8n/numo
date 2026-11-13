@@ -1,0 +1,43 @@
+error[E0282]: type annotations needed
+ --> tests/ui/dec_needs_a_type.rs:9:7
+  |
+9 |   let _value = dec!(0.5);
+  |       ^^^^^^
+  |
+help: consider giving `_value` an explicit type
+  |
+9 |   let _value: /* Type */ = dec!(0.5);
+  |             ++++++++++++
+
+error[E0284]: type annotations needed
+  --> tests/ui/dec_needs_a_type.rs:13:13
+   |
+13 |   dec!(0.5) + value
+   |   --------- ^ -----
+   |             |
+   |             cannot infer type
+   |
+   = note: cannot satisfy `<_ as Add<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>::Output == Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>`
+   = note: the type must also implement `Add<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>`
+
+error[E0283]: type annotations needed
+  --> tests/ui/dec_needs_a_type.rs:17:13
+   |
+17 |   dec!(0.5) < value
+   |   --------- ^ -----
+   |             |
+   |             cannot infer type
+   |
+   = note: the type must implement `PartialOrd<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>`
+
+error[E0277]: the trait bound `T: numo::__private::DecimalLiteral<generic::__Literal>` is not satisfied
+  --> tests/ui/dec_needs_a_type.rs:21:3
+   |
+21 |   dec!(0.5)
+   |   ^^^^^^^^^ the trait `numo::__private::DecimalLiteral<generic::__Literal>` is not implemented for `T`
+   |
+   = note: this error originates in the macro `$crate::dec` which comes from the expansion of the macro `dec` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider further restricting type parameter `T` with trait `DecimalLiteral`
+   |
+20 | fn generic<T: FixedDecimal + numo::__private::DecimalLiteral<generic::__Literal>>() -> T {
+   |                            +++++++++++++++++++++++++++++++++++++++++++++++++++++
