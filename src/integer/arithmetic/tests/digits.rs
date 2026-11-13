@@ -71,6 +71,14 @@ macro_rules! check_small_digits {
         <$ty as UnsignedDigits>::checked_from_radix_be(&be, radix),
       ];
       assert_eq!(read, [Some(x); 4], "{what}");
+      #[cfg(any(feature = "std", feature = "alloc"))]
+      {
+        let (le, be) = if a == 0 { (vec![0], vec![0]) } else { (le, be) };
+        assert_eq!(x.to_radix_le(radix), le, "{what}");
+        assert_eq!(UnsignedDigits::to_radix_le(&x, radix), le, "{what}");
+        assert_eq!(x.to_radix_be(radix), be, "{what}");
+        assert_eq!(UnsignedDigits::to_radix_be(&x, radix), be, "{what}");
+      }
     }
     for &base in small_bases() {
       let le = model_digits(a, base);
@@ -88,6 +96,16 @@ macro_rules! check_small_digits {
         <$ty as UnsignedDigits>::checked_from_base_be(le.iter().rev().copied(), base),
       ];
       assert_eq!(read, [Some(x); 4], "{what}");
+      #[cfg(any(feature = "std", feature = "alloc"))]
+      {
+        let be: Vec<u64> = le.iter().rev().copied().collect();
+        assert_eq!(x.to_base_be(base).collect::<Vec<u64>>(), be, "{what}");
+        assert_eq!(
+          UnsignedDigits::to_base_be(&x, base).collect::<Vec<u64>>(),
+          be,
+          "{what}"
+        );
+      }
     }
   }};
 }
@@ -296,6 +314,11 @@ fn wide_digits_against_big_integers<T>(
       assert_eq!(T::checked_from_radix_be(&be, radix), Some(x), "{what}");
       let over = one_more_digit(&le, max.to_radix_le(radix).len());
       assert_eq!(T::checked_from_radix_le(&over, radix), None, "{what}");
+      #[cfg(any(feature = "std", feature = "alloc"))]
+      {
+        assert_eq!(x.to_radix_le(radix), le, "{what}");
+        assert_eq!(x.to_radix_be(radix), be, "{what}");
+      }
     }
     for &base in bases {
       let le = big_digits(&big, base);
@@ -313,6 +336,11 @@ fn wide_digits_against_big_integers<T>(
       );
       let over = one_more_digit(&le, big_digits(&max, base).len());
       assert_eq!(T::checked_from_base_le(over, base), None, "{what}");
+      #[cfg(any(feature = "std", feature = "alloc"))]
+      {
+        let be: Vec<u64> = le.iter().rev().copied().collect();
+        assert_eq!(x.to_base_be(base).collect::<Vec<u64>>(), be, "{what}");
+      }
     }
   }
 }
@@ -435,6 +463,11 @@ fn round_trip_at<T: Patterned + UnsignedDigits + IntegerBytes, const K: usize>(b
       })
       .collect();
     assert_eq!(x.to_base_le(1 << 32).collect::<Vec<u64>>(), words, "{what}");
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    if !bytes.is_empty() {
+      let be: Vec<u8> = bytes.iter().rev().copied().collect();
+      assert_eq!(x.to_radix_be(256), be, "{what}");
+    }
   }
 }
 
@@ -465,6 +498,13 @@ fn widest_bytes_read_back() {
   );
 }
 
+/// The text of the widest value in the radix 10 is that of `Display`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn widest_text_is_display() {
+  assert_eq!(Widest::MAX.to_str_radix(10), Widest::MAX.to_string());
+}
+
 /// The digits of 65 and 129 bits in `u8` and `u64` limbs read back, in every tier, and the words
 /// and the bytes of a value are its digits in the bases `2^32` and 256; in an optimized build also
 /// the digits of the largest value of 65536 bits, and its text.
@@ -477,6 +517,8 @@ fn wide_digits_round_trip() {
   if tier().is_full() {
     widest_decimal_digits_read_back();
     widest_bytes_read_back();
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    widest_text_is_display();
   }
 }
 
@@ -511,6 +553,21 @@ fn the_digits_of_the_reference_crates() {
     .collect();
   written.reverse();
   assert_eq!(written.into_iter().collect::<String>(), letters);
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  {
+    let n = Wide::checked_from_radix_be(&[3, 55, 60, 100, 5, 0, 5, 88], 120).expect("512 bits");
+    assert_eq!(n.to_radix_be(120), [3, 55, 60, 100, 5, 0, 5, 88]);
+    let n = Wide::checked_from_radix_le(&[1, 67, 88, 200, 55, 68, 87, 120, 178], 250).expect("512");
+    assert_eq!(n.to_radix_le(250), [1, 67, 88, 200, 55, 68, 87, 120, 178]);
+    assert_eq!(
+      Wide::from_str_radix(letters, 36)
+        .expect("512")
+        .to_str_radix(36),
+      letters
+    );
+    let negative = Int::<U512>::from_str_radix("-123456701234567", 8).expect("512 bits");
+    assert_eq!(negative.to_str_radix(8), "-123456701234567");
+  }
 
   let small = Uint::<U64>::new(123_456_789);
   assert_eq!(
@@ -551,6 +608,14 @@ fn the_digits_of_the_reference_crates() {
     Uint::<U256, [u64; 4]>::checked_from_base_be(reversed, base),
     Some(n)
   );
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  {
+    assert_eq!(
+      small.to_base_be(10).collect::<Vec<u64>>(),
+      [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    );
+    assert_eq!(n.to_base_be(base).collect::<Vec<u64>>(), reversed);
+  }
   assert_eq!(u0::checked_from_base_be([], 10), Some(u0::ZERO));
   assert_eq!(u0::checked_from_base_be([0], 10), Some(u0::ZERO));
   assert_eq!(u0::checked_from_base_be([1], 10), None);
@@ -613,6 +678,8 @@ fn zero_at<T: UnsignedDigits + Debug + PartialEq>(zero: &T, bits: u32) {
     assert_eq!(zero.to_base_le(base).count(), 0);
     assert_eq!(T::checked_from_base_le([], base).as_ref(), Some(zero));
     assert_eq!(T::checked_from_base_be([0, 0], base).as_ref(), Some(zero));
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    assert_eq!(zero.to_base_be(base).count(), 0);
   }
   for radix in [2, 10, 256] {
     assert_eq!(T::checked_from_radix_be(&[], radix).as_ref(), Some(zero));
@@ -621,6 +688,11 @@ fn zero_at<T: UnsignedDigits + Debug + PartialEq>(zero: &T, bits: u32) {
       Some(zero)
     );
     assert_eq!(T::checked_from_radix_le(&[1], radix).is_none(), bits == 0);
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    {
+      assert_eq!(zero.to_radix_le(radix), [0]);
+      assert_eq!(zero.to_radix_be(radix), [0]);
+    }
   }
 }
 
@@ -684,4 +756,23 @@ fn digit_trait_surface() {
   );
   assert_eq!(again_at_width(&u7::new(100)), Some(u7::new(100)));
   assert_eq!(again_at_width(&Uint::<U200>::MAX), Some(Uint::<U200>::MAX));
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  {
+    type Boxed = Uint<U200, Box<[u64; 4]>>;
+    let boxed = Boxed::checked_from_base_le([7, 2], 10).expect("200 bits");
+    assert_eq!(digits_through(&boxed, 10), [7, 2]);
+    assert_eq!(
+      <Boxed as UnsignedDigits>::checked_from_radix_be(&[2, 7], 10),
+      Some(boxed.clone())
+    );
+    assert_eq!(
+      digits_of_a_local_through(boxed).collect::<Vec<u64>>(),
+      [7, 2]
+    );
+    let mut digits = u7::new(5).to_base_be(10);
+    assert_eq!(
+      (digits.next(), digits.next(), digits.next()),
+      (Some(5), None, None)
+    );
+  }
 }

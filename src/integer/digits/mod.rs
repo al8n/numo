@@ -48,6 +48,17 @@ const fn chunk_of(base: u64) -> (u64, u32) {
   (base.pow(per_chunk), per_chunk)
 }
 
+/// The number of digits of `base` that a writer reserves for a value of `bit_len` significant
+/// bits, `ceil(bit_len / floor(log2(base)))`: at least the number of its digits, as `base^count`
+/// is at least `2^bit_len`. Requires `base >= 2`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline]
+fn digit_capacity(bit_len: u32, base: u64) -> usize {
+  // A count that `usize` does not hold belongs to a value that no memory holds, and the
+  // allocation then fails as it does for any such capacity.
+  usize::try_from(bit_len.div_ceil(base.ilog2())).unwrap_or(usize::MAX)
+}
+
 /// The digits of a value in a base, least significant first, without the zeros above the highest
 /// one: what is left of the value is divided by the largest power of the base in a `u64`, and the
 /// digits of a chunk are taken from the remainder.
@@ -199,6 +210,66 @@ fn add_chunk<I: UintCore>(
   Some(())
 }
 
+/// The digits of `value`, of `bits` bits, in `radix` as bytes, most significant first if
+/// `big_endian`: the one digit 0 for zero. Requires `2 <= radix <= 256`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn radix_digits<I: UintCore>(
+  value: &I,
+  radix: u32,
+  bits: u32,
+  big_endian: bool,
+) -> std::vec::Vec<u8> {
+  let bit_len = bits - value.leading_zeros_bits(bits, Token::new());
+  let mut digits = std::vec::Vec::with_capacity(digit_capacity(bit_len, radix.into()).max(1));
+  // Each digit is below `radix`, at most 256, so it fits a byte.
+  digits.extend(BaseDigits::new(value, radix.into()).map(|digit| digit as u8));
+  if digits.is_empty() {
+    digits.push(0);
+  }
+  if big_endian {
+    digits.reverse();
+  }
+  digits
+}
+
+/// The text of the magnitude `magnitude`, of `bits` bits, in `radix` with lowercase letters, after
+/// `-` if `negative`: `"0"` for zero. Requires `2 <= radix <= 36`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) fn write_text<I: UintCore>(
+  magnitude: &I,
+  negative: bool,
+  radix: u32,
+  bits: u32,
+) -> std::string::String {
+  const ALPHABET: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+  let bit_len = bits - magnitude.leading_zeros_bits(bits, Token::new());
+  let capacity = digit_capacity(bit_len, radix.into())
+    .max(1)
+    .saturating_add(usize::from(negative));
+  let mut text = std::vec::Vec::with_capacity(capacity);
+  // Each digit is below `radix`, at most 36, so it indexes the alphabet.
+  text.extend(BaseDigits::new(magnitude, radix.into()).map(|digit| ALPHABET[digit as usize]));
+  if text.is_empty() {
+    text.push(b'0');
+  }
+  if negative {
+    text.push(b'-');
+  }
+  text.reverse();
+  match std::string::String::from_utf8(text) {
+    Ok(text) => text,
+    Err(_) => not_ascii(),
+  }
+}
+
+/// Panics on a text that is not ASCII: a bug of this crate, as every byte of the text comes from
+/// the alphabet or is a sign.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cold]
+fn not_ascii() -> ! {
+  panic!("the digits of a text are ASCII")
+}
+
 /// Emits the constructors of `Uint` from digits in bytes as inherent `const fn`s of one inline
 /// storage, in an impl block whose width relation holds: `$args` is `[layer]` for a native integer
 /// and `[group, layer, &]` for an array, as for `byte_methods!`.
@@ -343,6 +414,42 @@ pub trait UnsignedDigits: Sealed + Sized {
   /// Panics if `base` is below 2, reporting the caller, when it is called.
   #[track_caller]
   fn to_base_le(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<Self>;
+
+  /// The digits of the value in `base`, most significant first, without the zeros above the
+  /// highest one, so zero has none. They are collected in a `Vec`, which a value that is not zero
+  /// allocates.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `base` is below 2, reporting the caller, when it is called.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[track_caller]
+  fn to_base_be(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<Self>;
+
+  /// The digits of the value in `radix`, a byte each, most significant first: the one digit 0 for
+  /// zero.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 256, reporting the caller.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[track_caller]
+  fn to_radix_be(&self, radix: u32) -> std::vec::Vec<u8>;
+
+  /// The digits of the value in `radix`, a byte each, least significant first: the one digit 0
+  /// for zero.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 256, reporting the caller.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[track_caller]
+  fn to_radix_le(&self, radix: u32) -> std::vec::Vec<u8>;
 }
 
 // The constructors from a slice call the row of the storage, which a heap storage answers with one
@@ -386,6 +493,27 @@ impl<B: FitsBits<R>, R: UintRepr> UnsignedDigits for Uint<B, R> {
   #[track_caller]
   fn to_base_le(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<B, R> {
     Self::to_base_le(self, base)
+  }
+
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_base_be(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<B, R> {
+    Self::to_base_be(self, base)
+  }
+
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_radix_be(&self, radix: u32) -> std::vec::Vec<u8> {
+    Self::to_radix_be(self, radix)
+  }
+
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_radix_le(&self, radix: u32) -> std::vec::Vec<u8> {
+    Self::to_radix_le(self, radix)
   }
 }
 
@@ -470,5 +598,91 @@ impl<B: FitsBits<R>, R: UintRepr> Uint<B, R> {
   pub fn to_base_le(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<B, R> {
     check_base(base, "to_base_le: base must be at least 2");
     BaseDigits::new(self.repr.inline(Token::new()), base)
+  }
+
+  /// The digits of the value in `base`, most significant first, without the zeros above the
+  /// highest one, so zero has none: those of [`to_base_le`](Self::to_base_le) in reverse order,
+  /// collected in a `Vec` of the capacity that they need, which zero does not allocate. Without
+  /// the `std` and the `alloc` features, a caller fills a buffer from `to_base_le` and reads it
+  /// backwards.
+  ///
+  /// ```
+  /// use numo::u7;
+  ///
+  /// assert_eq!(u7::new(100).to_base_be(10).collect::<Vec<u64>>(), [1, 0, 0]);
+  /// assert_eq!(u7::ZERO.to_base_be(10).count(), 0);
+  /// ```
+  ///
+  /// # Panics
+  ///
+  /// Panics if `base` is below 2, reporting the caller, when it is called.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[inline]
+  #[track_caller]
+  pub fn to_base_be(&self, base: u64) -> impl Iterator<Item = u64> + FusedIterator + use<B, R> {
+    check_base(base, "to_base_be: base must be at least 2");
+    let value = self.repr.inline(Token::new());
+    let bit_len = B::U32 - value.leading_zeros_bits(B::U32, Token::new());
+    let mut digits = std::vec::Vec::with_capacity(digit_capacity(bit_len, base));
+    digits.extend(BaseDigits::new(value, base));
+    digits.into_iter().rev()
+  }
+
+  /// The digits of the value in `radix`, a byte each, most significant first: the one digit 0 for
+  /// zero. Mapped through an alphabet of `radix` symbols they are the text of the value, such as
+  /// base 58; in the radix 256 they are the bytes of a value that is not zero, without the zeros
+  /// above it. The `Vec` is allocated once, with the capacity that the digits need.
+  ///
+  /// ```
+  /// use numo::u7;
+  ///
+  /// assert_eq!(u7::new(100).to_radix_be(10), [1, 0, 0]);
+  /// assert_eq!(u7::ZERO.to_radix_be(10), [0]);
+  /// assert_eq!(u7::checked_from_radix_be(&u7::new(100).to_radix_be(58), 58), Some(u7::new(100)));
+  /// ```
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 256, reporting the caller.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[inline]
+  #[track_caller]
+  pub fn to_radix_be(&self, radix: u32) -> std::vec::Vec<u8> {
+    check_radix(
+      radix,
+      256,
+      "to_radix_be: radix must lie in the range `[2, 256]`",
+    );
+    radix_digits(self.repr.inline(Token::new()), radix, B::U32, true)
+  }
+
+  /// The digits of the value in `radix`, a byte each, least significant first: the one digit 0
+  /// for zero, and those of [`to_radix_be`](Self::to_radix_be) in reverse order.
+  ///
+  /// ```
+  /// use numo::u7;
+  ///
+  /// assert_eq!(u7::new(100).to_radix_le(10), [0, 0, 1]);
+  /// assert_eq!(u7::ZERO.to_radix_le(256), [0]);
+  /// ```
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 256, reporting the caller.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[inline]
+  #[track_caller]
+  pub fn to_radix_le(&self, radix: u32) -> std::vec::Vec<u8> {
+    check_radix(
+      radix,
+      256,
+      "to_radix_le: radix must lie in the range `[2, 256]`",
+    );
+    radix_digits(self.repr.inline(Token::new()), radix, B::U32, false)
   }
 }

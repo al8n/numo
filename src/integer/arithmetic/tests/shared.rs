@@ -1321,13 +1321,25 @@ where
 pub(super) fn text<T: FixedInteger + ArrayInteger<Array: Debug>>(a: &T) -> Vec<String> {
   let decimal = a.to_string();
   let hex = format!("{a:x}");
-  vec![
+  let results = vec![
     format!("{a} {a:+} {a:_>40} {a:?} {a:b} {a:o} {a:x} {a:X} {a:#x} {a:#010b}"),
     format!("{a:e} {a:E} {a:.3e} {a:+.1E} {a:>30e}"),
     format!("{:?}", decimal.parse::<T>().map(limbs)),
     format!("{:?}", T::from_str_radix(&hex, 16).map(limbs)),
     format!("{:?}", T::from_str_radix(&decimal, 10).map(limbs)),
-  ]
+  ];
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  let results = {
+    let mut results = results;
+    results.push(format!(
+      "{} {} {}",
+      a.to_str_radix(2),
+      a.to_str_radix(10),
+      a.to_str_radix(36)
+    ));
+    results
+  };
+  results
 }
 
 /// The digits of `a` through `UnsignedDigits`: in the bases 10, `2^32 + 1` and `u64::MAX` the
@@ -1361,6 +1373,16 @@ where
     T::checked_from_base_be(over.iter().map(|&digit| u64::from(digit)), 256).map(limbs),
     T::checked_from_radix_be(&[10], 10).map(limbs),
   ));
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  for radix in [2, 10, 256] {
+    results.push(format!(
+      "{:?} {:?}",
+      a.to_radix_le(radix),
+      a.to_radix_be(radix)
+    ));
+  }
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  results.push(format!("{:?}", a.to_base_be(10).collect::<Vec<u64>>()));
   results
 }
 
@@ -1382,6 +1404,14 @@ pub(super) fn bytes<T: IntegerBytes>(a: &T) -> Vec<String> {
     );
     results.push(format!("{written:?} {little:?} {big:?}"));
   }
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  results.push(format!(
+    "{:?} {:?} {:?} {:?}",
+    a.to_le_bytes_vec(),
+    a.to_be_bytes_vec(),
+    a.to_le_bytes_trimmed_vec(),
+    a.to_be_bytes_trimmed_vec()
+  ));
   results
 }
 
@@ -1668,7 +1698,7 @@ where
   T: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
 {
   let value = |x: T| limbs(x.get());
-  vec![
+  let results = vec![
     format!(
       "{:?}",
       [
@@ -1705,7 +1735,19 @@ where
         a == b,
       )
     ),
-  ]
+  ];
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  let results = {
+    let mut results = results;
+    results.push(format!(
+      "{} {} {}",
+      a.to_str_radix(2),
+      a.to_str_radix(10),
+      a.to_str_radix(36)
+    ));
+    results
+  };
+  results
 }
 
 /// The results of the methods of `UnsignedNonZero` on `a` and `b`, as the limbs of the integers of

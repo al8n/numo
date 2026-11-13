@@ -20,8 +20,10 @@ fn ui() {
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/*.rs");
     // trybuild builds the cases with the features of this test build, which it reads from the
-    // fingerprint of the build. Where it cannot read them, it builds the cases with the default
-    // features, and the serde cases fail on `numo::serde`, which needs `serde`.
+    // fingerprint of the build, and a case can read them with `cfg(feature = "..")`, as the impl of
+    // `tests/ui/fixed_non_zero_is_sealed.rs` does. Where trybuild cannot read them, it builds the
+    // cases with the default features: the serde cases fail on `numo::serde`, which needs `serde`,
+    // and a case that reads the features fails as well.
     #[cfg(feature = "serde")]
     cases.compile_fail("tests/ui/serde/*.rs");
     // A list of implementors includes the heap storages in a build that has them.

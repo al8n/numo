@@ -6,7 +6,11 @@
 
 use core::{fmt, num::ParseIntError, str::FromStr};
 
+#[cfg(any(feature = "std", feature = "alloc"))]
+use super::digits;
 use super::{Int, Uint};
+#[cfg(any(feature = "std", feature = "alloc"))]
+use crate::width::IntCore;
 use crate::{
   layout::Token,
   width::{FitsBits, IntRepr, UintRepr},
@@ -18,6 +22,79 @@ use crate::{
 pub(crate) const fn check_radix(radix: u32) {
   if !matches!(radix, 2..=36) {
     panic!("from_str_radix: radix must lie in the range `[2, 36]`");
+  }
+}
+
+// One item for every storage, which computes on the inline storage and allocates the text alone.
+#[cfg(any(feature = "std", feature = "alloc"))]
+impl<B: FitsBits<R>, R: UintRepr> Uint<B, R> {
+  /// The text of the value in `radix`, from 2 to 36: its digits, with lowercase letters, and `"0"`
+  /// for zero, with no sign and no prefix, which [`from_str_radix`](Self::from_str_radix) reads
+  /// back. The radixes 2, 8, 16 and 10 give the text of `{:b}`, `{:o}`, `{:x}` and `Display`. The
+  /// `String` is allocated once, with the capacity that the digits need: this is the form of
+  /// `Display`'s text whose digits are on the heap.
+  ///
+  /// ```
+  /// use numo::{Uint, typenum::U200, u7};
+  ///
+  /// assert_eq!(u7::new(100).to_str_radix(36), "2s");
+  /// assert_eq!(u7::ZERO.to_str_radix(2), "0");
+  /// let max = Uint::<U200>::MAX;
+  /// assert_eq!(max.to_str_radix(10), max.to_string());
+  /// assert_eq!(Uint::<U200>::from_str_radix(&max.to_str_radix(7), 7), Ok(max));
+  /// ```
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 36, reporting the caller.
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[inline]
+  #[track_caller]
+  pub fn to_str_radix(&self, radix: u32) -> std::string::String {
+    digits::check_radix(
+      radix,
+      36,
+      "to_str_radix: radix must lie in the range `[2, 36]`",
+    );
+    digits::write_text(self.repr.inline(Token::new()), false, radix, B::U32)
+  }
+}
+
+// The magnitude is computed on the inline storage, so that a heap storage allocates the text alone.
+#[cfg(any(feature = "std", feature = "alloc"))]
+impl<B: FitsBits<R>, R: IntRepr> Int<B, R> {
+  /// The text of the value in `radix`, from 2 to 36: `-` before the digits of the magnitude of a
+  /// negative value, with lowercase letters, and `"0"` for zero, with no prefix, which
+  /// [`from_str_radix`](Self::from_str_radix) reads back. The radix formats write the `Bits` bits
+  /// of a negative value instead: `{:x}` of `i7` -1 is `7f`, and `to_str_radix(16)` is `-1`. The
+  /// `String` is allocated once, with the capacity that the digits and the sign need.
+  ///
+  /// ```
+  /// use numo::i7;
+  ///
+  /// assert_eq!(i7::new(-1).to_str_radix(16), "-1");
+  /// assert_eq!(format!("{:x}", i7::new(-1)), "7f");
+  /// assert_eq!(i7::MIN.to_str_radix(2), "-1000000");
+  /// assert_eq!(i7::from_str_radix(&i7::MIN.to_str_radix(2), 2), Ok(i7::MIN));
+  /// ```
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 36, reporting the caller.
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[inline]
+  #[track_caller]
+  pub fn to_str_radix(&self, radix: u32) -> std::string::String {
+    digits::check_radix(
+      radix,
+      36,
+      "to_str_radix: radix must lie in the range `[2, 36]`",
+    );
+    let value = self.repr.inline(Token::new());
+    let magnitude = value.unsigned_abs(Token::new());
+    digits::write_text(&magnitude, value.is_negative(Token::new()), radix, B::U32)
   }
 }
 
