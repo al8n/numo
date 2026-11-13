@@ -31,6 +31,13 @@
 //!   builds only the storage that it returns. Without a return type, as in
 //!   `fn set_bit(&mut self, ..) = prim name(self; ..) as result { body }`, the method returns
 //!   nothing, and its body may store a value with `self.store`.
+//! - `= prim storage name(operands; arguments) as result { body }` binds what the row `name` of
+//!   the storage itself returns for the storages of the operands, where the form above computes on
+//!   the inline storages that they lend: for a row whose operands or results are of both signs,
+//!   whose inline storages no bound relates. Such a row returns the inline storage for a value of
+//!   its own sign, which the body wraps with `Self::of`, and a storage for a value of the other
+//!   sign, which the body wraps with `Uint::wrap` or `Int::wrap`, so that a heap storage builds
+//!   only what the method returns.
 //!
 //! A derived body calls the inherent `const fn`s of the storage in an inherent block, and the trait
 //! methods, which must be in scope, in a generic implementation. A row writes `Self::bound(max)`
@@ -328,6 +335,26 @@ macro_rules! inherent_items {
 
     inherent_items!($args $($rest)*);
   };
+  // A row of the storage itself: in an inline storage, the row of the storage and that of the
+  // inline storage are one function of the layer, which the arm above calls.
+  (
+    $args:tt
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim storage $prim:ident($($operand:ident),+ $(; $($arg:expr),+)?)
+      as $result:ident $body:block
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[must_use]
+    #[inline]
+    pub const fn $name($($param)*) -> $ret {
+      let $result = inherent_items!(@call $args $prim($($operand),+) $(, $($arg),+)?);
+      $body
+    }
+
+    inherent_items!($args $($rest)*);
+  };
   // A method that returns nothing, such as one that changes the value through `&mut self`.
   (
     $args:tt
@@ -393,6 +420,20 @@ macro_rules! trait_items {
     $(#[$meta:meta])*
     fn $name:ident($($param:tt)*) -> $ret:ty
       = prim $prim:ident($($operand:ident),+ $(; $($arg:expr),+)?) as $result:ident $body:block
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[must_use]
+    fn $name($($param)*) -> $ret;
+
+    trait_items!([] $($rest)*);
+  };
+  (
+    []
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim storage $prim:ident($($operand:ident),+ $(; $($arg:expr),+)?)
+      as $result:ident $body:block
     $($rest:tt)*
   ) => {
     $(#[$meta])*
@@ -653,6 +694,24 @@ macro_rules! generic_items {
         $($($arg,)+)?
         Token::new()
       );
+      $body
+    }
+
+    generic_items!([] $($rest)*);
+  };
+  // `storage` calls the row on the storages themselves, not on the inline storages that they lend.
+  (
+    []
+    $(#[$meta:meta])*
+    fn $name:ident($($param:tt)*) -> $ret:ty
+      = prim storage $prim:ident($receiver:ident $(, $operand:ident)* $(; $($arg:expr),+)?)
+      as $result:ident $body:block
+    $($rest:tt)*
+  ) => {
+    $(#[$meta])*
+    #[inline]
+    fn $name($($param)*) -> $ret {
+      let $result = $receiver.repr.$prim($(&$operand.repr,)* $($($arg,)+)? Token::new());
       $body
     }
 
