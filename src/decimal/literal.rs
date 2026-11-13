@@ -108,6 +108,10 @@ pub(super) const fn reject(kind: ParseErrorKind) -> ! {
 /// `-1e-8`. It does not read `+1.5` or `.5`, which are not Rust number tokens, and a radix prefix,
 /// a suffix or a string is not a decimal number.
 ///
+/// A macro that passes a literal on to `dec!` as one fragment passes its text as it was written, so
+/// a minus sign with a space after it is not a decimal number there. Pass the number without its
+/// sign, and write the sign in the macro, as in `dec!(-$number)`.
+///
 /// # The type
 ///
 /// The literal needs a type from its context. It has none with no expected type at all; as the
