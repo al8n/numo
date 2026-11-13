@@ -1437,7 +1437,9 @@ macro_rules! heap_decimal {
       assert!(allocates!(0, 0; Heap::round_from_f64(f64::NAN, mode)).is_err());
       assert!(allocates!(0, 0; Heap::round_from_f32(f32::INFINITY, mode)).is_err());
       assert!(allocates!(0, 0; Heap::from_f64_shortest(1e300, mode)).is_err());
-      assert!(allocates!(0, 0; Heap::from_f32_shortest(-1e38, mode)).is_err());
+      // Every finite `f32` is below `10^39`, which 58 integral digits hold: only a value that is not
+      // finite fails here.
+      assert!(allocates!(0, 0; Heap::from_f32_shortest(f32::NEG_INFINITY, mode)).is_err());
     }
 
     /// `Deserialize` allocates the decimal, here with a deserializer that lends the string, and
