@@ -100,9 +100,10 @@ mod tests;
 /// Types with different `Repr` are distinct; [`widen`](Self::widen) and
 /// [`try_convert`](Self::try_convert) convert between decimal types. The default `Repr` is meant
 /// for concrete types, and generic code names `Repr`. `Decimal` itself has no bounds, so generic
-/// code can store and pass `Decimal<I, F, R>` values without any. It needs `R: Storage` to copy,
-/// compare or hash them, and adds `(I, F): Layout<R>` only where it uses items that depend on the
-/// digit counts, such as formatting and conversions (see [`Layout`]).
+/// code can store and pass `Decimal<I, F, R>` values without any. It needs `R: Storage` to clone,
+/// compare or hash them, and `R: InlineStorage` to copy them, and adds `(I, F): Layout<R>` only
+/// where it uses items that depend on the digit counts, such as formatting and conversions (see
+/// [`Layout`]).
 ///
 /// The constants and methods defined for each storage, such as [`ZERO`](Self::ZERO) and
 /// [`checked_add`](Self::checked_add), reach generic code through traits in two layers. The general
@@ -111,15 +112,15 @@ mod tests;
 /// `Copy`, has the operators `+` and `-` on values and `Sum`, and its functions `zero`,
 /// `max_value`, `min_value` and `one` return [`ZERO`](Self::ZERO), [`MAX`](Self::MAX),
 /// [`MIN`](Self::MIN) and [`ONE`](Self::ONE). The const layer, [`ConstFixedDecimal`] and
-/// [`ConstDecimalOne`], adds `Copy`, the assignments `+=` and `-=` and these constants, which a
-/// generic `const fn` can read. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] carry the
-/// bounds of the methods between decimal types. [`DecimalFloat`] has the conversions with the
-/// floats. Because the implementations are per storage, code generic over the storage adds the
-/// bound `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and `(I, F): Layout<R>` do not imply.
-/// Every type also has the constants [`INTEGRAL`](Self::INTEGRAL), [`FRACTION`](Self::FRACTION) and
-/// [`DIGITS`](Self::DIGITS), its digit counts, and [`SIGNED`](Self::SIGNED), whether its storage is
-/// signed, for generic code that derives a display scale or a step from the fraction digits of the
-/// type:
+/// [`ConstDecimalOne`], adds `Copy`, the assignments `+=` and `-=` of [`DecimalAssign`] and these
+/// constants, which a generic `const fn` can read. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
+/// [`DivRound`] carry the bounds of the methods between decimal types. [`DecimalFloat`] has the
+/// conversions with the floats. Because the implementations are per storage, code generic over the
+/// storage adds the bound `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and
+/// `(I, F): Layout<R>` do not imply. Every type also has the constants
+/// [`INTEGRAL`](Self::INTEGRAL), [`FRACTION`](Self::FRACTION) and [`DIGITS`](Self::DIGITS), its
+/// digit counts, and [`SIGNED`](Self::SIGNED), whether its storage is signed, for generic code that
+/// derives a display scale or a step from the fraction digits of the type:
 ///
 /// ```
 /// use numo::{
@@ -352,7 +353,8 @@ mod tests;
 /// The width, fill, alignment, `+` and `0` flags behave as they do for integers, and the width
 /// counts the whole text, exponent included. The precision is the minimum number of fraction
 /// digits, those of the mantissa for `{:e}` and `{:E}`, with `#` or without: shorter fractions are
-/// padded with zeros, even beyond `Fraction`.
+/// padded with zeros, even beyond `Fraction`. A format writes the digits through a buffer on the
+/// stack of the length of the storage's digits.
 ///
 /// <div class="warning">
 ///

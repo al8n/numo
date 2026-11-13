@@ -289,8 +289,9 @@ pub trait InlineStorage: MutableStorage + Storage<Inline = Self> + InlineCore + 
 
 /// A [`Storage`] that holds the coefficient in place, so that the decimal has `+=` and `-=`.
 ///
-/// Implemented for every storage of `Storage`, each of which holds its coefficient inline. This
-/// trait is sealed and cannot be implemented outside this crate.
+/// Implemented for every storage of `Storage`, each of which holds its coefficient inline. With
+/// it, the decimal implements [`DecimalAssign`](crate::DecimalAssign), the assignments of generic
+/// code. This trait is sealed and cannot be implemented outside this crate.
 pub trait MutableStorage: Storage + InPlace {}
 
 /// Maps a type-level number of decimal digits to the smallest signed and the smallest unsigned
@@ -354,8 +355,9 @@ pub trait FitsDigits<Repr>: DigitsOf<Repr> {}
 ///
 /// [`Decimal`](crate::Decimal) requires `(Integral, Fraction): Layout<Repr>` on its constants,
 /// constructors, `const fn` methods, formatting and conversions, not on the type itself. Generic
-/// code needs no bounds to store and pass `Decimal<I, F, R>` values and only `R: Storage` to copy,
-/// compare and hash them; it adds `(I, F): Layout<R>` where it uses the other items:
+/// code needs no bounds to store and pass `Decimal<I, F, R>` values, only `R: Storage` to clone,
+/// compare and hash them and `R: InlineStorage` to copy them, and adds `(I, F): Layout<R>` where it
+/// uses the other items:
 ///
 /// ```
 /// use numo::{

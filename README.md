@@ -142,10 +142,10 @@ fn main() -> Result<(), ParseError> {
   values, `Sum` and `zero()`, `max_value()` and `min_value()`, `SignedFixedDecimal` and
   `UnsignedFixedDecimal` for each sign, and `DecimalOne`, with `one()`; these functions return the
   constants `ZERO`, `MAX`, `MIN` and `ONE`. The const layer, `ConstFixedDecimal` and
-  `ConstDecimalOne`, adds `Copy`, the assignments `+=` and `-=` and the constants themselves,
-  which a generic `const fn` can read. `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound` have the
-  methods between decimal types, and `DecimalFloat` the conversions with the floats. Code generic
-  over `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`.
+  `ConstDecimalOne`, adds `Copy`, the assignments `+=` and `-=` of `DecimalAssign` and the constants
+  themselves, which a generic `const fn` can read. `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound`
+  have the methods between decimal types, and `DecimalFloat` the conversions with the floats. Code
+  generic over `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`.
 - `parse` accepts ASCII text with an optional sign, point and exponent, and `_` separators as in
   Rust literals: the numeric strings of the General Decimal Arithmetic specification and every
   form that `f64` parses, such as `-1.5`, `+.5`, `5.`, `2.5E-3` and `1_000`. Infinity and NaN are

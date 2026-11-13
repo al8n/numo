@@ -87,6 +87,13 @@ FEATURES
     which implements `FixedDecimal`. Because the implementations are per storage, code generic over
     `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`. The trait methods are not
     `const`; constant contexts use the inherent `const fn`s.
+  - `Storage` is an integer type that stores a coefficient, and gives `Clone`, the comparisons and
+    the hash. `MutableStorage` is a storage that holds it in place, so that the decimal has `+=`
+    and `-=`, and `InlineStorage` one that holds it inline, so that the decimal is `Copy` too.
+    `Storage::Inline` is the inline storage of the same width and sign, and `FixedDecimal::Inline`
+    the decimal over it: `to_inline` copies a value into it and `from_inline` stores one, so that
+    generic code computes in a `Copy` type and stores once. `DecimalAssign` has the assignments,
+    and `ConstFixedDecimal` requires it.
 - `Scaled<D>`: a decimal with the scale of its text, the number of fraction digits that the text
   showed, for code that must write a text back as it came.
   - A `const fn` `parse` for each storage and `FromStr` read the grammar of `Decimal::parse` and
@@ -99,21 +106,23 @@ FEATURES
     `Debug` shows the scale, while equality, ordering and hashing compare the value only.
   - `const fn` `new`, `value` and `scale`, and `into_value` and `into_parts`. `From` and `Default`
     give scale 0.
+  - The scale is a `u16`: a scale above 65535 is `ScaleTooLarge`, and an exact product takes the
+    sum of the scales, saturating at 65535.
   - The operators `+`, `-`, `+=` and `-=` and `Sum`, as for `Decimal`: their result takes the
     larger scale of its operands, and a sum over an iterator the largest scale of its items.
   - Every decimal trait, implemented once for every decimal that implements it, so that generic
-    code takes a `Scaled` and a bare decimal alike: `FixedDecimal`, `ConstFixedDecimal`, the sign
-    traits, `DecimalOne`, `ConstDecimalOne` and `DecimalFloat`, and `ExactMul`, `WidenTo`,
-    `ConvertTo` and `DivRound` between `Scaled` types, with no mixed implementations. Sums,
-    differences and remainders take the larger scale, also where they saturate to a limit, exact
-    products the sum of the scales, saturating at 65535, quantized values the scale of the step,
-    widened and exactly converted values their own, values of `round_to` and quotients the fraction
-    digits of their target type, and zero, the limits, one and a value made from a coefficient
-    scale 0. `trunc`, `floor` and `ceil` give scale 0, `fract` keeps the scale, `round_significant`
-    gives the scale that the significant digits of its result need, at most 65535, and `is_integer`
-    and the digits of a value are those of the value, whatever the scale. A value read from the
-    binary value of a float takes the fraction digits of the type, and one read from its shortest
-    text the fraction digits of that text, at most those of the type. A concrete
+    code takes a `Scaled` and a bare decimal alike: `FixedDecimal`, `DecimalAssign`,
+    `ConstFixedDecimal`, the sign traits, `DecimalOne`, `ConstDecimalOne` and `DecimalFloat`, and
+    `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound` between `Scaled` types, with no mixed
+    implementations. Sums, differences and remainders take the larger scale, also where they
+    saturate to a limit, exact products the sum of the scales, saturating at 65535, quantized values
+    the scale of the step, widened and exactly converted values their own, values of `round_to` and
+    quotients the fraction digits of their target type, and zero, the limits, one and a value made
+    from a coefficient scale 0. `trunc`, `floor` and `ceil` give scale 0, `fract` keeps the scale,
+    `round_significant` gives the scale that the significant digits of its result need, at most
+    65535, and `is_integer` and the digits of a value are those of the value, whatever the scale. A
+    value read from the binary value of a float takes the fraction digits of the type, and one read
+    from its shortest text the fraction digits of that text, at most those of the type. A concrete
     `Scaled<Decimal<I, F, R>>` needs no bound; code generic over the decimal `D` adds the bound
     `Scaled<D>: FixedDecimal`.
 - `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`,
@@ -633,5 +642,6 @@ FEATURES
   wide value, while the operators keep the signatures of their standard traits. The casts, between
   any widths and signs, and the bitwise `const fn`s take their operands by value, as the native
   casts and the methods of the operator traits do; a shift amount or a bit index is a `u32`.
-- `Storage`, `DigitCount`, `FitsDigits`, `Layout`, `Widen`, `WidenRepr` and `Pick`: the type-level
-  capacity and sign checks, with compile-time diagnostics for invalid digit counts and storages.
+- `Storage`, `InlineStorage`, `MutableStorage`, `DigitCount`, `FitsDigits`, `Layout`, `Widen`,
+  `WidenRepr` and `Pick`: the type-level capacity and sign checks, with compile-time diagnostics for
+  invalid digit counts and storages.

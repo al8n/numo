@@ -59,11 +59,11 @@
 //! and [`UnsignedFixedDecimal`], for each sign, and [`DecimalOne`], with `one`, requires `Clone`
 //! but not `Copy`; its functions return the inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The
 //! const layer, [`ConstFixedDecimal`] and [`ConstDecimalOne`], adds `Copy`, the assignments `+=`
-//! and `-=` and these constants, which a generic `const fn` can read. [`ExactMul`], [`WidenTo`],
-//! [`ConvertTo`] and [`DivRound`] have the methods between decimal types, and [`DecimalFloat`] the
-//! conversions with the floats. Code generic over the storage adds the bound
-//! `Decimal<I, F, R>: FixedDecimal`. The trait methods are not `const`, so constant contexts call
-//! the inherent `const fn`s.
+//! and `-=` of [`DecimalAssign`] and these constants, which a generic `const fn` can read.
+//! [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] have the methods between decimal
+//! types, and [`DecimalFloat`] the conversions with the floats. Code generic over the storage adds
+//! the bound `Decimal<I, F, R>: FixedDecimal`. The trait methods are not `const`, so constant
+//! contexts call the inherent `const fn`s.
 //!
 //! # The scale of a text
 //!

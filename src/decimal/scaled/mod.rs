@@ -94,14 +94,14 @@ mod tests;
 /// # Arithmetic
 ///
 /// Every decimal trait of this crate is implemented for `Scaled<D>` once, for every decimal `D`
-/// that implements it: [`FixedDecimal`], [`ConstFixedDecimal`], [`SignedFixedDecimal`],
-/// [`UnsignedFixedDecimal`], [`DecimalOne`], [`ConstDecimalOne`] and [`DecimalFloat`], and between
-/// `Scaled` types [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`]. Generic code bounded
-/// by them takes a `Scaled` and a bare decimal alike. The operators `+`, `-`, `+=` and `-=` and
-/// [`Sum`](core::iter::Sum) are implemented as for a decimal, and panic where `checked_add` and
-/// `checked_sub` return `None`; the methods of a `Scaled` are reached through the traits, with the
-/// trait in scope. A `Scaled` relates only to a `Scaled`: no trait converts a bare decimal into a
-/// `Scaled`, or multiplies one by the other.
+/// that implements it: [`FixedDecimal`], [`DecimalAssign`], [`ConstFixedDecimal`],
+/// [`SignedFixedDecimal`], [`UnsignedFixedDecimal`], [`DecimalOne`], [`ConstDecimalOne`] and
+/// [`DecimalFloat`], and between `Scaled` types [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
+/// [`DivRound`]. Generic code bounded by them takes a `Scaled` and a bare decimal alike. The
+/// operators `+`, `-`, `+=` and `-=` and [`Sum`](core::iter::Sum) are implemented as for a decimal,
+/// and panic where `checked_add` and `checked_sub` return `None`; the methods of a `Scaled` are
+/// reached through the traits, with the trait in scope. A `Scaled` relates only to a `Scaled`: no
+/// trait converts a bare decimal into a `Scaled`, or multiplies one by the other.
 ///
 /// A result has the value that the decimal's own operation gives, and the scale of the operation:
 ///
