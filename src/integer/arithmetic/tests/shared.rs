@@ -619,6 +619,24 @@ where
       );
     }
     row!(UintCore::next_power_of_two_bits(&x => a; bits));
+    for (factor, addend) in [(0, 0), (0, 1), (1, 0), (10, 9), (u64::MAX, u64::MAX)] {
+      row!(UintCore::checked_mul_add_u64(&x => a; factor, addend, bits));
+    }
+    // The division writes the value as `set_inline` stores one: in place, or for a shared pointer
+    // in a new allocation.
+    for divisor in [1, 10, u64::MAX] {
+      let mut quotient = *a;
+      let remainder = UintCore::div_rem_u64_assign(&mut quotient, divisor, Token::new());
+      let mut target = P::new(*a);
+      let (before, other) = (address(target.array()), witness(&target));
+      let what = format!("div_rem_u64_assign of {a:?} by {divisor}");
+      assert_eq!(
+        UintCore::div_rem_u64_assign(&mut target, divisor, Token::new()),
+        remainder,
+        "{what}"
+      );
+      written(&target, &quotient, before, other, a, &what);
+    }
     let (before, other) = (address(x.array()), witness(&x));
     let cast = UintCore::cast_signed_bits(x, bits, Token::new());
     let expected = UintCore::cast_signed_bits(*a, bits, Token::new());
@@ -642,6 +660,29 @@ where
       panic!("lend_nonzero of {a:?} returns a copy");
     };
     assert!(core::ptr::eq(lent, &integer), "lend_nonzero of {a:?}");
+  }
+  // No digits, a zero, a one, a digit that is not below the radix, and the largest digit once for
+  // each byte of the storage and once more, so that each width has a value and a `None`.
+  let storage_bytes = size_of::<[L; N]>();
+  for radix in [2u32, 10, 256] {
+    let top = (radix - 1) as u8;
+    let mut sequences = vec![
+      vec![],
+      vec![0],
+      vec![1],
+      vec![top; storage_bytes],
+      vec![top; storage_bytes + 1],
+    ];
+    if radix < 256 {
+      sequences.push(vec![radix as u8]);
+    }
+    for digits in &sequences {
+      for big_endian in [false, true] {
+        row!(UintCore::checked_read_digits(
+          digits, big_endian, radix, bits
+        ));
+      }
+    }
   }
   for (a, b) in &samples.pairs {
     let (x, y) = (P::new(*a), P::new(*b));

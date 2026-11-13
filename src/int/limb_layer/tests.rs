@@ -17,7 +17,7 @@
 macro_rules! limb_layer_tests {
   (unsigned) => {
     use core::cmp::Ordering;
-    use std::{string::ToString, vec, vec::Vec};
+    use std::{format, string::ToString, vec, vec::Vec};
 
     use num_bigint::BigInt;
 
@@ -1159,6 +1159,102 @@ macro_rules! limb_layer_tests {
       assert_eq!(checked_ilog2(&NONE), None);
       assert_eq!(checked_ilog10(&NONE), None);
       assert_eq!(checked_ilog(&NONE, &NONE), None);
+    }
+
+    /// The divisors at which the division by a chunk is checked: the smallest, the bytes, the
+    /// limits of 32 bits, the largest power of ten in a `u64`, and the largest.
+    const CHUNK_DIVISORS: [u64; 11] = [
+      1,
+      2,
+      3,
+      10,
+      255,
+      256,
+      (1 << 32) - 1,
+      1 << 32,
+      (1 << 32) + 1,
+      10_000_000_000_000_000_000,
+      u64::MAX,
+    ];
+
+    /// Checks `div_rem_chunk_assign` at the patterns of `bigint::bit_patterns_of` and each divisor
+    /// of [`CHUNK_DIVISORS`]: the remainder is below the divisor, the quotient times the divisor
+    /// plus the remainder, through `mul_add_chunk`, is the value, and up to 128 bits both are those
+    /// of `u128`.
+    fn chunk_division<const N: usize>() {
+      for pattern in bigint::bit_patterns_of::<Limb, N>(&widths::<N>()) {
+        for divisor in CHUNK_DIVISORS {
+          let mut quotient = pattern;
+          let remainder = div_rem_chunk_assign(&mut quotient, divisor);
+          let what = format!("{pattern:?} by {divisor}");
+          assert!(remainder < divisor, "{what}");
+          assert_eq!(
+            mul_add_chunk(&quotient, divisor, remainder),
+            (pattern, 0),
+            "{what}"
+          );
+          if B as usize * N <= 128 {
+            let value = u128::try_from(bigint::from_limbs(&pattern, false)).expect("128 bits");
+            let quotient = u128::try_from(bigint::from_limbs(&quotient, false)).expect("128 bits");
+            let divisor = u128::from(divisor);
+            assert_eq!(
+              (quotient, u128::from(remainder)),
+              (value / divisor, value % divisor),
+              "{what}"
+            );
+          }
+        }
+      }
+    }
+
+    /// The division by a chunk at one to three limbs, against its inverse and `u128`; with no
+    /// limbs there is nothing to divide, and the remainder is zero.
+    #[test]
+    fn chunk_division_inverts_the_multiplication() {
+      chunk_division::<1>();
+      chunk_division::<2>();
+      chunk_division::<3>();
+      let mut none: [Limb; 0] = [];
+      for divisor in CHUNK_DIVISORS {
+        assert_eq!(div_rem_chunk_assign(&mut none, divisor), 0);
+      }
+    }
+
+    /// Checks `checked_read_digits` at each width of `widths::<N>()` against the model, at every
+    /// sequence of the digits 0, 1, `radix - 1`, `radix` and 255 in the radixes 2 and 10, and 0, 1
+    /// and 255 in the radix 256, of up to `bigint::digit_sequence_len()` digits, in both orders.
+    fn digits_against_the_model<const N: usize>() {
+      for radix in [2u32, 10, 256] {
+        let set: Vec<u8> = if radix == 256 {
+          vec![0, 1, 255]
+        } else {
+          vec![0, 1, radix as u8 - 1, radix as u8, 255]
+        };
+        for digits in bigint::digit_sequences(&set, bigint::digit_sequence_len()) {
+          for big_endian in [false, true] {
+            for width in widths::<N>() {
+              let expected = bigint::digits_value(&digits, big_endian, radix.into())
+                .filter(|value| value.bits() <= u64::from(width));
+              assert_eq!(
+                checked_read_digits::<N>(&digits, big_endian, radix, width)
+                  .map(|value| bigint::from_limbs(&value, false)),
+                expected,
+                "{digits:?} in radix {radix}, big-endian {big_endian}, at {width} bits"
+              );
+            }
+          }
+        }
+      }
+    }
+
+    /// The reader of digits at no limbs to three, against the model: `None` for a digit outside
+    /// the radix and for a value outside the width, and zeros above the value are read.
+    #[test]
+    fn digits_read_as_the_model() {
+      digits_against_the_model::<0>();
+      digits_against_the_model::<1>();
+      digits_against_the_model::<2>();
+      digits_against_the_model::<3>();
     }
 
     limb_layer_tests!(@bits false, cast_signed_bits);
