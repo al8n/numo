@@ -18,9 +18,10 @@
 //! values and `Sum` over values, and [`DecimalAssign`] the assignments `+=` and `-=`, which need a
 //! storage that holds its value in place: it has one implementation for every
 //! [`MutableStorage`](crate::MutableStorage), and [`ConstFixedDecimal`] requires it. Each operator
-//! has one implementation for every storage, bounded by [`FixedDecimal`], whose checked methods it
-//! calls. The operators on two references and `Sum` over references are implemented for every
-//! decimal type as well, but are not supertraits: generic code that adds by reference calls
+//! has one implementation for every storage, which computes in the inline twin of the decimal,
+//! bounded by the [`FixedDecimal`] of the twin, whose checked methods it calls. The operators on
+//! two references and `Sum` over references are implemented for every decimal type as well, but
+//! are not supertraits: generic code that adds by reference calls
 //! [`checked_add`](FixedDecimal::checked_add), or adds the bound
 //! `for<'a> &'a T: Add<&'a T, Output = T>`.
 //!
@@ -363,11 +364,12 @@ pub trait FixedDecimal:
 pub trait DecimalAssign: FixedDecimal + AddAssign + SubAssign {}
 
 // Bounded by `MutableStorage`, so that a decimal has the assignments only where its storage holds
-// the coefficient in place.
+// the coefficient in place, and by the twin, in which the assignments compute.
 impl<I, F, R> DecimalAssign for Decimal<I, F, R>
 where
   R: MutableStorage,
   Self: FixedDecimal,
+  Decimal<I, F, R::Inline>: FixedDecimal,
 {
 }
 

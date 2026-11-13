@@ -1143,6 +1143,11 @@ where
   fn clone(&self) -> Self {
     Self::from_coeff(self.repr.clone())
   }
+
+  #[inline]
+  fn clone_from(&mut self, source: &Self) {
+    self.repr.clone_from(&source.repr);
+  }
 }
 
 impl<I, F, R> Copy for Decimal<I, F, R> where R: Copy {}

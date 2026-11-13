@@ -576,10 +576,12 @@ where
 }
 
 // The operators exist where the `Scaled` is a `FixedDecimal`, the bound of its other traits, and
-// call its own checked methods, which take the larger scale. A bound on `D` alone would hold one
-// level further out too, and give the operators to a `Scaled<Scaled<D>>`, which is not a decimal.
+// take the larger scale: each form on values is the same form of the decimal, and each form on
+// references calls the checked method of the `Scaled`. A bound on `D` alone would hold one level
+// further out too, and give the operators to a `Scaled<Scaled<D>>`, which is not a decimal.
 impl<D> Add for Scaled<D>
 where
+  D: Add<Output = D>,
   Self: FixedDecimal,
 {
   type Output = Self;
@@ -593,10 +595,7 @@ where
   #[inline]
   #[track_caller]
   fn add(self, rhs: Self) -> Self {
-    match FixedDecimal::checked_add(&self, &rhs) {
-      Some(sum) => sum,
-      None => overflow::add(),
-    }
+    Self::new(self.value + rhs.value, self.scale.max(rhs.scale))
   }
 }
 
@@ -624,6 +623,7 @@ where
 
 impl<D> AddAssign for Scaled<D>
 where
+  D: AddAssign,
   Self: FixedDecimal,
 {
   /// Adds `rhs` to `self`, which takes the larger of the two scales.
@@ -636,15 +636,14 @@ where
   #[inline]
   #[track_caller]
   fn add_assign(&mut self, rhs: Self) {
-    match FixedDecimal::checked_add(self, &rhs) {
-      Some(sum) => *self = sum,
-      None => overflow::add(),
-    }
+    self.value += rhs.value;
+    self.scale = self.scale.max(rhs.scale);
   }
 }
 
 impl<D> Sub for Scaled<D>
 where
+  D: Sub<Output = D>,
   Self: FixedDecimal,
 {
   type Output = Self;
@@ -659,10 +658,7 @@ where
   #[inline]
   #[track_caller]
   fn sub(self, rhs: Self) -> Self {
-    match FixedDecimal::checked_sub(&self, &rhs) {
-      Some(difference) => difference,
-      None => overflow::sub(),
-    }
+    Self::new(self.value - rhs.value, self.scale.max(rhs.scale))
   }
 }
 
@@ -692,6 +688,7 @@ where
 
 impl<D> SubAssign for Scaled<D>
 where
+  D: SubAssign,
   Self: FixedDecimal,
 {
   /// Subtracts `rhs` from `self`, which takes the larger of the two scales.
@@ -704,10 +701,8 @@ where
   #[inline]
   #[track_caller]
   fn sub_assign(&mut self, rhs: Self) {
-    match FixedDecimal::checked_sub(self, &rhs) {
-      Some(difference) => *self = difference,
-      None => overflow::sub(),
-    }
+    self.value -= rhs.value;
+    self.scale = self.scale.max(rhs.scale);
   }
 }
 
@@ -723,7 +718,9 @@ where
   /// `overflow-checks` is, also where the whole sum would be in range. A fold with
   /// [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
   fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-    iter.fold(Self::zero(), |sum, value| sum + value)
+    // The running sum is a twin, from the zero of the twin, and the total is stored once.
+    let zero = <<Self as FixedDecimal>::Inline as ConstFixedDecimal>::ZERO;
+    Self::from_inline(iter.fold(zero, |sum, value| sum + value.to_inline()))
   }
 }
 
@@ -739,7 +736,9 @@ where
   /// `overflow-checks` is, also where the whole sum would be in range. A fold with
   /// [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
   fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-    iter.fold(Self::zero(), |sum, value| &sum + value)
+    // The running sum is a twin, from the zero of the twin, and the total is stored once.
+    let zero = <<Self as FixedDecimal>::Inline as ConstFixedDecimal>::ZERO;
+    Self::from_inline(iter.fold(zero, |sum, value| sum + value.to_inline()))
   }
 }
 
@@ -749,6 +748,7 @@ where
 // `Scaled<Scaled<D>>` or a `Scaled<i32>`, which are not decimals.
 impl<D> Neg for Scaled<D>
 where
+  D: Neg<Output = D>,
   Self: SignedFixedDecimal,
 {
   type Output = Self;
@@ -756,7 +756,7 @@ where
   /// Returns `-self`, with the same scale.
   #[inline]
   fn neg(self) -> Self {
-    SignedFixedDecimal::neg(&self)
+    Self::new(-self.value, self.scale)
   }
 }
 

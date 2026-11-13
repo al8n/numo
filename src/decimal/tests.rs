@@ -118,6 +118,24 @@ fn trait_surface() {
   assert_traits::<D19x19u128>();
 }
 
+/// `clone_from` gives the value of its source, as `clone` does, through the bound `Clone` alone:
+/// in a native and in a wide storage.
+#[test]
+fn clone_from_takes_the_value_of_the_source() {
+  fn cloned_into<T: Clone>(target: &mut T, source: &T) {
+    target.clone_from(source);
+  }
+
+  let source: Price = "64250.5".parse().unwrap();
+  let mut target = Price::MIN;
+  cloned_into(&mut target, &source);
+  assert_eq!(target, source);
+  let source: D58x18 = "-1.25".parse().unwrap();
+  let mut target = D58x18::MAX;
+  cloned_into(&mut target, &source);
+  assert_eq!(target, source);
+}
+
 #[test]
 fn generic_bounds() {
   // Storing and passing values needs no bounds.
