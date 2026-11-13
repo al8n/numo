@@ -6,9 +6,9 @@ FEATURES
   counts, stored in a native integer from `i8` to `i128` or from `u8` to `u128` (up to 38 digits),
   or in a wide integer from `i192` to `i1024` or from `u192` to `u1024` (up to 307 digits, or 308 in
   an explicit `u1024`).
-  - `const fn` constants and methods for each storage: `ZERO`, `ONE`, `MIN`, `MAX`, `parse`,
-    `from_repr`, `repr`, `checked_add`, `checked_sub`, `is_zero` and `is_positive`, plus `neg`,
-    `abs` and `is_negative` for signed storages.
+  - `const fn` constants and methods for each inline storage: `ZERO`, `ONE`, `MIN`, `MAX`,
+    `parse`, `from_repr`, `repr`, `checked_add`, `checked_sub`, `is_zero` and `is_positive`, plus
+    `neg`, `abs` and `is_negative` for signed storages.
   - The operators `+`, `-`, `+=` and `-=` between two values of one type, `+` and `-` also between
     two references, and `Sum` for values and references. A result outside the range of the type
     panics in every build, whatever `overflow-checks` is, with the message of the native
@@ -22,9 +22,9 @@ FEATURES
     value as `{:e}` and `Display` write them.
   - `exact_mul`, `widen` and `try_convert` between decimal types.
   - The conversions with the floats, for interchange and display, not for arithmetic that must be
-    exact. `to_f64` and `to_f32`, `const fn`s of every storage, return the nearest float, ties to
-    even, rounded once, the float that parsing the text of the decimal gives; like `trunc`, `floor`
-    and `ceil`, they round without a `RoundingMode`. `to_f64` never gives an infinity, and a
+    exact. `to_f64` and `to_f32`, `const fn`s of every inline storage, return the nearest float,
+    ties to even, rounded once, the float that parsing the text of the decimal gives; like `trunc`,
+    `floor` and `ceil`, they round without a `RoundingMode`. `to_f64` never gives an infinity, and a
     subnormal float only for the two smallest values above zero of a type with 308 fraction digits.
     `to_f32` gives the infinity of the sign of the value for a magnitude that rounds to `2^128` or
     more, a subnormal float for one that rounds below `2^-126`, and a zero with the sign of the
@@ -65,19 +65,21 @@ FEATURES
     storages.
   - The errors `ParseErrorKind`, `ConvertError`, `QuantizeError` and `DivideError` have a
     `const fn` predicate for each variant, such as `is_out_of_range`.
-  - The constants `INTEGRAL`, `FRACTION` and `DIGITS`, the digit counts of the type, and `SIGNED`,
-    `true` for a signed storage and `false` for an unsigned one, so that generic code can derive a
-    display scale or a step from the fraction digits of a type.
-  - The sealed traits of a decimal type in two layers, each with one implementation for every
-    storage. The general layer requires `Clone` but not `Copy`: `FixedDecimal`, with the digit
+  - The constants `INTEGRAL`, `FRACTION` and `DIGITS`, the digit counts of the type, and over an
+    inline storage `SIGNED`, `true` for a signed storage and `false` for an unsigned one, so that
+    generic code can derive a display scale or a step from the fraction digits of a type.
+  - The sealed traits of a decimal type in two layers, the general one with one implementation
+    for every storage and the const one for every inline storage. The general layer requires
+    `Clone` but not `Copy`: `FixedDecimal`, with the digit
     counts, `SIGNED`, the storage as `Repr`, `repr`, `from_repr`, `zero`, `max_value`,
     `min_value`, `is_zero`, `is_positive`, `checked_add`, `checked_sub`, `checked_rem`,
     `saturating_add`, `saturating_sub`, `quantize`, `is_multiple_of`, `trunc`, `fract`, `floor`,
     `ceil`, `is_integer`, `order_of_magnitude`, `significant_digits`, `fraction_digits` and
     `round_significant`, `SignedFixedDecimal`,
     which also requires `Neg` and has `is_negative`, `neg` and `abs`, `UnsignedFixedDecimal`, and
-    `DecimalOne`, with `one` where `Integral` is nonzero. Its functions `zero`, `max_value`,
-    `min_value` and `one` return the inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The const
+    `DecimalOne`, with `one` where `Integral` is nonzero. Over an inline storage, its functions
+    `zero`, `max_value`, `min_value` and `one` return the inherent constants `ZERO`, `MAX`, `MIN`
+    and `ONE`. The const
     layer also requires `Copy` and has these constants, which a generic `const fn` can read:
     `ConstFixedDecimal`, with `ZERO`, `MAX` and `MIN`, and `ConstDecimalOne`, with `ONE`.
     `FixedDecimal` requires the operators `+` and `-` on values and `Sum`, and `ConstFixedDecimal`
@@ -96,8 +98,9 @@ FEATURES
     and `ConstFixedDecimal` requires it.
 - `Scaled<D>`: a decimal with the scale of its text, the number of fraction digits that the text
   showed, for code that must write a text back as it came.
-  - A `const fn` `parse` for each storage and `FromStr` read the grammar of `Decimal::parse` and
-    keep the scale: the fraction digits written, not counting `_`, minus the exponent, and at least
+  - A `const fn` `parse` for each inline storage and `FromStr` read the grammar of
+    `Decimal::parse` and keep the scale: the fraction digits written, not counting `_`, minus the
+    exponent, and at least
     0, which may exceed the fraction digits of the decimal. A scale above 65535 is the new
     `ParseErrorKind::ScaleTooLarge`, which only a text that `Decimal::parse` accepts can give, and
     which `Decimal::parse` never reports. `dec!` reads a literal of a `Scaled` and keeps its scale.
@@ -205,6 +208,16 @@ FEATURES
   The `triomphe` feature adds `triomphe::Arc<[L; N]>`, a storage of the same kind without a weak
   count, on a target with atomic pointers. An integer in an `Arc` or a `triomphe::Arc` is `Send` and
   `Sync`, and one in an `Rc` is neither.
+- Heap storages of `Decimal`, with the `std` or the `alloc` feature: a wide integer of 192 to 1024
+  bits in a `Box`, an `Rc` or an `Arc` of its limbs, and with the `triomphe` feature in a
+  `triomphe::Arc`, as in `Decimal<U60, U18, Uint<U320, Box<[u64; 5]>>>`. The decimal has the size
+  of a pointer. It has the general trait layer, `FixedDecimal` and the traits beside it, and not
+  the const layer: no constants, no `const fn`s and no literal, which comes through `from_inline`.
+  It computes in its inline storage and allocates only the values that it returns: none for `None`
+  or an error. In a `Box`, `+=`, `-=`, a unary minus and an operator with an owned operand store
+  into the allocation; in a shared pointer every result is a new allocation and there is no
+  assignment. `exact_mul` returns the product in an inline storage, and `widen` stores it.
+  `to_inline` reads a value without a clone.
 - The `std` and `alloc` features are independent, and either one gives the heap storages and the
   forms that return a `Vec` or a `String`: `alloc` gives them to a `no_std` build. With no feature
   the crate is `no_std` and does not allocate.

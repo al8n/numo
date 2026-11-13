@@ -53,14 +53,16 @@
 //! does not hold fails to compile. See [`Decimal`] for the details.
 //!
 //! Every decimal type has the constants `INTEGRAL`, `FRACTION` and `DIGITS`, its digit counts, and
-//! `SIGNED`, whether its storage is signed. Generic code reaches the constants and methods through
-//! traits in two layers, each with one implementation for every storage. The general layer,
-//! [`FixedDecimal`], with the digit counts, the queries, the arithmetic, the operators `+` and `-`
-//! on values, `Sum` and the functions `zero`, `max_value` and `min_value`, [`SignedFixedDecimal`]
-//! and [`UnsignedFixedDecimal`], for each sign, and [`DecimalOne`], with `one`, requires `Clone`
-//! but not `Copy`; its functions return the inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The
-//! const layer, [`ConstFixedDecimal`] and [`ConstDecimalOne`], adds `Copy`, the assignments `+=`
-//! and `-=` of [`DecimalAssign`] and these constants, which a generic `const fn` can read.
+//! every type over an inline storage `SIGNED`, whether its storage is signed. Generic code reaches
+//! the constants and methods through traits in two layers, the general one for every storage and
+//! the const one for every inline storage. The general layer, [`FixedDecimal`], with the digit
+//! counts, the queries, the arithmetic, the operators `+` and `-` on values, `Sum` and the
+//! functions `zero`, `max_value` and `min_value`, [`SignedFixedDecimal`] and
+//! [`UnsignedFixedDecimal`], for each sign, and [`DecimalOne`], with `one`, requires `Clone` but
+//! not `Copy`; over an inline storage, its functions return the inherent constants `ZERO`, `MAX`,
+//! `MIN` and `ONE`. The const layer, [`ConstFixedDecimal`] and [`ConstDecimalOne`], adds `Copy`,
+//! the assignments `+=` and `-=` of [`DecimalAssign`] and these constants, which a generic
+//! `const fn` can read.
 //! [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] have the methods between decimal
 //! types, and [`DecimalFloat`] the conversions with the floats. Code generic over the storage adds
 //! the bound `Decimal<I, F, R>: FixedDecimal`. The trait methods are not `const`, so constant
@@ -135,6 +137,16 @@
 //! assert_eq!("18446744073709551621e-18".parse::<TokenAmount>()?, amount);
 //! # Ok::<(), numo::ParseError>(())
 //! ```
+//!
+//! With the `std` or the `alloc` feature, the storage of a decimal can also be a wide integer of
+//! 192 to 1024 bits whose limbs are in a `Box`, an `Rc` or an `Arc`, and with the `triomphe`
+//! feature in a `triomphe::Arc`: `Decimal<U60, U18, Uint<U320, Box<[u64; 5]>>>` has the size of a
+//! pointer. Such a decimal has the general layer of the traits, the conversions, the formats, serde
+//! and the generators, and no constants, no `const fn`s and no literal. It computes in its inline
+//! storage, the wide integer of the same width and sign, and allocates only the values that it
+//! returns: in a `Box`, an assignment and an operator with an owned operand store into the
+//! allocation, and in a shared pointer every result is a new allocation. See
+//! [Heap storages](Decimal#heap-storages).
 //!
 //! # Integers
 //!

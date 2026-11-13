@@ -117,10 +117,11 @@ fn main() -> Result<(), ParseError> {
   to a multiple of a step, `div_round` divides into any decimal type, and `round_significant` rounds
   to a number of significant digits.
   The modes are `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`, `HalfEven` and `Up05`.
-- The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
-  references, and `Sum` adds the values or the references of an iterator. They are exact too: a
-  result outside the range panics in every build, whatever `overflow-checks` is, with the message
-  of the native operators, where `checked_add` and `checked_sub` return `None` and
+- Over an inline storage, the operators `+`, `-`, `+=` and `-=` take two values of one type, `+`
+  and `-` also two references, and `Sum` adds the values or the references of an iterator; a heap
+  storage has the forms with one owned operand too (see [Wide storage](#wide-storage)). They are
+  exact too: a result outside the range panics in every build, whatever `overflow-checks` is, with
+  the message of the native operators, where `checked_add` and `checked_sub` return `None` and
   `saturating_add` and `saturating_sub` the limit that it passes. `checked_rem` is the exact
   remainder, with the sign of the dividend. There are no `*`, `/` or `%` operators: `exact_mul`
   and `div_round` are methods.
@@ -135,24 +136,27 @@ fn main() -> Result<(), ParseError> {
   the nearest float, rounded once. `round_from_f64` reads the exact binary value of a float and
   `from_f64_shortest` its shortest text, so that `0.1` reads as `0.1`; each rounds once with a
   `RoundingMode`, and each has an `f32` form. `DecimalFloat` has the six for generic code.
-- Methods that depend only on the storage are `const fn`, so constants can be parsed and computed
-  at compile time.
-- The constants `INTEGRAL`, `FRACTION` and `DIGITS` give the digit counts of a type, and `SIGNED`
-  whether its storage is signed. Sealed traits give generic code the items of a type in two
-  layers, each implemented for every storage. The general layer requires `Clone` but not `Copy`:
-  `FixedDecimal`, with the digit counts, the queries, the arithmetic, the operators `+` and `-` on
-  values, `Sum` and `zero()`, `max_value()` and `min_value()`, `SignedFixedDecimal` and
-  `UnsignedFixedDecimal` for each sign, and `DecimalOne`, with `one()`; these functions return the
-  constants `ZERO`, `MAX`, `MIN` and `ONE`. The const layer, `ConstFixedDecimal` and
-  `ConstDecimalOne`, adds `Copy`, the assignments `+=` and `-=` of `DecimalAssign` and the constants
-  themselves, which a generic `const fn` can read. `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound`
-  have the methods between decimal types, and `DecimalFloat` the conversions with the floats. Code
-  generic over `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`.
-- `parse` accepts ASCII text with an optional sign, point and exponent, and `_` separators as in
-  Rust literals: the numeric strings of the General Decimal Arithmetic specification and every
-  form that `f64` parses, such as `-1.5`, `+.5`, `5.`, `2.5E-3` and `1_000`. Infinity and NaN are
-  recognized and reported as `NotFinite`, because a `Decimal` is always finite. A value that does
-  not fit is `OutOfRange` or `Inexact`, never rounded.
+- Methods that depend only on the storage are `const fn` for each inline storage, so constants can
+  be parsed and computed at compile time.
+- The constants `INTEGRAL`, `FRACTION` and `DIGITS` give the digit counts of a type, and over an
+  inline storage `SIGNED` whether its storage is signed. Sealed traits give generic code the items
+  of a type in two layers, the general one implemented for every storage and the const one for
+  every inline storage. The general layer requires `Clone` but not `Copy`: `FixedDecimal`, with
+  the digit counts, the queries, the arithmetic, the operators `+` and `-` on values, `Sum` and
+  `zero()`, `max_value()` and `min_value()`, `SignedFixedDecimal` and `UnsignedFixedDecimal` for
+  each sign, and `DecimalOne`, with `one()`; these functions return the constants `ZERO`, `MAX`,
+  `MIN` and `ONE`, or over a heap storage those of its inline storage. The const layer,
+  `ConstFixedDecimal` and `ConstDecimalOne`, adds `Copy`, the assignments `+=` and `-=` of
+  `DecimalAssign` and the constants themselves, which a generic `const fn` can read. `ExactMul`,
+  `WidenTo`, `ConvertTo` and `DivRound` have the methods between decimal types, and `DecimalFloat`
+  the conversions with the floats. Code generic over `Decimal<I, F, R>` adds the bound
+  `Decimal<I, F, R>: FixedDecimal`.
+- `parse`, a `const fn` of each inline storage, and `FromStr` accept ASCII text with an optional
+  sign, point and exponent, and `_` separators as in Rust literals: the numeric strings of the
+  General Decimal Arithmetic specification and every form that `f64` parses, such as `-1.5`,
+  `+.5`, `5.`, `2.5E-3` and `1_000`. Infinity and NaN are recognized and reported as `NotFinite`,
+  because a `Decimal` is always finite. A value that does not fit is `OutOfRange` or `Inexact`,
+  never rounded.
 - `dec!` writes a decimal literal in the source, which `parse` reads when the crate is compiled,
   of the type that its context expects or that `as` names: `dec!(0.01)`,
   `dec!(-2.5e-3 as Price)`. A literal that the type does not hold fails to compile: in a `const`
@@ -187,15 +191,15 @@ fn main() {
 A `Decimal` writes the shortest exact text, so `0.00100000` reads as `0.001` and writes back as
 `0.001`. `Scaled<D>` keeps the scale of the text beside the decimal, the number of fraction digits
 that the text showed, for code that must write a text back as it came. It parses with the grammar
-of `Decimal::parse`, in a `const fn` of each storage and through `FromStr`, writes at least as many
-fraction digits as its scale, and compares, orders and hashes by value only. Every decimal trait is
-implemented for it over any decimal, so generic code takes a `Scaled` and a bare decimal alike: a
-sum takes the larger scale, an exact product the sum of the scales, a value of `round_to` or a
-quotient the fraction digits of its target type, and a value read from a float those of the type or,
-by its shortest text, those of the text. The operators `+`, `-`, `+=` and `-=` and `Sum` work as for
-a decimal, and their result takes the larger scale. A scale above 65535 is `ScaleTooLarge`, which
-only the `parse` of `Scaled` reports. A literal of `dec!` keeps its scale too: `dec!(1.50)` writes
-`1.50`.
+of `Decimal::parse`, in a `const fn` of each inline storage and through `FromStr`, writes at least
+as many fraction digits as its scale, and compares, orders and hashes by value only. Every decimal
+trait is implemented for it over any decimal, so generic code takes a `Scaled` and a bare decimal
+alike: a sum takes the larger scale, an exact product the sum of the scales, a value of `round_to`
+or a quotient the fraction digits of its target type, and a value read from a float those of the
+type or, by its shortest text, those of the text. The operators `+`, `-`, `+=` and `-=` and `Sum`
+work as for a decimal, and their result takes the larger scale. A scale above 65535 is
+`ScaleTooLarge`, which only the `parse` of `Scaled` reports. A literal of `dec!` keeps its scale
+too: `dec!(1.50)` writes `1.50`.
 
 ```rust
 use numo::{
@@ -247,6 +251,43 @@ fn main() -> Result<(), ParseError> {
   let amount = TokenAmount::from_repr(u320::from_limbs([l0, l1, l2, l3, 0])).unwrap();
   assert_eq!(amount.to_string(), "1.5");
   assert_eq!("1500000000000000000e-18".parse::<TokenAmount>()?, amount);
+
+  Ok(())
+}
+```
+
+With the `std` or the `alloc` feature, `Decimal` also takes a wide integer of 192 to 1024 bits whose
+limbs are in a `Box`, an `Rc` or an `Arc`, and with the `triomphe` feature in a `triomphe::Arc`,
+such as `Decimal<U60, U18, Uint<U320, Box<[u64; 5]>>>`. Such a decimal has the size of a pointer, is
+not `Copy`, and has no constants, no `const fn`s and no literal: its API is the traits,
+`FixedDecimal` and the traits beside it, with `zero`, `min_value`, `max_value` and `one` for the
+constants, and a literal reaches it through `from_inline`. It computes in its inline storage, the
+wide integer of the same width and sign, and builds only the decimals that it returns, none when it
+returns `None` or an error. In a `Box`, `+=`, `-=`, a unary minus and an operator with an owned
+operand store their result in the allocation of that operand, and an operator on two references
+allocates its result; in an `Rc` or an `Arc` every result is a new allocation, and there is no `+=`
+or `-=`. `exact_mul` returns the product in an inline storage, and `widen` stores it. Each operation
+computes on the stack before it stores, so a heap storage keeps the value off the stack and not the
+working space. `to_inline` reads a value without a clone, and serde writes and reads a heap decimal
+as its inline twin.
+
+```rust
+use numo::{
+  Decimal, ParseError, Uint, dec,
+  typenum::{U18, U60, U320},
+  u320,
+};
+
+type Amount = Decimal<U60, U18, u320>;
+type Boxed = Decimal<U60, U18, Uint<U320, Box<[u64; 5]>>>;
+
+fn main() -> Result<(), ParseError> {
+  let mut total = Boxed::from_inline(dec!(1.5));
+  let fee: Boxed = "0.25".parse()?;
+  total += &fee; // in the allocation of `total`
+  let sum = &total + &fee; // a new allocation
+  assert_eq!(sum.to_inline(), dec!(2 as Amount));
+  assert_eq!(size_of::<Boxed>(), size_of::<usize>());
 
   Ok(())
 }

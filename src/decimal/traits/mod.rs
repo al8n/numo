@@ -2,17 +2,20 @@
 //!
 //! The traits on one decimal type form two layers. The general layer, [`FixedDecimal`], the sign
 //! traits and [`DecimalOne`], requires `Clone` but not `Copy`, and has zero, the limits and one as
-//! the functions `zero`, `max_value`, `min_value` and `one`, which return the inherent constants
-//! `ZERO`, `MAX`, `MIN` and `ONE`; its other items mirror inherent items of the same names, which
-//! concrete types reach without the trait. The const layer, [`ConstFixedDecimal`] and
-//! [`ConstDecimalOne`], adds `Copy` and the constants themselves, which are the inherent constants
-//! and which a generic `const fn` can read. Each of these traits has one implementation for each
-//! storage, which `storage_decimal!` emits next to the inherent items. [`DecimalFloat`], the
-//! conversions with the floats, has one implementation for each storage too, and mirrors the
-//! inherent functions of the same names. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`],
-//! which relate two or three decimal types, mirror inherent methods of the same names, and each has
-//! a single implementation for every combination of them, with the bounds of the inherent method it
-//! calls.
+//! the functions `zero`, `max_value`, `min_value` and `one`. Over an inline storage they return the
+//! inherent constants `ZERO`, `MAX`, `MIN` and `ONE`, and the other items mirror inherent items of
+//! the same names, which concrete types reach without the trait. The const layer,
+//! [`ConstFixedDecimal`] and [`ConstDecimalOne`], adds `Copy` and the constants themselves, which
+//! are the inherent constants and which a generic `const fn` can read. Each of these traits has
+//! one implementation for each inline storage, which `storage_decimal!` emits next to the inherent
+//! items. [`DecimalFloat`], the conversions with the floats, has one implementation for each inline
+//! storage too, and mirrors the inherent functions of the same names. A heap storage has the
+//! general layer and the conversions with the floats, in the implementations of each pointer and
+//! sign, whose items compute in the inline twin through its trait and store a result once, and no
+//! const layer and no inherent item but those generic over the storage. [`ExactMul`], [`WidenTo`],
+//! [`ConvertTo`] and [`DivRound`], which relate two or three decimal types, mirror inherent methods
+//! of the same names, and each has a single implementation for every combination of them, with the
+//! bounds of the inherent method it calls.
 //!
 //! The operators come with the layers as supertraits. [`FixedDecimal`] requires `+` and `-` on two
 //! values and `Sum` over values, and [`DecimalAssign`] the assignments `+=` and `-=`, which need a
@@ -86,11 +89,13 @@ mod sealed {
 /// An exact fixed-point decimal number: [`Decimal`] over any storage, or [`Scaled`] over such a
 /// decimal.
 ///
-/// [`zero`](Self::zero), [`max_value`](Self::max_value) and [`min_value`](Self::min_value) return
-/// the inherent constants `ZERO`, `MAX` and `MIN`, and have no inherent counterparts; the other
-/// constants and methods are the inherent items of the same names, which a concrete type reaches
-/// without this trait, also in constant contexts. This trait requires `Clone` rather than `Copy`,
-/// so generic code bounded by it alone clones a value that it uses again, or computes with it in
+/// Over an inline storage, [`zero`](Self::zero), [`max_value`](Self::max_value) and
+/// [`min_value`](Self::min_value) return the inherent constants `ZERO`, `MAX` and `MIN`, and have
+/// no inherent counterparts; the other constants and methods are the inherent items of the same
+/// names, which a concrete type reaches without this trait, also in constant contexts. A decimal
+/// over a heap storage has no constants, and reaches these items through this trait, each computed
+/// in its inline twin. This trait requires `Clone` rather than `Copy`, so generic code bounded by
+/// it alone clones a value that it uses again, or computes with it in
 /// [`to_inline`](Self::to_inline), which is `Copy`, and stores the result once with
 /// [`from_inline`](Self::from_inline); [`ConstFixedDecimal`] adds `Copy` and the constants `ZERO`,
 /// `MAX` and `MIN`. Generic code reaches the items through this trait, which `Decimal<I, F, R>`
@@ -196,7 +201,8 @@ pub trait FixedDecimal:
   #[must_use]
   fn to_inline(&self) -> Self::Inline;
 
-  /// Returns `value` in the storage of `Self`: `value` itself for an inline storage.
+  /// Returns `value` in the storage of `Self`: `value` itself for an inline storage, and one
+  /// allocation for a heap storage.
   #[must_use]
   fn from_inline(value: Self::Inline) -> Self;
 
@@ -330,8 +336,8 @@ pub trait FixedDecimal:
 }
 
 /// A decimal number whose storage holds the coefficient in place: [`Decimal`] over a
-/// [`MutableStorage`](crate::MutableStorage), as every storage of this crate is, or [`Scaled`] over
-/// such a decimal.
+/// [`MutableStorage`](crate::MutableStorage), as every inline storage and a wide integer whose
+/// limbs are in a `Box` are, or [`Scaled`] over such a decimal.
 ///
 /// The supertraits `AddAssign` and `SubAssign` give generic code the compound assignments `+=` and
 /// `-=`, each with a value on the right, as the operators of [`FixedDecimal`] take one. They panic
@@ -374,7 +380,7 @@ where
 }
 
 /// An exact fixed-point decimal number whose zero and limits are constants: [`Decimal`] over any
-/// storage, or [`Scaled`] over such a decimal.
+/// inline storage, or [`Scaled`] over such a decimal.
 ///
 /// `ZERO`, `MAX` and `MIN` are the inherent constants of the same names, which a concrete type
 /// reaches without this trait, also in constant contexts. Generic code reads them through this
@@ -385,8 +391,8 @@ where
 /// the compound assignments `+=` and `-=`, which panic where the operators `+` and `-` do and then
 /// leave their target unchanged. A type of this layer is its own [`Inline`](FixedDecimal::Inline)
 /// type, so that [`to_inline`](FixedDecimal::to_inline) returns the value itself.
-/// `Decimal<I, F, R>` implements this trait for each storage `R` where `(I, F): Layout<R>`, as it
-/// implements [`FixedDecimal`].
+/// `Decimal<I, F, R>` implements this trait for each inline storage `R` where `(I, F): Layout<R>`,
+/// as it implements [`FixedDecimal`]; a heap storage has no constants.
 ///
 /// ```
 /// use numo::{
@@ -432,13 +438,15 @@ pub trait ConstFixedDecimal: DecimalAssign + FixedDecimal<Inline = Self> + Copy 
 /// [`i192`](crate::i192), [`i256`](crate::i256), [`i320`](crate::i320), [`i384`](crate::i384),
 /// [`i448`](crate::i448), [`i512`](crate::i512), [`i576`](crate::i576), [`i640`](crate::i640),
 /// [`i704`](crate::i704), [`i768`](crate::i768), [`i832`](crate::i832), [`i896`](crate::i896),
-/// [`i960`](crate::i960) or [`i1024`](crate::i1024), or [`Scaled`] over such a decimal.
+/// [`i960`](crate::i960) or [`i1024`](crate::i1024), or a heap storage of one of the wide ones, as
+/// in `Int<U256, Box<[u64; 4]>>`, or [`Scaled`] over such a decimal.
 ///
-/// The methods are the inherent methods of the same names, which a concrete type reaches without
-/// this trait, also in constant contexts. The range of a signed storage is symmetric, so negation
-/// never fails, and the supertrait `Neg` gives generic code the operator `-`. On a value, `-x` and
-/// `x.neg()` call `Neg::neg`, while `x.neg()` on a reference calls [`neg`](Self::neg), which takes
-/// a reference; both return the same value.
+/// Over an inline storage, the methods are the inherent methods of the same names, which a
+/// concrete type reaches without this trait, also in constant contexts; over a heap storage, they
+/// are those of the inline twin, through this trait. The range of a signed storage is symmetric,
+/// so negation never fails, and the supertrait `Neg` gives generic code the operator `-`. On a
+/// value, `-x` and `x.neg()` call `Neg::neg`, while `x.neg()` on a reference calls
+/// [`neg`](Self::neg), which takes a reference; both return the same value.
 ///
 /// ```
 /// use numo::{
@@ -484,7 +492,8 @@ pub trait SignedFixedDecimal: FixedDecimal + Neg<Output = Self> {
 /// [`u320`](crate::u320), [`u384`](crate::u384), [`u448`](crate::u448), [`u512`](crate::u512),
 /// [`u576`](crate::u576), [`u640`](crate::u640), [`u704`](crate::u704), [`u768`](crate::u768),
 /// [`u832`](crate::u832), [`u896`](crate::u896), [`u960`](crate::u960) or [`u1024`](crate::u1024),
-/// or [`Scaled`] over such a decimal.
+/// or a heap storage of one of the wide ones, as in `Uint<U256, Box<[u64; 4]>>`, or [`Scaled`]
+/// over such a decimal.
 ///
 /// This trait has no items of its own. As a bound, it states that values are never negative, so
 /// that [`min_value`](FixedDecimal::min_value) returns zero and
@@ -515,10 +524,11 @@ pub trait UnsignedFixedDecimal: FixedDecimal {}
 /// A decimal number that holds one: [`Decimal`] with at least one integral digit, over any
 /// storage, or [`Scaled`] over such a decimal.
 ///
-/// [`one`](Self::one) returns the inherent constant `ONE` and has no inherent counterpart; a
-/// concrete type reaches `ONE` without this trait, also in constant contexts, and
-/// [`ConstDecimalOne`] gives it to generic code as a constant. One needs an integral digit, so a
-/// type whose `Integral` is zero has no `ONE`, rather than one that is out of range.
+/// Over an inline storage, [`one`](Self::one) returns the inherent constant `ONE` and has no
+/// inherent counterpart; a concrete type reaches `ONE` without this trait, also in constant
+/// contexts, and [`ConstDecimalOne`] gives it to generic code as a constant. Over a heap storage,
+/// `one` stores the `ONE` of the inline twin. One needs an integral digit, so a type whose
+/// `Integral` is zero has no `ONE`, rather than one that is out of range.
 /// `Decimal<I, F, R>` implements this trait for each storage `R` where `I: NonZero` and
 /// `(I, F): Layout<R>`. It is separate from the integer trait [`IntegerOne`](crate::IntegerOne),
 /// which also requires `Product`.
@@ -550,13 +560,13 @@ pub trait DecimalOne: FixedDecimal {
 }
 
 /// A decimal number that holds one as a constant: [`Decimal`] with at least one integral digit,
-/// over any storage, or [`Scaled`] over such a decimal.
+/// over any inline storage, or [`Scaled`] over such a decimal.
 ///
 /// `ONE` is the inherent constant of the same name, which a concrete type reaches without this
 /// trait, also in constant contexts. Generic code reads it through this trait as `T::ONE`, also in
 /// a generic `const fn`, which cannot call [`one`](DecimalOne::one). `Decimal<I, F, R>` implements
-/// this trait for each storage `R` where `I: NonZero` and `(I, F): Layout<R>`, as it implements
-/// [`DecimalOne`].
+/// this trait for each inline storage `R` where `I: NonZero` and `(I, F): Layout<R>`, as it
+/// implements [`DecimalOne`]; a heap storage has no constants.
 ///
 /// ```
 /// use numo::{
@@ -585,13 +595,15 @@ pub trait ConstDecimalOne: DecimalOne + ConstFixedDecimal {
 /// The conversions of a decimal number with the floats `f64` and `f32`: [`Decimal`] over any
 /// storage, or [`Scaled`] over such a decimal.
 ///
-/// The methods are the inherent functions of the same names, which a concrete type reaches
-/// without this trait, also in constant contexts but for the two that read the shortest text:
-/// [`to_f64`](Self::to_f64) and [`to_f32`](Self::to_f32), which round to the nearest float, ties
-/// to even; [`round_from_f64`](Self::round_from_f64), which reads the exact binary value of a
-/// float, and [`from_f64_shortest`](Self::from_f64_shortest), which reads its shortest text, each
-/// rounded once with a [`RoundingMode`] to the fraction digits of the type; and the `f32` form of
-/// each reading. They are for interchange and display, not for arithmetic that must be exact. The
+/// The methods are [`to_f64`](Self::to_f64) and [`to_f32`](Self::to_f32), which round to the
+/// nearest float, ties to even; [`round_from_f64`](Self::round_from_f64), which reads the exact
+/// binary value of a float, and [`from_f64_shortest`](Self::from_f64_shortest), which reads its
+/// shortest text, each rounded once with a [`RoundingMode`] to the fraction digits of the type;
+/// and the `f32` form of each reading. Over an inline storage they are the inherent functions of
+/// the same names, which a concrete type reaches without this trait, also in constant contexts but
+/// for the two that read the shortest text; over a heap storage they are those of the inline twin,
+/// through this trait, but for those two, which are inherent for every storage. They are for
+/// interchange and display, not for arithmetic that must be exact. The
 /// errors are those of [`FromFloatError`], which reports NaN, the infinities, a value above the
 /// range and one below it apart. `Decimal<I, F, R>` implements this trait for each storage `R`
 /// where `(I, F): Layout<R>`, and [`Scaled<D>`](Scaled) for every `D` that does: its conversions to

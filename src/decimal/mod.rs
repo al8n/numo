@@ -62,8 +62,9 @@ mod tests;
 /// integer up to 38 digits, and beyond that, up to 307 digits, a wide integer of 192 to 1024 bits,
 /// every 64 bits, from [`i192`](crate::i192), which holds 57 digits, to [`i1024`](crate::i1024),
 /// which holds 307. Any other storage that holds the digits can be named explicitly: a wider one,
-/// or an unsigned one for values that are never negative. An unsigned `Repr` holds as many digits
-/// as the signed one of the same width, except that `u64` holds 19 digits and `i64` 18,
+/// an unsigned one for values that are never negative, or a heap storage, which holds the
+/// coefficient behind a pointer (see [Heap storages](#heap-storages)). An unsigned `Repr` holds as
+/// many digits as the signed one of the same width, except that `u64` holds 19 digits and `i64` 18,
 /// [`u256`](crate::u256) holds 77 and `i256` 76, [`u512`](crate::u512) holds 154 and `i512` 153,
 /// [`u768`](crate::u768) holds 231 and `i768` 230, and [`u1024`](crate::u1024) holds 308 and
 /// `i1024` 307. Only an explicit `u1024` holds 308 digits. The type has the size, alignment and ABI
@@ -112,22 +113,24 @@ mod tests;
 /// where it uses items that depend on the digit counts, such as formatting and conversions (see
 /// [`Layout`]).
 ///
-/// The constants and methods defined for each storage, such as [`ZERO`](Self::ZERO) and
+/// The constants and methods defined for each inline storage, such as [`ZERO`](Self::ZERO) and
 /// [`checked_add`](Self::checked_add), reach generic code through traits in two layers. The general
 /// layer is [`FixedDecimal`] for every storage, [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`]
 /// for each sign, and [`DecimalOne`] for the types that hold one. It requires `Clone` but not
 /// `Copy`, has the operators `+` and `-` on values and `Sum`, and its functions `zero`,
 /// `max_value`, `min_value` and `one` return [`ZERO`](Self::ZERO), [`MAX`](Self::MAX),
-/// [`MIN`](Self::MIN) and [`ONE`](Self::ONE). The const layer, [`ConstFixedDecimal`] and
-/// [`ConstDecimalOne`], adds `Copy`, the assignments `+=` and `-=` of [`DecimalAssign`] and these
-/// constants, which a generic `const fn` can read. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
-/// [`DivRound`] carry the bounds of the methods between decimal types. [`DecimalFloat`] has the
-/// conversions with the floats. Because the implementations are per storage, code generic over the
-/// storage adds the bound `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and
-/// `(I, F): Layout<R>` do not imply. Every type also has the constants
-/// [`INTEGRAL`](Self::INTEGRAL), [`FRACTION`](Self::FRACTION) and [`DIGITS`](Self::DIGITS), its
-/// digit counts, and [`SIGNED`](Self::SIGNED), whether its storage is signed, for generic code that
-/// derives a display scale or a step from the fraction digits of the type:
+/// [`MIN`](Self::MIN) and [`ONE`](Self::ONE), or over a heap storage those of its inline storage.
+/// The const layer, [`ConstFixedDecimal`] and [`ConstDecimalOne`], of every inline storage, adds
+/// `Copy`, the assignments `+=` and `-=` of [`DecimalAssign`] and these constants, which a generic
+/// `const fn` can read. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] carry the bounds
+/// of the methods between decimal types. [`DecimalFloat`] has the conversions with the floats.
+/// Because the implementations are per storage, code generic over the storage adds the bound
+/// `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and `(I, F): Layout<R>` do not imply. Every
+/// type also has the constants [`INTEGRAL`](Self::INTEGRAL), [`FRACTION`](Self::FRACTION) and
+/// [`DIGITS`](Self::DIGITS), its digit counts, and a type over an inline storage
+/// [`SIGNED`](Self::SIGNED), whether its storage is signed, which [`FixedDecimal::SIGNED`] gives
+/// for every type, for generic code that derives a display scale or a step from the fraction
+/// digits of the type:
 ///
 /// ```
 /// use numo::{
@@ -168,12 +171,14 @@ mod tests;
 /// The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
 /// references, and [`Sum`](core::iter::Sum) adds the values or the references of an iterator. They
 /// are exact too, and where the checked methods return `None` they panic, in every build, whatever
-/// `overflow-checks` is, with the message of the native operators. A value and a reference do not
-/// mix: `a + &b` does not compile, and `a + *b` adds them. There is no `*`, `/` or `%` operator:
-/// [`exact_mul`](Self::exact_mul) returns the product in the type that holds it,
-/// [`div_round`](Self::div_round) rounds the quotient with a mode, and `checked_rem` gives the
-/// remainder. The right operand can be a literal of [`dec!`](crate::dec), as in
-/// `price + dec!(0.5)`, which takes the type of the left one.
+/// `overflow-checks` is, with the message of the native operators. Over an inline storage, a value
+/// and a reference do not mix: `a + &b` does not compile, and `a + *b` adds them. There is no `*`,
+/// `/` or `%` operator: [`exact_mul`](Self::exact_mul) returns the product in the type that holds
+/// it, [`div_round`](Self::div_round) rounds the quotient with a mode, and `checked_rem` gives the
+/// remainder. The right operand of a decimal over an inline storage can be a literal of
+/// [`dec!`](crate::dec), as in `price + dec!(0.5)`, which takes the type of the left one. A heap
+/// storage has the forms with one owned operand and no literal operand, and in a shared pointer no
+/// `+=` and `-=` (see [Heap storages](#heap-storages)).
 ///
 /// ```
 /// use numo::{
@@ -299,8 +304,8 @@ mod tests;
 /// # Ok::<(), numo::ParseError>(())
 /// ```
 ///
-/// Methods whose behavior depends only on the storage are `const fn`, generated for each storage,
-/// so values can be computed at compile time:
+/// Methods whose behavior depends only on the storage are `const fn`, generated for each inline
+/// storage, so values can be computed at compile time:
 ///
 /// ```
 /// use numo::{
@@ -322,16 +327,17 @@ mod tests;
 ///
 /// # Text
 ///
-/// [`parse`](Self::parse) and [`FromStr`](core::str::FromStr) accept ASCII text with an optional
-/// sign, point and exponent, and `_` separators as in Rust literals: the numeric strings of the
-/// General Decimal Arithmetic specification and every form that [`f64`] parses, such as `-1.5`,
-/// `+.5`, `5.`, `2.5E-3` and `1_000`. An unsigned `Repr` rejects a negative number, even `-0`, as
-/// [`Negative`](crate::ParseErrorKind::Negative). Infinity and NaN are recognized and reported as
-/// [`NotFinite`](crate::ParseErrorKind::NotFinite), because a decimal is always finite. The value
-/// must fit exactly: once the exponent has moved the point, digits beyond `Integral` and `Fraction`
-/// are accepted only when they are leading or trailing zeros; anything else is an error, never a
-/// rounded value. See [`parse`](Self::parse) for the grammar. [`dec!`](crate::dec) reads a literal
-/// of the source with `parse`, when the crate is compiled.
+/// [`parse`](Self::parse), a `const fn` of each inline storage, and [`FromStr`](core::str::FromStr)
+/// accept ASCII text with an optional sign, point and exponent, and `_` separators as in Rust
+/// literals: the numeric strings of the General Decimal Arithmetic specification and every form
+/// that [`f64`] parses, such as `-1.5`, `+.5`, `5.`, `2.5E-3` and `1_000`. An unsigned `Repr`
+/// rejects a negative number, even `-0`, as [`Negative`](crate::ParseErrorKind::Negative).
+/// Infinity and NaN are recognized and reported as [`NotFinite`](crate::ParseErrorKind::NotFinite),
+/// because a decimal is always finite. The value must fit exactly: once the exponent has moved the
+/// point, digits beyond `Integral` and `Fraction` are accepted only when they are leading or
+/// trailing zeros; anything else is an error, never a rounded value. See [`parse`](Self::parse) for
+/// the grammar. [`dec!`](crate::dec) reads a literal of the source with `parse`, when the crate is
+/// compiled.
 ///
 /// [`Display`](fmt::Display) writes the shortest exact form: an optional `-`, the integral part
 /// without leading zeros (at least one digit), then `.` and the fraction digits without trailing
@@ -519,6 +525,62 @@ mod tests;
 /// assert_eq!(Price::round_from_f64(-0.0, RoundingMode::Down), Ok(Price::ZERO));
 /// # Ok::<(), Box<dyn core::error::Error>>(())
 /// ```
+///
+/// # Heap storages
+///
+/// With the `std` or the `alloc` feature, `Repr` can also be a wide integer of 192 to 1024 bits,
+/// every 64 bits, whose limbs are in a `Box`, an `Rc` or, on a target with atomic pointers, an
+/// `Arc`, and with the `triomphe` feature, on such a target, in a `triomphe::Arc`. The type names
+/// its storage, as in `Decimal<U60, U18, Uint<U320, Box<[u64; 5]>>>`, where
+/// [`Limbs<U320>`](crate::Limbs) spells the array `[u64; 5]`. The decimal has the size of a
+/// pointer, and so has its `Option`. It has the general layer of the traits, [`FixedDecimal`] and
+/// the traits beside it, whose methods need their trait in scope; the conversions; the formats;
+/// the order and the hash, by value; serde; and the generators. It is not `Copy`, and has none of
+/// the constants, `parse` and the other `const fn`s of the inline storages, no const layer and no
+/// literal.
+///
+/// The decimal computes in its inline storage, [`Storage::Inline`], the integer of the same width
+/// and sign over the array, and a method allocates only a value that it returns: none for `None`
+/// or an error. In a `Box`, `+=`, `-=`, a unary minus and an operator with an owned operand store
+/// into the allocation of that operand, the left one of two: `a + b` and `a + &b` into that of
+/// `a`, and `&a + b` into that of `b`. A shared pointer never writes the value that it holds:
+/// every result is a new allocation, also that of a method that returns its value unchanged, such
+/// as `abs` of a value that is not negative, and there is no `+=` and no `-=`.
+/// [`to_inline`](Self::to_inline) reads a value into its inline storage without an allocation or a
+/// clone, [`from_inline`](Self::from_inline) stores one, [`widen`](Self::widen) converts each way,
+/// and [`repr`](FixedDecimal::repr) and [`from_repr`](FixedDecimal::from_repr) move the storage
+/// itself. [`exact_mul`](Self::exact_mul) returns the product in an inline storage, and `widen`
+/// stores it in a heap storage.
+///
+/// A literal of [`dec!`](crate::dec) is a constant of an inline type, and reaches a heap decimal
+/// through it, as in `Boxed::from_inline(dec!(1.5))`, where the parameter of `from_inline` gives
+/// the literal its type. A heap decimal takes no literal operand: it has two forms of `+` with an
+/// owned left operand, `a + b` and `a + &b`, so the type of a literal on the right is not known.
+/// An operation takes the stack of its inline type, so a heap storage keeps the value off the
+/// stack, and not the working space of an operation. `Send` and `Sync` follow the pointer: a
+/// decimal in a `Box`, an `Arc` or a `triomphe::Arc` is both, and one in an `Rc` neither.
+///
+/// ```
+/// # #[cfg(any(feature = "std", feature = "alloc"))]
+/// # {
+/// use numo::{
+///   Decimal, Uint, dec,
+///   typenum::{U18, U60, U320},
+///   u320,
+/// };
+///
+/// type Amount = Decimal<U60, U18, u320>;
+/// type Boxed = Decimal<U60, U18, Uint<U320, Box<[u64; 5]>>>;
+///
+/// let mut total = Boxed::from_inline(dec!(1.5));
+/// let fee: Boxed = "0.25".parse()?;
+/// total += &fee; // in the allocation of `total`
+/// let sum = &total + &fee; // a new allocation
+/// assert_eq!(sum.to_inline(), dec!(2 as Amount));
+/// assert_eq!(size_of::<Boxed>(), size_of::<usize>());
+/// # }
+/// # Ok::<(), numo::ParseError>(())
+/// ```
 #[repr(transparent)]
 pub struct Decimal<Integral, Fraction, Repr = <Sum<Integral, Fraction> as DigitCount>::Signed> {
   // Read by the storage-generic code of the crate outside this module, such as the shrinking of
@@ -629,7 +691,8 @@ where
     Decimal::from_coeff(self.repr.twin(Token::new()))
   }
 
-  /// Returns `value` in the storage of `Self`: `value` itself for an inline storage.
+  /// Returns `value` in the storage of `Self`: `value` itself for an inline storage, and one
+  /// allocation for a heap storage.
   #[must_use]
   #[inline]
   pub fn from_inline(value: Decimal<I, F, R::Inline>) -> Self {

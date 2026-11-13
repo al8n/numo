@@ -2,9 +2,9 @@
 //! names, and the messages of a literal that its type does not hold.
 //!
 //! The expansion defines a unit type that carries the text of the literal in [`LiteralText`], and
-//! reads the value from [`DecimalLiteral`], which every decimal type and every [`Scaled`] over one
-//! implements for every such text: its constant is the `parse` of that type. So the type is the one
-//! that the context infers, and the text is read when the crate is compiled.
+//! reads the value from [`DecimalLiteral`], which every decimal over an inline storage and every
+//! [`Scaled`] over one implements for every such text: its constant is the `parse` of that type. So
+//! the type is the one that the context infers, and the text is read when the crate is compiled.
 //!
 //! [`Scaled`]: crate::Scaled
 
@@ -22,7 +22,7 @@ pub trait LiteralText {
 }
 
 /// The value of the literal `T` of [`dec!`](crate::dec) in this type, implemented by every decimal
-/// type and every [`Scaled`](crate::Scaled) over one.
+/// over an inline storage and every [`Scaled`](crate::Scaled) over one.
 ///
 /// It is public because the expansion names it from another crate. It is not part of the API, and
 /// may change in any release.
@@ -169,6 +169,11 @@ pub(super) const fn reject(kind: ParseErrorKind) -> ! {
 /// let fee = dec!(0.5) + price;
 /// assert!(price < fee);
 /// ```
+///
+/// A literal is a constant, and a decimal over a heap storage, which allocates, has none, and takes
+/// none as an operand. A literal of its inline twin reaches it, as in
+/// `Boxed::from_inline(dec!(1.5))`, where the parameter of `from_inline` gives the literal its
+/// type, or `dec!(1.5 as Price).widen()` (see [Heap storages](crate::Decimal#heap-storages)).
 ///
 /// # Errors
 ///

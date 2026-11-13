@@ -65,15 +65,17 @@ mod tests;
 ///
 /// # Text
 ///
-/// `parse`, a `const fn` of each storage, and [`FromStr`](core::str::FromStr) read the text as
-/// [`Decimal::parse`](crate::Decimal::parse) does, with the same grammar, value and errors, and
+/// `parse`, a `const fn` of each inline storage, and [`FromStr`](core::str::FromStr) read the text
+/// as [`Decimal::parse`](crate::Decimal::parse) does, with the same grammar, value and errors, and
 /// take its scale: the number of fraction digits written, not counting `_`, minus the exponent,
 /// and at least 0. So `2.50` and `250e-2` have scale 2, and `1E+2` has scale 0. The scale may
 /// exceed the fraction digits of `D`: a type with 8 fraction digits keeps
 /// `9999999999.0000000000000000` with scale 16 and writes it back. A scale above 65535 is
 /// [`ScaleTooLarge`](crate::ParseErrorKind::ScaleTooLarge), which only a text that
 /// `Decimal::parse` accepts can give. [`dec!`](crate::dec) reads a literal in the same way and
-/// keeps its scale, so `dec!(1.50)` writes `1.50`.
+/// keeps its scale, so `dec!(1.50)` writes `1.50`. A `Scaled` over a decimal in a heap storage has
+/// no inherent `parse`, and is parsed through `FromStr`, as the `Scaled` over the inline twin of
+/// the decimal parses, which then stores the decimal.
 ///
 /// The text comes back as written except for these forms: a `+` sign; an exponent, which is
 /// written out with the same scale, so `25e-1` comes back as `2.5` and `1E+2` as `100`; `_`
@@ -180,10 +182,12 @@ mod tests;
 /// # Layout
 ///
 /// The scale is a plain `u16` beside the decimal, so a `Scaled` over a storage of at least 16 bits
-/// takes the size of its decimal plus the padding to its alignment, and `Option<Scaled<D>>` has no
-/// niche: where an `i128` is aligned to 16 bytes, `Scaled<Decimal<U20, U18>>` takes 32 bytes and
-/// its `Option` 48. Over an `i8` or a `u8` storage a `Scaled` takes 4 bytes, on a target that
-/// aligns a `u16` to two bytes.
+/// takes the size of its decimal plus the padding to its alignment. Over an inline storage,
+/// `Option<Scaled<D>>` has no niche: where an `i128` is aligned to 16 bytes,
+/// `Scaled<Decimal<U20, U18>>` takes 32 bytes and its `Option` 48. Over an `i8` or a `u8` storage
+/// a `Scaled` takes 4 bytes, on a target that aligns a `u16` to two bytes. Over a heap storage, the
+/// pointer is a niche, so the `Option` takes the size of the `Scaled`, a pointer and the scale
+/// with its padding.
 #[derive(Debug)]
 pub struct Scaled<D> {
   value: D,
