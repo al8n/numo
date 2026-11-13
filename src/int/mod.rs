@@ -12,13 +12,13 @@
 //! They also give `Uint` and `Int` over the native integers the limits of a width, `max_of_bits`
 //! and `min_of_bits`, its range check, `fits_bits`, and its arithmetic and bit operations, such as
 //! `overflowing_add_bits` and `rotate_left_bits`, named as in the limb layers: the functions that
-//! take `bits` serve `Uint` and `Int`, at the width `bits`. The wide storages `u192` through `u512`
-//! and `i192` through `i512` hold arrays of 64-bit limbs, least significant first. Their modules
-//! apply `unsigned::b64`, the lower layer for `[u64; N]`, and `signed::b64`, the upper layer, which
-//! reads the array as two's complement. `Uint` and `Int` also store arrays of the other limb types,
-//! through `unsigned::b8`, `unsigned::b16`, `unsigned::b32` and `unsigned::b128` and the upper
-//! layers over them, `signed::b8`, `signed::b16`, `signed::b32` and `signed::b128`, which
-//! `limb_layer!` generates from the same code as `unsigned::b64` and `signed::b64`. No native
+//! take `bits` serve `Uint` and `Int`, at the width `bits`. The wide storages `u192` through
+//! `u1024` and `i192` through `i1024` hold arrays of 64-bit limbs, least significant first. Their
+//! modules apply `unsigned::b64`, the lower layer for `[u64; N]`, and `signed::b64`, the upper
+//! layer, which reads the array as two's complement. `Uint` and `Int` also store arrays of the
+//! other limb types, through `unsigned::b8`, `unsigned::b16`, `unsigned::b32` and `unsigned::b128`
+//! and the upper layers over them, `signed::b8`, `signed::b16`, `signed::b32` and `signed::b128`,
+//! which `limb_layer!` generates from the same code as `unsigned::b64` and `signed::b64`. No native
 //! integer has 256 bits, so `half_limbs!` computes the two primitives of the layer for `u128` from
 //! the 64-bit halves of each limb.
 //!
@@ -1917,6 +1917,14 @@ wide!(unsigned u320: 5);
 wide!(unsigned u384: 6);
 wide!(unsigned u448: 7);
 wide!(unsigned u512: 8);
+wide!(unsigned u576: 9);
+wide!(unsigned u640: 10);
+wide!(unsigned u704: 11);
+wide!(unsigned u768: 12);
+wide!(unsigned u832: 13);
+wide!(unsigned u896: 14);
+wide!(unsigned u960: 15);
+wide!(unsigned u1024: 16);
 
 wide!(signed i192: 3);
 wide!(signed i256: 4);
@@ -1924,6 +1932,14 @@ wide!(signed i320: 5);
 wide!(signed i384: 6);
 wide!(signed i448: 7);
 wide!(signed i512: 8);
+wide!(signed i576: 9);
+wide!(signed i640: 10);
+wide!(signed i704: 11);
+wide!(signed i768: 12);
+wide!(signed i832: 13);
+wide!(signed i896: 14);
+wide!(signed i960: 15);
+wide!(signed i1024: 16);
 
 #[cfg(test)]
 mod tests;
