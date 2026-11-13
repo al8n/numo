@@ -27,10 +27,15 @@ use typenum::{U20, U300};
 use super::*;
 use crate::{
   ArrayInteger, BoundedCastFrom, CheckedCastFrom, FillsRepr, FixedNonZero, FromFloatError,
-  FromLimbs, IntRepr, IntegerBytes, IntegerFloat, NonZeroInt, NonZeroIntRepr, NonZeroLimits,
-  NonZeroUint, NonZeroUintRepr, SignedNonZero, UintRepr, UnsignedNonZero, WidenFrom,
+  FromLimbs, IntRepr, IntegerByteOrder, IntegerBytes, IntegerFloat, NonZeroInt, NonZeroIntRepr,
+  NonZeroLimits, NonZeroUint, NonZeroUintRepr, SignedNonZero, UintRepr, UnsignedNonZero,
+  WholeBytes, WidenFrom,
   bigint::floats,
-  int::float::{FloatFormat, FloatParts, float_parts_f64},
+  int::{
+    float::{FloatFormat, FloatParts, float_parts_f64},
+    parse_errors,
+  },
+  integer::cast::try_cast,
   layout::Token,
   width::{ArrayLimb, ArrayRepr, IntCore, ReprLimb, UintCore, View},
 };
@@ -1791,8 +1796,6 @@ macro_rules! unsigned_nonzero {
     unsigned_nonzero_methods($a, $b)
   };
 }
-#[cfg(any(feature = "std", feature = "alloc"))]
-pub(super) use unsigned_nonzero;
 
 /// The results of the methods of `SignedNonZero` on `$a`.
 macro_rules! signed_nonzero {
@@ -1800,8 +1803,6 @@ macro_rules! signed_nonzero {
     signed_nonzero_methods($a)
   };
 }
-#[cfg(any(feature = "std", feature = "alloc"))]
-pub(super) use signed_nonzero;
 
 nonzero_agree!(
   nonzero_uint_agree,
@@ -1873,6 +1874,650 @@ serde_of!(uint_serde, Uint, NonZeroUint, false);
 #[cfg(feature = "serde")]
 serde_of!(int_serde, Int, NonZeroInt, true);
 
+/// The results of the arithmetic of `Uint` on `$a` and `$b`, with the amount `$n`: the families,
+/// the math functions and the methods of `Uint` alone, as the functions above give them.
+macro_rules! uint_limits {
+  ($a:expr, $b:expr, $n:expr) => {{
+    let (a, b, n) = ($a, $b, $n);
+    let mut results = arithmetic_families(a, b, n);
+    results.extend(math(a, b, n));
+    results.extend(unsigned_methods(a, b));
+    results
+  }};
+}
+
+/// The results of the arithmetic of `Int` on `$a` and `$b`, with the amount `$n`: the families,
+/// the math functions and the methods of `Int` alone, as the functions above give them.
+macro_rules! int_limits {
+  ($a:expr, $b:expr, $n:expr) => {{
+    let (a, b, n) = ($a, $b, $n);
+    let mut results = arithmetic_families(a, b, n);
+    results.extend(math(a, b, n));
+    results.extend(signed_methods(a));
+    results
+  }};
+}
+
+/// Emits a function that checks `$integer` of `B` bits in the heap storage `P` of `[L; N]` against
+/// its twin in `[L; N]`, read in two's complement if `$signed`, through the arithmetic that
+/// `$results!` gives, at every pair of the [`pattern_ends`], the limits of both signs among them,
+/// with every amount of [`row_amounts`]: the operands at which a method returns `None`, saturates
+/// or wraps, whatever [`row_pairs`] takes. The function is `#[inline(never)]`, so that its frame
+/// holds the values of this storage alone.
+macro_rules! limits_agree {
+  ($name:ident, $integer:ident, $signed:literal, $results:ident) => {
+    #[inline(never)]
+    pub(super) fn $name<P, B, L, const N: usize>()
+    where
+      P: Heap<L, N>,
+      B: FitsBits<[L; N]> + FitsBits<P>,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr,
+      Uint<B, P>: ArrayInteger<Array = [L; N], Limb = L>,
+      Int<B, P>: ArrayInteger<Array = [L; N], Limb = L>,
+    {
+      let bits = B::U32;
+      let values: Vec<[L; N]> = pattern_ends(bits)
+        .iter()
+        .map(|pattern| bigint::limbs_of_pattern(pattern, $signed))
+        .collect();
+      let twin = |array| <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+      let heap = |array| <$integer<B, P> as ArrayInteger>::checked_from_limbs(array);
+      for &x in &values {
+        for &y in &values {
+          let (a, b) = (twin(x).expect("in range"), twin(y).expect("in range"));
+          let (c, d) = (heap(x).expect("in range"), heap(y).expect("in range"));
+          for n in row_amounts(bits) {
+            assert_eq!(
+              $results!(&c, &d, n),
+              $results!(&a, &b, n),
+              "{x:?} and {y:?} at {bits} bits with {n}"
+            );
+          }
+        }
+      }
+    }
+  };
+}
+
+limits_agree!(uint_limits_agree, Uint, false, uint_limits);
+limits_agree!(int_limits_agree, Int, true, int_limits);
+
+/// The windows of limbs at which the folds of `bits` bits are checked, read in two's complement if
+/// `signed`: no item, and every window of one, two and three of the [`pattern_ends`], the limits
+/// among them; or under Miri every fifth of those, with every window of at most one item.
+pub(super) fn fold_windows<L: bigint::Limb, const N: usize>(
+  bits: u32,
+  signed: bool,
+) -> Vec<Vec<[L; N]>> {
+  let values: Vec<[L; N]> = pattern_ends(bits)
+    .iter()
+    .map(|pattern| bigint::limbs_of_pattern(pattern, signed))
+    .collect();
+  let mut windows = vec![Vec::new()];
+  // The windows of the length before, from which those of the next length grow.
+  let mut start = 0;
+  for _ in 0..3 {
+    let end = windows.len();
+    for k in start..end {
+      for &value in &values {
+        let mut window = windows[k].clone();
+        window.push(value);
+        windows.push(window);
+      }
+    }
+    start = end;
+  }
+  bigint::thin_by(windows, 5, |window| window.len() < 2)
+}
+
+/// What a fold gives: the limbs of its result, or the message of its panic.
+pub(super) fn fold_outcome<T: ArrayInteger>(fold: impl FnOnce() -> T) -> Result<T::Array, String> {
+  let mut result = None;
+  match panic_of(|| result = Some(fold())) {
+    Some((message, _, _)) => Err(message),
+    None => Ok(limbs(result.expect("a result"))),
+  }
+}
+
+/// What `Sum` over `items` gives, of values and of references, as [`fold_outcome`] gives it.
+#[inline(never)]
+pub(super) fn window_sums<T>(items: &[T]) -> String
+where
+  T: Clone + Sum + for<'x> Sum<&'x T> + ArrayInteger<Array: Debug>,
+{
+  format!(
+    "{:?}",
+    [
+      fold_outcome(|| items.iter().cloned().sum::<T>()),
+      fold_outcome(|| items.iter().sum::<T>()),
+    ]
+  )
+}
+
+/// What `Product` over `items` gives, of values and of references, as [`fold_outcome`] gives it.
+#[inline(never)]
+pub(super) fn window_products<T>(items: &[T]) -> String
+where
+  T: Clone + Product + for<'x> Product<&'x T> + ArrayInteger<Array: Debug>,
+{
+  format!(
+    "{:?}",
+    [
+      fold_outcome(|| items.iter().cloned().product::<T>()),
+      fold_outcome(|| items.iter().product::<T>()),
+    ]
+  )
+}
+
+/// What a fold of `items` must give, of values and of references alike, from the overflowing
+/// method `step` of each of its steps, on `start`, what no item gives: the total, or, where a step
+/// overflows, the panic `message` of the native operator if the build `checks` for overflow, and
+/// the wrapped total if it does not.
+pub(super) fn expected_fold<T>(
+  items: &[T],
+  start: T,
+  step: impl Fn(&T, &T) -> (T, bool),
+  message: &str,
+  checks: bool,
+) -> String
+where
+  T: ArrayInteger<Array: Debug>,
+{
+  let mut overflow = false;
+  let total = items.iter().fold(start, |total, item| {
+    let (total, flag) = step(&total, item);
+    overflow |= flag;
+    total
+  });
+  let outcome: Result<T::Array, String> = if overflow && checks {
+    Err(message.to_string())
+  } else {
+    Ok(limbs(total))
+  };
+  format!("{:?}", [&outcome, &outcome])
+}
+
+/// Emits two functions that check the folds of `$integer` of `B` bits in the heap storage `P` of
+/// `[L; N]` and of its twin in `[L; N]`, read in two's complement if `$signed`, of values and of
+/// references, at the windows of [`fold_windows`]: `$sums` checks `Sum`, and `$products` checks
+/// `Product`, at a width of two bits or more, which `Int` needs for one. Each fold gives what
+/// [`expected_fold`] gives from the overflowing addition or multiplication of the twin. Each
+/// function is `#[inline(never)]`, so that its frame holds the values of this storage alone.
+macro_rules! folds_agree {
+  ($sums:ident, $products:ident, $integer:ident, $signed:literal) => {
+    #[inline(never)]
+    pub(super) fn $sums<P, B, L, const N: usize>()
+    where
+      P: Heap<L, N>,
+      B: FitsBits<[L; N]> + FitsBits<P>,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr,
+      Uint<B, P>: ArrayInteger<Array = [L; N], Limb = L>,
+      Int<B, P>: ArrayInteger<Array = [L; N], Limb = L>,
+    {
+      let checks = overflow_checks();
+      let twin = |array| <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+      let heap = |array| <$integer<B, P> as ArrayInteger>::checked_from_limbs(array);
+      for window in fold_windows::<L, N>(B::U32, $signed) {
+        let twins: Vec<_> = window.iter().map(|&x| twin(x).expect("in range")).collect();
+        let heaps: Vec<_> = window.iter().map(|&x| heap(x).expect("in range")).collect();
+        let expected = expected_fold(
+          &twins,
+          FixedInteger::zero(),
+          |total, item| total.overflowing_add(item),
+          "attempt to add with overflow",
+          checks,
+        );
+        assert_eq!(
+          (window_sums(&heaps), window_sums(&twins)),
+          (expected.clone(), expected),
+          "the sum of {window:?}"
+        );
+      }
+    }
+
+    #[inline(never)]
+    pub(super) fn $products<P, B, L, const N: usize>()
+    where
+      P: Heap<L, N>,
+      B: FitsBits<[L; N]> + FitsBits<P> + NonZero + IsGreater<U1, Output = True>,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr,
+      Uint<B, P>: ArrayInteger<Array = [L; N], Limb = L>,
+      Int<B, P>: ArrayInteger<Array = [L; N], Limb = L>,
+    {
+      let checks = overflow_checks();
+      let twin = |array| <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+      let heap = |array| <$integer<B, P> as ArrayInteger>::checked_from_limbs(array);
+      for window in fold_windows::<L, N>(B::U32, $signed) {
+        let twins: Vec<_> = window.iter().map(|&x| twin(x).expect("in range")).collect();
+        let heaps: Vec<_> = window.iter().map(|&x| heap(x).expect("in range")).collect();
+        let expected = expected_fold(
+          &twins,
+          IntegerOne::one(),
+          |total, item| total.overflowing_mul(item),
+          "attempt to multiply with overflow",
+          checks,
+        );
+        assert_eq!(
+          (window_products(&heaps), window_products(&twins)),
+          (expected.clone(), expected),
+          "the product of {window:?}"
+        );
+      }
+    }
+  };
+}
+
+folds_agree!(uint_sums_agree, uint_products_agree, Uint, false);
+folds_agree!(int_sums_agree, int_products_agree, Int, true);
+
+/// The byte order of `a` through `IntegerByteOrder`, as the limbs of the integers that it returns.
+#[inline(never)]
+pub(super) fn byte_order<T>(a: &T) -> String
+where
+  T: IntegerByteOrder + Clone + ArrayInteger<Array: Debug>,
+{
+  format!(
+    "{:?}",
+    [
+      limbs(a.swap_bytes()),
+      limbs(a.to_be()),
+      limbs(a.to_le()),
+      limbs(T::from_be(a.clone())),
+      limbs(T::from_le(a.clone())),
+    ]
+  )
+}
+
+/// Checks the byte order of `Uint` and `Int` of `B` bits, a width of whole bytes, in the heap
+/// storage `P` of `[L; N]` against that of their twins in `[L; N]`, at the patterns of
+/// [`row_patterns`] in `K` words, and that `from_be` and `from_le` store their result in the
+/// allocation of the integer that they take, whichever of them swaps the bytes on the target, or
+/// for a shared pointer give it an allocation of its own while the other owner keeps its value.
+/// The function is `#[inline(never)]`, so that its frame holds the values of this storage alone.
+#[inline(never)]
+pub(super) fn byte_order_agrees<P, B, L, const N: usize, const K: usize>()
+where
+  P: Heap<L, N>,
+  B: FitsBits<[L; N]> + FitsBits<P> + WholeBytes,
+  L: ArrayLimb + bigint::Limb + Debug,
+  [L; N]: ArrayRepr,
+  Uint<B, P>: ArrayInteger<Array = [L; N], Limb = L>,
+  Int<B, P>: ArrayInteger<Array = [L; N], Limb = L>,
+{
+  for signed in [false, true] {
+    for pattern in row_patterns::<K>(B::U32, signed) {
+      let array: [L; N] = bigint::limbs_of_pattern(&pattern, signed);
+      if signed {
+        let twin = <Int<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+        let heap = <Int<B, P> as ArrayInteger>::checked_from_limbs(array);
+        let (twin, heap) = (twin.expect("in range"), heap.expect("in range"));
+        assert_eq!(byte_order(&heap), byte_order(&twin), "{array:?}");
+        let (before, other) = (place(&heap), (!P::IN_PLACE).then(|| heap.clone()));
+        let stored = IntegerByteOrder::from_le(IntegerByteOrder::from_be(heap));
+        stored_by_value(&stored, before, other, &array, &format!("{array:?}"));
+      } else {
+        let twin = <Uint<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+        let heap = <Uint<B, P> as ArrayInteger>::checked_from_limbs(array);
+        let (twin, heap) = (twin.expect("in range"), heap.expect("in range"));
+        assert_eq!(byte_order(&heap), byte_order(&twin), "{array:?}");
+        let (before, other) = (place(&heap), (!P::IN_PLACE).then(|| heap.clone()));
+        let stored = IntegerByteOrder::from_le(IntegerByteOrder::from_be(heap));
+        stored_by_value(&stored, before, other, &array, &format!("{array:?}"));
+      }
+    }
+  }
+}
+
+/// Emits a function that checks `$nonzero` of `B` bits in the heap storage `P` of `[L; N]` against
+/// its twin in `[L; N]`, read in two's complement if `$signed`, as [`limits_agree!`] checks the
+/// integers: through its traits, `$sign` giving the methods of its sign, at every pair of the
+/// [`pattern_ends`] that are not zero, the limits among them, with every amount of
+/// [`row_amounts`]. The function is `#[inline(never)]`, so that its frame holds the values of this
+/// storage alone.
+macro_rules! nonzero_limits_agree {
+  ($name:ident, $nonzero:ident, $integer:ident, $signed:literal, $sign:ident) => {
+    #[inline(never)]
+    pub(super) fn $name<P, B, L, const N: usize>()
+    where
+      P: Heap<L, N>,
+      B: FitsBits<[L; N]> + FitsBits<P> + NonZero,
+      L: ArrayLimb + bigint::Limb + Debug,
+      [L; N]: ArrayRepr
+        + NonZeroUintRepr<Integer = [L; N], Signed = [L; N]>
+        + NonZeroIntRepr<Integer = [L; N], Unsigned = [L; N]>,
+      Uint<B, P>: ArrayInteger<Array = [L; N], Limb = L>,
+      Int<B, P>: ArrayInteger<Array = [L; N], Limb = L>,
+    {
+      let bits = B::U32;
+      let values: Vec<[L; N]> = pattern_ends(bits)
+        .iter()
+        .map(|pattern| bigint::limbs_of_pattern(pattern, $signed))
+        .collect();
+      let twin = |array| <$integer<B, [L; N]> as ArrayInteger>::checked_from_limbs(array);
+      let heap = |array| <$integer<B, P> as ArrayInteger>::checked_from_limbs(array);
+      let nonzero = |array| twin(array).and_then(<$nonzero<B, [L; N]> as FixedNonZero>::new);
+      let heap_nonzero = |array| heap(array).and_then(<$nonzero<B, P> as FixedNonZero>::new);
+      for &x in &values {
+        for &y in &values {
+          let (Some(a), Some(b)) = (nonzero(x), nonzero(y)) else {
+            continue;
+          };
+          let (c, d) = (
+            heap_nonzero(x).expect("not zero"),
+            heap_nonzero(y).expect("not zero"),
+          );
+          for n in row_amounts(bits) {
+            let mut results = nonzero_methods(&c, &d, n);
+            results.extend($sign!(&c, &d));
+            let mut twin_results = nonzero_methods(&a, &b, n);
+            twin_results.extend($sign!(&a, &b));
+            assert_eq!(
+              results, twin_results,
+              "{x:?} and {y:?} at {bits} bits with {n}"
+            );
+          }
+        }
+      }
+    }
+  };
+}
+
+nonzero_limits_agree!(
+  nonzero_uint_limits_agree,
+  NonZeroUint,
+  Uint,
+  false,
+  unsigned_nonzero
+);
+nonzero_limits_agree!(
+  nonzero_int_limits_agree,
+  NonZeroInt,
+  Int,
+  true,
+  signed_nonzero
+);
+
+/// What the parsers of the non-zero integer `T` give for `text`, `FromStr` and `from_str_radix` in
+/// hexadecimal, as the limbs of the integers.
+pub(super) fn nonzero_reads<T>(text: &str) -> String
+where
+  T: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
+{
+  let value = |x: T| limbs(x.get());
+  format!(
+    "{:?}",
+    (
+      text.parse::<T>().map(value),
+      T::from_str_radix(text, 16).map(value),
+    )
+  )
+}
+
+/// Checks that the parsers of the non-zero integer `T`, over a heap storage, give what those of
+/// `U`, its twin over the array, give, at the spellings of zero, at texts that are no number, and
+/// at numbers inside and outside the width.
+#[inline(never)]
+pub(super) fn nonzero_reads_agree<T, U>()
+where
+  T: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
+  U: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
+{
+  for text in [
+    "0", "+0", "00", "-0", "", "-", "x", "1", "-1", "7f", "-80", "10000", "-fffff",
+  ] {
+    assert_eq!(nonzero_reads::<T>(text), nonzero_reads::<U>(text), "{text}");
+  }
+}
+
+/// Asserts that `result`, what a method that took an integer at `before` by value returned, is in
+/// that allocation where the pointer holds its value in place, and otherwise in a new one, while
+/// `other`, a second owner of the integer that it took, keeps its value `old` and the allocation at
+/// `before`.
+pub(super) fn stored_by_value<T>(
+  result: &T,
+  before: *const T::Array,
+  other: Option<T>,
+  old: &T::Array,
+  what: &str,
+) where
+  T: ArrayInteger<Array: Debug + PartialEq>,
+{
+  match other {
+    None => assert_eq!(place(result), before, "{what} keeps the allocation"),
+    Some(other) => {
+      assert_ne!(place(result), before, "{what} makes a new allocation");
+      let kept = (place(&other), other.as_limbs());
+      assert_eq!(kept, (before, old), "{what} leaves the other owner");
+    }
+  }
+}
+
+/// Checks that the methods of `Uint`, `Int` and `NonZeroInt` in the heap storages `P4`, `P1` and
+/// `P0` of four, one and no 64-bit limbs that panic at the limits panic as those of their inline
+/// twins do, with the messages of the native integers, and report the line of the caller, at 256
+/// and 200 bits in four limbs, at one signed bit and at zero bits.
+#[inline(never)]
+pub(super) fn methods_panic_at_the_limits<P4, P1, P0>()
+where
+  P4: Heap<u64, 4>,
+  P1: Heap<u64, 1>,
+  P0: Heap<u64, 0>,
+  U256: FitsBits<P4>,
+  U200: FitsBits<P4>,
+  U1: FitsBits<P1>,
+  U0: FitsBits<P0>,
+{
+  type U<P> = Uint<U256, P>;
+  type I<P> = Int<U200, P>;
+  let add = "attempt to add with overflow".to_string();
+  let sub = "attempt to subtract with overflow".to_string();
+  let mul = "attempt to multiply with overflow".to_string();
+  let neg = "attempt to negate with overflow".to_string();
+  let power = "attempt to exponentiate with overflow".to_string();
+  let shl = "attempt to shift left with overflow".to_string();
+  let shr = "attempt to shift right with overflow".to_string();
+  let div = "attempt to divide with overflow".to_string();
+  let rem = "attempt to calculate the remainder with overflow".to_string();
+  let by_zero = "attempt to divide by zero".to_string();
+  let rem_by_zero = "attempt to calculate the remainder with a divisor of zero".to_string();
+  // The message of the native `pow` that overflows, which only a build with checks has.
+  let pow = panic_of(|| black_box(u8::MAX).pow(2)).map_or_else(String::new, |panic| panic.0);
+
+  let (m, o, z) = (
+    U::<P4>::max_value(),
+    U::<P4>::from(1u64),
+    U::<P4>::from(0u64),
+  );
+  let two = U::<P4>::from(2u64);
+  panics_here!(m.strict_add(&o), add);
+  panics_here!(z.strict_sub(&o), sub);
+  panics_here!(m.strict_mul(&two), mul);
+  panics_here!(o.strict_neg(), neg);
+  panics_here!(m.strict_pow(2), power);
+  panics_here!(m.strict_shl(256), shl);
+  panics_here!(m.strict_shr(256), shr);
+  panics_here!(m.strict_div(&z), by_zero);
+  panics_here!(m.strict_rem(&z), rem_by_zero);
+  panics_here!(m.strict_div_euclid(&z), by_zero);
+  panics_here!(m.strict_rem_euclid(&z), rem_by_zero);
+  panics_here!(m.saturating_div(&z), by_zero);
+  panics_here!(m.div_exact(&z), rem_by_zero);
+  overflows_here!(m.pow(2), pow, o.clone(), in core);
+  overflows_here!(&m + &o, add, z.clone());
+  overflows_here!(&z - &o, sub, m.clone());
+  overflows_here!(&m * &two, mul, m.clone() - &o);
+  panics_here!(&m / &z, by_zero);
+  panics_here!(&m % &z, rem_by_zero);
+
+  let (min, max) = (I::<P4>::min_value(), I::<P4>::max_value());
+  let (zero, one, minus_one) = (
+    I::<P4>::from(0i64),
+    I::<P4>::from(1i64),
+    I::<P4>::from(-1i64),
+  );
+  panics_here!(max.strict_add(&one), add);
+  panics_here!(min.strict_sub(&one), sub);
+  panics_here!(min.strict_mul(&minus_one), mul);
+  panics_here!(min.strict_neg(), neg);
+  panics_here!(min.strict_abs(), neg);
+  panics_here!(min.strict_pow(2), power);
+  panics_here!(min.strict_shl(200), shl);
+  panics_here!(min.strict_shr(200), shr);
+  panics_here!(min.strict_div(&minus_one), div);
+  panics_here!(min.strict_rem(&minus_one), rem);
+  panics_here!(min.strict_div_euclid(&minus_one), div);
+  panics_here!(min.strict_rem_euclid(&minus_one), rem);
+  panics_here!(min.div_exact(&minus_one), rem);
+  panics_here!(min.strict_div(&zero), by_zero);
+  panics_here!(min.strict_rem_euclid(&zero), rem_by_zero);
+  panics_here!(min.saturating_div(&zero), by_zero);
+  panics_here!(min.div_exact(&zero), rem_by_zero);
+  assert_eq!(min.saturating_div(&minus_one), max);
+  overflows_here!(min.abs(), neg, min.clone());
+  overflows_here!(min.pow(2), pow, zero.clone(), in core);
+  overflows_here!(-&min, neg, min.clone());
+  overflows_here!(&max + &one, add, min.clone());
+  overflows_here!(&min - &one, sub, max.clone());
+  overflows_here!(&min * &minus_one, mul, min.clone());
+  panics_here!(&min / &minus_one, div);
+  panics_here!(&min % &minus_one, rem);
+  panics_here!(&min / &zero, by_zero);
+  panics_here!(&min % &zero, rem_by_zero);
+  let nonzero = NonZeroInt::<U200, P4>::new(min.clone()).expect("not zero");
+  overflows_here!(nonzero.abs(), neg, nonzero.clone());
+  overflows_here!(-&nonzero, neg, nonzero.clone());
+  overflows_here!(-nonzero.clone(), neg, nonzero.clone());
+
+  // One bit holds only -1 and 0, so -1 is `MIN`, and its square and its quotient by itself, both
+  // one, overflow.
+  type Bit<P> = Int<U1, P>;
+  let bit = Bit::<P1>::min_value();
+  panics_here!(bit.strict_add(&bit), add);
+  panics_here!(bit.strict_mul(&bit), mul);
+  panics_here!(bit.strict_neg(), neg);
+  panics_here!(bit.strict_abs(), neg);
+  panics_here!(bit.strict_pow(2), power);
+  panics_here!(bit.strict_div(&bit), div);
+  panics_here!(bit.div_exact(&bit), rem);
+  overflows_here!(bit.abs(), neg, bit.clone());
+  overflows_here!(-&bit, neg, bit.clone());
+  overflows_here!(&bit + &bit, add, Bit::<P1>::zero());
+  overflows_here!(&bit * &bit, mul, bit.clone());
+  let nonzero = NonZeroInt::<U1, P1>::new(bit.clone()).expect("not zero");
+  overflows_here!(nonzero.abs(), neg, nonzero.clone());
+  overflows_here!(-&nonzero, neg, nonzero.clone());
+
+  // Zero bits hold only zero.
+  type Empty<P> = Uint<U0, P>;
+  let (none, nothing) = (Empty::<P0>::zero(), Empty::<P0>::zero());
+  panics_here!(none.strict_pow(0), power);
+  panics_here!(none.strict_shl(0), shl);
+  panics_here!(none.strict_shr(0), shr);
+  panics_here!(none.strict_div(&nothing), by_zero);
+  panics_here!(none.div_exact(&nothing), rem_by_zero);
+  panics_here!(&none / &nothing, by_zero);
+  overflows_here!(none.pow(0), pow, nothing.clone(), in core);
+}
+
+/// Asserts that the checked cast and `try_cast` of each of `$sources` into `$nonzero` of `$width`
+/// in the heap storage `$pointer` of `$array`, and into its twin in the array, give the same
+/// limbs.
+macro_rules! casts_agree {
+  ($pointer:ident; $nonzero:ident<$width:ty, $array:ty>: $($source:expr),+ $(,)?) => {{
+    type Heap = $nonzero<$width, $pointer<$array>>;
+    type Twin = $nonzero<$width, $array>;
+    $(
+      assert_eq!(
+        Heap::checked_cast_from($source).map(|x| limbs(x.get())),
+        Twin::checked_cast_from($source).map(|x| limbs(x.get())),
+        "{} into {}",
+        stringify!($source),
+        stringify!($nonzero<$width, $array>)
+      );
+      assert_eq!(
+        try_cast::<_, Heap>($source).map(|x| limbs(x.get())),
+        try_cast::<_, Twin>($source).map(|x| limbs(x.get())),
+        "{} into {}",
+        stringify!($source),
+        stringify!($nonzero<$width, $array>)
+      );
+    )+
+  }};
+}
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(super) use casts_agree;
+
+/// Checks that the constructors of the non-zero integers in the heap storage `$pointer` that take
+/// a value which may be zero reject zero as those of their inline twins do, and build every other
+/// value of the width: the parsers, with the error of the kind `Zero` after every error of the
+/// integer; the checked cast, which returns `None`, and `try_cast`, with the error of the kind
+/// `Zero`, from native integers, from an inline integer and from a borrowed heap integer; and the
+/// strict cast, through [`strict_casts_reject_zero`]. In both signs, at one bit, and at zero bits,
+/// which hold no value that is not zero.
+macro_rules! nonzero_constructors_reject_zero {
+  ($pointer:ident) => {{
+  nonzero_reads_agree::<NonZeroUint<U65, $pointer<[u64; 2]>>, NonZeroUint<U65, [u64; 2]>>();
+  nonzero_reads_agree::<NonZeroInt<U65, $pointer<[u64; 2]>>, NonZeroInt<U65, [u64; 2]>>();
+  nonzero_reads_agree::<NonZeroUint<U20, $pointer<[u8; 3]>>, NonZeroUint<U20, [u8; 3]>>();
+  nonzero_reads_agree::<NonZeroInt<U20, $pointer<[u8; 3]>>, NonZeroInt<U20, [u8; 3]>>();
+  nonzero_reads_agree::<NonZeroUint<U1, $pointer<[u64; 1]>>, NonZeroUint<U1, [u64; 1]>>();
+  nonzero_reads_agree::<NonZeroInt<U1, $pointer<[u64; 1]>>, NonZeroInt<U1, [u64; 1]>>();
+  nonzero_reads_agree::<NonZeroUint<U0, $pointer<[u64; 0]>>, NonZeroUint<U0, [u64; 0]>>();
+  nonzero_reads_agree::<NonZeroInt<U0, $pointer<[u64; 0]>>, NonZeroInt<U0, [u64; 0]>>();
+  type Nz = NonZeroUint<U65, $pointer<[u64; 2]>>;
+  let read = |text: &str| text.parse::<Nz>().map(|x| limbs(x.get()));
+  assert_eq!(read("0"), Err(parse_errors::ZERO));
+  assert_eq!(read("36893488147419103231"), Ok([u64::MAX, 1]));
+
+  let (inline, heap) = (u256::ZERO, Uint::<U256, $pointer<[u64; 4]>>::zero());
+  let negative = Int::<U200, $pointer<[u64; 4]>>::from(-7i64);
+  casts_agree!($pointer; NonZeroUint<U256, [u64; 4]>: 0u8, 7u64, u128::MAX, -1i8, inline, &heap, &negative);
+  casts_agree!($pointer; NonZeroInt<U200, [u64; 4]>: 0i64, -7i64, i128::MIN, u128::MAX, &heap, &negative);
+  casts_agree!($pointer; NonZeroUint<U65, [u64; 2]>: 0u64, u64::MAX, u128::MAX, i128::MIN, &heap, &negative);
+  casts_agree!($pointer; NonZeroInt<U20, [u8; 3]>: 0u8, -1i8, 1u32 << 19, -(1i32 << 19), inline, &negative);
+  casts_agree!($pointer; NonZeroInt<U1, [u64; 1]>: 0i8, -1i8, 1i8, -2i8, &heap);
+  casts_agree!($pointer; NonZeroUint<U0, [u64; 0]>: 0u8, 1u8, &heap);
+  type Wide = NonZeroUint<U256, $pointer<[u64; 4]>>;
+  type Signed = NonZeroInt<U200, $pointer<[u64; 4]>>;
+  assert_eq!(Wide::checked_cast_from(0u8).map(|x| limbs(x.get())), None);
+  assert_eq!(
+    Wide::checked_cast_from(7u8).map(|x| limbs(x.get())),
+    Some([7, 0, 0, 0])
+  );
+  assert_eq!(
+    Signed::checked_cast_from(&negative).map(|x| limbs(x.get())),
+    Some(negative.to_limbs())
+  );
+    strict_casts_reject_zero::<$pointer<[u64; 4]>>();
+  }};
+}
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(super) use nonzero_constructors_reject_zero;
+
+/// Checks that the strict casts into the non-zero integers of 256 and 200 bits in the heap storage
+/// `P` of four 64-bit limbs panic on zero in every build and report the caller, and build every
+/// other value.
+#[inline(never)]
+pub(super) fn strict_casts_reject_zero<P>()
+where
+  P: Heap<u64, 4>,
+  U256: FitsBits<P>,
+  U200: FitsBits<P>,
+  Uint<U256, P>: ArrayInteger<Array = [u64; 4], Limb = u64>,
+{
+  type Wide<P> = NonZeroUint<U256, P>;
+  type Signed<P> = NonZeroInt<U200, P>;
+  let heap = <Uint<U256, P> as FixedInteger>::zero();
+  let zero = "number would be zero for non-zero type".to_string();
+  panics_here!(Wide::<P>::strict_cast_from(0u64), zero);
+  panics_here!(Wide::<P>::strict_cast_from(&heap), zero);
+  panics_here!(Signed::<P>::strict_cast_from(0i8), zero);
+  assert_eq!(limbs(Wide::<P>::strict_cast_from(7u8).get()), [7, 0, 0, 0]);
+}
+
 /// Asserts that `$expr`, an operation on owners of the values `$owner`, leaves each owner its value
 /// and its allocation, and gives its result, an integer, an allocation of its own.
 macro_rules! apart {
@@ -1920,8 +2565,10 @@ macro_rules! shared_tests {
 
     /// A clone shares the allocation of its source, and so do the non-zero `new` and `get`; every
     /// operation that returns an integer, the operators with owned operands, `set_bit`, the casts
-    /// between the signs and `Sum` among them, leaves every other owner of an operand its value and
-    /// its allocation, and gives its result an allocation of its own.
+    /// between the signs, the saturating ones also where they saturate, `carrying_add`,
+    /// `borrowing_sub`, the byte order of `from_be` and `from_le`, and `Sum` and `Product` of values
+    /// and of references among them, leaves every other owner of an operand its value and its
+    /// allocation, and gives its result an allocation of its own.
     #[test]
     fn shared_values_are_never_written() {
       type U = Uint<U256, $pointer<[u64; 4]>>;
@@ -1960,6 +2607,15 @@ macro_rules! shared_tests {
       apart!([&a, &b].into_iter().sum::<U>(); a, b);
       apart!([a.clone(), b.clone()].into_iter().product::<U>(); a, b);
       apart!(a.clone().wrapping_add(&b); a, b);
+      apart!(a.carrying_add(&b, true).0; a, b);
+      apart!(a.borrowing_sub(&b, true).0; a, b);
+      apart!([&a, &b].into_iter().product::<U>(); a, b);
+      let m = U::max_value();
+      apart!(a.clone().saturating_cast_signed(); a);
+      apart!(m.clone().saturating_cast_signed(); m);
+      apart!(i.clone().saturating_cast_unsigned(); i);
+      // One of `from_be` and `from_le` swaps the bytes on every target.
+      apart!(U::from_le(U::from_be(a.clone())); a);
       apart!(
         {
           let mut target = a.clone();
@@ -2084,6 +2740,106 @@ macro_rules! shared_tests {
       assert_eq!(size_of::<Option<Nz>>(), size_of::<usize>());
     }
 
+    /// At the limits, the arithmetic of `Uint` and `Int` in the pointer gives what it gives on the
+    /// inline twin, as for `Box`: at every pair of zero, one, the top bit alone, every bit but the
+    /// top one and every bit, with every amount of [`row_amounts`], at zero bits and one bit and,
+    /// but under Miri, at 65 bits in two 64-bit limbs, 20 in three bytes and 256 in four 64-bit
+    /// limbs.
+    #[test]
+    fn integers_agree_at_the_limits() {
+      uint_limits_agree::<$pointer<[u64; 0]>, U0, u64, 0>();
+      int_limits_agree::<$pointer<[u64; 0]>, U0, u64, 0>();
+      uint_limits_agree::<$pointer<[u64; 1]>, U1, u64, 1>();
+      int_limits_agree::<$pointer<[u64; 1]>, U1, u64, 1>();
+      if tier().is_miri() {
+        return;
+      }
+      uint_limits_agree::<$pointer<[u64; 2]>, U65, u64, 2>();
+      int_limits_agree::<$pointer<[u64; 2]>, U65, u64, 2>();
+      uint_limits_agree::<$pointer<[u8; 3]>, U20, u8, 3>();
+      int_limits_agree::<$pointer<[u8; 3]>, U20, u8, 3>();
+      uint_limits_agree::<$pointer<[u64; 4]>, U256, u64, 4>();
+      int_limits_agree::<$pointer<[u64; 4]>, U256, u64, 4>();
+    }
+
+    /// `Sum` and `Product` in the pointer, of values and of references, give what the folds of
+    /// the inline twins and the overflowing steps give, as for `Box`: the sums at zero bits, at
+    /// one bit and at 65 bits and the products at 65 bits, and, but under Miri, both at 2 bits in
+    /// one byte, at 20 in three bytes and at 256 in four 64-bit limbs.
+    #[test]
+    fn folds_agree_with_inline_folds() {
+      uint_sums_agree::<$pointer<[u64; 0]>, U0, u64, 0>();
+      int_sums_agree::<$pointer<[u64; 0]>, U0, u64, 0>();
+      uint_sums_agree::<$pointer<[u64; 1]>, U1, u64, 1>();
+      int_sums_agree::<$pointer<[u64; 1]>, U1, u64, 1>();
+      uint_sums_agree::<$pointer<[u64; 2]>, U65, u64, 2>();
+      int_sums_agree::<$pointer<[u64; 2]>, U65, u64, 2>();
+      uint_products_agree::<$pointer<[u64; 2]>, U65, u64, 2>();
+      int_products_agree::<$pointer<[u64; 2]>, U65, u64, 2>();
+      if tier().is_miri() {
+        return;
+      }
+      uint_products_agree::<$pointer<[u8; 1]>, U2, u8, 1>();
+      int_products_agree::<$pointer<[u8; 1]>, U2, u8, 1>();
+      uint_sums_agree::<$pointer<[u8; 3]>, U20, u8, 3>();
+      int_sums_agree::<$pointer<[u8; 3]>, U20, u8, 3>();
+      uint_products_agree::<$pointer<[u8; 3]>, U20, u8, 3>();
+      int_products_agree::<$pointer<[u8; 3]>, U20, u8, 3>();
+      uint_sums_agree::<$pointer<[u64; 4]>, U256, u64, 4>();
+      int_sums_agree::<$pointer<[u64; 4]>, U256, u64, 4>();
+      uint_products_agree::<$pointer<[u64; 4]>, U256, u64, 4>();
+      int_products_agree::<$pointer<[u64; 4]>, U256, u64, 4>();
+    }
+
+    /// The byte order of an integer in the pointer is that of its inline twin, and `from_be` and
+    /// `from_le` give the integer that they take a new allocation where they swap its bytes, while
+    /// the other owner keeps its value: at zero bits and at 24 bits in two 16-bit limbs and, but
+    /// under Miri, at 64 bits in one 64-bit limb, 200 in four and 256 in two 128-bit limbs.
+    #[test]
+    fn byte_order_is_that_of_inline_integers() {
+      byte_order_agrees::<$pointer<[u64; 0]>, U0, u64, 0, 1>();
+      byte_order_agrees::<$pointer<[u16; 2]>, U24, u16, 2, 1>();
+      if tier().is_miri() {
+        return;
+      }
+      byte_order_agrees::<$pointer<[u64; 1]>, U64, u64, 1, 1>();
+      byte_order_agrees::<$pointer<[u64; 4]>, U200, u64, 4, 4>();
+      byte_order_agrees::<$pointer<[u128; 2]>, U256, u128, 2, 4>();
+    }
+
+    /// The methods of an integer in the pointer that panic at the limits panic as those of its
+    /// inline twin, with the messages of the native integers and the line of the caller, as for
+    /// `Box`, at 256 and 200 bits, at one signed bit and at zero bits.
+    #[test]
+    fn methods_panic_at_the_limits() {
+      super::methods_panic_at_the_limits::<$pointer<[u64; 4]>, $pointer<[u64; 1]>, $pointer<[u64; 0]>>();
+    }
+
+    /// At the limits, the non-zero integers over the pointer give what their twins over the
+    /// array give, as for `Box`: at one bit and, but under Miri, at 65 bits in two 64-bit limbs,
+    /// 20 in three bytes and 256 in four 64-bit limbs.
+    #[test]
+    fn nonzero_integers_agree_at_the_limits() {
+      nonzero_uint_limits_agree::<$pointer<[u64; 1]>, U1, u64, 1>();
+      nonzero_int_limits_agree::<$pointer<[u64; 1]>, U1, u64, 1>();
+      if tier().is_miri() {
+        return;
+      }
+      nonzero_uint_limits_agree::<$pointer<[u64; 2]>, U65, u64, 2>();
+      nonzero_int_limits_agree::<$pointer<[u64; 2]>, U65, u64, 2>();
+      nonzero_uint_limits_agree::<$pointer<[u8; 3]>, U20, u8, 3>();
+      nonzero_int_limits_agree::<$pointer<[u8; 3]>, U20, u8, 3>();
+      nonzero_uint_limits_agree::<$pointer<[u64; 4]>, U256, u64, 4>();
+      nonzero_int_limits_agree::<$pointer<[u64; 4]>, U256, u64, 4>();
+    }
+
+    /// The constructors of a non-zero integer over the pointer that take a value which may be
+    /// zero reject zero as those of its inline twin do, as for `Box`.
+    #[test]
+    fn nonzero_constructors_reject_zero() {
+      nonzero_constructors_reject_zero!($pointer);
+    }
+
     /// An integer in the pointer has the size and the alignment of a pointer, and so has its
     /// `Option`, which takes the niche of the pointer, in limbs of each type and in no limbs, and
     /// so have the non-zero integers.
@@ -2101,7 +2857,7 @@ macro_rules! shared_tests {
 
     /// An integer in the pointer writes in JSON and in postcard what its inline twin writes, and
     /// reads back from both, at 7, 64 and 200 bits and at zero bits, in both signs, and so do the
-    /// non-zero integers.
+    /// non-zero integers, which read zero as their twins do, with an error.
     #[cfg(feature = "serde")]
     #[test]
     fn integers_serde_as_inline_integers() {
@@ -2113,6 +2869,20 @@ macro_rules! shared_tests {
       int_serde::<$pointer<[u64; 1]>, U64, u64, 1, 1>();
       uint_serde::<$pointer<[u64; 4]>, U200, u64, 4, 4>();
       int_serde::<$pointer<[u64; 4]>, U200, u64, 4, 4>();
+
+      // Zero is no value of a non-zero integer, in a heap storage as in the array.
+      type Nz = NonZeroInt<U200, $pointer<[u64; 4]>>;
+      type Twin = NonZeroInt<U200, [u64; 4]>;
+      for json in ["0", "\"0\"", "\"-0\""] {
+        let heap = serde_json::from_str::<Nz>(json).map(|x| limbs(x.get()));
+        let twin = serde_json::from_str::<Twin>(json).map(|x| limbs(x.get()));
+        assert!(heap.is_err(), "{json}");
+        assert_eq!(
+          heap.map_err(|error| error.to_string()),
+          twin.map_err(|error| error.to_string()),
+          "{json}"
+        );
+      }
     }
   };
 }
