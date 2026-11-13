@@ -52,8 +52,8 @@ pub enum FromFloatError {
 impl fmt::Display for FromFloatError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str(match self {
-      Self::Nan => "NaN has no integer value",
-      Self::Infinite => "infinity has no integer value",
+      Self::Nan => "NaN cannot be converted to the target type",
+      Self::Infinite => "infinity cannot be converted to the target type",
       Self::PosOverflow => "number too large to fit in target type",
       Self::NegOverflow => "number too small to fit in target type",
       Self::Inexact => "the value is not an integer",
