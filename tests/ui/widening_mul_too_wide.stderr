@@ -1,0 +1,20 @@
+error[E0277]: `Uint` and `Int` have a default storage only for 0 to 65536 bits
+ --> tests/ui/widening_mul_too_wide.rs:8:31
+  |
+8 |   let _ = Uint::<U65536>::MAX.widening_mul(&Uint::<U1>::MAX);
+  |                               ^^^^^^^^^^^^ `Bits` is greater than 65536
+  |
+  = help: the trait `numo::width::sealed::DefaultArray<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B1>>` is not implemented for `B0`
+  = note: a wider integer names its storage, as in `Uint<U100000, [u64; 2048]>`
+help: the trait `numo::width::sealed::DefaultArray<B>` is implemented for `B1`
+ --> src/width/mod.rs
+  |
+  | / impl<B> DefaultArray<B> for B1
+  | | where
+  | |   u64: LimbArray<B>,
+  | |   Limbs<B>: InlineUintRepr
+  | |     + InlineIntRepr
+  | |     + IntRepr<Unsigned = Limbs<B>, NonZero = Limbs<B>>
+  | |     + UintRepr<Signed = Limbs<B>, NonZero = Limbs<B>>,
+  | |______________________________________________________^
+  = note: required for `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B1>` to implement `numo::width::sealed::DefaultRepr<B0>`
