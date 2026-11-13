@@ -19,6 +19,10 @@
 //! nothing for `None`, the iterator of the digits, least significant first, allocates nothing, and
 //! a form that returns a `Vec` or a `String` allocates it once, with a capacity that it does not
 //! outgrow, and not at all where it is empty.
+//!
+//! The decimals over a heap storage are counted last, by the same rules but one, which their docs
+//! give: a decimal stores the value that it computed, so in a shared storage a result that equals
+//! an operand is a new allocation, and not a share of the operand.
 
 #![cfg(any(
   feature = "std",
@@ -1309,3 +1313,413 @@ shared_storage!(rc, Rc);
 shared_storage!(arc, Arc);
 #[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
 shared_storage!(triomphe_arc, TriompheArc);
+
+/// The checks that the decimals over every heap storage share, at 256 bits: the operations whose
+/// counts do not depend on the pointer.
+///
+/// A decimal over a heap storage computes in its inline twin, the decimal over `Int<U256, [u64;
+/// 4]>`, and builds its storage once, for the value that it returns, after every check: nothing
+/// for `None` or an error, and nothing before a panic. Here the decimals differ from the integers
+/// above: a decimal stores the twin that it computed and does not compare it with the value that
+/// it had, so in a shared storage too a result that equals an operand is a new allocation, and
+/// never a share of the operand.
+macro_rules! heap_decimal {
+  ($pointer:ident) => {
+    use std::{
+      fmt::{self, Write as _},
+      hash::{DefaultHasher, Hash, Hasher},
+      num::NonZero,
+    };
+
+    use numo::{
+      Decimal, DecimalFloat, DecimalOne, FixedDecimal, RoundingMode, Scaled, SignedFixedDecimal,
+      typenum::{U8, U10, U18, U58, U60, U320},
+    };
+
+    /// A signed decimal of 58 integral and 18 fraction digits over a heap storage of 256 bits.
+    type Heap = Decimal<U58, U18, Int<U256, $pointer<[u64; 4]>>>;
+
+    /// A decimal of two integral digits more over a heap storage of 320 bits: a wider target.
+    type Wider = Decimal<U60, U18, Int<U320, $pointer<[u64; 5]>>>;
+
+    /// A decimal of 10 integral and 8 fraction digits over the same heap storage as `Heap`.
+    type HeapNarrow = Decimal<U10, U8, Int<U256, $pointer<[u64; 4]>>>;
+
+    /// The inline twin of `Heap`.
+    type Twin = Decimal<U58, U18, Int<U256, [u64; 4]>>;
+
+    /// An inline decimal too narrow for the largest values of `Heap`.
+    type Narrow = Decimal<U10, U8, i64>;
+
+    /// A writer that keeps nothing, so that a format allocates only what the decimal allocates.
+    struct Sink;
+
+    impl fmt::Write for Sink {
+      fn write_str(&mut self, _: &str) -> fmt::Result {
+        Ok(())
+      }
+    }
+
+    /// The decimal of `text`, with one owner, observed.
+    fn heap(text: &str) -> Heap {
+      black_box(text.parse().expect("a value of the type"))
+    }
+
+    /// Two decimals, a positive and a negative one, each with one owner.
+    fn pair() -> (Heap, Heap) {
+      (heap("1234.5"), heap("-0.25"))
+    }
+
+    /// The largest decimal of the type, observed.
+    fn largest() -> Heap {
+      black_box(<Heap as FixedDecimal>::max_value())
+    }
+
+    /// The `Scaled` over `Heap` of `text`, with one owner, observed.
+    fn scaled(text: &str) -> Scaled<Heap> {
+      black_box(text.parse().expect("a value of the type"))
+    }
+
+    /// Reading a decimal allocates nothing: its twin, its predicates and counts, a comparison, a
+    /// hash, a format into a sink, its floats, and the exact product, which is inline.
+    #[test]
+    fn decimal_reads_allocate_nothing() {
+      let (a, b) = pair();
+      allocates!(0, 0; a.to_inline());
+      allocates!(0, 0; a.is_zero());
+      allocates!(0, 0; a.is_positive());
+      allocates!(0, 0; b.is_negative());
+      allocates!(0, 0; a.is_integer());
+      allocates!(0, 0; a.is_multiple_of(&b));
+      allocates!(0, 0; a.significant_digits());
+      allocates!(0, 0; a.fraction_digits());
+      allocates!(0, 0; a.order_of_magnitude());
+      allocates!(0, 0; a == b);
+      allocates!(0, 0; a.cmp(&b));
+      allocates!(0, 0; {
+        let mut hasher = DefaultHasher::new();
+        a.hash(&mut hasher);
+        hasher.finish()
+      });
+      allocates!(0, 0; write!(Sink, "{a} {b:e} {a:E} {b:?}")).expect("a sink never fails");
+      allocates!(0, 0; a.to_f64());
+      allocates!(0, 0; a.to_f32());
+      allocates!(0, 0; a.exact_mul(&b));
+    }
+
+    /// `repr` and `from_repr` in range move the storage, and `from_repr` out of range drops the
+    /// storage that it was given.
+    #[test]
+    fn decimal_storages_move() {
+      let (a, _) = pair();
+      let repr = allocates!(0, 0; a.repr());
+      allocates!(0, 0; Heap::from_repr(repr)).expect("in range");
+      let beyond = black_box(<Int<U256, $pointer<[u64; 4]>> as FixedInteger>::max_value());
+      assert!(allocates!(0, 1; Heap::from_repr(beyond)).is_none());
+    }
+
+    /// A constructor allocates the decimal that it returns, and nothing for an error.
+    #[test]
+    fn decimal_builders_allocate_their_result() {
+      allocates!(1, 0; Heap::from_inline(Twin::ZERO));
+      allocates!(1, 0; <Heap as FixedDecimal>::zero());
+      allocates!(1, 0; <Heap as FixedDecimal>::max_value());
+      allocates!(1, 0; <Heap as FixedDecimal>::min_value());
+      allocates!(1, 0; <Heap as DecimalOne>::one());
+      allocates!(1, 0; Heap::default());
+      allocates!(1, 0; "1234.5".parse::<Heap>()).expect("a value of the type");
+      assert!(allocates!(0, 0; "12x".parse::<Heap>()).is_err());
+      let mode = RoundingMode::HalfEven;
+      allocates!(1, 0; Heap::round_from_f64(1.5, mode)).expect("in range");
+      allocates!(1, 0; Heap::round_from_f32(1.5, mode)).expect("in range");
+      allocates!(1, 0; Heap::from_f64_shortest(1.5, mode)).expect("in range");
+      allocates!(1, 0; Heap::from_f32_shortest(1.5, mode)).expect("in range");
+      assert!(allocates!(0, 0; Heap::round_from_f64(f64::NAN, mode)).is_err());
+      assert!(allocates!(0, 0; Heap::round_from_f32(f32::INFINITY, mode)).is_err());
+      assert!(allocates!(0, 0; Heap::from_f64_shortest(1e300, mode)).is_err());
+      assert!(allocates!(0, 0; Heap::from_f32_shortest(-1e38, mode)).is_err());
+    }
+
+    /// `Deserialize` allocates the decimal, here with a deserializer that lends the string, and
+    /// `Serialize` nothing, with a serializer whose `collect_str` does not allocate: the text of
+    /// a `Scaled` whose scale is above its fraction digits goes through `collect_str`.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn decimal_serde_allocates_the_value_that_it_reads() {
+      allocates!(1, 0; serde_json::from_str::<Heap>("\"1234.5\"")).expect("a value of the type");
+      let (a, _) = pair();
+      let mut buffer = [0u8; 512];
+      allocates!(0, 0; postcard::to_slice(&a, &mut buffer).map(|bytes| bytes.len()))
+        .expect("the buffer holds the text");
+      let below = Scaled::new(a, 3);
+      allocates!(0, 0; postcard::to_slice(&below, &mut buffer).map(|bytes| bytes.len()))
+        .expect("the buffer holds the text");
+      let above = Scaled::new(heap("1.5"), 30);
+      allocates!(0, 0; postcard::to_slice(&above, &mut buffer).map(|bytes| bytes.len()))
+        .expect("the buffer holds the text");
+    }
+
+    /// A generated decimal is one allocation.
+    #[cfg(feature = "arbitrary")]
+    #[test]
+    fn decimal_generation_allocates_the_value() {
+      let bytes = [0x5a; 64];
+      allocates!(1, 0; <Heap as arbitrary::Arbitrary>::arbitrary(
+        &mut arbitrary::Unstructured::new(&bytes)
+      ))
+      .expect("enough bytes");
+    }
+
+    /// A checked or fallible method allocates the decimal that it returns, and nothing for `None`
+    /// or an error.
+    #[test]
+    fn decimal_fallible_methods_allocate_their_result() {
+      let (a, b) = pair();
+      let big = largest();
+      let zero = heap("0");
+      let mode = RoundingMode::HalfEven;
+      allocates!(1, 0; a.checked_add(&b)).expect("in range");
+      allocates!(1, 0; a.checked_sub(&b)).expect("in range");
+      allocates!(1, 0; a.checked_rem(&b)).expect("not zero");
+      assert!(allocates!(0, 0; big.checked_add(&a)).is_none());
+      assert!(allocates!(0, 0; big.checked_sub(&b)).is_none());
+      assert!(allocates!(0, 0; a.checked_rem(&zero)).is_none());
+      let step = heap("0.5");
+      allocates!(1, 0; a.quantize(&step, mode)).expect("in range");
+      assert!(allocates!(0, 0; big.quantize(&step, RoundingMode::Up)).is_err());
+      allocates!(1, 0; a.floor()).expect("in range");
+      allocates!(1, 0; a.ceil()).expect("in range");
+      assert!(allocates!(0, 0; big.ceil()).is_err());
+      let digits = NonZero::new(3).expect("not zero");
+      allocates!(1, 0; a.round_significant(digits, mode)).expect("in range");
+      let one = NonZero::new(1).expect("not zero");
+      assert!(allocates!(0, 0; big.round_significant(one, RoundingMode::Up)).is_err());
+    }
+
+    /// An infallible method allocates the decimal that it returns, also where its value is that of
+    /// the operand.
+    #[test]
+    fn decimal_methods_allocate_their_result() {
+      let (a, b) = pair();
+      let big = largest();
+      let whole = heap("12");
+      let positive = heap("5");
+      allocates!(1, 0; a.saturating_add(&b));
+      allocates!(1, 0; big.saturating_add(&a));
+      allocates!(1, 0; a.saturating_sub(&b));
+      allocates!(1, 0; a.trunc());
+      allocates!(1, 0; whole.trunc());
+      allocates!(1, 0; a.fract());
+      allocates!(1, 0; SignedFixedDecimal::neg(&a));
+      allocates!(1, 0; SignedFixedDecimal::abs(&b));
+      allocates!(1, 0; SignedFixedDecimal::abs(&positive));
+      allocates!(1, 0; &a + &b);
+      allocates!(1, 0; &a - &b);
+    }
+
+    /// A change of type allocates the target where it is a heap decimal, and frees the source
+    /// that it takes where that is one.
+    #[test]
+    fn decimal_changes_of_type_allocate_the_target() {
+      let mode = RoundingMode::HalfEven;
+      let (a, _) = pair();
+      let _: Wider = allocates!(1, 1; a.widen());
+      let (a, _) = pair();
+      let _: Wider = allocates!(1, 1; a.try_convert()).expect("fits");
+      let (a, _) = pair();
+      let _: Wider = allocates!(1, 1; a.round_to(mode)).expect("fits");
+      let big = largest();
+      let failed: Result<HeapNarrow, _> = allocates!(0, 1; big.try_convert());
+      assert!(failed.is_err());
+      let big = largest();
+      let failed: Result<HeapNarrow, _> = allocates!(0, 1; big.round_to(mode));
+      assert!(failed.is_err());
+      let (a, _) = pair();
+      let _: Narrow = allocates!(0, 1; a.try_convert()).expect("fits");
+      let (a, _) = pair();
+      let _: Narrow = allocates!(0, 1; a.round_to(mode)).expect("fits");
+      let inline: Narrow = black_box("1234.5".parse().expect("a value of the type"));
+      let _: Heap = allocates!(1, 0; inline.widen());
+      let _: Heap = allocates!(1, 0; inline.try_convert()).expect("fits");
+    }
+
+    /// `div_round` allocates the quotient where it is a heap decimal, and nothing for an error or
+    /// for an inline quotient.
+    #[test]
+    fn decimal_quotients_allocate_their_result() {
+      let mode = RoundingMode::HalfEven;
+      let (a, b) = pair();
+      let zero = heap("0");
+      allocates!(1, 0; a.div_round::<U58, U18, Int<U256, $pointer<[u64; 4]>>, _, _, _>(&b, mode))
+        .expect("in range");
+      assert!(
+        allocates!(0, 0; a.div_round::<U58, U18, Int<U256, $pointer<[u64; 4]>>, _, _, _>(&zero, mode))
+          .is_err()
+      );
+      allocates!(0, 0; a.div_round::<U58, U18, Int<U256, [u64; 4]>, _, _, _>(&b, mode))
+        .expect("in range");
+    }
+
+    /// A `Scaled` over a heap decimal allocates as its decimal, but for its sums of values, which
+    /// fold in the inline twin and free every value.
+    #[test]
+    fn scaled_heap_decimals_allocate_as_their_decimal() {
+      let s = scaled("1234.50");
+      let t = scaled("-0.250");
+      allocates!(1, 0; "1234.50".parse::<Scaled<Heap>>()).expect("a value of the type");
+      allocates!(1, 0; s.checked_add(&t)).expect("in range");
+      allocates!(1, 0; &s + &t);
+      let values = [scaled("1"), scaled("2.0"), scaled("3.00")];
+      allocates!(1, 3; values.into_iter().sum::<Scaled<Heap>>());
+      allocates!(1, 0; [&s, &t, &s].into_iter().sum::<Scaled<Heap>>());
+    }
+  };
+}
+
+/// The decimals over a `Box`, which holds its coefficient in place: an operator, a sum or an
+/// assignment that takes its decimal by value stores the result in that allocation.
+#[cfg(any(feature = "std", feature = "alloc"))]
+mod boxed_decimal {
+  use super::*;
+
+  heap_decimal!(Box);
+
+  /// An operator with an owned operand stores its result in the allocation of that operand, the
+  /// left one of two, and frees the other operand that it owns.
+  #[test]
+  fn decimal_operators_with_an_owned_operand_reuse_its_allocation() {
+    let (a, b) = pair();
+    allocates!(0, 1; a + b);
+    let (a, b) = pair();
+    allocates!(0, 1; a - b);
+    let (a, b) = pair();
+    allocates!(0, 0; a + &b);
+    let (a, b) = pair();
+    allocates!(0, 0; a - &b);
+    let (a, b) = pair();
+    allocates!(0, 0; &a + b);
+    let (a, b) = pair();
+    allocates!(0, 0; &a - b);
+    let (a, _) = pair();
+    allocates!(0, 0; -a);
+    let (mut a, b) = pair();
+    allocates!(0, 1; a += b);
+    let (mut a, b) = pair();
+    allocates!(0, 0; a += &b);
+    let (mut a, b) = pair();
+    allocates!(0, 1; a -= b);
+    let (mut a, b) = pair();
+    allocates!(0, 0; a -= &b);
+  }
+
+  /// A sum of values stores the total in the first value and frees the others; a sum of
+  /// references, or of nothing, allocates the total.
+  #[test]
+  fn decimal_sums_reuse_the_first_value() {
+    let values = [heap("1"), heap("2"), heap("3")];
+    allocates!(0, 2; values.into_iter().sum::<Heap>());
+    let one = [heap("1")];
+    allocates!(0, 0; one.into_iter().sum::<Heap>());
+    allocates!(1, 0; std::iter::empty::<Heap>().sum::<Heap>());
+    let (a, b) = pair();
+    allocates!(1, 0; [&a, &b, &a].into_iter().sum::<Heap>());
+    allocates!(1, 0; std::iter::empty::<&Heap>().sum::<Heap>());
+  }
+
+  /// A clone allocates its value; `clone_from` writes into the allocation that it has.
+  #[test]
+  fn decimal_clones_copy_the_value() {
+    let (a, mut b) = pair();
+    allocates!(1, 0; a.clone());
+    allocates!(0, 0; b.clone_from(&a));
+    let s = scaled("1.50");
+    allocates!(1, 0; s.clone());
+  }
+
+  /// A `Scaled` over a boxed decimal stores as its decimal: its operator with owned operands
+  /// keeps the left allocation, and its assignment by reference writes in place.
+  #[test]
+  fn scaled_boxed_decimals_store_in_place() {
+    let s = scaled("1234.50");
+    let t = scaled("-0.250");
+    allocates!(0, 1; s + t);
+    let mut s = scaled("1234.50");
+    let t = scaled("-0.250");
+    allocates!(0, 0; s += &t);
+  }
+}
+
+/// The checks of the decimals over the shared pointer `$pointer`, in the module `$module`. A shared
+/// pointer never writes the coefficient that it holds: every result is a new allocation, the
+/// operands that an operation takes give up their shares, which frees an allocation where the
+/// decimal was its only owner, and a clone shares.
+macro_rules! shared_decimal {
+  ($module:ident, $pointer:ident) => {
+    mod $module {
+      use super::*;
+
+      heap_decimal!($pointer);
+
+      /// An operator with an owned operand allocates its result and gives up the shares of the
+      /// operands that it takes; with a second owner of an operand, that allocation stays.
+      #[test]
+      fn decimal_operators_with_an_owned_operand_allocate_their_result() {
+        let (a, b) = pair();
+        allocates!(1, 2; a + b);
+        let (a, b) = pair();
+        allocates!(1, 2; a - b);
+        let (a, b) = pair();
+        allocates!(1, 1; a + &b);
+        let (a, b) = pair();
+        allocates!(1, 1; a - &b);
+        let (a, b) = pair();
+        allocates!(1, 1; &a + b);
+        let (a, b) = pair();
+        allocates!(1, 1; &a - b);
+        let (a, _) = pair();
+        allocates!(1, 1; -a);
+        let (a, b) = pair();
+        let _owner = black_box(a.clone());
+        allocates!(1, 1; a + b);
+      }
+
+      /// A sum allocates its total and gives up the shares of the values that it takes.
+      #[test]
+      fn decimal_sums_allocate_their_total() {
+        let values = [heap("1"), heap("2"), heap("3")];
+        allocates!(1, 3; values.into_iter().sum::<Heap>());
+        let one = [heap("1")];
+        allocates!(1, 1; one.into_iter().sum::<Heap>());
+        allocates!(1, 0; std::iter::empty::<Heap>().sum::<Heap>());
+        let (a, b) = pair();
+        allocates!(1, 0; [&a, &b, &a].into_iter().sum::<Heap>());
+        allocates!(1, 0; std::iter::empty::<&Heap>().sum::<Heap>());
+      }
+
+      /// A clone shares the allocation; `clone_from` gives up the share that it had.
+      #[test]
+      fn decimal_clones_share_the_value() {
+        let (a, mut b) = pair();
+        allocates!(0, 0; a.clone());
+        allocates!(0, 1; b.clone_from(&a));
+        let s = scaled("1.50");
+        allocates!(0, 0; s.clone());
+      }
+
+      /// A `Scaled` over a shared decimal allocates as its decimal.
+      #[test]
+      fn scaled_shared_decimals_allocate_their_result() {
+        let s = scaled("1234.50");
+        let t = scaled("-0.250");
+        allocates!(1, 2; s + t);
+      }
+    }
+  };
+}
+
+#[cfg(any(feature = "std", feature = "alloc"))]
+shared_decimal!(rc_decimal, Rc);
+#[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
+shared_decimal!(arc_decimal, Arc);
+#[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
+shared_decimal!(triomphe_arc_decimal, TriompheArc);
