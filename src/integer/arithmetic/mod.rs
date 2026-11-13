@@ -5,8 +5,9 @@
 //! with a carry and with a carry and an addend of `Uint` and of `Int`, with the carrying addition
 //! and the borrowing subtraction of `Int`, of the absolute value and the sign of `Int`, of the
 //! unchecked arithmetic of the traits, and of the integer functions without an overflow prefix,
-//! such as the Euclidean and rounded division, the roots and the logarithms; the panics; and the
-//! operators, `Sum` and `Product`.
+//! such as the Euclidean and rounded division, the roots and the logarithms; the panics; the
+//! operators, `Sum` and `Product`; and `widening_mul`, the product of two integers of any widths
+//! in the integer of the sum of the widths.
 //!
 //! Each storage computes the overflowing methods at the width `Bits`. The checked methods compute
 //! the same on the storage, and build a value only where it is in range; the wrapping methods are
@@ -37,7 +38,7 @@ use typenum::{IsGreater, NonZero, True, U1};
 use super::{Int, StrictOps, Uint, nonzero};
 use crate::{
   layout::Token,
-  width::{FitsBits, IntCore, IntRepr, IntReprMut, UintCore, UintRepr, UintReprMut},
+  width::{BitWidth, FitsBits, IntCore, IntRepr, IntReprMut, UintCore, UintRepr, UintReprMut},
 };
 
 /// Passes the overflowing methods of `Uint` and `Int` to `$callback`, after the tokens of `$args`.
@@ -1921,6 +1922,178 @@ macro_rules! folds {
 
 folds!(Uint: UintRepr, UintCore, unsigned_one, unsigned_inline_one, NonZero);
 folds!(Int: IntRepr, IntCore, signed_one, signed_inline_one, IsGreater<U1, Output = True>);
+
+/// The 64-bit word at `index` of `low + high * 2^shift`, for a `low` below `2^shift`: `low` and
+/// `high` give their words, extended beyond their storages by zeros or by copies of the sign.
+fn joined_word(
+  low: impl Fn(usize) -> u64,
+  high: impl Fn(usize) -> u64,
+  shift: u32,
+  index: usize,
+) -> u64 {
+  let (whole, part) = ((shift / u64::BITS) as usize, shift % u64::BITS);
+  let mut word = low(index);
+  if index >= whole {
+    word |= high(index - whole) << part;
+    // The top bits of the word below, which a shift by whole words does not take.
+    if part > 0 && index > whole {
+      word |= high(index - whole - 1) >> (u64::BITS - part);
+    }
+  }
+  word
+}
+
+/// Implements `widening_mul` for `$type` over every storage, `$repr`, whose sealed trait is
+/// `$core`, with the documentation `$meta`: the product of two operands of any widths and storages
+/// in the default storage `$default` of [`BitWidth`] for the sum of the widths.
+macro_rules! widening_mul {
+  ($type:ident: $repr:ident, $core:ident, $default:ident; $(#[$meta:meta])*) => {
+    impl<B: FitsBits<R>, R: $repr> $type<B, R> {
+      $(#[$meta])*
+      #[must_use]
+      pub fn widening_mul<B2, R2>(&self, rhs: &$type<B2, R2>) -> $type<typenum::Sum<B, B2>>
+      where
+        B: Add<B2>,
+        B2: FitsBits<R2>,
+        R2: $repr,
+        typenum::Sum<B, B2>: BitWidth,
+      {
+        let bits = <typenum::Sum<B, B2> as typenum::Unsigned>::U32;
+        // The product is computed at the width of the wider operand, in its inline storage, which
+        // holds the other operand too, and the halves are joined at that width.
+        if B::U32 >= B2::U32 {
+          let wide = self.repr.inline(Token::new());
+          let narrow = <R::Inline as $core>::from_words(
+            |index| rhs.repr.word(index, Token::new()),
+            B::U32,
+            Token::new(),
+          );
+          let zero = <R::Inline as $core>::zero(Token::new());
+          let (low, high) = wide.carrying_mul_bits(&narrow, &zero, B::U32, Token::new());
+          $type::wrap(<<typenum::Sum<B, B2> as BitWidth>::$default as $core>::from_words(
+            |index| {
+              joined_word(
+                |word| low.word(word, Token::new()),
+                |word| high.word(word, Token::new()),
+                B::U32,
+                index,
+              )
+            },
+            bits,
+            Token::new(),
+          ))
+        } else {
+          // The same with the operands exchanged: `rhs` lends its inline storage, `self` is read
+          // into it at `B2::U32` bits, and the halves are joined at `B2::U32`.
+          let wide = rhs.repr.inline(Token::new());
+          let narrow = <R2::Inline as $core>::from_words(
+            |index| self.repr.word(index, Token::new()),
+            B2::U32,
+            Token::new(),
+          );
+          let zero = <R2::Inline as $core>::zero(Token::new());
+          let (low, high) = wide.carrying_mul_bits(&narrow, &zero, B2::U32, Token::new());
+          $type::wrap(<<typenum::Sum<B, B2> as BitWidth>::$default as $core>::from_words(
+            |index| {
+              joined_word(
+                |word| low.word(word, Token::new()),
+                |word| high.word(word, Token::new()),
+                B2::U32,
+                index,
+              )
+            },
+            bits,
+            Token::new(),
+          ))
+        }
+      }
+    }
+  };
+}
+
+widening_mul! {
+  Uint: UintRepr, UintCore, Unsigned;
+  /// Widening multiplication: the exact product `self * rhs` as the `Uint` of `Bits + Bits2` bits
+  /// in its default storage, where `Bits2` is the width of `rhs`: `u256` by `u256` is a `u512`.
+  /// The type of the result is computed from the widths, so `let product = a.widening_mul(&b);`
+  /// needs no annotation. The operands may differ in width and in storage, and nothing overflows:
+  /// a product of values of `Bits` and `Bits2` bits has at most `Bits + Bits2` bits.
+  ///
+  /// A product of more than 65536 bits has no default storage and does not compile;
+  /// [`carrying_mul`](Self::carrying_mul) returns the low and the high half of a product at any
+  /// width, in the storage of its operands. The result is inline, on the stack of the caller, also
+  /// for operands in a heap storage: the method allocates nothing.
+  ///
+  /// Code generic over the widths writes the bounds of the result, `B: Add<B2>` and
+  /// `Sum<B, B2>: BitWidth`, which the bound `B: BitWidth` of the operands does not give:
+  ///
+  /// ```
+  /// use numo::{
+  ///   BitWidth, Uint,
+  ///   typenum::{self, U14, U64, U71},
+  ///   u7, u256, u512,
+  /// };
+  ///
+  /// // 127 * 127 in 14 bits, and 2^64 - 1 times 127 in 71.
+  /// assert_eq!(u7::MAX.widening_mul(&u7::MAX), Uint::<U14>::new(16129));
+  /// assert_eq!(
+  ///   Uint::<U64>::MAX.widening_mul(&u7::MAX),
+  ///   Uint::<U71>::new(u64::MAX as u128 * 127)
+  /// );
+  ///
+  /// let wide: u512 = u256::ONE.widening_mul(&u256::MAX);
+  /// assert_eq!(wide, u256::MAX.widen::<u512>());
+  ///
+  /// fn square<B>(x: &Uint<B>) -> Uint<typenum::Sum<B, B>>
+  /// where
+  ///   B: BitWidth + core::ops::Add<B>,
+  ///   typenum::Sum<B, B>: BitWidth,
+  /// {
+  ///   x.widening_mul(x)
+  /// }
+  ///
+  /// assert_eq!(square(&u7::MAX), Uint::<U14>::new(16129));
+  /// ```
+}
+
+widening_mul! {
+  Int: IntRepr, IntCore, Signed;
+  /// Widening multiplication: the exact product `self * rhs` as the `Int` of `Bits + Bits2` bits
+  /// in its default storage, where `Bits2` is the width of `rhs`: `i256` by `i256` is an `i512`.
+  /// The type of the result is computed from the widths, so `let product = a.widening_mul(&b);`
+  /// needs no annotation. The operands may differ in width and in storage, and nothing overflows:
+  /// a product of values of `Bits` and `Bits2` bits in two's complement is within the range of
+  /// `Bits + Bits2` bits, the product of the two `MIN`s included.
+  ///
+  /// A product of more than 65536 bits has no default storage and does not compile;
+  /// [`carrying_mul`](Self::carrying_mul) returns the low and the high half of a product at any
+  /// width, in the storages of its operands. The result is inline, on the stack of the caller,
+  /// also for operands in a heap storage: the method allocates nothing.
+  ///
+  /// Code generic over the widths writes the bounds of the result, `B: Add<B2>` and
+  /// `Sum<B, B2>: BitWidth`, which the bound `B: BitWidth` of the operands does not give:
+  ///
+  /// ```
+  /// use numo::{
+  ///   BitWidth, Int, i7,
+  ///   typenum::{self, U14},
+  /// };
+  ///
+  /// // -64 * -64 and -64 * 63 in 14 bits.
+  /// assert_eq!(i7::MIN.widening_mul(&i7::MIN), Int::<U14>::new(4096));
+  /// assert_eq!(i7::MIN.widening_mul(&i7::MAX), Int::<U14>::new(-4032));
+  ///
+  /// fn square<B>(x: &Int<B>) -> Int<typenum::Sum<B, B>>
+  /// where
+  ///   B: BitWidth + core::ops::Add<B>,
+  ///   typenum::Sum<B, B>: BitWidth,
+  /// {
+  ///   x.widening_mul(x)
+  /// }
+  ///
+  /// assert_eq!(square(&i7::MIN), Int::<U14>::new(4096));
+  /// ```
+}
 
 #[cfg(test)]
 mod tests;
