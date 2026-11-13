@@ -15,13 +15,14 @@ note: required by a bound in `Uint::<B, u16>::swap_bytes`
  --> src/integer/bytes/mod.rs
   |
   |       pub const fn swap_bytes(&self) -> Self
-  |                    ---------- required by a bound in this associated function
   |       where
   |         B: WholeBytes,
   |            ^^^^^^^^^^ required by this bound in `Uint::<B, u16>::swap_bytes`
   |
  ::: src/integer/mod.rs
   |
+  |       impl<B> Uint<B, $uint>
+...
   | / native_integers!(
   | |   u8, i8;
   | |   u16, i16;
@@ -49,13 +50,14 @@ note: required by a bound in `Uint::<B, u16>::to_be`
   --> src/integer/bytes/mod.rs
    |
    |       pub const fn to_be(&self) -> Self
-   |                    ----- required by a bound in this associated function
    |       where
    |         B: WholeBytes,
    |            ^^^^^^^^^^ required by this bound in `Uint::<B, u16>::to_be`
    |
   ::: src/integer/mod.rs
    |
+   |       impl<B> Uint<B, $uint>
+...
    | / native_integers!(
    | |   u8, i8;
    | |   u16, i16;
@@ -85,13 +87,14 @@ note: required by a bound in `Uint::<B, u16>::from_be`
   --> src/integer/bytes/mod.rs
    |
    |       pub const fn from_be(x: Self) -> Self
-   |                    ------- required by a bound in this associated function
    |       where
    |         B: WholeBytes,
    |            ^^^^^^^^^^ required by this bound in `Uint::<B, u16>::from_be`
    |
   ::: src/integer/mod.rs
    |
+   |       impl<B> Uint<B, $uint>
+...
    | / native_integers!(
    | |   u8, i8;
    | |   u16, i16;
@@ -119,13 +122,14 @@ note: required by a bound in `numo::Int::<B, i8>::swap_bytes`
   --> src/integer/bytes/mod.rs
    |
    |       pub const fn swap_bytes(&self) -> Self
-   |                    ---------- required by a bound in this associated function
    |       where
    |         B: WholeBytes,
    |            ^^^^^^^^^^ required by this bound in `Int::<B, i8>::swap_bytes`
    |
   ::: src/integer/mod.rs
    |
+   |       impl<B> Int<B, $int>
+...
    | / native_integers!(
    | |   u8, i8;
    | |   u16, i16;

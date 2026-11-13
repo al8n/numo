@@ -22,8 +22,9 @@ error[E0277]: a `Decimal` must have between 1 and 153 digits in total
 note: required by a bound in `Decimal::<I, F, R>::exact_mul`
  --> src/decimal/mod.rs
   |
+  | impl<I, F, R> Decimal<I, F, R>
+...
   |   pub fn exact_mul<I2, F2, R2>(
-  |          --------- required by a bound in this associated function
 ...
   |     And<R::IsUnsigned, R2::IsUnsigned>: Pick<Sum<Sum<I, I2>, Sum<F, F2>>>,
   |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Decimal::<I, F, R>::exact_mul`

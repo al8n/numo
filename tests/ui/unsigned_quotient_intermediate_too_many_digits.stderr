@@ -22,8 +22,9 @@ error[E0277]: the intermediate of `div_round` has more than 153 digits
 note: required by a bound in `Decimal::<I, F, R>::div_round`
   --> src/decimal/mod.rs
    |
+   | impl<I, F, R> Decimal<I, F, R>
+...
    |   pub fn div_round<I3, F3, R3, I2, F2, R2>(
-   |          --------- required by a bound in this associated function
 ...
    |       DivIntermediate<And<R::IsUnsigned, R2::IsUnsigned>>,
    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Decimal::<I, F, R>::div_round`

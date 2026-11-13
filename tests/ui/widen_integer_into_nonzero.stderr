@@ -18,6 +18,8 @@ help: the trait `KindWidens<B1>` is not implemented for `B0`
 note: required by a bound in `numo::integer::cast::<impl Uint<B, R>>::widen`
  --> src/integer/cast/mod.rs
   |
+  |     impl<B: FitsBits<R>, R: $repr> $integer<B, R> {
+...
   |       pub fn widen<T: WidenFrom<Self>>(self) -> T {
   |                       ^^^^^^^^^^^^^^^ required by this bound in `numo::integer::cast::<impl Uint<B, R>>::widen`
 ...

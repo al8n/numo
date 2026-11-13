@@ -22,6 +22,8 @@ error[E0277]: the target of a wrapping or saturating cast must take every value 
 note: required by a bound in `numo::integer::cast::<impl Uint<B, R>>::wrapping_cast`
  --> src/integer/cast/mod.rs
   |
+  |     impl<B: FitsBits<R>, R: $repr> $integer<B, R> {
+...
   |       pub fn wrapping_cast<T: BoundedCastFrom<Self>>(self) -> T {
   |                               ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `numo::integer::cast::<impl Uint<B, R>>::wrapping_cast`
 ...
@@ -52,6 +54,8 @@ error[E0277]: the target of a wrapping or saturating cast must take every value 
 note: required by a bound in `numo::integer::cast::<impl Uint<B, R>>::saturating_cast`
  --> src/integer/cast/mod.rs
   |
+  |     impl<B: FitsBits<R>, R: $repr> $integer<B, R> {
+...
   |       pub fn saturating_cast<T: BoundedCastFrom<Self>>(self) -> T {
   |                                 ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `numo::integer::cast::<impl Uint<B, R>>::saturating_cast`
 ...

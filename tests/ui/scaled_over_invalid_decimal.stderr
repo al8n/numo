@@ -54,4 +54,4 @@ note: required by a bound in `numo::ConstFixedDecimal::ZERO`
    |                              ^^^^^^^^^^^^ required by this bound in `ConstFixedDecimal::ZERO`
    |   /// Zero.
    |   const ZERO: Self;
-   |         ---- required by a bound in this associated constant
+   |
