@@ -348,12 +348,18 @@ FEATURES
     storage.
   - The arithmetic of the native integers at the width `Bits`, as `const fn`s of every storage:
     `overflowing_*`, `checked_*`, `wrapping_*` and `strict_*` addition, subtraction, multiplication
-    and negation, and `saturating_*` addition, subtraction and multiplication; `carrying_add` and
-    `borrowing_sub` for `Uint`; `saturating_neg`, the absolute value as `overflowing_abs`,
+    and negation, and `saturating_*` addition, subtraction and multiplication; `carrying_mul` and
+    `carrying_mul_add` for `Uint` and `Int`, which return the low and the high half of
+    `self * rhs + carry + add`, the low half of an `Int` as the `Uint` of the same width, and which
+    never overflow; `carrying_add` and `borrowing_sub` for `Uint`, and for `Int`, whose flag is an
+    overflow of the range; `saturating_neg`, the absolute value as `overflowing_abs`,
     `checked_abs`, `wrapping_abs`, `saturating_abs`, `strict_abs` and `abs`, `unsigned_abs`, which
     returns the `Uint` of the same width, and `signum` for `Int`; `is_one`; and the constant `ONE`
     from one bit for `Uint` and from two bits for `Int`, so that `u0`, `i0` and `i1` have none. The
     strict methods panic on overflow in every build, with the messages of the native integers.
+    `widening_mul`, a method of every storage that is not `const`, returns the exact product of two
+    integers of any widths and storages in the integer of both widths, in its default storage:
+    `u256` by `u256` is a `u512`.
   - The division and the remainder, rounded toward zero and Euclidean, in the `overflowing_*`,
     `checked_*`, `wrapping_*` and `strict_*` forms, and `saturating_div`, the exponentiation in
     every form, and the integer functions of the native integers without an overflow prefix, as

@@ -318,11 +318,16 @@ assert_eq!(sum.to_string(), "8");
   multiplication, negation, division, remainder and exponentiation in the `checked_*`,
   `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` forms that the native integers have,
   the Euclidean, rounded and exact division, the next multiple, the square root and the root of
-  any degree, the logarithms, the midpoint and the absolute difference, `carrying_add`,
-  `borrowing_sub`, `is_multiple_of` and the next power of two for `Uint`, and `abs` and its forms,
-  `unsigned_abs`, `signum` and `checked_isqrt` for `Int`. Addition, subtraction, multiplication,
-  exact division and the shifts, and negation for `Int`, also have the `unchecked_*` form, as
-  `const unsafe fn`s whose caller guarantees that the `checked_*` method would return `Some`. The
+  any degree, the logarithms, the midpoint and the absolute difference, `carrying_mul` and
+  `carrying_mul_add`, the low and the high half of `self * rhs + carry + add`, whose low half for
+  `Int` is the `Uint` of the same width, `carrying_add`, `borrowing_sub`, `is_multiple_of` and the
+  next power of two for `Uint`, and `abs` and its forms, `unsigned_abs`, `signum`, `checked_isqrt`,
+  and `carrying_add` and `borrowing_sub`, whose flag is an overflow of the range, for `Int`.
+  Addition, subtraction, multiplication, exact division and the shifts, and negation for `Int`,
+  also have the `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the
+  `checked_*` method would return `Some`. `widening_mul`, for every storage, returns the exact
+  product of two integers of any widths and storages in the integer of the sum of the widths, in
+  its default storage: the product of two `u256` is a `u512`. The
   operators `+`, `-` and `*`, their compound assignments, `-` for `Int`, `Sum` and `Product` panic
   or wrap on overflow as `overflow-checks` decides, as for the native integers, and so do `pow`,
   `next_multiple_of` and `next_power_of_two`; `/` and `%` and their compound assignments, like the
