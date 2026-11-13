@@ -171,9 +171,11 @@ pub(super) const fn reject(kind: ParseErrorKind) -> ! {
 /// ```
 ///
 /// A literal is a constant, and a decimal over a heap storage, which allocates, has none, and takes
-/// none as an operand. A literal of its inline twin reaches it, as in
-/// `Boxed::from_inline(dec!(1.5))`, where the parameter of `from_inline` gives the literal its
-/// type, or `dec!(1.5 as Price).widen()` (see [Heap storages](crate::Decimal#heap-storages)).
+/// none as an operand. Its literal is written in an inline type and converted: in its inline twin
+/// and stored, as in `Boxed::from_inline(dec!(1.5))`, where the parameter of `from_inline` gives
+/// the literal its type, or in a narrower inline type and widened, as `dec!(1.5 as Price).widen()`
+/// widens into a heap type with a signed storage and at least the integral and the fraction digits
+/// of `Price` (see [Heap storages](crate::Decimal#heap-storages)).
 ///
 /// # Errors
 ///
