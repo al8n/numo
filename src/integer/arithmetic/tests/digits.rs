@@ -6,7 +6,7 @@
 //! width.
 
 use num_bigint::BigUint;
-use typenum::{U3, U4, U5, U6, U12, U512, U65536};
+use typenum::{U3, U4, U5, U6, U10, U11, U12, U13, U14, U15, U512, U65536};
 
 use super::*;
 use crate::{IntegerBytes, u0};
@@ -178,13 +178,21 @@ fn digits_of_up_to_8_bits() {
 }
 
 /// The digits of the values that the tier takes of widths from 9 to 16 bits, against the model on
-/// `u128`: 9, 12 and 16 bits, or 16 bits under Miri.
+/// `u128`: every width in an optimized build, 9, 12, 15 and 16 bits in an unoptimized one, and 16
+/// bits under Miri.
 #[test]
 fn digits_of_9_to_16_bits() {
   digits_of_large_widths::<U16>(16);
   if !tier().is_miri() {
     digits_of_large_widths::<U9>(9);
     digits_of_large_widths::<U12>(12);
+    digits_of_large_widths::<U15>(15);
+  }
+  if tier().is_full() {
+    digits_of_large_widths::<U10>(10);
+    digits_of_large_widths::<U11>(11);
+    digits_of_large_widths::<U13>(13);
+    digits_of_large_widths::<U14>(14);
   }
 }
 
@@ -652,6 +660,52 @@ fn a_radix_or_a_base_outside_its_range_panics() {
     panics_here!(n.to_base_le(b), to_le);
     panics_here!(UnsignedDigits::to_base_le(&a, b), to_le);
   }
+}
+
+/// The writers into a `Vec` panic for a radix outside 2 to 256 and a base below 2, with the name
+/// of the method, and report the caller, inherent and through `UnsignedDigits`, on a native
+/// integer and an array; and every digit form panics on a box.
+#[test]
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn the_writers_into_a_vec_and_a_box_panic_outside_the_range() {
+  use UnsignedDigits as D;
+  type N = u7;
+  type A = Uint<U200, [u32; 7]>;
+  type X = Uint<U200, Box<[u64; 4]>>;
+  let be = "to_radix_be: radix must lie in the range `[2, 256]`".to_string();
+  let le = "to_radix_le: radix must lie in the range `[2, 256]`".to_string();
+  let (n, a) = (N::new(5), A::MAX);
+  for r in [0, 1, 257, u32::MAX] {
+    panics_here!(n.to_radix_be(r), be);
+    panics_here!(n.to_radix_le(r), le);
+    panics_here!(a.to_radix_be(r), be);
+    panics_here!(a.to_radix_le(r), le);
+    panics_here!(UnsignedDigits::to_radix_be(&n, r), be);
+    panics_here!(UnsignedDigits::to_radix_le(&n, r), le);
+    panics_here!(UnsignedDigits::to_radix_be(&a, r), be);
+    panics_here!(UnsignedDigits::to_radix_le(&a, r), le);
+  }
+  let to_be = "to_base_be: base must be at least 2".to_string();
+  for b in [0, 1] {
+    panics_here!(n.to_base_be(b), to_be);
+    panics_here!(a.to_base_be(b), to_be);
+    panics_here!(UnsignedDigits::to_base_be(&n, b), to_be);
+    panics_here!(UnsignedDigits::to_base_be(&a, b), to_be);
+  }
+  let from_radix_be = "checked_from_radix_be: radix must lie in the range `[2, 256]`".to_string();
+  let from_radix_le = "checked_from_radix_le: radix must lie in the range `[2, 256]`".to_string();
+  let from_be = "checked_from_base_be: base must be at least 2".to_string();
+  let from_le = "checked_from_base_le: base must be at least 2".to_string();
+  let to_le = "to_base_le: base must be at least 2".to_string();
+  let x = X::checked_from_base_le([5], 10).expect("200 bits");
+  panics_here!(<X as D>::checked_from_radix_be(&[], 1), from_radix_be);
+  panics_here!(<X as D>::checked_from_radix_le(&[1], 257), from_radix_le);
+  panics_here!(X::checked_from_base_be([], 1), from_be);
+  panics_here!(<X as D>::checked_from_base_le([1], 0), from_le);
+  panics_here!(x.to_base_le(1), to_le);
+  panics_here!(x.to_radix_be(257), be);
+  panics_here!(UnsignedDigits::to_radix_le(&x, 0), le);
+  panics_here!(x.to_base_be(0), to_be);
 }
 
 /// The constructors from digits in bytes in constant contexts, in a native integer, an array and
