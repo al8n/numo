@@ -144,19 +144,22 @@ FEATURES
   `[L; N]` holds, such as `Uint<U4096, Box<[u64; 64]>>`. The integer has the size of a pointer, is
   not `Copy`, and has no constants and no `const fn`s: its API is the traits, with
   `FixedInteger::zero`, `min_value` and `max_value` and `IntegerOne::one` for the constants. An
-  operator on two references allocates its result, a compound assignment of `Uint` or `Int`
-  computes in place, and an operator with an owned operand stores its result in the allocation of
-  that operand, the left one of two. A method builds only the integers that it returns, none when it
+  operator on two references allocates its result, a compound assignment of `Uint` or `Int` computes
+  in place, and an operator with an owned operand stores its result in the allocation of that
+  operand, the left one of two. A method builds only the integers that it returns, none when it
   returns `None` or an error, and one that takes its integer by value, as the casts between the
-  signs do, stores its result in that allocation. Each operation computes in arrays on the stack
-  before it stores, so a heap storage keeps the value off the stack and not the working space.
-  `From` moves a `Box<[L; N]>` out of an integer, and into one whose width fills the array, without
-  a copy, and `ArrayInteger` reads and builds the limbs. serde writes and reads a boxed integer as
-  the inline integer of its width. `Rc<[L; N]>` and, on a target with atomic pointers, `Arc<[L; N]>`
-  are storages too, read-only: a clone shares the value, every result is a new allocation, and
-  there is no compound assignment. The `triomphe` feature adds `triomphe::Arc<[L; N]>`, a storage
-  of the same kind without a weak count, on a target with atomic pointers. An integer in an `Arc`
-  or a `triomphe::Arc` is `Send` and `Sync`, and one in an `Rc` is neither.
+  signs do, stores its result in that allocation, while a cast, such as `checked_cast`, builds its
+  target from the words of the source and frees a source given by value. Each operation computes in
+  arrays on the stack before it stores, so a heap storage keeps the value off the stack and not the
+  working space. `From` moves a `Box<[L; N]>` out of an integer, and into one whose width fills the
+  array, without a copy, and `ArrayInteger` reads and builds the limbs. serde writes and reads a
+  boxed integer as the inline integer of its width. `Rc<[L; N]>` and, on a target with atomic
+  pointers, `Arc<[L; N]>` are storages too, read-only: a clone shares the value, a method makes one
+  allocation for each integer that it returns and a fold one, a method that takes a shared integer
+  by value allocates its result and gives up its share, and there is no compound assignment. The
+  `triomphe` feature adds `triomphe::Arc<[L; N]>`, a storage of the same kind without a weak count,
+  on a target with atomic pointers. An integer in an `Arc` or a `triomphe::Arc` is `Send` and
+  `Sync`, and one in an `Rc` is neither.
 - The `std` and `alloc` features are independent, and either one gives the heap storages: `alloc`
   gives them to a `no_std` build. With no feature the crate is `no_std` and does not allocate.
 - The `arbitrary`, `proptest` and `quickcheck` features: the `Arbitrary` trait of each crate for

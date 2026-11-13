@@ -831,8 +831,8 @@ pub trait IntegerByteOrder: Sealed + Sized {
 /// Implements the byte traits for [`Uint`] and [`Int`], written `Integer: Repr`, with the sealed
 /// methods of the storage trait `Repr`, which neither need `Copy` nor read a constant of a value.
 /// [`IntegerByteOrder`] also needs `Repr: Clone`, to return the value itself where the order is
-/// that of the target; `from_be` and `from_le` take their value, and store its reversed bytes in
-/// its storage.
+/// that of the target; `from_be` and `from_le` take their value, and the one that reverses the
+/// bytes on the target stores them in its storage.
 // Trait methods cannot be `const`.
 macro_rules! byte_traits {
   ($($integer:ident: $repr:ident),+ $(,)?) => {$(

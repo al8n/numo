@@ -155,8 +155,11 @@ mod traits;
 /// allocation of `a` and frees that of `b`. A method builds only the integers that it returns, and
 /// none when it returns `None` or an error, and one that takes its integer by value, as the casts
 /// between the signs and [`from_be`](crate::IntegerByteOrder::from_be) do, stores its result in
-/// that allocation. `Sum` and `Product` of values store their result in the allocation of the first
-/// item, and those of references allocate it. A compound assignment, as in `total += &a`,
+/// that allocation. The casts, such as `checked_cast` and `widen`, are the exception: they build
+/// their target from the words of the source, so a cast into a heap storage allocates its target,
+/// also from a source of the same type, and frees a source given by value. `Sum` and `Product` of
+/// values store their result in the allocation of the first item, and of no item a new allocation,
+/// and those of references allocate it. A compound assignment, as in `total += &a`,
 /// [`set_bit`](crate::IntegerBits::set_bit) and `clone_from` store in the allocation of their
 /// target, `clone` allocates, and the casts between the signs keep the allocation. `From` moves a
 /// `Box<[L; N]>` out of an integer, and into one whose width fills the array, without a copy, and
@@ -197,20 +200,21 @@ mod traits;
 ///
 /// With the same features, `Repr` can also be such an array in an `Rc`, `Rc<[L; N]>`, and on a
 /// target with atomic pointers in an `Arc`, `Arc<[L; N]>`; with the `triomphe` feature, on such a
-/// target, in a `triomphe::Arc`, `triomphe::Arc<[L; N]>`, which holds one count and no weak
-/// count. These storages are shared and read-only: `clone` shares the value without an
-/// allocation, a value that they hold is never written, and every result is a new allocation, also
-/// that of an operator with an owned operand, whose allocation another owner may share. They have
-/// no compound assignment and no [`IntegerAssign`](crate::IntegerAssign), whose `|=` would look
-/// like a write in place. [`set_bit`](crate::IntegerBits::set_bit), which takes `&mut self` for
-/// every storage, changes the value of its target, not the allocation: it puts the changed value
-/// in a new allocation, and the other owners of the old one keep their value. An integer in an
-/// `Arc` or a `triomphe::Arc` is `Send` and `Sync`, and one in an `Rc` is neither. A large value
-/// that many owners read, such as a modulus, is read into a computation in another storage
-/// through a borrowed cast source, as in `u256::widen_from(&modulus)`, or through
-/// [`ArrayInteger::as_limbs`], without a clone. The zero of a `triomphe::Arc` is built as an array
-/// and moved into its allocation, so an unoptimized build has the array on the stack; the other
-/// heap storages build their zero in its allocation.
+/// target, in a `triomphe::Arc`, `triomphe::Arc<[L; N]>`, which holds one count and no weak count.
+/// These storages are shared and read-only: `clone` shares the value without an allocation, and a
+/// value that they hold is never written. A method makes one allocation for each integer that it
+/// returns, a fold makes one, and a method that takes a shared integer by value, an operator with
+/// an owned operand among them, allocates its result and gives up its share, whose allocation
+/// another owner may hold. They have no compound assignment and no
+/// [`IntegerAssign`](crate::IntegerAssign), whose `|=` would look like a write in place.
+/// [`set_bit`](crate::IntegerBits::set_bit), which takes `&mut self` for every storage, changes the
+/// value of its target, not the allocation: it puts the changed value in a new allocation, and the
+/// other owners of the old one keep their value. An integer in an `Arc` or a `triomphe::Arc` is
+/// `Send` and `Sync`, and one in an `Rc` is neither. A large value that many owners read, such as a
+/// modulus, is read into a computation in another storage through a borrowed cast source, as in
+/// `u256::widen_from(&modulus)`, or through [`ArrayInteger::as_limbs`], without a clone. The zero
+/// of a `triomphe::Arc` is built as an array and moved into its allocation, so an unoptimized build
+/// has the array on the stack; the other heap storages build their zero in its allocation.
 ///
 /// ```
 /// # #[cfg(any(feature = "std", feature = "alloc"))]

@@ -243,10 +243,12 @@ allocates its result, a compound assignment of `Uint` or `Int` computes in place
 with an owned operand stores its result in the allocation of that operand, the left one of two. A
 method builds only the integers that it returns, none when it returns `None` or an error, and one
 that takes its integer by value, as the casts between the signs do, stores its result in that
-allocation. Each operation computes in arrays on the stack before it stores, so a heap storage keeps
-the value off the stack and not the working space. `From` moves a `Box<[L; N]>` out of an integer,
-and into one whose width fills the array, without a copy, and `ArrayInteger` reads and builds the
-limbs. serde writes and reads a boxed integer as the inline integer of its width.
+allocation, while a cast, such as `checked_cast`, builds its target from the words of the source and
+frees a source given by value. Each operation computes in arrays on the stack before it stores, so a
+heap storage keeps the value off the stack and not the working space. `From` moves a `Box<[L; N]>`
+out of an integer, and into one whose width fills the array, without a copy, and `ArrayInteger`
+reads and builds the limbs. serde writes and reads a boxed integer as the inline integer of its
+width.
 
 ```rust
 use numo::{FixedInteger, Uint, typenum::U4096};
