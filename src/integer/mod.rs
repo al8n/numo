@@ -202,11 +202,12 @@ mod traits;
 /// target with atomic pointers in an `Arc`, `Arc<[L; N]>`; with the `triomphe` feature, on such a
 /// target, in a `triomphe::Arc`, `triomphe::Arc<[L; N]>`, which holds one count and no weak count.
 /// These storages are shared and read-only: `clone` shares the value without an allocation, and a
-/// value that they hold is never written. A method makes one allocation for each integer that it
-/// returns, a fold makes one, and a method that takes a shared integer by value, an operator with
-/// an owned operand among them, allocates its result and gives up its share, whose allocation
-/// another owner may hold. They have no compound assignment and no
-/// [`IntegerAssign`](crate::IntegerAssign), whose `|=` would look like a write in place.
+/// value that they hold is never written. A method makes at most one allocation for each integer
+/// that it returns: none where it returns the value of its operand, which it then shares, as the
+/// absolute value of a value that is not negative does. A fold makes one, and a method that takes a
+/// shared integer by value, an operator with an owned operand among them, allocates its result and
+/// gives up its share, whose allocation another owner may hold. They have no compound assignment
+/// and no [`IntegerAssign`](crate::IntegerAssign), whose `|=` would look like a write in place.
 /// [`set_bit`](crate::IntegerBits::set_bit), which takes `&mut self` for every storage, changes the
 /// value of its target, not the allocation: it puts the changed value in a new allocation, and the
 /// other owners of the old one keep their value. An integer in an `Arc` or a `triomphe::Arc` is
@@ -1090,10 +1091,11 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
 /// that it cannot hold, so `Option` of an array storage adds a tag. Each storage gives a distinct
 /// type, as for [`Uint`]. With the `std` or the `alloc` feature, `Repr` can also be an array of
 /// limbs in a `Box`, an `Rc` or an `Arc`, and with the `triomphe` feature in a `triomphe::Arc`,
-/// each its own non-zero storage (see [Heap storages](Uint#heap-storages)):
-/// the niche of the pointer gives `Option` the size of a pointer, `new`, `get`, `TryFrom` and the
-/// casts between the signs move the pointer and do not allocate, and `|=` stores its result in an
-/// allocation of its own.
+/// each its own non-zero storage (see [Heap storages](Uint#heap-storages)): the niche of the
+/// pointer gives `Option` the size of a pointer, and `new`, `get` and `TryFrom` move the pointer
+/// and do not allocate. In a `Box`, the casts between the signs move the pointer too, and `|=`
+/// stores its result in an allocation of its own; a shared storage puts the result of a cast
+/// between the signs in a new allocation, and has no `|=`.
 ///
 /// In each storage, [`new`](Self::new) creates a value from the [`Uint`] of the same width and
 /// storage, returning `None` for zero, and [`get`](Self::get) returns it, as `From` does.

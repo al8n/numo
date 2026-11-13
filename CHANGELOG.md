@@ -154,11 +154,11 @@ FEATURES
   working space. `From` moves a `Box<[L; N]>` out of an integer, and into one whose width fills the
   array, without a copy, and `ArrayInteger` reads and builds the limbs. serde writes and reads a
   boxed integer as the inline integer of its width. `Rc<[L; N]>` and, on a target with atomic
-  pointers, `Arc<[L; N]>` are storages too, read-only: a clone shares the value, a method makes one
-  allocation for each integer that it returns and a fold one, a method that takes a shared integer
-  by value allocates its result and gives up its share, and there is no compound assignment. The
-  `triomphe` feature adds `triomphe::Arc<[L; N]>`, a storage of the same kind without a weak count,
-  on a target with atomic pointers. An integer in an `Arc` or a `triomphe::Arc` is `Send` and
+  pointers, `Arc<[L; N]>` are storages too, read-only: a clone shares the value, a method makes at
+  most one allocation for each integer that it returns and a fold one, a method that takes a shared
+  integer by value allocates its result and gives up its share, and there is no compound assignment.
+  The `triomphe` feature adds `triomphe::Arc<[L; N]>`, a storage of the same kind without a weak
+  count, on a target with atomic pointers. An integer in an `Arc` or a `triomphe::Arc` is `Send` and
   `Sync`, and one in an `Rc` is neither.
 - The `std` and `alloc` features are independent, and either one gives the heap storages: `alloc`
   gives them to a `no_std` build. With no feature the crate is `no_std` and does not allocate.
