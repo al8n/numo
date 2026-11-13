@@ -16,9 +16,9 @@
 //!
 //! The digits and the forms that return a `Vec` or a `String` are counted too, in a heap storage
 //! and in the inline twin: a constructor from digits builds the integer that it returns and
-//! nothing for `None`, the iterator of the digits allocates nothing, and a form that returns a
-//! `Vec` or a `String` allocates it once, with a capacity that it does not outgrow, and not at all
-//! where it is empty.
+//! nothing for `None`, the iterator of the digits, least significant first, allocates nothing, and
+//! a form that returns a `Vec` or a `String` allocates it once, with a capacity that it does not
+//! outgrow, and not at all where it is empty.
 
 #![cfg(any(
   feature = "std",
@@ -191,6 +191,12 @@ macro_rules! reads_digits {
     assert!(allocates!(0, 0; <$uint>::checked_from_base_be(OVER_WORDS_BE, 1 << 32)).is_none());
     assert!(allocates!(0, 0; <$uint>::checked_from_base_le(OVER_WORDS_LE, 1 << 32)).is_none());
 
+    // In the base 256 a reader adds the last digits after its loop, and builds nothing there for
+    // `None` either.
+    let (over_be, over_le) = (OVER_BE.map(u64::from), OVER_LE.map(u64::from));
+    assert!(allocates!(0, 0; <$uint>::checked_from_base_be(over_be, 256)).is_none());
+    assert!(allocates!(0, 0; <$uint>::checked_from_base_le(over_le, 256)).is_none());
+
     assert!(allocates!($built, 0; radix_be(&[1, 2, 7], 10)).is_some());
     assert!(allocates!($built, 0; radix_le(&[7, 2, 1], 10)).is_some());
     assert!(allocates!($built, 0; <$uint>::checked_from_base_be([1, 2, 7], 10)).is_some());
@@ -203,12 +209,13 @@ macro_rules! reads_digits {
 
 /// Asserts that each form of the integers `$uint` and `$int`, of 256 bits, and of their non-zero
 /// integers `$nonzero` and `$nonzero_int`, that returns a `Vec` or a `String` allocates what it
-/// returns, once, and nothing else, in a heap storage as in an inline one. Its capacity is a bound
-/// of what it writes, which the largest value meets exactly in the radixes 2 and 256, and the
-/// smallest signed one in the radix 2 with its sign: a writer that reserved one less would
-/// reallocate, which the allocator counts. What is empty is not allocated: the digits of zero in a
-/// base, and its trimmed bytes. The text of a signed integer builds no magnitude in the heap,
-/// which would count a second allocation and a free.
+/// returns, once, and nothing else, in a heap storage as in an inline one, and that the digits of a
+/// base, most significant first, are collected in one `Vec`, which their iterator frees. Each
+/// capacity is a bound of what is written, which the largest value meets exactly in the bases and
+/// the radixes 2 and 256, and the smallest signed one in the radix 2 with its sign: a writer that
+/// reserved one less would reallocate, which the allocator counts. What is empty is not allocated:
+/// the digits of zero in a base, and its trimmed bytes. The text of a signed integer builds no
+/// magnitude in the heap, which would count a second allocation and a free.
 #[cfg(any(feature = "std", feature = "alloc"))]
 macro_rules! writes_vectors_and_text {
   ($uint:ty, $int:ty, $nonzero:ty, $nonzero_int:ty) => {{
@@ -221,9 +228,17 @@ macro_rules! writes_vectors_and_text {
     let nonzero = black_box(<$nonzero as NonZeroLimits>::max_value());
     let negative = black_box(<$nonzero_int as NonZeroLimits>::min_value());
 
-    // The digits of a base, most significant first: the `Vec` is freed with its iterator.
-    assert_eq!(allocates!(1, 1; most.to_base_be(10).count()), 78);
-    assert_eq!(allocates!(0, 0; zero.to_base_be(10).count()), 0);
+    // The digits of a base, most significant first, which fill the capacity in the bases 2 and
+    // 256. The iterator is observed before it is counted, so that the `Vec` that it holds is one
+    // that the harness sees, and counting the digits frees it.
+    let digits = allocates!(1, 0; most.to_base_be(2));
+    assert_eq!(allocates!(0, 1; digits.count()), 256);
+    let digits = allocates!(1, 0; most.to_base_be(10));
+    assert_eq!(allocates!(0, 1; digits.count()), 78);
+    let digits = allocates!(1, 0; most.to_base_be(256));
+    assert_eq!(allocates!(0, 1; digits.count()), 32);
+    let digits = allocates!(0, 0; zero.to_base_be(10));
+    assert_eq!(allocates!(0, 0; digits.count()), 0);
 
     // The digits of a radix, which fill the capacity in the radixes 2 and 256.
     assert_eq!(allocates!(1, 0; most.to_radix_le(2)).len(), 256);
@@ -252,6 +267,8 @@ macro_rules! writes_vectors_and_text {
     assert_eq!(allocates!(1, 0; least.to_str_radix(36)).len(), 51);
     assert_eq!(allocates!(1, 0; minus_one.to_str_radix(2)), "-1");
     assert_eq!(allocates!(1, 0; minus_one.to_str_radix(36)), "-1");
+    assert_eq!(allocates!(1, 0; greatest.to_str_radix(2)).len(), 255);
+    assert_eq!(allocates!(1, 0; nothing.to_str_radix(2)), "0");
     assert_eq!(allocates!(1, 0; nonzero.to_str_radix(2)).len(), 256);
     assert_eq!(allocates!(1, 0; nonzero.to_str_radix(36)).len(), 50);
     assert_eq!(allocates!(1, 0; negative.to_str_radix(2)).len(), 257);
