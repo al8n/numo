@@ -142,8 +142,8 @@ fn increments_per_mode() {
 /// are false for it.
 #[test]
 fn up05_has_its_predicate_and_name() {
-  const IS_UP05: bool = RoundingMode::Up05.is_up05();
-  assert!(IS_UP05);
+  const { assert!(RoundingMode::Up05.is_up05()) };
+  const { assert!(!RoundingMode::Down.is_up05()) };
   for mode in MODES {
     assert_eq!(mode.is_up05(), mode == RoundingMode::Up05, "{mode:?}");
   }
