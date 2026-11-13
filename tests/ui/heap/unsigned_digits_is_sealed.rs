@@ -22,11 +22,11 @@ impl UnsignedDigits for Local {
     None
   }
 
-  fn to_base_le(&self, _: u64) -> impl Iterator<Item = u64> + FusedIterator + use<> {
+  fn to_base_le(&self, _: u64) -> impl FusedIterator<Item = u64> + use<> {
     core::iter::empty()
   }
 
-  fn to_base_be(&self, _: u64) -> impl Iterator<Item = u64> + FusedIterator + use<> {
+  fn to_base_be(&self, _: u64) -> impl FusedIterator<Item = u64> + use<> {
     core::iter::empty()
   }
 
