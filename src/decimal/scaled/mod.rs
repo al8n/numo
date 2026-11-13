@@ -96,13 +96,18 @@ mod tests;
 /// that implements it: [`FixedDecimal`], [`ConstFixedDecimal`], [`SignedFixedDecimal`],
 /// [`UnsignedFixedDecimal`], [`DecimalOne`] and [`ConstDecimalOne`], and between `Scaled` types
 /// [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`]. Generic code bounded by them takes a
-/// `Scaled` and a bare decimal alike, and the arithmetic of a `Scaled` is reached through them,
-/// with the trait in scope. A `Scaled` relates only to a `Scaled`: no trait converts a bare decimal
-/// into a `Scaled`, or multiplies one by the other.
+/// `Scaled` and a bare decimal alike. The operators `+`, `-`, `+=` and `-=` and
+/// [`Sum`](core::iter::Sum) are implemented as for a decimal, and panic where `checked_add` and
+/// `checked_sub` return `None`; the methods of a `Scaled` are reached through the traits, with the
+/// trait in scope. A `Scaled` relates only to a `Scaled`: no trait converts a bare decimal into a
+/// `Scaled`, or multiplies one by the other.
 ///
 /// A result has the value that the decimal's own operation gives, and the scale of the operation:
 ///
-/// - a sum or a difference takes the larger scale of its operands;
+/// - a sum, a difference or a remainder takes the larger scale of its operands, whether an
+///   operator, a checked or a saturating method gives it, also where the result saturates to a
+///   limit;
+/// - a sum over an iterator takes the largest scale of its items, and scale 0 without an item;
 /// - an exact product takes the sum of the scales, saturating at 255, which only limits the text:
 ///   the product is never rounded;
 /// - [`quantize`](FixedDecimal::quantize) takes the scale of the step;

@@ -29,9 +29,13 @@
 //! ```
 //!
 //! Every operation is exact: it returns the exact result or reports failure, and nothing rounds,
-//! truncates or wraps unless asked to. Rounding takes an explicit [`RoundingMode`]:
-//! [`round_to`](Decimal::round_to) converts to fewer fraction digits,
-//! [`quantize`](Decimal::quantize) rounds to a multiple of a step and
+//! truncates or wraps unless asked to. The operators `+`, `-`, `+=` and `-=` between two values of
+//! one type, and `Sum`, are exact too: where [`checked_add`](Decimal::checked_add) and
+//! [`checked_sub`](Decimal::checked_sub) return `None`, for a result outside the range of the type,
+//! they panic, in every build, and [`saturating_add`](Decimal::saturating_add) and
+//! [`saturating_sub`](Decimal::saturating_sub) return the limit that the result passes. Rounding
+//! takes an explicit [`RoundingMode`]: [`round_to`](Decimal::round_to) converts to fewer fraction
+//! digits, [`quantize`](Decimal::quantize) rounds to a multiple of a step and
 //! [`div_round`](Decimal::div_round) divides into any decimal type, while
 //! [`is_multiple_of`](Decimal::is_multiple_of) checks a value against a step without rounding it.
 //! Parsing accepts decimal and exponent notation with `_` separators, including every form that
@@ -41,14 +45,15 @@
 //! Every decimal type has the constants `INTEGRAL`, `FRACTION` and `DIGITS`, its digit counts, and
 //! `SIGNED`, whether its storage is signed. Generic code reaches the constants and methods through
 //! traits in two layers, each with one implementation for every storage. The general layer,
-//! [`FixedDecimal`], with the digit counts, the queries, the arithmetic and the functions `zero`,
-//! `max_value` and `min_value`, [`SignedFixedDecimal`] and [`UnsignedFixedDecimal`], for each sign,
-//! and [`DecimalOne`], with `one`, requires `Clone` but not `Copy`; its functions return the
-//! inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The const layer, [`ConstFixedDecimal`] and
-//! [`ConstDecimalOne`], adds `Copy` and these constants, which a generic `const fn` can read.
-//! [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] have the methods between decimal
-//! types. Code generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`. The trait
-//! methods are not `const`, so constant contexts call the inherent `const fn`s.
+//! [`FixedDecimal`], with the digit counts, the queries, the arithmetic, the operators `+` and `-`
+//! on values, `Sum` and the functions `zero`, `max_value` and `min_value`, [`SignedFixedDecimal`]
+//! and [`UnsignedFixedDecimal`], for each sign, and [`DecimalOne`], with `one`, requires `Clone`
+//! but not `Copy`; its functions return the inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The
+//! const layer, [`ConstFixedDecimal`] and [`ConstDecimalOne`], adds `Copy`, the assignments `+=`
+//! and `-=` and these constants, which a generic `const fn` can read. [`ExactMul`], [`WidenTo`],
+//! [`ConvertTo`] and [`DivRound`] have the methods between decimal types. Code generic over the
+//! storage adds the bound `Decimal<I, F, R>: FixedDecimal`. The trait methods are not `const`, so
+//! constant contexts call the inherent `const fn`s.
 //!
 //! # The scale of a text
 //!

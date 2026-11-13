@@ -108,7 +108,14 @@ fn main() -> Result<(), ParseError> {
   converts to a type with at least as many digits, and `try_convert` reports `OutOfRange` or
   `Inexact` instead of rounding. Rounding happens only where an explicit `RoundingMode` is given:
   `round_to` converts to fewer fraction digits, `quantize` rounds to a multiple of a step, and
-  `div_round` divides into any decimal type. There are no `+`, `-`, `*` or `/` operators.
+  `div_round` divides into any decimal type.
+- The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
+  references, and `Sum` adds the values or the references of an iterator. They are exact too: a
+  result outside the range panics in every build, whatever `overflow-checks` is, with the message
+  of the native operators, where `checked_add` and `checked_sub` return `None` and
+  `saturating_add` and `saturating_sub` the limit that it passes. `checked_rem` is the exact
+  remainder, with the sign of the dividend. There are no `*`, `/` or `%` operators: `exact_mul`
+  and `div_round` are methods.
 - Conversions follow the sign of the storage. The product of two unsigned storages is unsigned,
   and any other product is signed. `widen` converts an unsigned storage to any storage, but a
   signed storage only to a signed one. `try_convert` reports a negative value converted to an
@@ -118,13 +125,14 @@ fn main() -> Result<(), ParseError> {
 - The constants `INTEGRAL`, `FRACTION` and `DIGITS` give the digit counts of a type, and `SIGNED`
   whether its storage is signed. Sealed traits give generic code the items of a type in two
   layers, each implemented for every storage. The general layer requires `Clone` but not `Copy`:
-  `FixedDecimal`, with the digit counts, the queries, the arithmetic and `zero()`, `max_value()`
-  and `min_value()`, `SignedFixedDecimal` and `UnsignedFixedDecimal` for each sign, and
-  `DecimalOne`, with `one()`; these functions return the constants `ZERO`, `MAX`, `MIN` and `ONE`.
-  The const layer, `ConstFixedDecimal` and `ConstDecimalOne`, adds `Copy` and the constants
-  themselves, which a generic `const fn` can read. `ExactMul`, `WidenTo`, `ConvertTo` and
-  `DivRound` have the methods between decimal types. Code generic over `Decimal<I, F, R>` adds the
-  bound `Decimal<I, F, R>: FixedDecimal`.
+  `FixedDecimal`, with the digit counts, the queries, the arithmetic, the operators `+` and `-` on
+  values, `Sum` and `zero()`, `max_value()` and `min_value()`, `SignedFixedDecimal` and
+  `UnsignedFixedDecimal` for each sign, and `DecimalOne`, with `one()`; these functions return the
+  constants `ZERO`, `MAX`, `MIN` and `ONE`. The const layer, `ConstFixedDecimal` and
+  `ConstDecimalOne`, adds `Copy`, the assignments `+=` and `-=` and the constants themselves,
+  which a generic `const fn` can read. `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound` have the
+  methods between decimal types. Code generic over `Decimal<I, F, R>` adds the bound
+  `Decimal<I, F, R>: FixedDecimal`.
 - `parse` accepts ASCII text with an optional sign, point and exponent, and `_` separators as in
   Rust literals: the numeric strings of the General Decimal Arithmetic specification and every
   form that `f64` parses, such as `-1.5`, `+.5`, `5.`, `2.5E-3` and `1_000`. Infinity and NaN are
@@ -142,8 +150,9 @@ of `Decimal::parse`, in a `const fn` of each storage and through `FromStr`, writ
 fraction digits as its scale, and compares, orders and hashes by value only. Every decimal trait is
 implemented for it over any decimal, so generic code takes a `Scaled` and a bare decimal alike: a
 sum takes the larger scale, an exact product the sum of the scales, and a rounded value or a
-quotient the fraction digits of its target type. A scale above 255 is `ScaleTooLarge`, which only
-the `parse` of `Scaled` reports.
+quotient the fraction digits of its target type. The operators `+`, `-`, `+=` and `-=` and `Sum`
+work as for a decimal, and their result takes the larger scale. A scale above 255 is
+`ScaleTooLarge`, which only the `parse` of `Scaled` reports.
 
 ```rust
 use numo::{

@@ -145,11 +145,55 @@ mod tests;
 /// # Operations
 ///
 /// Every operation is exact: it returns the exact result or reports failure, and nothing rounds,
-/// truncates or wraps unless asked to. The operators `+`, `-`, `*` and `/` are not implemented;
-/// use [`checked_add`](Self::checked_add), [`checked_sub`](Self::checked_sub),
-/// [`exact_mul`](Self::exact_mul) and [`div_round`](Self::div_round). With a signed `Repr`,
-/// negation always succeeds because the range is symmetric, so [`Neg`](core::ops::Neg) is
-/// implemented, along with [`neg`](Self::neg), [`abs`](Self::abs) and
+/// truncates or wraps unless asked to. [`checked_add`](Self::checked_add) and
+/// [`checked_sub`](Self::checked_sub) return `None` for a result outside the range of the type,
+/// and [`saturating_add`](Self::saturating_add) and [`saturating_sub`](Self::saturating_sub) the
+/// limit that it passes. [`checked_rem`](Self::checked_rem) returns the remainder of a division
+/// whose quotient is truncated toward zero, which has the sign of the dividend, or `None` for a
+/// divisor of zero.
+///
+/// The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
+/// references, and [`Sum`](core::iter::Sum) adds the values or the references of an iterator. They
+/// are exact too, and where the checked methods return `None` they panic, in every build, whatever
+/// `overflow-checks` is, with the message of the native operators. A value and a reference do not
+/// mix: `a + &b` does not compile, and `a + *b` adds them. There is no `*`, `/` or `%` operator:
+/// [`exact_mul`](Self::exact_mul) returns the product in the type that holds it,
+/// [`div_round`](Self::div_round) rounds the quotient with a mode, and `checked_rem` gives the
+/// remainder.
+///
+/// ```
+/// use numo::{
+///   Decimal,
+///   typenum::{U8, U10},
+/// };
+///
+/// type Price = Decimal<U10, U8>;
+///
+/// let price: Price = "64250.5".parse()?;
+/// let tick: Price = "0.25".parse()?;
+/// assert_eq!((price + tick).to_string(), "64250.75");
+/// assert_eq!((&price - &tick).to_string(), "64250.25");
+/// let mut total = price;
+/// total += tick;
+/// total -= price;
+/// assert_eq!(total, tick);
+/// assert_eq!([price, tick, tick].iter().sum::<Price>().to_string(), "64251");
+///
+/// // The remainder has the sign of the dividend.
+/// let change: Price = "-7.5".parse()?;
+/// assert_eq!(change.checked_rem(&"2".parse()?), Some("-1.5".parse()?));
+/// assert_eq!(change.checked_rem(&Price::ZERO), None);
+///
+/// // Outside the range, a checked method returns `None` and a saturating one the limit, where an
+/// // operator panics.
+/// assert_eq!(Price::MAX.checked_add(&tick), None);
+/// assert_eq!(Price::MAX.saturating_add(&tick), Price::MAX);
+/// assert_eq!(Price::MIN.saturating_sub(&tick), Price::MIN);
+/// # Ok::<(), numo::ParseError>(())
+/// ```
+///
+/// With a signed `Repr`, negation always succeeds because the range is symmetric, so
+/// [`Neg`](core::ops::Neg) is implemented, along with [`neg`](Self::neg), [`abs`](Self::abs) and
 /// [`is_negative`](Self::is_negative). An unsigned `Repr` has none of them, and its `checked_sub`
 /// returns `None` below zero.
 ///
