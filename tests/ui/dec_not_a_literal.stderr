@@ -1,0 +1,19 @@
+error: no rules expected `+`
+ --> tests/ui/dec_not_a_literal.rs:7:19
+  |
+7 | const _: D = dec!(+1.5);
+  |                   ^ no rules expected this token in macro call
+  |
+note: while trying to match `-`
+ --> src/decimal/literal.rs
+  |
+  |   (- $literal:literal $(as $ty:ty)?) => {
+  |    ^
+
+error: no rules expected `.`
+ --> tests/ui/dec_not_a_literal.rs:8:22
+  |
+8 | const _: D = dec!(1.5.5);
+  |                      ^ no rules expected this token in macro call
+  |
+  = note: while trying to match sequence start

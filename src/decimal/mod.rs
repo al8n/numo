@@ -11,6 +11,7 @@ use core::{
 use typenum::{And, Diff, Max, Maximum, Sum};
 
 pub use error::{ConvertError, DivideError, ParseError, ParseErrorKind, QuantizeError};
+pub use literal::{DecimalLiteral, LiteralText};
 pub use scaled::Scaled;
 pub use traits::{
   ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalOne, DivRound, ExactMul, FixedDecimal,
@@ -28,6 +29,7 @@ use crate::{
 
 mod error;
 mod format;
+mod literal;
 mod ops;
 mod parse;
 mod scaled;
@@ -160,7 +162,8 @@ mod tests;
 /// mix: `a + &b` does not compile, and `a + *b` adds them. There is no `*`, `/` or `%` operator:
 /// [`exact_mul`](Self::exact_mul) returns the product in the type that holds it,
 /// [`div_round`](Self::div_round) rounds the quotient with a mode, and `checked_rem` gives the
-/// remainder.
+/// remainder. The right operand can be a literal of [`dec!`](crate::dec), as in
+/// `price + dec!(0.5)`, which takes the type of the left one.
 ///
 /// ```
 /// use numo::{
@@ -266,7 +269,8 @@ mod tests;
 /// [`NotFinite`](crate::ParseErrorKind::NotFinite), because a decimal is always finite. The value
 /// must fit exactly: once the exponent has moved the point, digits beyond `Integral` and `Fraction`
 /// are accepted only when they are leading or trailing zeros; anything else is an error, never a
-/// rounded value. See [`parse`](Self::parse) for the grammar.
+/// rounded value. See [`parse`](Self::parse) for the grammar. [`dec!`](crate::dec) reads a literal
+/// of the source with `parse`, when the crate is compiled.
 ///
 /// [`Display`](fmt::Display) writes the shortest exact form: an optional `-`, the integral part
 /// without leading zeros (at least one digit), then `.` and the fraction digits without trailing
@@ -336,6 +340,44 @@ mod tests;
 /// assert_eq!(format!("{:012e}", -price), "-006.42505e4");
 /// assert_eq!(format!("{price:>12E}"), "   6.42505E4");
 /// assert_eq!(format!("{price:e}").parse::<Price>()?, price);
+/// # Ok::<(), numo::ParseError>(())
+/// ```
+///
+/// # Bytes
+///
+/// The bytes of a decimal are those of its coefficient. [`repr`](Self::repr) returns the integer,
+/// and the integer has the byte methods: those of the standard library for a native storage, and
+/// those of this crate's integers for a wide one, which the [bytes of `Uint`](crate::Uint#bytes)
+/// describe. There are as many bytes as the storage has, and a signed storage writes its integer
+/// in two's complement. Back, [`from_repr`](Self::from_repr) takes the integer that the bytes
+/// hold: every array of bytes is an integer, but not every integer is a coefficient, and
+/// `from_repr` returns `None` outside the range of the type.
+///
+/// The bytes do not carry the number of fraction digits, which is in the type. The 16 bytes that
+/// `rust_decimal`'s `serialize` writes hold the sign and the scale in four bytes of flags beside a
+/// 96-bit integer; these hold the integer alone. So bytes that one type wrote are read by a type
+/// with the same `Fraction`, and read with another `Fraction` the value is off by a power of ten.
+///
+/// ```
+/// use numo::{
+///   Decimal,
+///   typenum::{U8, U10, U18, U60},
+///   u320,
+/// };
+///
+/// type Price = Decimal<U10, U8>;
+/// type TokenAmount = Decimal<U60, U18, u320>;
+///
+/// let price: Price = "64250.5".parse()?;
+/// let bytes: [u8; 8] = price.repr().to_le_bytes();
+/// assert_eq!(Price::from_repr(i64::from_le_bytes(bytes)), Some(price));
+///
+/// let amount: TokenAmount = "1.5".parse()?;
+/// let bytes: [u8; 40] = amount.repr().to_be_bytes();
+/// assert_eq!(TokenAmount::from_repr(u320::from_be_bytes(bytes)), Some(amount));
+///
+/// // `u320::MAX` has 97 digits, more than `TokenAmount` holds.
+/// assert_eq!(TokenAmount::from_repr(u320::from_le_bytes([0xff; 40])), None);
 /// # Ok::<(), numo::ParseError>(())
 /// ```
 #[repr(transparent)]

@@ -22,6 +22,8 @@ FEATURES
     form that `f64` parses (signs, `.5`, `5.`, exponents) and `_` separators as in Rust literals,
     and reports infinity and NaN as the new `ParseErrorKind::NotFinite`. Exponents of any size are
     applied exactly.
+  - `dec!`, a decimal literal checked at compile time, of the type that its context expects or
+    names: `dec!(0.01)`, `dec!(-2.5e-3 as Price)`.
   - Scientific notation through `LowerExp` and `UpperExp`, `{:e}` and `{:E}`: the significant
     digits with the point after the first, and the exponent, as in `6.42505e4`, with zero as `0e0`.
     The flags work as for `Display`, and the precision is the minimum number of mantissa fraction
@@ -71,7 +73,7 @@ FEATURES
     keep the scale: the fraction digits written, not counting `_`, minus the exponent, and at least
     0, which may exceed the fraction digits of the decimal. A scale above 255 is the new
     `ParseErrorKind::ScaleTooLarge`, which only a text that `Decimal::parse` accepts can give, and
-    which `Decimal::parse` never reports.
+    which `Decimal::parse` never reports. `dec!` reads a literal of a `Scaled` and keeps its scale.
   - `Display` writes at least as many fraction digits as the scale, or the precision where it is
     larger, never rounded and without allocation; with scale 0 it writes what the decimal writes.
     `Debug` shows the scale, while equality, ordering and hashing compare the value only.

@@ -3,8 +3,9 @@ use core::{ops::Neg, str::FromStr};
 use typenum::NonZero;
 
 use super::{
-  ConstDecimalOne, ConstFixedDecimal, Decimal, DecimalOne, FixedDecimal, ParseError,
-  ParseErrorKind, QuantizeError, Scaled, SignedFixedDecimal, UnsignedFixedDecimal, parse,
+  ConstDecimalOne, ConstFixedDecimal, Decimal, DecimalLiteral, DecimalOne, FixedDecimal,
+  LiteralText, ParseError, ParseErrorKind, QuantizeError, Scaled, SignedFixedDecimal,
+  UnsignedFixedDecimal, literal, parse,
 };
 use crate::{
   i192, i256, i320, i384, i448, i512, int, layout::Layout, rounding::RoundingMode, u192, u256,
@@ -13,9 +14,9 @@ use crate::{
 
 /// Implements the constants, `const fn` methods and traits that depend only on the storage, for
 /// each listed storage with its sign, `signed` or `unsigned`, and its kind, `native` or `wide`,
-/// and the parsing of a [`Scaled`] over a decimal of the storage. The kind selects how a
-/// coefficient goes to the storage's module in `int`, and how the examples import the storage and
-/// spell its coefficients.
+/// and the parsing and the literal of a [`Scaled`] over a decimal of the storage. The kind selects
+/// how a coefficient goes to the storage's module in `int`, and how the examples import the
+/// storage and spell its coefficients.
 macro_rules! storage_decimal {
   ($($repr:ident: $sign:ident $kind:ident),+ $(,)?) => {$(
     storage_decimal!(@by $sign $repr $kind);
@@ -237,6 +238,29 @@ macro_rules! storage_decimal {
       (I, F): Layout<$repr>,
     {
       const ONE: Self = Self::ONE;
+    }
+
+    impl<I, F, T> DecimalLiteral<T> for Decimal<I, F, $repr>
+    where
+      (I, F): Layout<$repr>,
+      T: LiteralText,
+    {
+      const VALUE: Self = match Self::parse(T::TEXT) {
+        Ok(value) => value,
+        Err(error) => literal::reject(error.kind()),
+      };
+    }
+
+    // The `parse` of the `Scaled`, which keeps the scale of the text.
+    impl<I, F, T> DecimalLiteral<T> for Scaled<Decimal<I, F, $repr>>
+    where
+      (I, F): Layout<$repr>,
+      T: LiteralText,
+    {
+      const VALUE: Self = match Self::parse(T::TEXT) {
+        Ok(value) => value,
+        Err(error) => literal::reject(error.kind()),
+      };
     }
 
     #[cfg(feature = "serde")]
