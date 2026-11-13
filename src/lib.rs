@@ -547,7 +547,8 @@ pub use integer::{
   UnsignedDigits, UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WidenFrom, WrappingOps,
 };
 pub use layout::{
-  DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,
+  DigitCount, DivIntermediate, FitsDigits, InlineStorage, Layout, MutableStorage, Pick, Storage,
+  Widen, WidenRepr,
 };
 pub use rounding::RoundingMode;
 pub use width::{

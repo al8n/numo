@@ -16,7 +16,7 @@ use ::quickcheck::{Arbitrary, Gen};
 
 use crate::{
   Decimal, RoundingMode,
-  layout::{Layout, Storage},
+  layout::{Layout, Storage, Token},
   sample::{self, Chain, MODES, Source},
 };
 
@@ -53,14 +53,18 @@ where
   fn arbitrary(g: &mut Gen) -> Self {
     let coeff = sample::coefficient::<I, F, R>(&mut Choices(g));
     // The coefficient has at most the digits of the type.
-    Decimal::from_coeff(coeff)
+    Decimal::from_coeff(R::from_twin(coeff, Token::new()))
   }
 
   /// Returns zero, then the magnitude of a negative value, then the value truncated toward zero to
   /// its first digit, its first two digits, and so on: each simpler than the value, which is never
   /// among them. The iterator is boxed, as the trait requires.
   fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-    Box::new(Chain::<I, F, R>::new(self.coeff()))
+    // The chain holds the twin of the coefficient, so that nothing of the storage is cloned
+    // before a candidate is made.
+    Box::new(Chain::<I, F, R, R::Inline>::new(
+      self.repr.twin(Token::new()),
+    ))
   }
 }
 

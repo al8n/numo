@@ -320,7 +320,7 @@ macro_rules! wide_tests {
       use crate::{
         $int as Wide, bigint,
         int::$int as wide,
-        layout::{DigitBuf, StorageCore, Token},
+        layout::{DigitBuf, InlineCore, Token},
       };
 
       const SIGNED: bool = wide_tests!(@signed $sign);
@@ -450,7 +450,7 @@ macro_rules! wide_tests {
         for &(a, ref big_a) in &samples {
           for &(b, ref big_b) in &samples {
             if let Some(product) = from_big(&(big_a * big_b)) {
-              assert_eq!(StorageCore::mul(&a, &b, Token::new()), product, "{a:?} * {b:?}");
+              assert_eq!(InlineCore::mul(&a, &b, Token::new()), product, "{a:?} * {b:?}");
             }
           }
         }
@@ -511,12 +511,12 @@ macro_rules! wide_tests {
         for (a, big_a) in with_big(samples()) {
           for &(exp, ref power) in &powers {
             let product = from_big(&(&big_a * power));
-            assert_eq!(StorageCore::checked_mul_pow10(&a, exp, Token::new()), product);
+            assert_eq!(InlineCore::checked_mul_pow10(&a, exp, Token::new()), product);
             if let Some(product) = product {
               assert_eq!(wide::mul_pow10(&a, exp), product);
             }
             // As with `/` and `%`, the quotient and the remainder have the sign of `a`.
-            let (quotient, remainder) = StorageCore::div_rem_pow10(&a, exp, Token::new());
+            let (quotient, remainder) = InlineCore::div_rem_pow10(&a, exp, Token::new());
             assert_eq!(big(quotient), &big_a / power);
             assert_eq!(big(remainder), &big_a % power);
           }
@@ -528,7 +528,7 @@ macro_rules! wide_tests {
         for a in samples() {
           // The row takes the buffer of its storage, whose zeros no digit check reads.
           let mut buf = DigitBuf::<Wide>::default();
-          let start = StorageCore::write_digits(&a, &mut buf, Token::new());
+          let start = InlineCore::write_digits(&a, &mut buf, Token::new());
           let expected = big(a).magnitude().to_string();
           assert_eq!(&buf[start..], expected.as_bytes());
 

@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
   FromFloatError,
-  layout::{DigitBuf, StorageCore, Token},
+  layout::{DigitBuf, InlineCore, Storage, StorageCore, Token},
   rounding::RoundingMode,
 };
 
@@ -301,16 +301,16 @@ where
   /// larger, honoring width, fill, alignment, `+` and `0` as described on [`Scaled`]. Nothing is
   /// rounded or truncated.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let repr = self.value.clone().repr();
-    let mut buf = DigitBuf::<D::Repr>::default();
-    let start = repr.write_digits(&mut buf, Token::new());
+    let coeff = self.value.clone().repr().twin(Token::new());
+    let mut buf = DigitBuf::<<D::Repr as Storage>::Inline>::default();
+    let start = coeff.write_digits(&mut buf, Token::new());
     let scale = usize::from(self.scale);
     let min_fraction = f
       .precision()
       .map_or(scale, |precision| precision.max(scale));
     format::write(
       f,
-      repr.is_negative(Token::new()),
+      coeff.is_negative(Token::new()),
       &buf[start..],
       D::FRACTION as usize,
       min_fraction,

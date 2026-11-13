@@ -21,7 +21,7 @@ use crate::{
   Scaled,
   bigint::MODES,
   i192, i256, i320, i384, i448, i512,
-  layout::{StorageCore, Token},
+  layout::{InlineCore, Token},
   u192, u256, u320, u384, u448, u512,
 };
 
@@ -117,7 +117,7 @@ macro_rules! assert_fixed {
     );
     assert!(FixedDecimal::is_multiple_of(&T::ZERO, &T::ZERO));
     assert!(!FixedDecimal::is_multiple_of(&unit, &T::ZERO));
-    let beyond = StorageCore::checked_mul_pow10(&unit.repr(), T::DIGITS, Token::new()).unwrap();
+    let beyond = InlineCore::checked_mul_pow10(&unit.repr(), T::DIGITS, Token::new()).unwrap();
     assert_eq!(<T as FixedDecimal>::from_repr(beyond), None);
     assert_eq!(T::from_repr(beyond), None);
   })+};
@@ -142,8 +142,8 @@ macro_rules! assert_signed {
       FixedDecimal::quantize(&unit, &unit.neg(), RoundingMode::Up),
       Err(QuantizeError::InvalidStep)
     );
-    let beyond = StorageCore::checked_mul_pow10(&unit.repr(), T::DIGITS, Token::new()).unwrap();
-    let below = StorageCore::checked_neg(&beyond, Token::new()).unwrap();
+    let beyond = InlineCore::checked_mul_pow10(&unit.repr(), T::DIGITS, Token::new()).unwrap();
+    let below = InlineCore::checked_neg(&beyond, Token::new()).unwrap();
     assert_eq!(<T as FixedDecimal>::from_repr(below), None);
   })+};
 }

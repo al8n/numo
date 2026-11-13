@@ -11,8 +11,8 @@ use typenum::{
 };
 
 use super::{
-  DigitBuf, DigitCount, DivIntermediate, FitsDigits, Layout, LayoutDigits, Pick, StorageCore,
-  Token, WidenRepr,
+  DigitBuf, DigitCount, DivIntermediate, FitsDigits, InlineCore, Layout, LayoutDigits, Pick,
+  StorageCore, Token, WidenRepr,
 };
 use crate::{bigint, i192, i256, i320, i384, i448, i512, u192, u256, u320, u384, u448, u512};
 
@@ -324,7 +324,7 @@ fn widen_repr_pairs() {
 }
 
 /// A storage whose values the conversion tests compare as `num-bigint` integers.
-trait Value: StorageCore + Debug + PartialEq {
+trait Value: InlineCore + Debug + PartialEq {
   fn to_big(self) -> BigInt;
 
   /// The value of this storage equal to `value`, if the storage holds it.

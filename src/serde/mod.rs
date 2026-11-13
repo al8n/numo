@@ -166,7 +166,7 @@ use serde_core::{
 
 use crate::{
   Decimal, FixedDecimal, ParseError, RoundingMode, Scaled,
-  layout::{Layout, Storage, StorageCore},
+  layout::{InlineCore, Layout, Storage},
   width::{Array, ArrayLength, ArraySize},
 };
 
@@ -291,7 +291,7 @@ where
   where
     S: Serializer,
   {
-    serialize_text::<R::TextLen, _, _>(self, serializer)
+    serialize_text::<<R::Inline as InlineCore>::TextLen, _, _>(self, serializer)
   }
 }
 
@@ -311,7 +311,9 @@ where
     // a text of `D`, which the text buffer of its storage holds. A larger scale asks for up to
     // 65535 fraction digits, which `collect_str` streams with no buffer.
     if u32::from(self.scale()) <= D::FRACTION {
-      serialize_text::<<D::Repr as StorageCore>::TextLen, _, _>(self, serializer)
+      serialize_text::<<<D::Repr as Storage>::Inline as InlineCore>::TextLen, _, _>(
+        self, serializer,
+      )
     } else {
       serializer.collect_str(self)
     }

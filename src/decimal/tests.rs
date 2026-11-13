@@ -21,8 +21,8 @@ use typenum::{
 
 use super::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
 use crate::{
-  DivIntermediate, Layout, RoundingMode, Storage, bigint, i192, i256, i320, i384, i448, i512, u192,
-  u256, u320, u384, u448, u512,
+  DivIntermediate, InlineStorage, Layout, RoundingMode, Storage, bigint, i192, i256, i320, i384,
+  i448, i512, u192, u256, u320, u384, u448, u512,
 };
 
 /// `i8` at its 2-digit limit.
@@ -129,8 +129,14 @@ fn generic_bounds() {
     value
   }
 
-  // `Storage` alone lets generic code copy, compare and hash values.
+  // `Storage` alone lets generic code clone, compare and hash values, and `InlineStorage` also
+  // copy them.
   fn storage_traits<I, F, R: Storage>() {
+    fn assert<T: Clone + Ord + Hash>() {}
+    assert::<Decimal<I, F, R>>();
+  }
+
+  fn inline_storage_traits<I, F, R: InlineStorage>() {
     fn assert<T: Copy + Ord + Hash>() {}
     assert::<Decimal<I, F, R>>();
   }
@@ -150,8 +156,10 @@ fn generic_bounds() {
   };
   assert_eq!(holder.value, Price::ONE);
   storage_traits::<U10, U8, i64>();
+  inline_storage_traits::<U10, U8, i64>();
   layout_traits::<U10, U8, i64>();
   storage_traits::<U10, U9, u64>();
+  inline_storage_traits::<U10, U9, u64>();
   layout_traits::<U10, U9, u64>();
 }
 

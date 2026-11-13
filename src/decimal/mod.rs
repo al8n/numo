@@ -21,7 +21,7 @@ pub use traits::{
 use crate::{
   FromFloatError, int,
   layout::{
-    DigitBuf, DigitCount, DivIntermediate, Layout, LayoutDigits, Pick, Storage, StorageCore, Token,
+    DigitBuf, DigitCount, DivIntermediate, InlineCore, Layout, LayoutDigits, Pick, Storage, Token,
     Widen, WidenRepr,
   },
   rounding::{self, RoundingMode},
@@ -510,7 +510,9 @@ mod tests;
 /// ```
 #[repr(transparent)]
 pub struct Decimal<Integral, Fraction, Repr = <Sum<Integral, Fraction> as DigitCount>::Signed> {
-  repr: Repr,
+  // Read by the storage-generic code of the crate outside this module, such as the shrinking of
+  // `quickcheck`, which takes the twin of the coefficient: `repr` is defined for each storage.
+  pub(crate) repr: Repr,
   _digits: PhantomData<(Integral, Fraction)>,
 }
 
@@ -522,18 +524,6 @@ impl<I, F, R> Decimal<I, F, R> {
       repr,
       _digits: PhantomData,
     }
-  }
-}
-
-#[cfg(feature = "quickcheck")]
-impl<I, F, R> Decimal<I, F, R>
-where
-  R: Copy,
-{
-  /// Returns the coefficient. Storage-generic code calls this, because `repr` is defined for each
-  /// storage.
-  pub(crate) const fn coeff(self) -> R {
-    self.repr
   }
 }
 
@@ -615,9 +605,23 @@ where
     // so both operands convert to it exactly. Their product has at most as many digits as the
     // operands together, which is the digit count of its type, so it fits that storage as well.
     // Between native storages, the conversions are casts and the multiplication is native.
-    let lhs = self.repr.convert(Token::new());
-    let rhs = rhs.repr.convert(Token::new());
-    Decimal::from_coeff(StorageCore::mul(&lhs, &rhs, Token::new()))
+    let lhs = self.repr.twin(Token::new()).convert(Token::new());
+    let rhs = rhs.repr.twin(Token::new()).convert(Token::new());
+    Decimal::from_coeff(InlineCore::mul(&lhs, &rhs, Token::new()))
+  }
+
+  /// Returns the value in its inline storage. This is a copy and allocates nothing.
+  #[must_use]
+  #[inline]
+  pub fn to_inline(&self) -> Decimal<I, F, R::Inline> {
+    Decimal::from_coeff(self.repr.twin(Token::new()))
+  }
+
+  /// Returns `value` in the storage of `Self`: `value` itself for an inline storage.
+  #[must_use]
+  #[inline]
+  pub fn from_inline(value: Decimal<I, F, R::Inline>) -> Self {
+    Decimal::from_coeff(R::from_twin(value.repr, Token::new()))
   }
 }
 
@@ -661,8 +665,11 @@ where
     // most `I + F2 <= I2 + F2` digits. `R2` is unsigned only if `R` is, and then the coefficient
     // is not negative.
     let scale = Decimal::<I2, F2, R2>::FRACTION - Self::FRACTION;
-    let coeff: R2 = self.repr.convert(Token::new());
-    Decimal::from_coeff(coeff.mul_pow10(scale, Token::new()))
+    let coeff: R2::Inline = self.repr.twin(Token::new()).convert(Token::new());
+    Decimal::from_coeff(R2::from_twin(
+      coeff.mul_pow10(scale, Token::new()),
+      Token::new(),
+    ))
   }
 
   /// Converts to any decimal type, failing instead of losing digits.
@@ -714,10 +721,11 @@ where
     R2: Storage,
     (I2, F2): Layout<R2>,
   {
+    let coeff = self.repr.twin(Token::new());
     // Checked before scaling, so that a negative value that truncates to zero, such as `-0.5`,
     // is out of range rather than inexact. A value that remains is never negative for an unsigned
     // target.
-    if self.repr.is_negative(Token::new()) && !R2::SIGNED {
+    if coeff.is_negative(Token::new()) && !R2::SIGNED {
       return Err(ConvertError::OutOfRange);
     }
     let from = Self::FRACTION;
@@ -730,7 +738,7 @@ where
     let converted = if to >= from {
       // Scaled in `R2`, which holds every scaled value in range, while `R` may not. A value that
       // `R2` cannot hold is out of range even before scaling.
-      match self.repr.checked_convert::<R2>(Token::new()) {
+      match coeff.checked_convert::<R2::Inline>(Token::new()) {
         Some(coeff) => match coeff.checked_mul_pow10(to - from, Token::new()) {
           Some(scaled) if scaled.within_digits(digits, Token::new()) => scaled,
           _ => return Err(ConvertError::OutOfRange),
@@ -741,8 +749,8 @@ where
       // Divided in `R`, which holds `10^(from - to)`. The truncated quotient is in range exactly
       // when the value's integral part has at most `I2` digits, so range is decided before
       // exactness.
-      let (quotient, remainder) = self.repr.div_rem_pow10(from - to, Token::new());
-      match quotient.checked_convert::<R2>(Token::new()) {
+      let (quotient, remainder) = coeff.div_rem_pow10(from - to, Token::new());
+      match quotient.checked_convert::<R2::Inline>(Token::new()) {
         Some(quotient) if quotient.within_digits(digits, Token::new()) => {
           if !remainder.is_zero(Token::new()) {
             return Err(ConvertError::Inexact);
@@ -752,7 +760,7 @@ where
         _ => return Err(ConvertError::OutOfRange),
       }
     };
-    Ok(Decimal::from_coeff(converted))
+    Ok(Decimal::from_coeff(R2::from_twin(converted, Token::new())))
   }
 
   /// Converts to any decimal type, rounding with `mode` where the target has fewer fraction
@@ -822,10 +830,13 @@ where
     }
     // Rounded in `R`, which holds `10^(from - to)` and the rounded quotient: its magnitude is at
     // most `10^(Integral + to)`. The range is then checked in `R2`, as `try_convert` does.
-    let rounded = self.repr.round_div_pow10(from - to, mode, Token::new());
-    match rounded.checked_convert::<R2>(Token::new()) {
+    let rounded = self
+      .repr
+      .twin(Token::new())
+      .round_div_pow10(from - to, mode, Token::new());
+    match rounded.checked_convert::<R2::Inline>(Token::new()) {
       Some(coeff) if coeff.within_digits(Decimal::<I2, F2, R2>::DIGITS, Token::new()) => {
-        Ok(Decimal::from_coeff(coeff))
+        Ok(Decimal::from_coeff(R2::from_twin(coeff, Token::new())))
       }
       _ => Err(ConvertError::OutOfRange),
     }
@@ -933,7 +944,8 @@ where
     Maximum<Sum<I, Maximum<Sum<F2, F3>, F>>, Sum<I2, Diff<Maximum<Sum<F2, F3>, F>, F3>>>:
       DivIntermediate<And<R::IsUnsigned, R2::IsUnsigned>>,
   {
-    if rhs.repr.is_zero(Token::new()) {
+    let (dividend, divisor) = (self.repr.twin(Token::new()), rhs.repr.twin(Token::new()));
+    if divisor.is_zero(Token::new()) {
       return Err(DivideError::DivisionByZero);
     }
     let from = Self::FRACTION;
@@ -943,30 +955,30 @@ where
     // `N = c_a` and `D = c_b * 10^(F - F2 - F3)` when that exponent is positive. The intermediate
     // holds the digits of both and is unsigned only if both operand storages are, so the
     // coefficients convert to it exactly and the scaling does not overflow.
-    let numerator = self.repr.convert::<<Maximum<
+    let numerator = dividend.convert::<<Maximum<
       Sum<I, Maximum<Sum<F2, F3>, F>>,
       Sum<I2, Diff<Maximum<Sum<F2, F3>, F>, F3>>,
     > as DivIntermediate<And<R::IsUnsigned, R2::IsUnsigned>>>::Storage>(
       Token::new()
     );
-    let denominator = rhs.repr.convert(Token::new());
+    let denominator = divisor.convert(Token::new());
     let (numerator, denominator) = if to + by >= from {
       (
-        StorageCore::mul_pow10(&numerator, to + by - from, Token::new()),
+        InlineCore::mul_pow10(&numerator, to + by - from, Token::new()),
         denominator,
       )
     } else {
       (
         numerator,
-        StorageCore::mul_pow10(&denominator, from - to - by, Token::new()),
+        InlineCore::mul_pow10(&denominator, from - to - by, Token::new()),
       )
     };
     // `|N|, |D| <= 10^W - 1 <= MAX < |MIN|` in the intermediate, so neither operand is `MIN`. The
     // rounded quotient is at most `|N|`: rounding away from zero needs a remainder, so `|D| >= 2`.
     let quotient = numerator.round_div(&denominator, mode, Token::new());
-    match quotient.checked_convert::<R3>(Token::new()) {
+    match quotient.checked_convert::<R3::Inline>(Token::new()) {
       Some(coeff) if coeff.within_digits(Decimal::<I3, F3, R3>::DIGITS, Token::new()) => {
-        Ok(Decimal::from_coeff(coeff))
+        Ok(Decimal::from_coeff(R3::from_twin(coeff, Token::new())))
       }
       _ => Err(DivideError::OutOfRange),
     }
@@ -989,12 +1001,13 @@ where
     // Zero, of either sign and in every mode, has no digit count, and this block has no zero of
     // its storage but the one of a `u64`.
     if digits == 0 {
-      return Ok(Decimal::from_coeff(0u64.convert::<R>(Token::new())));
+      let zero = 0u64.convert::<R::Inline>(Token::new());
+      return Ok(Decimal::from_coeff(R::from_twin(zero, Token::new())));
     }
     // The place of the last digit in units of the last digit of the type. It and the count of
     // digits below are computed in `i64`, which holds every sum of them.
     let places = i64::from(Self::FRACTION) + i64::from(exponent);
-    let magnitude: R = if places >= 0 {
+    let magnitude: R::Inline = if places >= 0 {
       // The coefficient is `digits * 10^places`, which has as many digits as `digits` and
       // `places` more: the count decides the range before any arithmetic, and a coefficient in
       // range is below `10^DIGITS`, which the storage holds, so the product does not overflow.
@@ -1002,7 +1015,7 @@ where
       if count + places > i64::from(Self::DIGITS) {
         return Err(overflow);
       }
-      match digits.checked_convert::<R>(Token::new()) {
+      match digits.checked_convert::<R::Inline>(Token::new()) {
         Some(digits) => digits.mul_pow10(places as u32, Token::new()),
         None => return Err(overflow),
       }
@@ -1018,18 +1031,18 @@ where
         // remainder is below half the divisor.
         _ => rounding::increments(mode, negative, false, Ordering::Less, false, true) as u64,
       };
-      match rounded.checked_convert::<R>(Token::new()) {
+      match rounded.checked_convert::<R::Inline>(Token::new()) {
         Some(coeff) if coeff.within_digits(Self::DIGITS, Token::new()) => coeff,
         _ => return Err(overflow),
       }
     };
     if !negative {
-      return Ok(Decimal::from_coeff(magnitude));
+      return Ok(Decimal::from_coeff(R::from_twin(magnitude, Token::new())));
     }
     // The sign comes last, so that a negative value that rounds to zero is zero in every
     // storage: an unsigned storage refuses every other negative value.
     match magnitude.checked_neg(Token::new()) {
-      Some(coeff) => Ok(Decimal::from_coeff(coeff)),
+      Some(coeff) => Ok(Decimal::from_coeff(R::from_twin(coeff, Token::new()))),
       None => Err(FromFloatError::NegOverflow),
     }
   }
@@ -1184,11 +1197,12 @@ where
   /// Writes the shortest exact form, honoring width, fill, alignment, `+`, `0` and precision as
   /// described on [`Decimal`]. Precision never rounds or truncates.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let mut buf = DigitBuf::<R>::default();
-    let start = self.repr.write_digits(&mut buf, Token::new());
+    let coeff = self.repr.twin(Token::new());
+    let mut buf = DigitBuf::<R::Inline>::default();
+    let start = coeff.write_digits(&mut buf, Token::new());
     format::write(
       f,
-      self.repr.is_negative(Token::new()),
+      coeff.is_negative(Token::new()),
       &buf[start..],
       Self::FRACTION as usize,
       f.precision().unwrap_or(0),
@@ -1224,11 +1238,12 @@ where
   /// point of a text that would have none, and the exponent formats of the primitive floats and
   /// of [`Uint`](crate::Uint) and [`Int`](crate::Int) ignore it, so neither meaning holds here.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let mut buf = DigitBuf::<R>::default();
-    let start = self.repr.write_digits(&mut buf, Token::new());
+    let coeff = self.repr.twin(Token::new());
+    let mut buf = DigitBuf::<R::Inline>::default();
+    let start = coeff.write_digits(&mut buf, Token::new());
     format::write_exp(
       f,
-      self.repr.is_negative(Token::new()),
+      coeff.is_negative(Token::new()),
       &buf[start..],
       Self::FRACTION as usize,
       b'e',
@@ -1252,11 +1267,12 @@ where
   /// point of a text that would have none, and the exponent formats of the primitive floats and
   /// of [`Uint`](crate::Uint) and [`Int`](crate::Int) ignore it, so neither meaning holds here.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let mut buf = DigitBuf::<R>::default();
-    let start = self.repr.write_digits(&mut buf, Token::new());
+    let coeff = self.repr.twin(Token::new());
+    let mut buf = DigitBuf::<R::Inline>::default();
+    let start = coeff.write_digits(&mut buf, Token::new());
     format::write_exp(
       f,
-      self.repr.is_negative(Token::new()),
+      coeff.is_negative(Token::new()),
       &buf[start..],
       Self::FRACTION as usize,
       b'E',

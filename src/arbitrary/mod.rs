@@ -8,7 +8,7 @@ use ::arbitrary::{Arbitrary, Error, Result, Unstructured};
 
 use crate::{
   Decimal, RoundingMode,
-  layout::{Layout, LayoutDigits, Storage},
+  layout::{Layout, LayoutDigits, Storage, Token},
   sample::{self, Source},
 };
 
@@ -58,7 +58,7 @@ where
     };
     let coeff = sample::coefficient::<I, F, R>(&mut source);
     // The coefficient has at most the digits of the type.
-    source.finish(Decimal::from_coeff(coeff))
+    source.finish(Decimal::from_coeff(R::from_twin(coeff, Token::new())))
   }
 
   fn size_hint(depth: usize) -> (usize, Option<usize>) {

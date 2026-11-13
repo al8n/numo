@@ -23,7 +23,7 @@ use ::proptest::{
 
 use crate::{
   Decimal, RoundingMode,
-  layout::{Layout, Storage},
+  layout::{Layout, Storage, Token},
   sample::{self, Chain, DecimalMarker, MODES, Source},
 };
 
@@ -66,7 +66,7 @@ where
     let coeff = sample::coefficient::<I, F, R>(&mut source);
     match source.reason {
       Some(reason) => Err(reason),
-      None => Ok(DecimalValueTree::new(coeff)),
+      None => Ok(DecimalValueTree::new(R::from_twin(coeff, Token::new()))),
     }
   }
 }
@@ -115,12 +115,12 @@ pub struct DecimalValueTree<I, F, R> {
 
 impl<I, F, R> DecimalValueTree<I, F, R>
 where
-  R: Copy,
+  R: Clone,
 {
   /// Returns a tree that starts from `repr`, a coefficient in the range of `Decimal<I, F, R>`.
-  pub(crate) const fn new(repr: R) -> Self {
+  pub(crate) fn new(repr: R) -> Self {
     Self {
-      parent: repr,
+      parent: repr.clone(),
       current: repr,
       cursor: None,
       exhausted: false,
@@ -136,14 +136,17 @@ where
   /// Moves to the candidate for `parent` at `index` and returns `true`, or, past the last
   /// candidate, back to `parent`, which is then exhausted, and returns `false`.
   fn move_to(&mut self, index: u8) -> bool {
-    match Chain::<I, F, R>::new(self.parent).get(u32::from(index)) {
+    // The candidates are computed in the twin of the parent, and only the one that the tree moves
+    // to is stored.
+    let chain = Chain::<I, F, R, R::Inline>::new(self.parent.twin(Token::new()));
+    match chain.get(u32::from(index)) {
       Some(candidate) => {
-        self.current = candidate;
+        self.current = R::from_twin(candidate, Token::new());
         self.cursor = Some(index);
         true
       }
       None => {
-        self.current = self.parent;
+        self.current = self.parent.clone();
         self.cursor = None;
         self.exhausted = true;
         false
@@ -168,10 +171,16 @@ where
 
 impl<I, F, R> Clone for DecimalValueTree<I, F, R>
 where
-  R: Copy,
+  R: Clone,
 {
   fn clone(&self) -> Self {
-    *self
+    Self {
+      parent: self.parent.clone(),
+      current: self.current.clone(),
+      cursor: self.cursor,
+      exhausted: self.exhausted,
+      decimal: PhantomData,
+    }
   }
 }
 
@@ -186,14 +195,14 @@ where
 
   fn current(&self) -> Decimal<I, F, R> {
     // Every candidate has at most the digits of the value it was made from.
-    Decimal::from_coeff(self.current)
+    Decimal::from_coeff(self.current.clone())
   }
 
   fn simplify(&mut self) -> bool {
     let first = if self.cursor.is_some() {
       // The candidate failed, so the next level shrinks it. Zero comes first among the
       // candidates of every value, and the first level has tried it.
-      self.parent = self.current;
+      self.parent = self.current.clone();
       self.exhausted = false;
       1
     } else if self.exhausted {

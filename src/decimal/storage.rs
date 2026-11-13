@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
   FromFloatError, i192, i256, i320, i384, i448, i512, int,
-  layout::{FloatScratch, Layout, StorageCore},
+  layout::{FloatScratch, InlineCore, Layout},
   rounding::RoundingMode,
   u192, u256, u320, u384, u448, u512,
 };
@@ -1210,7 +1210,7 @@ macro_rules! storage_decimal {
       const fn coefficient_digits(&self) -> (u32, u32) {
         // The digit length of the storage, as a constant of its own: a nested item takes no
         // parameter of the impl around it.
-        const LEN: usize = <<$repr as StorageCore>::DigitLen as typenum::Unsigned>::USIZE;
+        const LEN: usize = <<$repr as InlineCore>::DigitLen as typenum::Unsigned>::USIZE;
         let mut buf = [0; LEN];
         let start = int::$repr::write_digits($($by)* self.repr, &mut buf);
         let mut end = buf.len();
