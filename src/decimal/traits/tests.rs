@@ -624,6 +624,35 @@ fn operators_through_the_bounds() {
   assert_eq!(texts(over_the_decimal(a, b)), ["1.750", "1.250", "1.750"]);
 }
 
+/// As [`over_the_decimal`], for the unary minus: it comes with the bound
+/// `Scaled<D>: SignedFixedDecimal`.
+#[inline(never)]
+fn negated_over_the_decimal<D>(a: Scaled<D>) -> Scaled<D>
+where
+  Scaled<D>: SignedFixedDecimal,
+{
+  -a
+}
+
+/// Generic code negates a `Scaled` under the bound of the `Scaled` itself, over a native and over
+/// a wide signed decimal, and the result keeps the scale.
+#[test]
+fn negation_through_the_bound_of_the_scaled() {
+  let price: Scaled<Decimal<U10, U8>> = "1.50".parse().unwrap();
+  let negated = negated_over_the_decimal(price);
+  assert_eq!(
+    (negated.to_string(), negated.scale()),
+    ("-1.50".to_string(), 2)
+  );
+
+  let wide: Scaled<Decimal<U38, U38, i256>> = "-0.250".parse().unwrap();
+  let negated = negated_over_the_decimal(wide);
+  assert_eq!(
+    (negated.to_string(), negated.scale()),
+    ("0.250".to_string(), 3)
+  );
+}
+
 /// Compiles only if the product of `P` and `Q` is `O`.
 fn product<P: ExactMul<Q, Output = O>, Q, O>() {}
 

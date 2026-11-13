@@ -673,16 +673,20 @@ where
   }
 }
 
+// The unary minus exists where the `Scaled` is a `SignedFixedDecimal` and is its own negation, as
+// the binary operators exist where it is a `FixedDecimal`. A bound on `D` alone would hold one
+// level further out, and for any type that negates into itself, and give the unary minus to a
+// `Scaled<Scaled<D>>` or a `Scaled<i32>`, which are not decimals.
 impl<D> Neg for Scaled<D>
 where
-  D: Neg<Output = D>,
+  Self: SignedFixedDecimal,
 {
   type Output = Self;
 
   /// Returns `-self`, with the same scale.
   #[inline]
   fn neg(self) -> Self {
-    Self::new(-self.value, self.scale)
+    SignedFixedDecimal::neg(&self)
   }
 }
 
