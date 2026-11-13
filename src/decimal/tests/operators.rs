@@ -4,7 +4,7 @@
 //! and `checked_sub`, with their panics on a result outside the range. Each type checks in a
 //! function of its own, whose frame holds the values of that type alone: the function is
 //! `#[inline(never)]`, since an optimized build would inline a function that has one call site,
-//! which would put every type in the frame of the test, beyond the stack of a test thread.
+//! and the frame of the test would then hold the values of every type.
 //!
 //! The operators panic in every build, so these tests also run in an optimized build without
 //! overflow checks, and nothing that they expect depends on a build setting.

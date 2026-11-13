@@ -415,6 +415,7 @@ fn negations_agree() {
 /// Uses the operators that the bound `T: FixedDecimal` gives, which take their operands by value,
 /// and `Sum` over values: the sum and the difference of two values, and the total of both. The
 /// bound does not require `Copy`, so a value that is used again is cloned.
+#[inline(never)]
 fn sum_difference_and_total<T: FixedDecimal>(a: T, b: T) -> [T; 3] {
   [
     a.clone() + b.clone(),
@@ -425,6 +426,7 @@ fn sum_difference_and_total<T: FixedDecimal>(a: T, b: T) -> [T; 3] {
 
 /// Uses the compound assignments that the bound `T: ConstFixedDecimal` gives: the sum and the
 /// difference of two values, each made in place.
+#[inline(never)]
 fn assigned_sum_and_difference<T: ConstFixedDecimal>(a: T, b: T) -> [T; 2] {
   let (mut sum, mut difference) = (a, a);
   sum += b;
@@ -434,6 +436,7 @@ fn assigned_sum_and_difference<T: ConstFixedDecimal>(a: T, b: T) -> [T; 2] {
 
 /// As [`sum_difference_and_total`], in code generic over the storage: the operators come with the
 /// bound that such code writes for the other items of a decimal.
+#[inline(never)]
 fn over_the_storage<I, F, R>(a: Decimal<I, F, R>, b: Decimal<I, F, R>) -> [Decimal<I, F, R>; 3]
 where
   Decimal<I, F, R>: FixedDecimal,
@@ -447,6 +450,7 @@ where
 
 /// As [`sum_difference_and_total`], in code generic over the decimal of a `Scaled`: the operators
 /// come with the bound `Scaled<D>: FixedDecimal`.
+#[inline(never)]
 fn over_the_decimal<D>(a: Scaled<D>, b: Scaled<D>) -> [Scaled<D>; 3]
 where
   Scaled<D>: FixedDecimal,
