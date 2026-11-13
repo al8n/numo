@@ -15,11 +15,12 @@
 //! calls.
 //!
 //! The operators come with the layers as supertraits. [`FixedDecimal`] requires `+` and `-` on two
-//! values and `Sum` over values, and [`ConstFixedDecimal`] the assignments `+=` and `-=`, which
-//! need a storage that holds its value in place. Each operator has one implementation for every
-//! storage, bounded by [`FixedDecimal`], whose checked methods it calls. The operators on two
-//! references and `Sum` over references are implemented for every decimal type as well, but are
-//! not supertraits: generic code that adds by reference calls
+//! values and `Sum` over values, and [`DecimalAssign`] the assignments `+=` and `-=`, which need a
+//! storage that holds its value in place: it has one implementation for every
+//! [`MutableStorage`](crate::MutableStorage), and [`ConstFixedDecimal`] requires it. Each operator
+//! has one implementation for every storage, bounded by [`FixedDecimal`], whose checked methods it
+//! calls. The operators on two references and `Sum` over references are implemented for every
+//! decimal type as well, but are not supertraits: generic code that adds by reference calls
 //! [`checked_add`](FixedDecimal::checked_add), or adds the bound
 //! `for<'a> &'a T: Add<&'a T, Output = T>`.
 //!
@@ -44,7 +45,7 @@ use sealed::{Sealed, SealedPair, SealedTriple};
 use super::{ConvertError, Decimal, DivideError, ParseError, QuantizeError, Scaled};
 use crate::{
   FromFloatError,
-  layout::{DivIntermediate, Layout, Pick, Storage, Widen, WidenRepr},
+  layout::{DivIntermediate, Layout, MutableStorage, Pick, Storage, Widen, WidenRepr},
   rounding::RoundingMode,
 };
 
@@ -88,26 +89,29 @@ mod sealed {
 /// the inherent constants `ZERO`, `MAX` and `MIN`, and have no inherent counterparts; the other
 /// constants and methods are the inherent items of the same names, which a concrete type reaches
 /// without this trait, also in constant contexts. This trait requires `Clone` rather than `Copy`,
-/// so generic code bounded by it alone clones a value that it uses again; [`ConstFixedDecimal`]
-/// adds `Copy` and the constants `ZERO`, `MAX` and `MIN`. Generic code reaches the items through
-/// this trait, which `Decimal<I, F, R>` implements for each storage `R` where `(I, F): Layout<R>`;
-/// a method call needs the trait in scope. Because the implementations are per storage, code
-/// generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and
-/// `(I, F): Layout<R>` do not imply. [`Scaled<D>`](Scaled) implements this trait for every `D` that
-/// does, keeping the scale of its text, and code generic over `D` that computes with `Scaled<D>`
-/// adds the bound `Scaled<D>: FixedDecimal`. The supertraits give generic code cloning, comparison,
-/// hashing, formatting, parsing through `FromStr`, `Default`, which is zero, and the operators
-/// below. The functions `zero`, `max_value` and `min_value`, and [`one`](DecimalOne::one), have
-/// the names of those of `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by
-/// traits of both crates names the trait in the path, as in `FixedDecimal::zero()`.
+/// so generic code bounded by it alone clones a value that it uses again, or computes with it in
+/// [`to_inline`](Self::to_inline), which is `Copy`, and stores the result once with
+/// [`from_inline`](Self::from_inline); [`ConstFixedDecimal`] adds `Copy` and the constants `ZERO`,
+/// `MAX` and `MIN`. Generic code reaches the items through this trait, which `Decimal<I, F, R>`
+/// implements for each storage `R` where `(I, F): Layout<R>`; a method call needs the trait in
+/// scope. Because the implementations are per storage, code generic over the storage adds the bound
+/// `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and `(I, F): Layout<R>` do not imply.
+/// [`Scaled<D>`](Scaled) implements this trait for every `D` that does, keeping the scale of its
+/// text, and code generic over `D` that computes with `Scaled<D>` adds the bound
+/// `Scaled<D>: FixedDecimal`. The supertraits give generic code cloning, comparison, hashing,
+/// formatting, parsing through `FromStr`, `Default`, which is zero, and the operators below. The
+/// functions `zero`, `max_value` and `min_value`, and [`one`](DecimalOne::one), have the names of
+/// those of `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by traits of
+/// both crates names the trait in the path, as in `FixedDecimal::zero()`.
 ///
 /// The supertraits `Add`, `Sub` and `Sum` give generic code the operators `+` and `-` on two
 /// values and the sum of an iterator of values. They take their operands by value, so code bounded
 /// by this trait alone clones an operand that it uses again, and they panic where
 /// [`checked_add`](Self::checked_add) and [`checked_sub`](Self::checked_sub) return `None`. The
-/// compound assignments `+=` and `-=` come with [`ConstFixedDecimal`]. The operators on two
-/// references and the sum of an iterator of references are not supertraits: generic code calls
-/// `checked_add`, or adds the bound `for<'a> &'a T: Add<&'a T, Output = T>`.
+/// compound assignments `+=` and `-=` come with [`DecimalAssign`], which [`ConstFixedDecimal`]
+/// requires. The operators on two references and the sum of an iterator of references are not
+/// supertraits: generic code calls `checked_add`, or adds the bound
+/// `for<'a> &'a T: Add<&'a T, Output = T>`.
 ///
 /// ```
 /// use numo::{
@@ -131,12 +135,20 @@ mod sealed {
 ///   format!("{value:.digits$}")
 /// }
 ///
+/// // The value doubled, computed in its inline twin, which is `Copy`, and stored once.
+/// fn doubled<T: FixedDecimal>(value: &T) -> Option<T> {
+///   let inline = value.to_inline();
+///   inline.checked_add(&inline).map(T::from_inline)
+/// }
+///
 /// type Price = Decimal<U10, U8>;
 /// type Fee = Decimal<U10, U2, u64>;
 ///
 /// let prices: [Price; 2] = ["64250.5".parse()?, "0.25".parse()?];
 /// assert_eq!(total(&prices), Some("64250.75".parse()?));
 /// assert_eq!(total(&[Price::MAX, Price::MAX]), None);
+/// assert_eq!(doubled(&prices[1]), Some("0.5".parse()?));
+/// assert_eq!(doubled(&Price::MAX), None);
 /// assert!(is_limit(&Price::MIN) && !is_limit(&prices[0]));
 /// assert!(is_limit(&Fee::ZERO));
 /// assert_eq!(padded(&prices[1]), "0.25000000");
@@ -174,6 +186,18 @@ pub trait FixedDecimal:
 
   /// The storage of the coefficient, `Repr`.
   type Repr: Storage;
+
+  /// The decimal with the same digit counts over the inline storage of the same width and sign, or
+  /// for a [`Scaled`] the `Scaled` over that decimal: `Self` for an inline storage.
+  type Inline: ConstFixedDecimal;
+
+  /// Returns the value in its inline storage. This is a copy and allocates nothing.
+  #[must_use]
+  fn to_inline(&self) -> Self::Inline;
+
+  /// Returns `value` in the storage of `Self`: `value` itself for an inline storage.
+  #[must_use]
+  fn from_inline(value: Self::Inline) -> Self;
 
   /// Returns the coefficient: the stored integer `c` such that the value is `c / 10^Fraction`.
   #[must_use]
@@ -304,6 +328,49 @@ pub trait FixedDecimal:
   ) -> Result<Self, ConvertError>;
 }
 
+/// A decimal number whose storage holds the coefficient in place: [`Decimal`] over a
+/// [`MutableStorage`](crate::MutableStorage), as every storage of this crate is, or [`Scaled`] over
+/// such a decimal.
+///
+/// The supertraits `AddAssign` and `SubAssign` give generic code the compound assignments `+=` and
+/// `-=`, each with a value on the right, as the operators of [`FixedDecimal`] take one. They panic
+/// where the operators `+` and `-` do, and then leave their target unchanged. [`ConstFixedDecimal`]
+/// requires this trait.
+///
+/// ```
+/// use numo::{
+///   Decimal, DecimalAssign,
+///   typenum::{U8, U10},
+/// };
+///
+/// // The total of the values, each added in place.
+/// fn total<T: DecimalAssign>(values: &[T]) -> T {
+///   let mut total = T::zero();
+///   for value in values {
+///     total += value.clone();
+///   }
+///   total
+/// }
+///
+/// type Price = Decimal<U10, U8>;
+///
+/// let prices: [Price; 2] = ["64250.5".parse()?, "0.25".parse()?];
+/// assert_eq!(total(&prices), "64250.75".parse()?);
+/// # Ok::<(), numo::ParseError>(())
+/// ```
+///
+/// This trait is sealed and cannot be implemented outside this crate.
+pub trait DecimalAssign: FixedDecimal + AddAssign + SubAssign {}
+
+// Bounded by `MutableStorage`, so that a decimal has the assignments only where its storage holds
+// the coefficient in place.
+impl<I, F, R> DecimalAssign for Decimal<I, F, R>
+where
+  R: MutableStorage,
+  Self: FixedDecimal,
+{
+}
+
 /// An exact fixed-point decimal number whose zero and limits are constants: [`Decimal`] over any
 /// storage, or [`Scaled`] over such a decimal.
 ///
@@ -312,10 +379,12 @@ pub trait FixedDecimal:
 /// trait as `T::ZERO`, `T::MAX` and `T::MIN`, also in a generic `const fn`, which cannot call
 /// [`zero`](FixedDecimal::zero), [`max_value`](FixedDecimal::max_value) or
 /// [`min_value`](FixedDecimal::min_value) because trait methods are not `const`. The supertrait
-/// `Copy` lets generic code use a value again without cloning it, and the supertraits `AddAssign`
-/// and `SubAssign` give it the compound assignments `+=` and `-=`, which panic where the operators
-/// `+` and `-` do and then leave their target unchanged. `Decimal<I, F, R>` implements this trait
-/// for each storage `R` where `(I, F): Layout<R>`, as it implements [`FixedDecimal`].
+/// `Copy` lets generic code use a value again without cloning it, and [`DecimalAssign`] gives it
+/// the compound assignments `+=` and `-=`, which panic where the operators `+` and `-` do and then
+/// leave their target unchanged. A type of this layer is its own [`Inline`](FixedDecimal::Inline)
+/// type, so that [`to_inline`](FixedDecimal::to_inline) returns the value itself.
+/// `Decimal<I, F, R>` implements this trait for each storage `R` where `(I, F): Layout<R>`, as it
+/// implements [`FixedDecimal`].
 ///
 /// ```
 /// use numo::{
@@ -346,7 +415,7 @@ pub trait FixedDecimal:
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait ConstFixedDecimal: FixedDecimal + Copy + AddAssign + SubAssign {
+pub trait ConstFixedDecimal: DecimalAssign + FixedDecimal<Inline = Self> + Copy {
   /// Zero.
   const ZERO: Self;
 

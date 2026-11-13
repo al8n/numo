@@ -1,4 +1,4 @@
-use core::{hash::BuildHasher, num::NonZero};
+use core::{any::TypeId, hash::BuildHasher, num::NonZero};
 use std::{
   boxed::Box,
   collections::hash_map::RandomState,
@@ -13,12 +13,12 @@ use typenum::{
 };
 
 use super::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalFloat, DecimalOne, DivRound, ExactMul,
-  FixedDecimal, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
+  ConstDecimalOne, ConstFixedDecimal, ConvertTo, DecimalAssign, DecimalFloat, DecimalOne, DivRound,
+  ExactMul, FixedDecimal, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 use crate::{
-  ConvertError, Decimal, DivideError, FromFloatError, ParseErrorKind, QuantizeError, RoundingMode,
-  Scaled,
+  ConvertError, Decimal, DivideError, FromFloatError, InlineStorage, ParseErrorKind, QuantizeError,
+  RoundingMode, Scaled,
   bigint::MODES,
   i192, i256, i320, i384, i448, i512,
   layout::{InlineCore, Token},
@@ -614,6 +614,104 @@ fn const_layer_in_constant_contexts() {
   assert_eq!(
     SUPPLIES,
     [Supply::ZERO, Supply::ZERO, Supply::ONE, Supply::MAX]
+  );
+}
+
+/// The value doubled through the bound `T: FixedDecimal` alone: computed in the inline twin, which
+/// is `Copy`, and stored once with `from_inline`, or `None` if it is outside the range of the type.
+#[inline(never)]
+fn doubled_in_the_twin<T: FixedDecimal>(value: &T) -> Option<T> {
+  let twin = value.to_inline();
+  twin.checked_add(&twin).map(T::from_inline)
+}
+
+/// The difference of `a` and `b`, and that difference with `b` added back, each assigned in place
+/// through the bound `T: DecimalAssign`, which does not give `Copy`.
+#[inline(never)]
+fn assigned<T: DecimalAssign>(a: T, b: T) -> [T; 2] {
+  let mut difference = a;
+  difference -= b.clone();
+  let mut restored = difference.clone();
+  restored += b;
+  [difference, restored]
+}
+
+/// The twin of `value` through the bound `T: ConstFixedDecimal`, under which it is a `T`.
+#[inline(never)]
+fn twin_in_the_const_layer<T: ConstFixedDecimal>(value: T) -> T {
+  value.to_inline()
+}
+
+/// The sum of `a` and `b`, assigned in place in code generic over an inline storage: the bound
+/// `R: InlineStorage` gives the assignments without a bound of `MutableStorage`.
+#[inline(never)]
+fn assigned_over_an_inline_storage<I, F, R>(
+  a: Decimal<I, F, R>,
+  b: Decimal<I, F, R>,
+) -> Decimal<I, F, R>
+where
+  R: InlineStorage,
+  Decimal<I, F, R>: FixedDecimal,
+{
+  let mut sum = a;
+  sum += b;
+  sum
+}
+
+/// Asserts, for each type, that its twin is the type itself, by `TypeId`, that `to_inline` and
+/// `from_inline` of [`FixedDecimal`] and the inherent ones give the value at the values of
+/// [`samples`], and that the generic functions of each layer compute in the twin and assign. Each
+/// type checks in a function of its own.
+macro_rules! assert_inline {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      assert_eq!(TypeId::of::<<T as FixedDecimal>::Inline>(), TypeId::of::<T>());
+      for value in samples::<T>() {
+        assert_eq!(FixedDecimal::to_inline(&value), value, "{value}");
+        assert_eq!(<T as FixedDecimal>::from_inline(value), value, "{value}");
+        assert_eq!(value.to_inline(), value, "{value}");
+        assert_eq!(T::from_inline(value), value, "{value}");
+        assert_eq!(twin_in_the_const_layer(value), value, "{value}");
+      }
+      let unit = T::parse(&format!("1e-{}", T::FRACTION)).unwrap();
+      let two_units = unit.checked_add(&unit).unwrap();
+      assert_eq!(doubled_in_the_twin(&unit), Some(two_units));
+      assert_eq!(doubled_in_the_twin(&T::MAX), None);
+      assert_eq!(assigned_over_an_inline_storage(unit, unit), two_units);
+      let below = T::MAX.checked_sub(&unit).unwrap();
+      assert_eq!(assigned(T::MAX, unit), [below, T::MAX]);
+    }
+    storage();
+  })+};
+}
+
+#[test]
+fn every_storage_is_its_own_twin() {
+  assert_inline!(
+    Decimal<U1, U1, i8>,
+    Decimal<U2, U2, i16>,
+    Decimal<U5, U4, i32>,
+    Decimal<U10, U8, i64>,
+    Decimal<U19, U19, i128>,
+    Decimal<U40, U17, i192>,
+    Decimal<U38, U38, i256>,
+    Decimal<U78, U18, i320>,
+    Decimal<U97, U18, i384>,
+    Decimal<U116, U18, i448>,
+    Decimal<U135, U18, i512>,
+    Decimal<U1, U1, u8>,
+    Decimal<U2, U2, u16>,
+    Decimal<U5, U4, u32>,
+    Decimal<U10, U9, u64>,
+    Decimal<U19, U19, u128>,
+    Decimal<U40, U17, u192>,
+    Decimal<U59, U18, u256>,
+    Decimal<U78, U18, u320>,
+    Decimal<U97, U18, u384>,
+    Decimal<U116, U18, u448>,
+    Decimal<U154, U0, u512>,
   );
 }
 

@@ -533,9 +533,9 @@ pub use typenum;
 
 pub use aliases::*;
 pub use decimal::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalFloat, DecimalOne,
-  DivRound, DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError, Scaled,
-  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalAssign,
+  DecimalFloat, DecimalOne, DivRound, DivideError, ExactMul, FixedDecimal, ParseError,
+  ParseErrorKind, QuantizeError, Scaled, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 pub use integer::{
   ArrayInteger, BoundedCastFrom, ByteArray, CheckedCastFrom, CheckedOps, ConstFixedInteger,

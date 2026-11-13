@@ -10,9 +10,9 @@ use core::{
 };
 
 use super::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, DecimalFloat, DecimalOne, DivRound,
-  DivideError, ExactMul, FixedDecimal, ParseError, QuantizeError, SignedFixedDecimal,
-  UnsignedFixedDecimal, WidenTo, float, format, ops::overflow,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, DecimalAssign, DecimalFloat,
+  DecimalOne, DivRound, DivideError, ExactMul, FixedDecimal, ParseError, QuantizeError,
+  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo, float, format, ops::overflow,
 };
 use crate::{
   FromFloatError,
@@ -182,7 +182,7 @@ mod tests;
 /// niche: where an `i128` is aligned to 16 bytes, `Scaled<Decimal<U20, U18>>` takes 32 bytes and
 /// its `Option` 48. Over an `i8` or a `u8` storage a `Scaled` takes 4 bytes, on a target that
 /// aligns a `u16` to two bytes.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct Scaled<D> {
   value: D,
   scale: u16,
@@ -229,6 +229,26 @@ impl<D> Scaled<D> {
     (self.value, self.scale)
   }
 }
+
+// By hand, for `clone_from`, which forwards to that of the decimal: the derived one would clone the
+// decimal whole.
+impl<D> Clone for Scaled<D>
+where
+  D: Clone,
+{
+  #[inline]
+  fn clone(&self) -> Self {
+    Self::new(self.value.clone(), self.scale)
+  }
+
+  #[inline]
+  fn clone_from(&mut self, source: &Self) {
+    self.value.clone_from(&source.value);
+    self.scale = source.scale;
+  }
+}
+
+impl<D> Copy for Scaled<D> where D: Copy {}
 
 impl<D> From<D> for Scaled<D> {
   /// Wraps `value` with scale 0, so that its text is the shortest exact text of the decimal.
@@ -301,8 +321,9 @@ where
   /// larger, honoring width, fill, alignment, `+` and `0` as described on [`Scaled`]. Nothing is
   /// rounded or truncated.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let coeff = self.value.clone().repr().twin(Token::new());
-    let mut buf = DigitBuf::<<D::Repr as Storage>::Inline>::default();
+    // The coefficient of the inline twin, which is a copy: the decimal is not cloned.
+    let coeff = self.value.to_inline().repr().twin(Token::new());
+    let mut buf = DigitBuf::<<<D::Inline as FixedDecimal>::Repr as Storage>::Inline>::default();
     let start = coeff.write_digits(&mut buf, Token::new());
     let scale = usize::from(self.scale);
     let min_fraction = f
@@ -335,11 +356,14 @@ fn text_scale<T: FixedDecimal>(exponent: i32) -> u16 {
 }
 
 // `parse` and `FromStr` are per storage, emitted by `storage_decimal!` beside `Decimal::parse`, so
-// the implementations over a generic decimal require the `FromStr` that `FixedDecimal` needs.
+// the implementations over a generic decimal require the `FromStr` that `FixedDecimal` needs. The
+// twin of a `Scaled` is the `Scaled` over the twin of its decimal, which has to be a decimal of the
+// const layer, as the twin of every decimal is.
 impl<D> FixedDecimal for Scaled<D>
 where
   D: FixedDecimal,
   Self: FromStr<Err = ParseError>,
+  Scaled<D::Inline>: ConstFixedDecimal,
 {
   const INTEGRAL: u32 = D::INTEGRAL;
   const FRACTION: u32 = D::FRACTION;
@@ -347,6 +371,20 @@ where
   const SIGNED: bool = D::SIGNED;
 
   type Repr = D::Repr;
+
+  type Inline = Scaled<D::Inline>;
+
+  /// Returns the value in its inline storage, with the same scale.
+  #[inline]
+  fn to_inline(&self) -> Scaled<D::Inline> {
+    Scaled::new(self.value.to_inline(), self.scale)
+  }
+
+  /// Returns `value` in the storage of `D`, with the scale of `value`.
+  #[inline]
+  fn from_inline(value: Scaled<D::Inline>) -> Self {
+    Self::new(D::from_inline(value.value), value.scale)
+  }
 
   /// Returns the coefficient of the decimal, which does not depend on the scale.
   #[inline]
@@ -528,6 +566,13 @@ where
 
   /// The smallest value with scale 0.
   const MIN: Self = Self::new(D::MIN, 0);
+}
+
+impl<D> DecimalAssign for Scaled<D>
+where
+  D: DecimalAssign,
+  Self: FixedDecimal,
+{
 }
 
 // The operators exist where the `Scaled` is a `FixedDecimal`, the bound of its other traits, and
@@ -718,7 +763,7 @@ where
 impl<D> SignedFixedDecimal for Scaled<D>
 where
   D: SignedFixedDecimal,
-  Self: FromStr<Err = ParseError>,
+  Self: FixedDecimal,
 {
   #[inline]
   fn is_negative(&self) -> bool {
@@ -741,14 +786,14 @@ where
 impl<D> UnsignedFixedDecimal for Scaled<D>
 where
   D: UnsignedFixedDecimal,
-  Self: FromStr<Err = ParseError>,
+  Self: FixedDecimal,
 {
 }
 
 impl<D> DecimalOne for Scaled<D>
 where
   D: DecimalOne,
-  Self: FromStr<Err = ParseError>,
+  Self: FixedDecimal,
 {
   /// Returns one with scale 0.
   #[inline]

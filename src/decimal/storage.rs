@@ -131,7 +131,8 @@ macro_rules! storage_decimal {
     }
 
     // The constants and methods are the inherent ones, which `Self::` names first, and the
-    // functions without an inherent counterpart return the inherent constants.
+    // functions without an inherent counterpart return the inherent constants. The storage is
+    // inline, so the decimal is its own twin.
     impl<I, F> FixedDecimal for Decimal<I, F, $repr>
     where
       (I, F): Layout<$repr>,
@@ -142,6 +143,18 @@ macro_rules! storage_decimal {
       const SIGNED: bool = Self::SIGNED;
 
       type Repr = $repr;
+
+      type Inline = Self;
+
+      #[inline]
+      fn to_inline(&self) -> Self {
+        *self
+      }
+
+      #[inline]
+      fn from_inline(value: Self) -> Self {
+        value
+      }
 
       #[inline]
       fn repr(self) -> $repr {

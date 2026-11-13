@@ -1,4 +1,5 @@
 use core::{
+  any::TypeId,
   cmp::Ordering,
   fmt::{self, Write as _},
   hash::BuildHasher,
@@ -15,10 +16,10 @@ use typenum::{U0, U1, U2, U4, U8, U10, U11, U12, U16, U18, U20, U22, U36, U40, U
 
 use super::Scaled;
 use crate::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalFloat, DecimalOne,
-  DivRound, DivideError, ExactMul, FixedDecimal, FromFloatError, ParseError, ParseErrorKind,
-  QuantizeError, RoundingMode, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo, bigint::MODES,
-  dec, i256, i512, u256, u512,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalAssign,
+  DecimalFloat, DecimalOne, DivRound, DivideError, ExactMul, FixedDecimal, FromFloatError,
+  ParseError, ParseErrorKind, QuantizeError, RoundingMode, SignedFixedDecimal,
+  UnsignedFixedDecimal, WidenTo, bigint::MODES, dec, i256, i512, u256, u512,
 };
 
 /// 20 integral and 18 fraction digits in an `i128`.
@@ -483,6 +484,67 @@ fn construction_and_accessors() {
   assert_text(&WideS::default(), "0", 0);
   assert_eq!(*WideS::default().value(), Wide::ZERO);
   assert_text(&NarrowS::default(), "0", 0);
+}
+
+/// The twin of a `Scaled` is the `Scaled` over the twin of its decimal, which is the type itself
+/// over an inline storage, and `to_inline` and `from_inline` keep the scale.
+#[test]
+fn the_twin_keeps_the_scale() {
+  fn twin<T: FixedDecimal>(value: &T) -> T::Inline {
+    value.to_inline()
+  }
+  assert_eq!(
+    TypeId::of::<<WideS as FixedDecimal>::Inline>(),
+    TypeId::of::<WideS>()
+  );
+  assert_eq!(
+    TypeId::of::<<NarrowS as FixedDecimal>::Inline>(),
+    TypeId::of::<NarrowS>()
+  );
+  let padded: WideS = value("0.00100000");
+  let inline = padded.to_inline();
+  assert_text(&inline, "0.00100000", 8);
+  assert_text(&WideS::from_inline(inline), "0.00100000", 8);
+  let fee: NarrowS = value("2.5000");
+  assert_text(&twin(&fee), "2.5000", 4);
+  assert_text(&<NarrowS as FixedDecimal>::from_inline(fee), "2.5000", 4);
+}
+
+/// Through the bounds of generic code, a `Scaled` assigns in place, computes in its twin, and
+/// clones, also with `clone_from`, which gives the value and the scale of the source.
+#[test]
+fn generic_assignment_twin_and_clone_keep_the_scale() {
+  fn assigned<T: DecimalAssign>(mut a: T, b: T) -> T {
+    a += b;
+    a
+  }
+  fn doubled<T: FixedDecimal>(value: &T) -> Option<T> {
+    let twin = value.to_inline();
+    twin.checked_add(&twin).map(T::from_inline)
+  }
+  fn cloned<T: Clone>(value: &T) -> T {
+    value.clone()
+  }
+  fn cloned_into<T: Clone>(target: &mut T, source: &T) {
+    target.clone_from(source);
+  }
+  assert_text(&assigned::<WideS>(value("1.5"), value("0.250")), "1.750", 3);
+  assert_text(
+    &assigned::<NarrowS>(value("2.50"), value("0.0010")),
+    "2.5010",
+    4,
+  );
+  assert_text(&doubled::<WideS>(&value("1.50")).unwrap(), "3.00", 2);
+  assert_eq!(doubled(&WideS::from(Wide::MAX)), None);
+
+  let source: WideS = value("1.50");
+  assert_text(&cloned(&source), "1.50", 2);
+  let mut target: WideS = value("-0.001");
+  cloned_into(&mut target, &source);
+  assert_text(&target, "1.50", 2);
+  let mut narrow: NarrowS = value("0.25000");
+  cloned_into(&mut narrow, &value("3"));
+  assert_text(&narrow, "3", 0);
 }
 
 #[test]
