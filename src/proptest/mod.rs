@@ -239,7 +239,7 @@ impl Arbitrary for RoundingMode {
   type Strategy = Select<RoundingMode>;
 
   /// Chooses a mode uniformly, shrinking toward [`Down`](RoundingMode::Down) in the order `Down`,
-  /// `Up`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`, `HalfEven`.
+  /// `Up`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`, `HalfEven`, `Up05`.
   fn arbitrary_with(_: ()) -> Select<RoundingMode> {
     select(&MODES[..])
   }

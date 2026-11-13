@@ -388,7 +388,8 @@
 //! number of fraction digits, and read back into a type with another number it would be off by a
 //! power of ten. A `Scaled` is written as its text with its scale and read with the scale of the
 //! text, in the same way. A rounding mode is written as its lowercase name, such as `"halfeven"`,
-//! and read from a name of any case, with the words of a half mode optionally separated.
+//! and read from a name of any case, with the words of a half mode, and `up` and `05` of `up05`,
+//! optionally separated.
 //!
 //! An integer is written in a form that depends only on its width, its sign and its value, in every
 //! format and every storage: up to 128 bits as a number, through the method of the smallest native

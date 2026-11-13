@@ -89,8 +89,9 @@ FEATURES
     type, and zero, the limits, one and a value made from a coefficient scale 0. A concrete
     `Scaled<Decimal<I, F, R>>` needs no bound; code generic over the decimal `D` adds the bound
     `Scaled<D>: FixedDecimal`.
-- `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown` and
-  `HalfEven`. Rounding happens only where a mode is given, for native and wide storages alike:
+- `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`,
+  `HalfEven` and `Up05`. Rounding happens only where a mode is given, for native and wide
+  storages alike:
   - `round_to` converts to any decimal type as `try_convert` does, but rounds dropped fraction
     digits with the mode instead of failing. It reports `OutOfRange` if the rounded value does not
     fit, so a negative value converts to an unsigned storage only when it rounds to zero.
@@ -103,6 +104,8 @@ FEATURES
     is sized at the type level; one of more than 153 digits fails to compile, and 154 is allowed
     only when both storages are unsigned.
   - `const fn` `is_multiple_of` checks a value against a step without rounding it.
+  - `Up05` is the `ROUND_05UP` of the General Decimal Arithmetic: away from zero if the last digit
+    of the truncated result is 0 or 5. Its name is `up05` and its predicate `is_up05`.
 - The `serde` feature: `Decimal` is written as its text and read from a string, never from a number,
   in every format, `Scaled` likewise with the scale of its text, and `RoundingMode` as its lowercase
   name, read leniently, without allocation. No error that numo builds names the input: every input
