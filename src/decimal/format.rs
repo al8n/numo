@@ -2,15 +2,19 @@ use core::fmt::{self, Formatter, Write};
 
 use crate::format::{ascii, pad, write_zeros};
 
-/// Bytes of the longest exponent text, `e-154`: the marker, a sign and three digits. A coefficient
-/// has between 1 and 154 digits and a decimal at most 154 fraction digits, so the exponent of any
-/// decimal is between -154 and 153.
+/// Bytes of the longest exponent text, `e-156`: the marker, a sign and three digits. A coefficient
+/// has between 1 and 154 digits and a decimal at most 154 fraction digits, so the exponent of
+/// scientific notation is between -154 and 153, and engineering notation lowers an exponent by at
+/// most two: the exponent of any text is between -156 and 153.
 const EXPONENT_LEN: usize = 5;
 
 /// The pieces of the text of a decimal, in output order.
 struct Parts<'a> {
   sign: Option<char>,
   integral: &'a str,
+  /// Zeros after `integral` that the magnitude digits do not contain, as in `100e-156` for the
+  /// digit `1` in engineering notation.
+  integral_zeros: usize,
   /// Zeros between the decimal point and `fraction` that the magnitude digits do not contain, as
   /// in `0.05` for the digits `5`.
   leading_zeros: usize,
@@ -40,12 +44,14 @@ impl Parts<'_> {
     self
       .integral
       .len()
+      .saturating_add(self.integral_zeros)
       .saturating_add(point)
       .saturating_add(self.exponent.map_or(0, str::len))
   }
 
   fn write_digits(&self, f: &mut Formatter<'_>) -> fmt::Result {
     f.write_str(self.integral)?;
+    write_zeros(f, self.integral_zeros)?;
     if self.fraction_len() > 0 {
       f.write_char('.')?;
       write_zeros(f, self.leading_zeros)?;
@@ -104,6 +110,7 @@ pub(super) fn write(
   let parts = Parts {
     sign,
     integral: ascii(integral)?,
+    integral_zeros: 0,
     leading_zeros,
     fraction: ascii(fraction_digits)?,
     trailing_zeros,
@@ -120,12 +127,16 @@ fn write_parts(f: &mut Formatter<'_>, parts: &Parts<'_>) -> fmt::Result {
 }
 
 /// Writes a decimal whose magnitude has the ASCII digits `digits`, as for `write`, in scientific
-/// notation, with `marker` (`e` or `E`) between the mantissa and the exponent.
+/// notation, with `marker` (`e` or `E`) between the mantissa and the exponent, or in engineering
+/// notation with the alternate flag of `f`, `#`.
 ///
 /// The mantissa has the significant digits, the first before the point. The exponent is the place
 /// of the first digit, `digits.len() - 1 - fraction`, and is 0 for zero, whatever `fraction` is.
-/// Sign and padding are as for `write`, over the whole text, exponent included. The precision is
-/// the minimum number of mantissa fraction digits, so it never rounds.
+/// Engineering notation lowers the exponent to a multiple of three, by `exponent.rem_euclid(3)`,
+/// and moves as many more digits before the point, so that the mantissa has one to three integral
+/// digits, with zeros where the digits end before the point: `100e-156` for the digit `1`. Sign
+/// and padding are as for `write`, over the whole text, exponent included. The precision is the
+/// minimum number of mantissa fraction digits, so it never rounds.
 pub(super) fn write_exp(
   f: &mut Formatter<'_>,
   negative: bool,
@@ -133,18 +144,28 @@ pub(super) fn write_exp(
   fraction: usize,
   marker: u8,
 ) -> fmt::Result {
-  let (first, rest) = digits.split_at_checked(1).ok_or(fmt::Error)?;
-  let significant_len = rest
-    .iter()
-    .rposition(|&digit| digit != b'0')
-    .map_or(0, |last| last + 1);
-  let rest = &rest[..significant_len];
+  if digits.is_empty() {
+    return Err(fmt::Error);
+  }
   // The digit writer gives zero a single `0`, which the formula would put at `-fraction`.
   let exponent = if digits == b"0" {
     0
   } else {
     digits.len() as i32 - 1 - fraction as i32
   };
+  // The Euclidean remainder, because the exponent of a value below one is negative.
+  let shift = if f.alternate() {
+    exponent.rem_euclid(3)
+  } else {
+    0
+  };
+  let integral_len = 1 + shift as usize;
+  let (integral, rest) = digits.split_at(integral_len.min(digits.len()));
+  let significant_len = rest
+    .iter()
+    .rposition(|&digit| digit != b'0')
+    .map_or(0, |last| last + 1);
+  let rest = &rest[..significant_len];
   let trailing_zeros = f
     .precision()
     .map_or(0, |precision| precision.saturating_sub(rest.len()));
@@ -161,17 +182,18 @@ pub(super) fn write_exp(
   let mut exponent_buf = [0; EXPONENT_LEN];
   let parts = Parts {
     sign,
-    integral: ascii(first)?,
+    integral: ascii(integral)?,
+    integral_zeros: integral_len - integral.len(),
     leading_zeros: 0,
     fraction: ascii(rest)?,
     trailing_zeros,
-    exponent: Some(exponent_text(&mut exponent_buf, marker, exponent)?),
+    exponent: Some(exponent_text(&mut exponent_buf, marker, exponent - shift)?),
   };
   write_parts(f, &parts)
 }
 
 /// Writes `marker` and `exponent`, as in `e-4`, to the end of `buf` and returns them as a string.
-/// Requires `-154 <= exponent <= 153`, so that they fit.
+/// Requires `-156 <= exponent <= 153`, so that they fit.
 fn exponent_text(
   buf: &mut [u8; EXPONENT_LEN],
   marker: u8,

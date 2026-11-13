@@ -940,6 +940,12 @@ where
   /// as described on [`Decimal`]. Precision never rounds or truncates: unlike the primitive types
   /// and the integers of this crate, `{:.1e}` writes `1.25` as `1.25e0`, not `1.2e0`. Use
   /// [`round_to`](Self::round_to) or [`quantize`](Self::quantize) to round.
+  ///
+  /// The alternate flag, `#` as in `{:#e}`, selects engineering notation: an exponent that is a
+  /// multiple of three, and one to three digits before the point, as in `12.345678e6`. This
+  /// meaning of the flag is this crate's own. In the `e` formats of C and of Python, `#` keeps the
+  /// point of a text that would have none, and the exponent formats of the primitive floats and
+  /// of [`Uint`](crate::Uint) and [`Int`](crate::Int) ignore it, so neither meaning holds here.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut buf = [0; int::DIGIT_BUF_LEN];
     let start = self.repr.write_digits(&mut buf, Token::new());
@@ -962,6 +968,12 @@ where
   /// as described on [`Decimal`]. Precision never rounds or truncates: unlike the primitive types
   /// and the integers of this crate, `{:.1E}` writes `1.25` as `1.25E0`, not `1.2E0`. Use
   /// [`round_to`](Self::round_to) or [`quantize`](Self::quantize) to round.
+  ///
+  /// The alternate flag, `#` as in `{:#E}`, selects engineering notation: an exponent that is a
+  /// multiple of three, and one to three digits before the point, as in `12.345678E6`. This
+  /// meaning of the flag is this crate's own. In the `e` formats of C and of Python, `#` keeps the
+  /// point of a text that would have none, and the exponent formats of the primitive floats and
+  /// of [`Uint`](crate::Uint) and [`Int`](crate::Int) ignore it, so neither meaning holds here.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut buf = [0; int::DIGIT_BUF_LEN];
     let start = self.repr.write_digits(&mut buf, Token::new());

@@ -1,8 +1,9 @@
 //! The parts of a decimal, `trunc`, `fract`, `floor`, `ceil` and `is_integer`, and the digits of
 //! a value, `order_of_magnitude`, `significant_digits` and `fraction_digits`, with
 //! `round_significant`, of every storage against the coefficients in `num-bigint`, as literals, at
-//! the edges of the layouts and in constant contexts. The literals of rust-decimal's documentation
-//! are kept apart from this module's own.
+//! the edges of the layouts and in constant contexts; and engineering notation, `{:#e}` and
+//! `{:#E}`, against scientific notation and by parsing its text back. The literals of the
+//! documentation of rust-decimal and bigdecimal are kept apart from this module's own.
 //!
 //! A sweep checks each type at values built from digit strings, which vary one at a time the
 //! number of digits, the digits themselves and the trailing zeros. Each type checks in a function
@@ -18,7 +19,8 @@ use std::{
 
 use num_bigint::{BigInt, Sign};
 use typenum::{
-  U0, U1, U2, U4, U5, U8, U9, U10, U18, U19, U39, U58, U77, U78, U96, U97, U116, U135, U153, U154,
+  U0, U1, U2, U4, U5, U8, U9, U10, U18, U19, U38, U39, U58, U77, U78, U96, U97, U116, U135, U153,
+  U154,
 };
 
 use crate::{
@@ -652,4 +654,171 @@ fn rounding_to_significant_digits_of_literals() {
       );
     }
   }
+}
+
+/// The engineering text of a value whose scientific text is `scientific`, built from it by moving
+/// the point: the exponent lowered to a multiple of three, and as many more digits before the
+/// point, with zeros where the mantissa ends first.
+fn engineering_of(scientific: &str) -> String {
+  let (mantissa, exponent) = scientific.split_once('e').expect("an exponent");
+  let exponent: i32 = exponent.parse().expect("an exponent");
+  let (sign, mantissa) = match mantissa.strip_prefix('-') {
+    Some(magnitude) => ("-", magnitude),
+    None => ("", mantissa),
+  };
+  let mut digits = mantissa.replace('.', "");
+  let shift = exponent.rem_euclid(3) as usize;
+  while digits.len() < shift + 1 {
+    digits.push('0');
+  }
+  let (integral, fraction) = digits.split_at(shift + 1);
+  let point = if fraction.is_empty() { "" } else { "." };
+  format!(
+    "{sign}{integral}{point}{fraction}e{}",
+    exponent - shift as i32
+  )
+}
+
+/// Checks `{:#e}` and `{:#E}` of each type of the list at every value of its [`sweep`]: the text
+/// parses back to the value, its exponent is a multiple of three, its mantissa has one to three
+/// integral digits, without a leading zero but for zero itself, and it is the text of `{:e}` with
+/// the point moved. Each type checks in a function of its own.
+macro_rules! engineering_agrees {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      for (value, _) in sweep::<T>() {
+        let text = format!("{value:#e}");
+        assert_eq!(text.parse::<T>(), Ok(value), "{text}");
+        let (mantissa, exponent) = text.split_once('e').expect("an exponent");
+        assert_eq!(exponent.parse::<i32>().map(|exponent| exponent % 3), Ok(0), "{text}");
+        let integral = mantissa
+          .trim_start_matches('-')
+          .split('.')
+          .next()
+          .expect("integral digits");
+        assert!((1..=3).contains(&integral.len()), "{text}");
+        assert!(integral == "0" || !integral.starts_with('0'), "{text}");
+        assert_eq!(integral == "0", value.is_zero(), "{text}");
+        assert_eq!(text, engineering_of(&format!("{value:e}")), "{value}");
+        assert_eq!(format!("{value:#E}"), text.replace('e', "E"), "{value}");
+      }
+    }
+    storage();
+  })+};
+}
+
+/// Engineering notation of one type of each storage at every value of the sweep; under Miri, of a
+/// signed native, an unsigned native and a wide storage.
+#[test]
+fn engineering_notation_moves_the_point_of_scientific_notation() {
+  engineering_agrees!(Di8, Du64, Di256);
+  if tier().is_miri() {
+    return;
+  }
+  engineering_agrees!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
+  engineering_agrees!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154
+  );
+}
+
+/// bigdecimal's cases of `to_engineering_notation`, as far as a type of this crate holds them. A
+/// decimal has no scale of its own, so `2.00` and `-57.0` write no trailing zero, where bigdecimal
+/// keeps them.
+#[test]
+fn engineering_notation_as_bigdecimal_writes_it() {
+  for (text, engineering) in [
+    ("4159248078.2835", "4.1592480782835e9"),
+    ("0.00001234", "12.34e-6"),
+    ("0", "0e0"),
+    ("1", "1e0"),
+    ("2.00", "2e0"),
+    ("-57.0", "-57e0"),
+    ("5.31e4", "53.1e3"),
+    ("5.31e5", "531e3"),
+    ("5.31e6", "5.31e6"),
+    ("5.31e7", "53.1e6"),
+    ("1e2", "100e0"),
+    ("4.2e7", "42e6"),
+    ("4.2e8", "420e6"),
+  ] {
+    assert_eq!(
+      format!("{:#e}", value::<Price>(text)),
+      engineering,
+      "{text}"
+    );
+  }
+  assert_eq!(format!("{:#e}", value::<Decimal<U38, U0>>("1e19")), "10e18");
+}
+
+/// Engineering notation of values above and below one, of zero, of one unit of the last digit,
+/// with zeros after the digits of the coefficient, and of the limits of the widest types.
+#[test]
+fn engineering_notation_of_literals() {
+  for (text, engineering) in [
+    ("12345678", "12.345678e6"),
+    ("0.00012", "120e-6"),
+    ("-3", "-3e0"),
+    ("64250.5", "64.2505e3"),
+    ("1200", "1.2e3"),
+    ("0.1", "100e-3"),
+    ("0.01", "10e-3"),
+    ("0.001", "1e-3"),
+  ] {
+    assert_eq!(
+      format!("{:#e}", value::<Price>(text)),
+      engineering,
+      "{text}"
+    );
+  }
+  // One digit and one zero before the point, and two digits and one zero.
+  assert_eq!(
+    format!("{:#e}", value::<Decimal<U2, U2>>("-0.05")),
+    "-50e-3"
+  );
+  assert_eq!(format!("{:#e}", value::<Decimal<U0, U2>>("0.12")), "120e-3");
+  assert_eq!(
+    format!("{:#e}", value::<Decimal<U0, U38>>("1e-38")),
+    "10e-39"
+  );
+  // One digit and two zeros, at the smallest exponent of any text.
+  let unit: D0x154 = value("1e-154");
+  assert_eq!(format!("{unit:#e}"), "100e-156");
+  assert_eq!(format!("{unit:#E}"), "100E-156");
+
+  assert_eq!(format!("{:#e}", value::<Du512>("1e153")), "1e153");
+  assert_eq!(
+    format!("{:#e}", Du512::MAX),
+    format!("9.{}e153", "9".repeat(153))
+  );
+  assert_eq!(
+    format!("{:#e}", Decimal::<U153, U0>::MIN),
+    format!("-999.{}e150", "9".repeat(150))
+  );
+}
+
+/// The precision, the sign, the width, the fill, the alignment and the `0` flag under `#`, which
+/// count the zeros that the coefficient does not have.
+#[test]
+fn engineering_notation_with_precision_and_flags() {
+  let price = |text: &str| value::<Price>(text);
+  assert_eq!(format!("{:#.2e}", price("100")), "100.00e0");
+  assert_eq!(format!("{:#.1e}", price("12345678")), "12.345678e6");
+  assert_eq!(format!("{:#.8e}", price("12345678")), "12.34567800e6");
+  assert_eq!(format!("{:#.3e}", price("0.00012")), "120.000e-6");
+  assert_eq!(format!("{:#.0e}", price("1200")), "1.2e3");
+  assert_eq!(format!("{:#.2e}", Price::ZERO), "0.00e0");
+  assert_eq!(format!("{:+#e}", price("100")), "+100e0");
+  assert_eq!(format!("{:#012e}", price("-64250.5")), "-0064.2505e3");
+  assert_eq!(format!("{:>#12E}", price("64250.5")), "   64.2505E3");
+  assert_eq!(format!("{:*^#11e}", price("0.00012")), "**120e-6***");
+
+  type Cents = Decimal<U2, U2>;
+  assert_eq!(format!("{:>#8e}", value::<Cents>("0.05")), "   50e-3");
+  assert_eq!(format!("{:#08e}", value::<Cents>("-0.05")), "-0050e-3");
+  assert_eq!(
+    format!("{:>#8e}", value::<Decimal<U0, U2>>("0.12")),
+    "  120e-3"
+  );
 }
