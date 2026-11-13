@@ -676,6 +676,111 @@ fn trait_results_agree_with_the_decimal() {
   unsigned::<Scaled<Decimal<U40, U36, u256>>>();
 }
 
+/// Checks, for a `Scaled` over `D`, that `checked_rem`, `saturating_add` and `saturating_sub` give
+/// the value of the decimal's method with the larger scale of the two operands, also where the
+/// decimal's result is a limit: at zero, the limits, `1.5` and `0.25`, with the larger scale on
+/// either side.
+#[inline(never)]
+fn check_remainder_and_saturation<D>()
+where
+  D: ConstFixedDecimal,
+  Scaled<D>: FixedDecimal,
+{
+  let decimals: [D; 5] = [D::ZERO, D::MIN, D::MAX, value("1.5"), value("0.25")];
+  for a in decimals {
+    for b in decimals {
+      for (left, right) in [(0u8, 0u8), (1, 5), (5, 1), (255, 3)] {
+        let (x, y) = (Scaled::new(a, left), Scaled::new(b, right));
+        let scale = left.max(right);
+        assert_eq!(
+          x.checked_rem(&y).map(Scaled::into_parts),
+          a.checked_rem(&b).map(|remainder| (remainder, scale)),
+          "{a} % {b}"
+        );
+        assert_eq!(
+          x.saturating_add(&y).into_parts(),
+          (a.saturating_add(&b), scale),
+          "{a} + {b}"
+        );
+        assert_eq!(
+          x.saturating_sub(&y).into_parts(),
+          (a.saturating_sub(&b), scale),
+          "{a} - {b}"
+        );
+      }
+    }
+  }
+}
+
+/// `checked_rem`, `saturating_add` and `saturating_sub` take the larger scale of their operands,
+/// also where the result is a limit, whose own scale is 0.
+#[test]
+fn remainders_and_saturated_results_take_the_larger_scale() {
+  let short: WideS = value("7.5");
+  let padded: WideS = value("2.000");
+  assert_text(&short.checked_rem(&padded).unwrap(), "1.500", 3);
+  assert_text(&padded.checked_rem(&short).unwrap(), "2.000", 3);
+  assert_eq!(short.checked_rem(&WideS::ZERO), None);
+  assert_text(&short.saturating_add(&padded), "9.500", 3);
+  assert_text(&padded.saturating_sub(&short), "-5.500", 3);
+
+  let max = "99999999999999999999.999999999999999999";
+  assert_text(&WideS::MAX.saturating_add(&padded), max, 3);
+  assert_text(&padded.saturating_add(&WideS::MAX), max, 3);
+  assert_text(&WideS::MIN.saturating_sub(&short), &format!("-{max}"), 1);
+  assert_text(&WideS::MAX.saturating_add(&WideS::MAX), max, 0);
+  let small: NarrowS = value("0.00100");
+  assert_text(&NarrowS::ZERO.saturating_sub(&small), "0.00000", 5);
+  assert_text(&small.saturating_sub(&NarrowS::MAX), "0.00000", 5);
+
+  check_remainder_and_saturation::<Decimal<U2, U2>>();
+  check_remainder_and_saturation::<Narrow>();
+  check_remainder_and_saturation::<Decimal<U40, U36, i256>>();
+  check_remainder_and_saturation::<Decimal<U40, U36, u256>>();
+}
+
+/// The operators take the larger scale of their operands, as `checked_add` and `checked_sub` do,
+/// and a sum over an iterator the largest scale of its items, or scale 0 without an item.
+#[test]
+#[allow(clippy::op_ref, reason = "the operators on references are under test")]
+fn operators_and_sums_take_the_larger_scale() {
+  let short: WideS = value("0.001");
+  let padded: WideS = value("0.00100000");
+  assert_text(&(short + padded), "0.00200000", 8);
+  assert_text(&(padded + short), "0.00200000", 8);
+  assert_text(&(&short + &padded), "0.00200000", 8);
+  assert_text(&(short - padded), "0.00000000", 8);
+  assert_text(&(padded - short), "0.00000000", 8);
+  assert_text(&(&short - &padded), "0.00000000", 8);
+  assert_text(&(short + short), "0.002", 3);
+  let mut total = short;
+  total += padded;
+  assert_text(&total, "0.00200000", 8);
+  total -= short;
+  assert_text(&total, "0.00100000", 8);
+  let mut total = padded;
+  total -= short;
+  assert_text(&total, "0.00000000", 8);
+  total += short;
+  assert_text(&total, "0.00100000", 8);
+
+  let items: [WideS; 3] = [value("1.5"), value("-0.250"), value("2")];
+  assert_text(&items.into_iter().sum::<WideS>(), "3.250", 3);
+  assert_text(&items.iter().sum::<WideS>(), "3.250", 3);
+  assert_text(&[padded].into_iter().sum::<WideS>(), "0.00100000", 8);
+  assert_text(&[padded].iter().sum::<WideS>(), "0.00100000", 8);
+  assert_text(&core::iter::empty::<WideS>().sum::<WideS>(), "0", 0);
+  assert_text(&core::iter::empty::<&WideS>().sum::<WideS>(), "0", 0);
+
+  let fee: NarrowS = value("0.0010");
+  let amount: NarrowS = value("2.5");
+  assert_text(&(amount + fee), "2.5010", 4);
+  assert_text(&(amount - fee), "2.4990", 4);
+  assert_text(&(&amount - &fee), "2.4990", 4);
+  assert_text(&[amount, fee, amount].iter().sum::<NarrowS>(), "5.0010", 4);
+  assert_text(&core::iter::empty::<NarrowS>().sum::<NarrowS>(), "0", 0);
+}
+
 #[test]
 fn generic_code_takes_scaled_and_bare_decimals_alike() {
   fn total<T: FixedDecimal>(values: &[T]) -> Option<T> {

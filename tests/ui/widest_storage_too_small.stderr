@@ -36,8 +36,9 @@ error[E0277]: the storage `Repr` cannot hold `Integral + Fraction` decimal digit
 note: required by a bound in `Decimal::<I, F, R>::try_convert`
   --> src/decimal/mod.rs
    |
+   | impl<I, F, R> Decimal<I, F, R>
+...
    |   pub fn try_convert<I2, F2, R2>(self) -> Result<Decimal<I2, F2, R2>, ConvertError>
-   |          ----------- required by a bound in this associated function
 ...
    |     (I2, F2): Layout<R2>,
    |               ^^^^^^^^^^ required by this bound in `Decimal::<I, F, R>::try_convert`

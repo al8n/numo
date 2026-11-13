@@ -28,6 +28,8 @@ help: the trait `numo::integer::cast::sealed::WidenBits` is implemented for `B1`
 note: required by a bound in `numo::integer::cast::<impl Uint<B, R>>::widen`
  --> src/integer/cast/mod.rs
   |
+  |     impl<B: FitsBits<R>, R: $repr> $integer<B, R> {
+...
   |       pub fn widen<T: WidenFrom<Self>>(self) -> T {
   |                       ^^^^^^^^^^^^^^^ required by this bound in `numo::integer::cast::<impl Uint<B, R>>::widen`
 ...
@@ -75,6 +77,8 @@ error[E0277]: the trait bound `usize: TruncateFrom<Uint<UInt<UInt<UInt<UInt<UInt
 note: required by a bound in `numo::integer::cast::<impl Uint<B, R>>::truncate`
   --> src/integer/cast/mod.rs
    |
+   |     impl<B: FitsBits<R>, R: $repr> $integer<B, R> {
+...
    |       pub fn truncate<T: TruncateFrom<Self>>(self) -> T {
    |                          ^^^^^^^^^^^^^^^^^^ required by this bound in `numo::integer::cast::<impl Uint<B, R>>::truncate`
 ...

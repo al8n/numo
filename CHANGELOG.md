@@ -9,6 +9,13 @@ FEATURES
   - `const fn` constants and methods for each storage: `ZERO`, `ONE`, `MIN`, `MAX`, `parse`,
     `from_repr`, `repr`, `checked_add`, `checked_sub`, `is_zero` and `is_positive`, plus `neg`,
     `abs` and `is_negative` for signed storages.
+  - The operators `+`, `-`, `+=` and `-=` between two values of one type, `+` and `-` also between
+    two references, and `Sum` for values and references. A result outside the range of the type
+    panics in every build, whatever `overflow-checks` is, with the message of the native
+    operators; `checked_add` and `checked_sub` return `None` instead. `*` and `/` are the methods
+    `exact_mul` and `div_round`.
+  - `const fn` `checked_rem`, the exact remainder with the sign of the dividend, and
+    `saturating_add` and `saturating_sub`, which return the limit that the result passes.
   - `exact_mul`, `widen` and `try_convert` between decimal types.
   - Exact parsing through `FromStr`, and the shortest exact text through `Display` and `Debug`.
   - Parsing accepts the numeric strings of the General Decimal Arithmetic specification, every
@@ -44,13 +51,15 @@ FEATURES
   - The sealed traits of a decimal type in two layers, each with one implementation for every
     storage. The general layer requires `Clone` but not `Copy`: `FixedDecimal`, with the digit
     counts, `SIGNED`, the storage as `Repr`, `repr`, `from_repr`, `zero`, `max_value`,
-    `min_value`, `is_zero`, `is_positive`, `checked_add`, `checked_sub`, `quantize` and
-    `is_multiple_of`, `SignedFixedDecimal`, which also requires `Neg` and has `is_negative`, `neg`
-    and `abs`, `UnsignedFixedDecimal`, and `DecimalOne`, with `one` where `Integral` is nonzero.
-    Its functions `zero`, `max_value`, `min_value` and `one` return the inherent constants `ZERO`,
-    `MAX`, `MIN` and `ONE`. The const layer also requires `Copy` and has these constants, which a
-    generic `const fn` can read: `ConstFixedDecimal`, with `ZERO`, `MAX` and `MIN`, and
-    `ConstDecimalOne`, with `ONE`. The sealed traits `ExactMul`, `WidenTo`, `ConvertTo` and
+    `min_value`, `is_zero`, `is_positive`, `checked_add`, `checked_sub`, `checked_rem`,
+    `saturating_add`, `saturating_sub`, `quantize` and `is_multiple_of`, `SignedFixedDecimal`,
+    which also requires `Neg` and has `is_negative`, `neg` and `abs`, `UnsignedFixedDecimal`, and
+    `DecimalOne`, with `one` where `Integral` is nonzero. Its functions `zero`, `max_value`,
+    `min_value` and `one` return the inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The const
+    layer also requires `Copy` and has these constants, which a generic `const fn` can read:
+    `ConstFixedDecimal`, with `ZERO`, `MAX` and `MIN`, and `ConstDecimalOne`, with `ONE`.
+    `FixedDecimal` requires the operators `+` and `-` on values and `Sum`, and `ConstFixedDecimal`
+    the assignments `+=` and `-=`. The sealed traits `ExactMul`, `WidenTo`, `ConvertTo` and
     `DivRound` each have one implementation for the decimal types that the inherent method accepts,
     so that generic code does not repeat its bounds. `ExactMul` has the product type as `Output`,
     which implements `FixedDecimal`. Because the implementations are per storage, code generic over
@@ -68,15 +77,18 @@ FEATURES
     `Debug` shows the scale, while equality, ordering and hashing compare the value only.
   - `const fn` `new`, `value` and `scale`, and `into_value` and `into_parts`. `From` and `Default`
     give scale 0.
+  - The operators `+`, `-`, `+=` and `-=` and `Sum`, as for `Decimal`: their result takes the
+    larger scale of its operands, and a sum over an iterator the largest scale of its items.
   - Every decimal trait, implemented once for every decimal that implements it, so that generic
     code takes a `Scaled` and a bare decimal alike: `FixedDecimal`, `ConstFixedDecimal`, the sign
     traits, `DecimalOne` and `ConstDecimalOne`, and `ExactMul`, `WidenTo`, `ConvertTo` and
-    `DivRound` between `Scaled` types, with no mixed implementations. Sums take the larger scale,
-    exact products the sum of the scales, saturating at 255, quantized values the scale of the
-    step, widened and exactly converted values their own, rounded values and quotients the
-    fraction digits of their target type, and zero, the limits, one and a value made from a
-    coefficient scale 0. A concrete `Scaled<Decimal<I, F, R>>` needs no bound; code generic over
-    the decimal `D` adds the bound `Scaled<D>: FixedDecimal`.
+    `DivRound` between `Scaled` types, with no mixed implementations. Sums, differences and
+    remainders take the larger scale, also where they saturate to a limit, exact products the sum
+    of the scales, saturating at 255, quantized values the scale of the step, widened and exactly
+    converted values their own, rounded values and quotients the fraction digits of their target
+    type, and zero, the limits, one and a value made from a coefficient scale 0. A concrete
+    `Scaled<Decimal<I, F, R>>` needs no bound; code generic over the decimal `D` adds the bound
+    `Scaled<D>: FixedDecimal`.
 - `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown` and
   `HalfEven`. Rounding happens only where a mode is given, for native and wide storages alike:
   - `round_to` converts to any decimal type as `try_convert` does, but rounds dropped fraction

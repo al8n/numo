@@ -12,6 +12,15 @@
 //! of the same names, and each has a single implementation for every combination of them, with the
 //! bounds of the inherent method it calls.
 //!
+//! The operators come with the layers as supertraits. [`FixedDecimal`] requires `+` and `-` on two
+//! values and `Sum` over values, and [`ConstFixedDecimal`] the assignments `+=` and `-=`, which
+//! need a storage that holds its value in place. Each operator has one implementation for every
+//! storage, bounded by [`FixedDecimal`], whose checked methods it calls. The operators on two
+//! references and `Sum` over references are implemented for every decimal type as well, but are
+//! not supertraits: generic code that adds by reference calls
+//! [`checked_add`](FixedDecimal::checked_add), or adds the bound
+//! `for<'a> &'a T: Add<&'a T, Output = T>`.
+//!
 //! [`Scaled`] implements each trait once, for every decimal that implements it, with the decimal's
 //! result and the scale that the documentation of `Scaled` gives each operation. A `Scaled` relates
 //! only to a `Scaled`. Its parsing is defined for each storage, so its implementations of the
@@ -22,7 +31,7 @@
 use core::{
   fmt::{Debug, Display},
   hash::Hash,
-  ops::{Add, BitAnd, Neg, Sub},
+  ops::{Add, AddAssign, BitAnd, Neg, Sub, SubAssign},
   str::FromStr,
 };
 
@@ -84,10 +93,18 @@ mod sealed {
 /// `(I, F): Layout<R>` do not imply. [`Scaled<D>`](Scaled) implements this trait for every `D` that
 /// does, keeping the scale of its text, and code generic over `D` that computes with `Scaled<D>`
 /// adds the bound `Scaled<D>: FixedDecimal`. The supertraits give generic code cloning, comparison,
-/// hashing, formatting, parsing through `FromStr` and `Default`, which is zero. The functions
-/// `zero`, `max_value` and `min_value`, and [`one`](DecimalOne::one), have the names of those of
-/// `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by traits of both crates
-/// names the trait in the path, as in `FixedDecimal::zero()`.
+/// hashing, formatting, parsing through `FromStr`, `Default`, which is zero, and the operators
+/// below. The functions `zero`, `max_value` and `min_value`, and [`one`](DecimalOne::one), have
+/// the names of those of `Zero`, `Bounded` and `One` in the `num-traits` crate, so code bounded by
+/// traits of both crates names the trait in the path, as in `FixedDecimal::zero()`.
+///
+/// The supertraits `Add`, `Sub` and `Sum` give generic code the operators `+` and `-` on two
+/// values and the sum of an iterator of values. They take their operands by value, so code bounded
+/// by this trait alone clones an operand that it uses again, and they panic where
+/// [`checked_add`](Self::checked_add) and [`checked_sub`](Self::checked_sub) return `None`. The
+/// compound assignments `+=` and `-=` come with [`ConstFixedDecimal`]. The operators on two
+/// references and the sum of an iterator of references are not supertraits: generic code calls
+/// `checked_add`, or adds the bound `for<'a> &'a T: Add<&'a T, Output = T>`.
 ///
 /// ```
 /// use numo::{
@@ -127,7 +144,18 @@ mod sealed {
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait FixedDecimal:
-  Sealed + Clone + Eq + Ord + Hash + Debug + Display + Default + FromStr<Err = ParseError>
+  Sealed
+  + Clone
+  + Eq
+  + Ord
+  + Hash
+  + Debug
+  + Display
+  + Default
+  + FromStr<Err = ParseError>
+  + Add<Output = Self>
+  + Sub<Output = Self>
+  + core::iter::Sum
 {
   /// The number of integral digits, `Integral`.
   const INTEGRAL: u32;
@@ -183,6 +211,22 @@ pub trait FixedDecimal:
   #[must_use]
   fn checked_sub(&self, rhs: &Self) -> Option<Self>;
 
+  /// Returns the remainder of `self` divided by `rhs`, which has the sign of `self`, or `None` if
+  /// `rhs` is zero.
+  #[must_use]
+  fn checked_rem(&self, rhs: &Self) -> Option<Self>;
+
+  /// Adds two values, returning the limit that the sum passes if it is outside the range of the
+  /// type: the largest value above the range and the smallest below it.
+  #[must_use]
+  fn saturating_add(&self, rhs: &Self) -> Self;
+
+  /// Subtracts `rhs` from `self`, returning the limit that the difference passes if it is outside
+  /// the range of the type: the smallest value below the range, which is zero for an unsigned
+  /// storage, and the largest above it.
+  #[must_use]
+  fn saturating_sub(&self, rhs: &Self) -> Self;
+
   /// Rounds to a multiple of `step` with `mode`, as [`Decimal::quantize`] describes.
   ///
   /// # Errors
@@ -205,8 +249,10 @@ pub trait FixedDecimal:
 /// trait as `T::ZERO`, `T::MAX` and `T::MIN`, also in a generic `const fn`, which cannot call
 /// [`zero`](FixedDecimal::zero), [`max_value`](FixedDecimal::max_value) or
 /// [`min_value`](FixedDecimal::min_value) because trait methods are not `const`. The supertrait
-/// `Copy` lets generic code use a value again without cloning it. `Decimal<I, F, R>` implements
-/// this trait for each storage `R` where `(I, F): Layout<R>`, as it implements [`FixedDecimal`].
+/// `Copy` lets generic code use a value again without cloning it, and the supertraits `AddAssign`
+/// and `SubAssign` give it the compound assignments `+=` and `-=`, which panic where the operators
+/// `+` and `-` do and then leave their target unchanged. `Decimal<I, F, R>` implements this trait
+/// for each storage `R` where `(I, F): Layout<R>`, as it implements [`FixedDecimal`].
 ///
 /// ```
 /// use numo::{
@@ -237,7 +283,7 @@ pub trait FixedDecimal:
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
-pub trait ConstFixedDecimal: FixedDecimal + Copy {
+pub trait ConstFixedDecimal: FixedDecimal + Copy + AddAssign + SubAssign {
   /// Zero.
   const ZERO: Self;
 

@@ -1,4 +1,9 @@
-use core::{fmt, str::FromStr};
+use core::{
+  fmt,
+  iter::Sum,
+  ops::{Add, Sub},
+  str::FromStr,
+};
 
 use numo::{FixedDecimal, ParseError, QuantizeError, RoundingMode};
 
@@ -17,6 +22,28 @@ impl FromStr for Local {
 
   fn from_str(_: &str) -> Result<Self, ParseError> {
     Ok(Self)
+  }
+}
+
+impl Add for Local {
+  type Output = Self;
+
+  fn add(self, _: Self) -> Self {
+    Self
+  }
+}
+
+impl Sub for Local {
+  type Output = Self;
+
+  fn sub(self, _: Self) -> Self {
+    Self
+  }
+}
+
+impl Sum for Local {
+  fn sum<I: Iterator<Item = Self>>(_: I) -> Self {
+    Self
   }
 }
 
@@ -62,6 +89,18 @@ impl FixedDecimal for Local {
 
   fn checked_sub(&self, _: &Self) -> Option<Self> {
     Some(Self)
+  }
+
+  fn checked_rem(&self, _: &Self) -> Option<Self> {
+    Some(Self)
+  }
+
+  fn saturating_add(&self, _: &Self) -> Self {
+    Self
+  }
+
+  fn saturating_sub(&self, _: &Self) -> Self {
+    Self
   }
 
   fn quantize(&self, _: &Self, _: RoundingMode) -> Result<Self, QuantizeError> {

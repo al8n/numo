@@ -15,8 +15,9 @@ help: the trait `numo::layout::sealed::IntegralNotReduced` is implemented for `B
 note: required by a bound in `Decimal::<I, F, R>::widen`
  --> src/decimal/mod.rs
   |
+  | impl<I, F, R> Decimal<I, F, R>
+...
   |   pub fn widen<I2, F2, R2>(self) -> Decimal<I2, F2, R2>
-  |          ----- required by a bound in this associated function
 ...
   |     (I, F): Widen<(I2, F2)>,
   |             ^^^^^^^^^^^^^^^ required by this bound in `Decimal::<I, F, R>::widen`
@@ -38,8 +39,9 @@ help: the trait `numo::layout::sealed::FractionNotReduced` is implemented for `B
 note: required by a bound in `Decimal::<I, F, R>::widen`
   --> src/decimal/mod.rs
    |
+   | impl<I, F, R> Decimal<I, F, R>
+...
    |   pub fn widen<I2, F2, R2>(self) -> Decimal<I2, F2, R2>
-   |          ----- required by a bound in this associated function
 ...
    |     (I, F): Widen<(I2, F2)>,
    |             ^^^^^^^^^^^^^^^ required by this bound in `Decimal::<I, F, R>::widen`

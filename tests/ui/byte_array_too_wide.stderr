@@ -22,13 +22,14 @@ note: required by a bound in `Uint::<B, [u64; N]>::to_le_bytes`
  --> src/integer/bytes/mod.rs
   |
   |       pub const fn to_le_bytes<const M: usize>(&self) -> [u8; M]
-  |                    ----------- required by a bound in this associated function
   |       where
   |         u8: LimbArray<B, Array = [u8; M]>,
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Uint::<B, [u64; N]>::to_le_bytes`
   |
  ::: src/integer/mod.rs
   |
+  |       impl<B, const N: usize> Uint<B, [$limb; N]>
+...
   | / array_integers! {
   | |   u64, 64, b64, b64;
   | |   Uint: {

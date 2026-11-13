@@ -21,4 +21,4 @@ note: required by a bound in `numo::ConstFixedInteger::MAX`
   |                              ^^^^^^^^^^^^^ required by this bound in `ConstFixedInteger::MAX`
 ...
   |   const MAX: Self;
-  |         --- required by a bound in this associated constant
+  |

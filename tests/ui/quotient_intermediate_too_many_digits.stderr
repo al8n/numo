@@ -18,8 +18,9 @@ help: the trait `DivIntermediate<B0>` is not implemented for `UInt<UInt<UInt<UIn
 note: required by a bound in `Decimal::<I, F, R>::div_round`
   --> src/decimal/mod.rs
    |
+   | impl<I, F, R> Decimal<I, F, R>
+...
    |   pub fn div_round<I3, F3, R3, I2, F2, R2>(
-   |          --------- required by a bound in this associated function
 ...
    |       DivIntermediate<And<R::IsUnsigned, R2::IsUnsigned>>,
    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Decimal::<I, F, R>::div_round`

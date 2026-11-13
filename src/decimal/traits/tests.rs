@@ -1,5 +1,10 @@
 use core::hash::BuildHasher;
-use std::{collections::hash_map::RandomState, format, string::ToString, vec::Vec};
+use std::{
+  collections::hash_map::RandomState,
+  format,
+  string::{String, ToString},
+  vec::Vec,
+};
 
 use typenum::{
   U0, U1, U2, U4, U5, U8, U9, U10, U11, U12, U16, U17, U18, U19, U20, U21, U22, U26, U38, U40, U50,
@@ -11,7 +16,7 @@ use super::{
   SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 use crate::{
-  ConvertError, Decimal, DivideError, ParseErrorKind, QuantizeError, RoundingMode,
+  ConvertError, Decimal, DivideError, ParseErrorKind, QuantizeError, RoundingMode, Scaled,
   bigint::MODES,
   i192, i256, i320, i384, i448, i512,
   layout::{StorageCore, Token},
@@ -160,6 +165,41 @@ macro_rules! assert_one {
   )+};
 }
 
+/// Asserts that `checked_rem`, `saturating_add` and `saturating_sub` of [`FixedDecimal`] are the
+/// inherent ones for each type, at every pair of the values of [`samples`]. Each type checks in a
+/// function of its own, whose frame holds the values of that type alone: the function is
+/// `#[inline(never)]`, since an optimized build would inline a function that has one call site,
+/// which would put every type in the frame of the test.
+macro_rules! assert_remainder_and_saturation {
+  ($($ty:ty),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      let values = samples::<T>();
+      for value in &values {
+        for rhs in &values {
+          assert_eq!(
+            FixedDecimal::checked_rem(value, rhs),
+            value.checked_rem(rhs),
+            "{value} % {rhs}"
+          );
+          assert_eq!(
+            FixedDecimal::saturating_add(value, rhs),
+            value.saturating_add(rhs),
+            "{value} + {rhs}"
+          );
+          assert_eq!(
+            FixedDecimal::saturating_sub(value, rhs),
+            value.saturating_sub(rhs),
+            "{value} - {rhs}"
+          );
+        }
+      }
+    }
+    storage();
+  })+};
+}
+
 #[test]
 fn signed_items_are_the_inherent_ones() {
   assert_signed!(
@@ -211,6 +251,36 @@ fn one_is_the_inherent_one() {
     Decimal<U116, U18, i448>,
     Decimal<U135, U18, i512>,
     Decimal<U1, U1, u8>,
+    Decimal<U2, U2, u16>,
+    Decimal<U5, U4, u32>,
+    Decimal<U10, U9, u64>,
+    Decimal<U19, U19, u128>,
+    Decimal<U40, U17, u192>,
+    Decimal<U59, U18, u256>,
+    Decimal<U78, U18, u320>,
+    Decimal<U97, U18, u384>,
+    Decimal<U116, U18, u448>,
+    Decimal<U154, U0, u512>,
+  );
+}
+
+#[test]
+fn remainder_and_saturation_are_the_inherent_ones() {
+  assert_remainder_and_saturation!(
+    Decimal<U1, U1, i8>,
+    Decimal<U0, U2, i8>,
+    Decimal<U2, U2, i16>,
+    Decimal<U5, U4, i32>,
+    Decimal<U10, U8, i64>,
+    Decimal<U19, U19, i128>,
+    Decimal<U40, U17, i192>,
+    Decimal<U38, U38, i256>,
+    Decimal<U78, U18, i320>,
+    Decimal<U97, U18, i384>,
+    Decimal<U116, U18, i448>,
+    Decimal<U135, U18, i512>,
+    Decimal<U1, U1, u8>,
+    Decimal<U0, U2, u8>,
     Decimal<U2, U2, u16>,
     Decimal<U5, U4, u32>,
     Decimal<U10, U9, u64>,
@@ -340,6 +410,101 @@ fn negations_agree() {
     let wide: Decimal<U38, U38, i256> = text.parse().unwrap();
     assert_eq!(negations(wide), [wide.neg(); 4], "{text}");
   }
+}
+
+/// Uses the operators that the bound `T: FixedDecimal` gives, which take their operands by value,
+/// and `Sum` over values: the sum and the difference of two values, and the total of both. The
+/// bound does not require `Copy`, so a value that is used again is cloned.
+#[inline(never)]
+fn sum_difference_and_total<T: FixedDecimal>(a: T, b: T) -> [T; 3] {
+  [
+    a.clone() + b.clone(),
+    a.clone() - b.clone(),
+    [a, b].into_iter().sum(),
+  ]
+}
+
+/// Uses the compound assignments that the bound `T: ConstFixedDecimal` gives: the sum and the
+/// difference of two values, each made in place.
+#[inline(never)]
+fn assigned_sum_and_difference<T: ConstFixedDecimal>(a: T, b: T) -> [T; 2] {
+  let (mut sum, mut difference) = (a, a);
+  sum += b;
+  difference -= b;
+  [sum, difference]
+}
+
+/// As [`sum_difference_and_total`], in code generic over the storage: the operators come with the
+/// bound that such code writes for the other items of a decimal.
+#[inline(never)]
+fn over_the_storage<I, F, R>(a: Decimal<I, F, R>, b: Decimal<I, F, R>) -> [Decimal<I, F, R>; 3]
+where
+  Decimal<I, F, R>: FixedDecimal,
+{
+  [
+    a.clone() + b.clone(),
+    a.clone() - b.clone(),
+    [a, b].into_iter().sum(),
+  ]
+}
+
+/// As [`sum_difference_and_total`], in code generic over the decimal of a `Scaled`: the operators
+/// come with the bound `Scaled<D>: FixedDecimal`.
+#[inline(never)]
+fn over_the_decimal<D>(a: Scaled<D>, b: Scaled<D>) -> [Scaled<D>; 3]
+where
+  Scaled<D>: FixedDecimal,
+{
+  [
+    a.clone() + b.clone(),
+    a.clone() - b.clone(),
+    [a, b].into_iter().sum(),
+  ]
+}
+
+/// Generic code adds and subtracts through each bound: by value and with `Sum` under
+/// `FixedDecimal`, in place under `ConstFixedDecimal`, and under the bounds of code generic over
+/// the storage and over the decimal of a `Scaled`; with a native storage, a wide one and a
+/// `Scaled` over each, whose results take the larger scale.
+#[test]
+fn operators_through_the_bounds() {
+  type Price = Decimal<U10, U8>;
+  type Wide = Decimal<U38, U38, i256>;
+  fn texts<T: FixedDecimal, const N: usize>(values: [T; N]) -> [String; N] {
+    values.map(|value| value.to_string())
+  }
+
+  let (a, b): (Price, Price) = ("1.5".parse().unwrap(), "0.25".parse().unwrap());
+  assert_eq!(
+    texts(sum_difference_and_total(a, b)),
+    ["1.75", "1.25", "1.75"]
+  );
+  assert_eq!(texts(assigned_sum_and_difference(a, b)), ["1.75", "1.25"]);
+  assert_eq!(texts(over_the_storage(a, b)), ["1.75", "1.25", "1.75"]);
+
+  let (a, b): (Wide, Wide) = ("1.5".parse().unwrap(), "0.25".parse().unwrap());
+  assert_eq!(
+    texts(sum_difference_and_total(a, b)),
+    ["1.75", "1.25", "1.75"]
+  );
+  assert_eq!(texts(assigned_sum_and_difference(a, b)), ["1.75", "1.25"]);
+  assert_eq!(texts(over_the_storage(a, b)), ["1.75", "1.25", "1.75"]);
+
+  let (a, b): (Scaled<Price>, Scaled<Price>) = ("1.50".parse().unwrap(), "0.250".parse().unwrap());
+  assert_eq!(
+    texts(sum_difference_and_total(a, b)),
+    ["1.750", "1.250", "1.750"]
+  );
+  assert_eq!(texts(assigned_sum_and_difference(a, b)), ["1.750", "1.250"]);
+  assert_eq!(texts(over_the_decimal(a, b)), ["1.750", "1.250", "1.750"]);
+
+  let (a, b): (Scaled<Wide>, Scaled<Wide>) = ("1.50".parse().unwrap(), "0.250".parse().unwrap());
+  assert_eq!(
+    texts(sum_difference_and_total(a, b)),
+    ["1.750", "1.250", "1.750"]
+  );
+  assert_eq!(texts(assigned_sum_and_difference(a, b)), ["1.750", "1.250"]);
+  assert_eq!(texts(over_the_decimal(a, b)), ["1.750", "1.250", "1.750"]);
 }
 
 /// Compiles only if the product of `P` and `Q` is `O`.
@@ -585,11 +750,11 @@ fn div_round_is_the_inherent_one() {
   );
 }
 
-/// Every trait of both families and `Neg` are in scope at once: no call below is ambiguous
-/// (E0034), on concrete types or in code bounded by either family, with the decimal traits of both
-/// layers in one bound.
+/// Every trait of both families, `Add`, `Sub` and `Neg` are in scope at once: no call below is
+/// ambiguous (E0034), on concrete types or in code bounded by either family, with the decimal
+/// traits of both layers in one bound.
 mod collisions {
-  use core::ops::Neg;
+  use core::ops::{Add, Neg, Sub};
 
   use typenum::{U8, U10};
 
@@ -600,7 +765,7 @@ mod collisions {
   use crate::{
     ArrayInteger, CheckedOps, ConstDecimalOne, ConstFixedDecimal, ConstFixedInteger,
     ConstIntegerOne, ConvertTo, Decimal, DecimalOne, DivRound, ExactMul, FixedDecimal,
-    FixedInteger, FromLimbs, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps,
+    FixedInteger, FromLimbs, IntegerOne, NativeInteger, OverflowingOps, SaturatingOps, Scaled,
     SignedFixedDecimal, SignedFixedInteger, StrictOps, UncheckedOps, UnsignedFixedDecimal,
     UnsignedFixedInteger, WidenTo, WrappingOps, i256, u256,
   };
@@ -807,5 +972,31 @@ mod collisions {
     let (zero, min, max, one) = (i256::ZERO, i256::MIN, i256::MAX, i256::ONE);
     assert_eq!(concrete, [zero, zero, min, min, max, max, one, one, zero]);
     assert_eq!(integer_values::<i256>(), concrete);
+  }
+
+  /// The negations resolve and agree, for a `Decimal` and for a `Scaled`: `-x` and `x.neg()` on a
+  /// value call `Neg::neg`, and `r.neg()` on a reference calls the method that takes a reference,
+  /// which for a `Scaled` is that of `SignedFixedDecimal` alone, since no `Neg` for a reference
+  /// competes with it. The methods `add` and `sub` are those of the operators.
+  #[test]
+  fn negations_and_operators_resolve() {
+    let x: Price = "-1.5".parse().unwrap();
+    let y: Price = "0.25".parse().unwrap();
+    let negated: Price = "1.5".parse().unwrap();
+    let r = &x;
+    assert_eq!([-x, x.neg(), r.neg()], [negated; 3]);
+    assert_eq!([x.add(y), x.sub(y)], [x + y, x - y]);
+
+    let x: Scaled<Price> = "-1.50".parse().unwrap();
+    let y: Scaled<Price> = "0.250".parse().unwrap();
+    let r = &x;
+    assert_eq!(
+      [-x, x.neg(), r.neg()].map(Scaled::into_parts),
+      [(negated, 2); 3]
+    );
+    assert_eq!(
+      [x.add(y), x.sub(y)].map(Scaled::into_parts),
+      [(x + y).into_parts(), (x - y).into_parts()]
+    );
   }
 }

@@ -21,8 +21,9 @@ error[E0277]: `widen` cannot convert from a signed storage to an unsigned storag
 note: required by a bound in `Decimal::<I, F, R>::widen`
  --> src/decimal/mod.rs
   |
+  | impl<I, F, R> Decimal<I, F, R>
+...
   |   pub fn widen<I2, F2, R2>(self) -> Decimal<I2, F2, R2>
-  |          ----- required by a bound in this associated function
   |   where
   |     R: WidenRepr<R2>,
   |        ^^^^^^^^^^^^^ required by this bound in `Decimal::<I, F, R>::widen`

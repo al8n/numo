@@ -4,14 +4,15 @@ use core::{
   cmp::Ordering,
   fmt,
   hash::{Hash, Hasher},
-  ops::Neg,
+  iter::Sum,
+  ops::{Add, AddAssign, Neg, Sub, SubAssign},
   str::FromStr,
 };
 
 use super::{
   ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, DecimalOne, DivRound, DivideError,
   ExactMul, FixedDecimal, ParseError, QuantizeError, SignedFixedDecimal, UnsignedFixedDecimal,
-  WidenTo, format,
+  WidenTo, format, ops::overflow,
 };
 use crate::{
   int,
@@ -95,13 +96,18 @@ mod tests;
 /// that implements it: [`FixedDecimal`], [`ConstFixedDecimal`], [`SignedFixedDecimal`],
 /// [`UnsignedFixedDecimal`], [`DecimalOne`] and [`ConstDecimalOne`], and between `Scaled` types
 /// [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`]. Generic code bounded by them takes a
-/// `Scaled` and a bare decimal alike, and the arithmetic of a `Scaled` is reached through them,
-/// with the trait in scope. A `Scaled` relates only to a `Scaled`: no trait converts a bare decimal
-/// into a `Scaled`, or multiplies one by the other.
+/// `Scaled` and a bare decimal alike. The operators `+`, `-`, `+=` and `-=` and
+/// [`Sum`](core::iter::Sum) are implemented as for a decimal, and panic where `checked_add` and
+/// `checked_sub` return `None`; the methods of a `Scaled` are reached through the traits, with the
+/// trait in scope. A `Scaled` relates only to a `Scaled`: no trait converts a bare decimal into a
+/// `Scaled`, or multiplies one by the other.
 ///
 /// A result has the value that the decimal's own operation gives, and the scale of the operation:
 ///
-/// - a sum or a difference takes the larger scale of its operands;
+/// - a sum, a difference or a remainder takes the larger scale of its operands, whether an
+///   operator, a checked or a saturating method gives it, also where the result saturates to a
+///   limit;
+/// - a sum over an iterator takes the largest scale of its items, and scale 0 without an item;
 /// - an exact product takes the sum of the scales, saturating at 255, which only limits the text:
 ///   the product is never rounded;
 /// - [`quantize`](FixedDecimal::quantize) takes the scale of the step;
@@ -371,6 +377,31 @@ where
     Some(Self::new(difference, self.scale.max(rhs.scale)))
   }
 
+  /// Returns the remainder of `self` divided by `rhs`, or `None` if `rhs` is zero. The remainder
+  /// takes the larger of the two scales.
+  fn checked_rem(&self, rhs: &Self) -> Option<Self> {
+    let remainder = self.value.checked_rem(&rhs.value)?;
+    Some(Self::new(remainder, self.scale.max(rhs.scale)))
+  }
+
+  /// Adds two values, returning the limit that the sum passes if it is outside the range of `D`.
+  /// The result takes the larger of the two scales, also when it is a limit.
+  fn saturating_add(&self, rhs: &Self) -> Self {
+    Self::new(
+      self.value.saturating_add(&rhs.value),
+      self.scale.max(rhs.scale),
+    )
+  }
+
+  /// Subtracts `rhs` from `self`, returning the limit that the difference passes if it is outside
+  /// the range of `D`. The result takes the larger of the two scales, also when it is a limit.
+  fn saturating_sub(&self, rhs: &Self) -> Self {
+    Self::new(
+      self.value.saturating_sub(&rhs.value),
+      self.scale.max(rhs.scale),
+    )
+  }
+
   /// Rounds to a multiple of `step` with `mode`, as [`Decimal::quantize`](crate::Decimal::quantize)
   /// describes. The result takes the scale of `step`.
   fn quantize(&self, step: &Self, mode: RoundingMode) -> Result<Self, QuantizeError> {
@@ -397,6 +428,174 @@ where
 
   /// The smallest value with scale 0.
   const MIN: Self = Self::new(D::MIN, 0);
+}
+
+// The operators exist where the `Scaled` is a `FixedDecimal`, the bound of its other traits, and
+// call its own checked methods, which take the larger scale. A bound on `D` alone would hold one
+// level further out too, and give the operators to a `Scaled<Scaled<D>>`, which is not a decimal.
+impl<D> Add for Scaled<D>
+where
+  Self: FixedDecimal,
+{
+  type Output = Self;
+
+  /// Adds two values. The sum takes the larger of the two scales.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the sum is outside the range of `D`, in every build, whatever `overflow-checks`
+  /// is. [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
+  #[inline]
+  #[track_caller]
+  fn add(self, rhs: Self) -> Self {
+    match FixedDecimal::checked_add(&self, &rhs) {
+      Some(sum) => sum,
+      None => overflow::add(),
+    }
+  }
+}
+
+impl<D> Add<&Scaled<D>> for &Scaled<D>
+where
+  Scaled<D>: FixedDecimal,
+{
+  type Output = Scaled<D>;
+
+  /// Adds two values by reference. The sum takes the larger of the two scales.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the sum is outside the range of `D`, in every build, whatever `overflow-checks`
+  /// is. [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
+  #[inline]
+  #[track_caller]
+  fn add(self, rhs: &Scaled<D>) -> Scaled<D> {
+    match FixedDecimal::checked_add(self, rhs) {
+      Some(sum) => sum,
+      None => overflow::add(),
+    }
+  }
+}
+
+impl<D> AddAssign for Scaled<D>
+where
+  Self: FixedDecimal,
+{
+  /// Adds `rhs` to `self`, which takes the larger of the two scales.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the sum is outside the range of `D`, in every build, whatever `overflow-checks`
+  /// is, and leaves `self` unchanged. [`checked_add`](FixedDecimal::checked_add) returns `None`
+  /// instead.
+  #[inline]
+  #[track_caller]
+  fn add_assign(&mut self, rhs: Self) {
+    match FixedDecimal::checked_add(self, &rhs) {
+      Some(sum) => *self = sum,
+      None => overflow::add(),
+    }
+  }
+}
+
+impl<D> Sub for Scaled<D>
+where
+  Self: FixedDecimal,
+{
+  type Output = Self;
+
+  /// Subtracts `rhs` from `self`. The difference takes the larger of the two scales.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the difference is outside the range of `D`, which for an unsigned storage is every
+  /// difference below zero, in every build, whatever `overflow-checks` is.
+  /// [`checked_sub`](FixedDecimal::checked_sub) returns `None` instead.
+  #[inline]
+  #[track_caller]
+  fn sub(self, rhs: Self) -> Self {
+    match FixedDecimal::checked_sub(&self, &rhs) {
+      Some(difference) => difference,
+      None => overflow::sub(),
+    }
+  }
+}
+
+impl<D> Sub<&Scaled<D>> for &Scaled<D>
+where
+  Scaled<D>: FixedDecimal,
+{
+  type Output = Scaled<D>;
+
+  /// Subtracts `rhs` from `self`, by reference. The difference takes the larger of the two
+  /// scales.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the difference is outside the range of `D`, which for an unsigned storage is every
+  /// difference below zero, in every build, whatever `overflow-checks` is.
+  /// [`checked_sub`](FixedDecimal::checked_sub) returns `None` instead.
+  #[inline]
+  #[track_caller]
+  fn sub(self, rhs: &Scaled<D>) -> Scaled<D> {
+    match FixedDecimal::checked_sub(self, rhs) {
+      Some(difference) => difference,
+      None => overflow::sub(),
+    }
+  }
+}
+
+impl<D> SubAssign for Scaled<D>
+where
+  Self: FixedDecimal,
+{
+  /// Subtracts `rhs` from `self`, which takes the larger of the two scales.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the difference is outside the range of `D`, which for an unsigned storage is every
+  /// difference below zero, in every build, whatever `overflow-checks` is, and leaves `self`
+  /// unchanged. [`checked_sub`](FixedDecimal::checked_sub) returns `None` instead.
+  #[inline]
+  #[track_caller]
+  fn sub_assign(&mut self, rhs: Self) {
+    match FixedDecimal::checked_sub(self, &rhs) {
+      Some(difference) => *self = difference,
+      None => overflow::sub(),
+    }
+  }
+}
+
+impl<D> Sum for Scaled<D>
+where
+  Self: FixedDecimal,
+{
+  /// Adds the values, from zero with scale 0, so the sum has the largest scale of the values.
+  ///
+  /// # Panics
+  ///
+  /// Panics if a partial sum is outside the range of `D`, in every build, whatever
+  /// `overflow-checks` is, also where the whole sum would be in range. A fold with
+  /// [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
+  fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+    iter.fold(Self::zero(), |sum, value| sum + value)
+  }
+}
+
+impl<'a, D> Sum<&'a Scaled<D>> for Scaled<D>
+where
+  Self: FixedDecimal,
+{
+  /// Adds the values, from zero with scale 0, so the sum has the largest scale of the values.
+  ///
+  /// # Panics
+  ///
+  /// Panics if a partial sum is outside the range of `D`, in every build, whatever
+  /// `overflow-checks` is, also where the whole sum would be in range. A fold with
+  /// [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
+  fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+    iter.fold(Self::zero(), |sum, value| &sum + value)
+  }
 }
 
 impl<D> Neg for Scaled<D>

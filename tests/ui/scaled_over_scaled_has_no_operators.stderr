@@ -1,0 +1,13 @@
+error[E0369]: cannot add `Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>` to `Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>`
+  --> tests/ui/scaled_over_scaled_has_no_operators.rs:12:5
+   |
+12 |   a + b
+   |   - ^ - Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>
+   |   |
+   |   Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>
+   |
+note: `Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>` does not implement `FromStr`
+  --> src/decimal/scaled/mod.rs
+   |
+   | pub struct Scaled<D> {
+   | ^^^^^^^^^^^^^^^^^^^^ `Scaled<Scaled<Decimal<UInt<UTerm, B1>, UInt<UTerm, B1>, i8>>>` is defined in another crate

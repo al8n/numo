@@ -186,6 +186,21 @@ macro_rules! storage_decimal {
       }
 
       #[inline]
+      fn checked_rem(&self, rhs: &Self) -> Option<Self> {
+        Self::checked_rem(self, rhs)
+      }
+
+      #[inline]
+      fn saturating_add(&self, rhs: &Self) -> Self {
+        Self::saturating_add(self, rhs)
+      }
+
+      #[inline]
+      fn saturating_sub(&self, rhs: &Self) -> Self {
+        Self::saturating_sub(self, rhs)
+      }
+
+      #[inline]
       fn quantize(&self, step: &Self, mode: RoundingMode) -> Result<Self, QuantizeError> {
         Self::quantize(self, step, mode)
       }
@@ -551,6 +566,8 @@ macro_rules! storage_decimal {
       }
     }
 
+    storage_decimal!(@shared $repr [$($by)*]);
+
     impl<I, F> Neg for Decimal<I, F, $repr>
     where
       (I, F): Layout<$repr>,
@@ -843,7 +860,66 @@ macro_rules! storage_decimal {
       }
     }
 
+    storage_decimal!(@shared $repr [$($by)*]);
+
     impl<I, F> UnsignedFixedDecimal for Decimal<I, F, $repr> where (I, F): Layout<$repr> {}
+  };
+
+  // The methods whose body is the same for both signs: the arm of each sign emits them with its
+  // `$($by)*`.
+  (@shared $repr:ident [$($by:tt)*]) => {
+    impl<I, F> Decimal<I, F, $repr>
+    where
+      (I, F): Layout<$repr>,
+    {
+      /// Returns the remainder of `self` divided by `rhs`, or `None` if `rhs` is zero.
+      ///
+      /// The quotient is truncated toward zero, so the remainder has the sign of `self` and a
+      /// magnitude below that of `rhs`: it is exact and always in range.
+      /// [`is_multiple_of`](Self::is_multiple_of) tells whether the remainder is zero, and takes a
+      /// step of zero too, of which only zero is a multiple.
+      #[must_use]
+      #[inline]
+      pub const fn checked_rem(&self, rhs: &Self) -> Option<Self> {
+        if int::$repr::is_zero($($by)* rhs.repr) {
+          return None;
+        }
+        // Both values have `Fraction` digits, so the remainder of the coefficients is that of the
+        // values. A coefficient is never the `MIN` of a signed storage, so the division does not
+        // overflow, even for a divisor of `-1`.
+        let (_, remainder) = int::$repr::div_rem($($by)* self.repr, $($by)* rhs.repr);
+        Some(Self::from_coeff(remainder))
+      }
+
+      /// Adds two values, returning the limit that the sum passes if it is outside the range of
+      /// the type: [`MAX`](Self::MAX) above the range and [`MIN`](Self::MIN) below it.
+      #[must_use]
+      #[inline]
+      pub const fn saturating_add(&self, rhs: &Self) -> Self {
+        match self.checked_add(rhs) {
+          Some(sum) => sum,
+          // A sum leaves the range on the side that `rhs` moves it to.
+          None if int::$repr::is_positive($($by)* rhs.repr) => Self::MAX,
+          None => Self::MIN,
+        }
+      }
+
+      /// Subtracts `rhs` from `self`, returning the limit that the difference passes if it is
+      /// outside the range of the type: [`MIN`](Self::MIN) below the range, which is zero for an
+      /// unsigned storage, and [`MAX`](Self::MAX) above it.
+      #[must_use]
+      #[inline]
+      pub const fn saturating_sub(&self, rhs: &Self) -> Self {
+        match self.checked_sub(rhs) {
+          Some(difference) => difference,
+          // A difference leaves the range on the side that `rhs` moves it to, which the sign of
+          // `self` does not tell: both operands of an unsigned difference below zero are positive
+          // or zero.
+          None if int::$repr::is_positive($($by)* rhs.repr) => Self::MIN,
+          None => Self::MAX,
+        }
+      }
+    }
   };
 
   // The imports of an example, the listed items of the crate and the storage, in `rustfmt` order.
