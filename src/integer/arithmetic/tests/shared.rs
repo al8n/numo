@@ -130,6 +130,16 @@ macro_rules! unbox_as_is {
 
 unbox_as_is!(bool, u8, u32, u64, Ordering);
 
+// An array is its own result: the high half of a signed product, which a heap storage returns as
+// the array that the integer of the row wraps.
+impl<L, const N: usize> Unbox for [L; N] {
+  type Inline = Self;
+
+  fn unbox(self) -> Self {
+    self
+  }
+}
+
 impl<T: Unbox> Unbox for Option<T> {
   type Inline = Option<T::Inline>;
 
@@ -595,11 +605,11 @@ macro_rules! common_rows {
 
 /// Checks every row of `UintCore` on the heap storage `P` of `[L; N]` against the row of the same
 /// name on `[L; N]`, at the unsigned [`Samples`] of `bits` bits, with the patterns in `K` words of
-/// 64 bits: the rows of [`common_rows!`], then those of `Uint` alone, with the addition with a
-/// carry and the subtraction with a borrow, the casts to the signed storage, the saturating one
-/// among them, which store their result in the allocation that they consume, or for a shared
-/// pointer in a new one, and the lent non-zero integer. The function is `#[inline(never)]`, so that
-/// its frame holds the values of this storage alone.
+/// 64 bits: the rows of [`common_rows!`], then those of `Uint`, with the addition with a carry, the
+/// subtraction with a borrow and the products with a carry and an addend, the casts to the signed
+/// storage, the saturating one among them, which store their result in the allocation that they
+/// consume, or for a shared pointer in a new one, and the lent non-zero integer. The function is
+/// `#[inline(never)]`, so that its frame holds the values of this storage alone.
 #[inline(never)]
 pub(super) fn uint_rows<P, L, const N: usize, const K: usize>(bits: u32)
 where
@@ -680,12 +690,22 @@ where
       row!(UintCore::carrying_add_bits(&x => a, &y => b; carry, bits));
       row!(UintCore::borrowing_sub_bits(&x => a, &y => b; carry, bits));
     }
+    // The first values as the carry and as the addend of the products.
+    for c in samples.values.iter().take(3) {
+      let z = P::new(*c);
+      row!(UintCore::carrying_mul_bits(&x => a, &y => b, &z => c; bits));
+      for d in samples.values.iter().take(3) {
+        let w = P::new(*d);
+        row!(UintCore::carrying_mul_add_bits(&x => a, &y => b, &z => c, &w => d; bits));
+      }
+    }
   }
 }
 
 /// Checks every row of `IntCore` on the heap storage `P` of `[L; N]` against the row of the same
 /// name on `[L; N]`, as [`uint_rows`] does for `UintCore`, at the signed [`Samples`] of `bits`
-/// bits: the rows of [`common_rows!`], then those of `Int` alone, with the casts to the unsigned
+/// bits: the rows of [`common_rows!`], then those of `Int`, with the addition with a carry, the
+/// subtraction with a borrow and the products with a carry and an addend, the casts to the unsigned
 /// storage, the saturating one among them, which store their result in the allocation that they
 /// consume, or for a shared pointer in a new one, and the lent non-zero integer.
 #[inline(never)]
@@ -737,6 +757,19 @@ where
   for (a, b) in &samples.pairs {
     let (x, y) = (P::new(*a), P::new(*b));
     row!(IntCore::abs_diff(&x => a, &y => b));
+    for carry in [false, true] {
+      row!(IntCore::carrying_add_bits(&x => a, &y => b; carry, bits));
+      row!(IntCore::borrowing_sub_bits(&x => a, &y => b; carry, bits));
+    }
+    // The first values as the carry and as the addend of the products.
+    for c in samples.values.iter().take(3) {
+      let z = P::new(*c);
+      row!(IntCore::carrying_mul_bits(&x => a, &y => b, &z => c; bits));
+      for d in samples.values.iter().take(3) {
+        let w = P::new(*d);
+        row!(IntCore::carrying_mul_add_bits(&x => a, &y => b, &z => c, &w => d; bits));
+      }
+    }
   }
 }
 

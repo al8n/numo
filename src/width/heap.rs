@@ -286,6 +286,26 @@ macro_rules! heap_rows {
     }
 
     #[inline]
+    fn carrying_add_bits(&self, rhs: &Self, carry: bool, bits: u32, token: Token) -> (Self, bool) {
+      let (value, overflow) =
+        <[L; N] as $core>::carrying_add_bits(self.borrow(), rhs.borrow(), carry, bits, token);
+      ($new(value), overflow)
+    }
+
+    #[inline]
+    fn borrowing_sub_bits(
+      &self,
+      rhs: &Self,
+      borrow: bool,
+      bits: u32,
+      token: Token,
+    ) -> (Self, bool) {
+      let (value, overflow) =
+        <[L; N] as $core>::borrowing_sub_bits(self.borrow(), rhs.borrow(), borrow, bits, token);
+      ($new(value), overflow)
+    }
+
+    #[inline]
     fn is_one(&self, token: Token) -> bool {
       <[L; N] as $core>::is_one(self.borrow(), token)
     }
@@ -656,35 +676,45 @@ macro_rules! heap_storage {
         <[L; N] as UintCore>::fmt_pow2(self.borrow(), shift, upper, f, token)
       }
 
+      // No method of `Uint` calls the two products of a heap storage, as the rows of `Uint`
+      // compute them on the arrays that the operands lend: the core requires them, and each puts
+      // both halves in allocations of their own.
       #[inline]
-      fn carrying_add_bits(
+      fn carrying_mul_bits(
         &self,
         rhs: &Self,
-        carry: bool,
+        carry: &Self,
         bits: u32,
         token: Token,
-      ) -> (Self, bool) {
-        let (value, overflow) =
-          <[L; N] as UintCore>::carrying_add_bits(self.borrow(), rhs.borrow(), carry, bits, token);
-        (uint(value), overflow)
-      }
-
-      #[inline]
-      fn borrowing_sub_bits(
-        &self,
-        rhs: &Self,
-        borrow: bool,
-        bits: u32,
-        token: Token,
-      ) -> (Self, bool) {
-        let (value, overflow) = <[L; N] as UintCore>::borrowing_sub_bits(
+      ) -> (Self, Self) {
+        let (low, high) = <[L; N] as UintCore>::carrying_mul_bits(
           self.borrow(),
           rhs.borrow(),
-          borrow,
+          carry.borrow(),
           bits,
           token,
         );
-        (uint(value), overflow)
+        (uint(low), uint(high))
+      }
+
+      #[inline]
+      fn carrying_mul_add_bits(
+        &self,
+        rhs: &Self,
+        carry: &Self,
+        add: &Self,
+        bits: u32,
+        token: Token,
+      ) -> (Self, Self) {
+        let (low, high) = <[L; N] as UintCore>::carrying_mul_add_bits(
+          self.borrow(),
+          rhs.borrow(),
+          carry.borrow(),
+          add.borrow(),
+          bits,
+          token,
+        );
+        (uint(low), uint(high))
       }
 
       #[inline]
@@ -795,6 +825,46 @@ macro_rules! heap_storage {
       #[inline]
       fn unsigned_abs(&self, token: Token) -> Self {
         uint(<[L; N] as IntCore>::unsigned_abs(self.borrow(), token))
+      }
+
+      // The low half is a magnitude in an allocation of its own, as `unsigned_abs` returns it, and
+      // the high half the array, which the integer of the row wraps.
+      #[inline]
+      fn carrying_mul_bits(
+        &self,
+        rhs: &Self,
+        carry: &Self,
+        bits: u32,
+        token: Token,
+      ) -> (Self::Magnitude, Self::Inline) {
+        let (low, high) = <[L; N] as IntCore>::carrying_mul_bits(
+          self.borrow(),
+          rhs.borrow(),
+          carry.borrow(),
+          bits,
+          token,
+        );
+        (uint(low), high)
+      }
+
+      #[inline]
+      fn carrying_mul_add_bits(
+        &self,
+        rhs: &Self,
+        carry: &Self,
+        add: &Self,
+        bits: u32,
+        token: Token,
+      ) -> (Self::Magnitude, Self::Inline) {
+        let (low, high) = <[L; N] as IntCore>::carrying_mul_add_bits(
+          self.borrow(),
+          rhs.borrow(),
+          carry.borrow(),
+          add.borrow(),
+          bits,
+          token,
+        );
+        (uint(low), high)
       }
 
       #[inline]
