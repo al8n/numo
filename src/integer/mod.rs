@@ -1784,6 +1784,7 @@ macro_rules! array_integers {
       saturating_table!(Uint, inherent_items![unsigned, $lower, &]);
       strict_table!(inherent_items![unsigned, $lower, &]);
       uint_sign_table!(inherent_items![unsigned, $lower, &]);
+      uint_wide_table!(inherent_items![unsigned, $lower, &]);
       integer_math_table!(inherent_items![unsigned, $lower, &, Uint<B, [$limb; N]>]);
       uint_math_table!(inherent_items![unsigned, $lower, &]);
       integer_bits_table!(inherent_items![unsigned, $lower, &]);
@@ -2065,6 +2066,7 @@ macro_rules! array_integers {
       saturating_table!(Int, inherent_items![signed, $upper, &]);
       strict_table!(inherent_items![signed, $upper, &]);
       int_sign_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
+      int_wide_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
       integer_math_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
       int_math_table!(inherent_items![signed, $upper, &]);
       integer_bits_table!(inherent_items![signed, $upper, &]);
@@ -2506,6 +2508,7 @@ macro_rules! native_integers {
       saturating_table!(Uint, inherent_items![$uint]);
       strict_table!(inherent_items![$uint]);
       uint_sign_table!(inherent_items![$uint]);
+      uint_wide_table!(inherent_items![$uint]);
       integer_math_table!(inherent_items![$uint, Uint<B, $uint>]);
       uint_math_table!(inherent_items![$uint]);
       integer_bits_table!(inherent_items![$uint]);
@@ -2776,6 +2779,7 @@ macro_rules! native_integers {
       saturating_table!(Int, inherent_items![$int]);
       strict_table!(inherent_items![$int]);
       int_sign_table!(inherent_items![$int, Uint<B, $uint>]);
+      int_wide_table!(inherent_items![$int, Uint<B, $uint>]);
       integer_math_table!(inherent_items![$int, Uint<B, $uint>]);
       int_math_table!(inherent_items![$int]);
       integer_bits_table!(inherent_items![$int]);

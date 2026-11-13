@@ -1273,6 +1273,11 @@ where
     ),
     format!(
       "{:?}",
+      [a.carrying_mul(b, a), a.carrying_mul_add(b, a, b)]
+        .map(|(low, high)| (limbs(low), limbs(high)))
+    ),
+    format!(
+      "{:?}",
       (
         a.is_multiple_of(b),
         a.is_power_of_two(),
@@ -1333,6 +1338,20 @@ where
           .map(|_| (limbs(a.strict_abs()), limbs(a.abs()))),
         a.checked_neg().map(|_| limbs(-a.clone())),
       )
+    ),
+    format!(
+      "{:?}",
+      [
+        flagged(a.carrying_add(a, false)),
+        flagged(a.carrying_add(a, true)),
+        flagged(a.borrowing_sub(a, false)),
+        flagged(a.borrowing_sub(a, true)),
+      ]
+    ),
+    format!(
+      "{:?}",
+      [a.carrying_mul(a, a), a.carrying_mul_add(a, a, a)]
+        .map(|(low, high)| (limbs(low), limbs(high)))
     ),
     format!(
       "{:?}",

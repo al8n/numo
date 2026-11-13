@@ -1326,6 +1326,10 @@ macro_rules! unsigned_results {
       ),
       format!(
         "{:?}",
+        (a.carrying_mul(&b, &a), a.carrying_mul_add(&b, &a, &b))
+      ),
+      format!(
+        "{:?}",
         (
           a.is_multiple_of(&b),
           a.checked_next_power_of_two(),
@@ -1354,6 +1358,18 @@ macro_rules! signed_results {
       format!("{:?}", a.checked_abs().map(|_| (a.strict_abs(), a.abs()))),
       format!("{:?}", a.checked_neg().map(|_| -a)),
       format!("{:?}", a.checked_isqrt()),
+      format!(
+        "{:?}",
+        (a.carrying_add(&a, false), a.carrying_add(&a, true))
+      ),
+      format!(
+        "{:?}",
+        (a.borrowing_sub(&a, false), a.borrowing_sub(&a, true))
+      ),
+      format!(
+        "{:?}",
+        (a.carrying_mul(&a, &a), a.carrying_mul_add(&a, &a, &a))
+      ),
     ]
   }};
 }
@@ -2390,3 +2406,4 @@ mod serde_helpers;
 mod shared;
 mod shifts;
 mod text;
+mod wide;

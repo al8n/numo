@@ -349,6 +349,7 @@ pub trait ConstFixedInteger: IntegerAssign + Copy {
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait UnsignedFixedInteger: Sealed + Sized {
   uint_sign_table!(trait_items![]);
+  uint_wide_table!(trait_items![]);
 }
 
 /// A signed integer of a fixed number of bits, in two's complement: [`Int`].
@@ -392,6 +393,7 @@ pub trait SignedFixedInteger: Sealed + Sized + Neg<Output = Self> {
 
   signed_query_table!(trait_items![]);
   int_sign_table!(trait_items![]);
+  int_wide_table!(trait_items![]);
   signed_unchecked_table!(trait_items![]);
 }
 
@@ -1368,6 +1370,7 @@ impl<B: FitsBits<R>, R: InlineIntRepr> ConstFixedInteger for Int<B, R> {
 
 impl<B: FitsBits<R>, R: UintRepr> UnsignedFixedInteger for Uint<B, R> {
   uint_sign_table!(generic_items![]);
+  uint_wide_table!(generic_items![]);
 }
 
 // The absolute value of a value that is not negative is the value itself, and the wrapped one of
@@ -1377,6 +1380,7 @@ impl<B: FitsBits<R>, R: IntRepr + Clone> SignedFixedInteger for Int<B, R> {
 
   signed_query_table!(generic_items![]);
   int_sign_table!(generic_items![]);
+  int_wide_table!(generic_items![]);
   signed_unchecked_table!(generic_items![]);
 }
 

@@ -1,10 +1,12 @@
 //! The arithmetic of [`Uint`](crate::Uint) and [`Int`](crate::Int): the method tables of the
 //! overflowing, checked, wrapping, saturating and strict addition, subtraction, multiplication,
 //! negation, division, remainder and power, and of the overflowing, checked, wrapping and strict
-//! shifts, of the carrying addition and the borrowing subtraction of `Uint`, of the absolute value
-//! and the sign of `Int`, of the unchecked arithmetic of the traits, and of the integer functions
-//! without an overflow prefix, such as the Euclidean and rounded division, the roots and the
-//! logarithms; the panics; and the operators, `Sum` and `Product`.
+//! shifts, of the carrying addition and the borrowing subtraction of `Uint`, of the multiplication
+//! with a carry and with a carry and an addend of `Uint` and of `Int`, with the carrying addition
+//! and the borrowing subtraction of `Int`, of the absolute value and the sign of `Int`, of the
+//! unchecked arithmetic of the traits, and of the integer functions without an overflow prefix,
+//! such as the Euclidean and rounded division, the roots and the logarithms; the panics; and the
+//! operators, `Sum` and `Product`.
 //!
 //! Each storage computes the overflowing methods at the width `Bits`. The checked methods compute
 //! the same on the storage, and build a value only where it is in range; the wrapping methods are
@@ -830,6 +832,92 @@ macro_rules! int_sign_table {
       /// The absolute value, `|self|`, as the unsigned integer of the same width, which also holds
       /// the absolute value of `MIN`.
       fn unsigned_abs(&self) -> Self::Unsigned = prim unsigned unsigned_abs(self);
+    }
+  };
+}
+
+/// Passes the multiplication with a carry and the multiplication with a carry and an addend of
+/// `Uint` to `$callback`, after the tokens of `$args`.
+macro_rules! uint_wide_table {
+  ($callback:ident! $args:tt) => {
+    $callback! { $args
+      /// Multiplication with a carry: the low and the high half of `self * rhs + carry`, the
+      /// integers `low` and `high` of `Bits` bits with `self * rhs + carry = low + high * 2^Bits`.
+      /// Nothing overflows: the exact value is at most `(2^Bits - 1)^2 + 2^Bits - 1`, below
+      /// `2^(2 * Bits)`, which the two halves hold. A digit of the product of a number of several
+      /// digits of `Bits` bits by one digit is such a low half, and its high half is the carry into
+      /// the next digit.
+      fn carrying_mul(&self, rhs: &Self, carry: &Self) -> (Self, Self)
+        = prim carrying_mul_bits(self, rhs, carry; Self::BITS) as halves {
+          let (low, high) = halves;
+          (Self::of(low), Self::of(high))
+        }
+
+      /// Multiplication with a carry and an addend: the low and the high half of
+      /// `self * rhs + carry + add`, the integers `low` and `high` of `Bits` bits with
+      /// `self * rhs + carry + add = low + high * 2^Bits`. Nothing overflows: the exact value is at
+      /// most `(2^Bits - 1)^2 + 2 * (2^Bits - 1) = 2^(2 * Bits) - 1`, which the two halves hold.
+      /// The addend is a digit of the product so far, as in a product of two numbers of several
+      /// digits.
+      fn carrying_mul_add(&self, rhs: &Self, carry: &Self, add: &Self) -> (Self, Self)
+        = prim carrying_mul_add_bits(self, rhs, carry, add; Self::BITS) as halves {
+          let (low, high) = halves;
+          (Self::of(low), Self::of(high))
+        }
+    }
+  };
+}
+
+/// Passes the carrying addition and the borrowing subtraction of `Int`, and its multiplication with
+/// a carry and with a carry and an addend, to `$callback`, after the tokens of `$args`. The low
+/// half of a product is the `Uint` of the same width and storage size, which an inherent block
+/// passes last in `$args`, for `cast_other!`.
+macro_rules! int_wide_table {
+  ($callback:ident! $args:tt) => {
+    $callback! { $args
+      /// Addition with a carry: `self + rhs + carry` wrapped to the range of the type, and whether
+      /// the exact sum is outside that range. As for the native signed integers, the flag is an
+      /// overflow of the range, not a carry out of the top bit: the method adds the most
+      /// significant digits of two numbers of several digits, whose lower digits are `Uint`s that
+      /// pass it their carry, and its flag says whether the sum of the numbers overflows.
+      fn carrying_add(&self, rhs: &Self, carry: bool) -> (Self, bool)
+        = prim pair carrying_add_bits(self, rhs; carry);
+
+      /// Subtraction with a borrow: `self - rhs - borrow` wrapped to the range of the type, and
+      /// whether the exact difference is outside that range. As for
+      /// [`carrying_add`](Self::carrying_add), the flag is an overflow of the range, not a borrow
+      /// past the top bit, so that the method subtracts the most significant digits of two numbers
+      /// of several digits.
+      fn borrowing_sub(&self, rhs: &Self, borrow: bool) -> (Self, bool)
+        = prim pair borrowing_sub_bits(self, rhs; borrow);
+
+      /// Multiplication with a carry: the low and the high half of `self * rhs + carry`, with
+      /// `self * rhs + carry = low + high * 2^Bits`. The low half is the `Uint` of the same width
+      /// in a storage of the same size, from zero to `2^Bits - 1`, and the high half is negative
+      /// exactly when the exact value is. Nothing overflows: the exact value is from
+      /// `MIN * MAX + MIN` to `MIN * MIN + MAX`, within the range of `2 * Bits` bits, which the two
+      /// halves hold.
+      fn carrying_mul(&self, rhs: &Self, carry: &Self) -> (cast_other!($args, Unsigned), Self)
+        = prim storage carrying_mul_bits(self, rhs, carry; Self::BITS) as halves {
+          let (low, high) = halves;
+          (Uint::wrap(low), Self::of(high))
+        }
+
+      /// Multiplication with a carry and an addend: the low and the high half of
+      /// `self * rhs + carry + add`, with `self * rhs + carry + add = low + high * 2^Bits`, as
+      /// [`carrying_mul`](Self::carrying_mul) gives them. Nothing overflows: the exact value is
+      /// from `MIN * MAX + 2 * MIN` to `MIN * MIN + 2 * MAX`, within the range of `2 * Bits` bits
+      /// at every width, which the two halves hold.
+      fn carrying_mul_add(
+        &self,
+        rhs: &Self,
+        carry: &Self,
+        add: &Self
+      ) -> (cast_other!($args, Unsigned), Self)
+        = prim storage carrying_mul_add_bits(self, rhs, carry, add; Self::BITS) as halves {
+          let (low, high) = halves;
+          (Uint::wrap(low), Self::of(high))
+        }
     }
   };
 }
