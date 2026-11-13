@@ -434,6 +434,92 @@ fn conversions_between_every_pair() {
   );
 }
 
+/// Checks, against `num-bigint`, the rows `read_limbs` and `checked_read_limbs` of `R`, a storage
+/// of `bits` bits, called with `M` limbs of either sign, at zero, one, minus one, the limits of `R`
+/// and one beyond each, wherever the limbs hold the value: the checked row gives the value exactly
+/// where `R` holds it, and the other row then gives it too. Counts each value that the checked row
+/// refuses in `refused`, by the sign of `R` and the sign of the limbs.
+fn check_read_limbs<R: Value, const M: usize>(bits: u32, refused: &mut [[usize; 2]; 2]) {
+  let (min, max) = (bigint::min(bits, R::SIGNED), bigint::max(bits, R::SIGNED));
+  let values = [
+    BigInt::ZERO,
+    BigInt::from(1u8),
+    BigInt::from(-1),
+    &min - 1u8,
+    min,
+    max.clone(),
+    max + 1u8,
+  ];
+  for signed in [false, true] {
+    for value in &values {
+      let Some(limbs) = bigint::to_limbs::<M>(value, signed) else {
+        continue;
+      };
+      let expected = R::from_big(value);
+      assert_eq!(
+        R::checked_read_limbs(&limbs, signed, Token::new()),
+        expected,
+        "{value} in {M} limbs, signed {signed}"
+      );
+      match expected {
+        Some(expected) => assert_eq!(
+          R::read_limbs(&limbs, signed, Token::new()),
+          expected,
+          "{value} in {M} limbs, signed {signed}"
+        ),
+        None => refused[usize::from(R::SIGNED)][usize::from(signed)] += 1,
+      }
+    }
+  }
+}
+
+/// Checks [`check_read_limbs`] for `R` with 1, 2, 3 and 8 limbs.
+#[inline(never)]
+fn read_limbs_of<R: Value>(bits: u32, refused: &mut [[usize; 2]; 2]) {
+  check_read_limbs::<R, 1>(bits, refused);
+  check_read_limbs::<R, 2>(bits, refused);
+  check_read_limbs::<R, 3>(bits, refused);
+  check_read_limbs::<R, 8>(bits, refused);
+}
+
+/// The rows that read the limbs of a wide source give every value that the target holds, from
+/// limbs of either sign and of any count, and the checked row refuses the others: each pair of the
+/// signs of the limbs and of the storage has a value that it refuses.
+#[test]
+#[cfg_attr(
+  all(miri, target_pointer_width = "32"),
+  ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+)]
+fn rows_read_limbs_of_either_sign() {
+  let mut refused = [[0; 2]; 2];
+  read_limbs_of::<i8>(8, &mut refused);
+  read_limbs_of::<i16>(16, &mut refused);
+  read_limbs_of::<i32>(32, &mut refused);
+  read_limbs_of::<i64>(64, &mut refused);
+  read_limbs_of::<i128>(128, &mut refused);
+  read_limbs_of::<i192>(192, &mut refused);
+  read_limbs_of::<i256>(256, &mut refused);
+  read_limbs_of::<i320>(320, &mut refused);
+  read_limbs_of::<i384>(384, &mut refused);
+  read_limbs_of::<i448>(448, &mut refused);
+  read_limbs_of::<i512>(512, &mut refused);
+  read_limbs_of::<u8>(8, &mut refused);
+  read_limbs_of::<u16>(16, &mut refused);
+  read_limbs_of::<u32>(32, &mut refused);
+  read_limbs_of::<u64>(64, &mut refused);
+  read_limbs_of::<u128>(128, &mut refused);
+  read_limbs_of::<u192>(192, &mut refused);
+  read_limbs_of::<u256>(256, &mut refused);
+  read_limbs_of::<u320>(320, &mut refused);
+  read_limbs_of::<u384>(384, &mut refused);
+  read_limbs_of::<u448>(448, &mut refused);
+  read_limbs_of::<u512>(512, &mut refused);
+  assert!(
+    refused.iter().flatten().all(|&count| count > 0),
+    "refused by the sign of the storage and of the limbs: {refused:?}"
+  );
+}
+
 /// Checks, against `num-bigint`, that the digit buffer of `R` has as many bytes as its widest
 /// magnitude has digits, `|MIN|` for a signed storage of `bits` bits and `MAX` for an unsigned one,
 /// that the row writes them from the first byte, and that the text buffer has two bytes more.

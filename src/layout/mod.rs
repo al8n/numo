@@ -11,10 +11,10 @@ use sealed::{
 pub(crate) use sealed::{LayoutDigits, StorageCore, Token};
 
 use crate::{
-  i192, i256, i320, i384, i448, i512, int,
+  Int, Uint, i192, i256, i320, i384, i448, i512, int,
   rounding::RoundingMode,
   u192, u256, u320, u384, u448, u512,
-  width::{Array, ArraySize, TypenumNumber},
+  width::{Array, ArraySize, FillsRepr, TypenumNumber},
 };
 
 /// The digit buffer of the storage `R`, of the length of the digits of its widest magnitude: the
@@ -27,9 +27,7 @@ pub(crate) type FloatScratch<R> = <<R as StorageCore>::FloatLen as ArraySize>::A
 
 mod sealed {
   use crate::{
-    i192, i256, i320, i384, i448, i512,
     rounding::RoundingMode,
-    u192, u256, u320, u384, u448, u512,
     width::{Array, ArrayLength, ArraySize},
   };
 
@@ -47,10 +45,11 @@ mod sealed {
 
   /// Seals [`Storage`](super::Storage) and gives storage-generic code access to the integer core.
   ///
-  /// Every storage converts to every storage: `convert` and `checked_convert`, implemented for
-  /// each source storage, call the `ConvertFrom` implementation of the target, which this trait
-  /// requires for every source. Storage-generic code is not `const`, because trait methods cannot
-  /// be.
+  /// Every storage converts to every storage. A native source calls the `ConvertFrom`
+  /// implementation of the target, which this trait requires for every native source, and a wide
+  /// source lends its limbs to the rows `read_limbs` and `checked_read_limbs` of the target, so
+  /// that no conversion is written for a pair of wide storages. Storage-generic code is not
+  /// `const`, because trait methods cannot be.
   pub trait StorageCore:
     Copy
     + ConvertFrom<i8>
@@ -58,23 +57,11 @@ mod sealed {
     + ConvertFrom<i32>
     + ConvertFrom<i64>
     + ConvertFrom<i128>
-    + ConvertFrom<i192>
-    + ConvertFrom<i256>
-    + ConvertFrom<i320>
-    + ConvertFrom<i384>
-    + ConvertFrom<i448>
-    + ConvertFrom<i512>
     + ConvertFrom<u8>
     + ConvertFrom<u16>
     + ConvertFrom<u32>
     + ConvertFrom<u64>
     + ConvertFrom<u128>
-    + ConvertFrom<u192>
-    + ConvertFrom<u256>
-    + ConvertFrom<u320>
-    + ConvertFrom<u384>
-    + ConvertFrom<u448>
-    + ConvertFrom<u512>
   {
     /// `B1` for an unsigned storage, `B0` for a signed one.
     type IsUnsigned: typenum::Bit;
@@ -146,10 +133,23 @@ mod sealed {
 
     /// Converts the value to `Target`, or returns `None` if it is not representable there.
     fn checked_convert<Target: StorageCore>(&self, token: Token) -> Option<Target>;
+
+    /// The integer in `limbs`, least significant first, in two's complement if `signed`, as a
+    /// value of this storage. Requires it to be representable here.
+    fn read_limbs<const N: usize>(limbs: &[u64; N], signed: bool, token: Token) -> Self;
+
+    /// The integer in `limbs`, least significant first, in two's complement if `signed`, as a
+    /// value of this storage, or `None` if it is not representable here.
+    fn checked_read_limbs<const N: usize>(
+      limbs: &[u64; N],
+      signed: bool,
+      token: Token,
+    ) -> Option<Self>;
   }
 
-  /// Converts values of the storage `Source` to this storage. Implemented for every ordered pair
-  /// of storages.
+  /// Converts values of the native storage `Source` to this storage. Implemented between every
+  /// two native storages, and from every native storage to every array storage of either sign
+  /// whose width fills its array.
   pub trait ConvertFrom<Source>: Sized {
     /// Converts `value`. Requires it to be representable in this storage, so not negative for an
     /// unsigned one.
@@ -463,7 +463,7 @@ macro_rules! impl_storage {
           Some(int::$int::neg(*self))
         }
 
-        impl_storage!(@native $int);
+        impl_storage!(@native signed $int);
       }
 
       impl Storage for $int {}
@@ -498,7 +498,7 @@ macro_rules! impl_storage {
           }
         }
 
-        impl_storage!(@native $uint);
+        impl_storage!(@native unsigned $uint);
       }
 
       impl Storage for $uint {}
@@ -594,7 +594,7 @@ macro_rules! impl_storage {
     type TextLen = typenum::Sum<typenum::consts::$digits, typenum::consts::U2>;
     type FloatLen = typenum::consts::$float;
   };
-  (@native $repr:ident) => {
+  (@native $sign:ident $repr:ident) => {
     #[inline]
     fn is_zero(&self, _: Token) -> bool {
       int::$repr::is_zero(*self)
@@ -636,7 +636,8 @@ macro_rules! impl_storage {
       int::$repr::push_digits(*self, bytes, start, end)
     }
 
-    impl_storage!(@convert $repr);
+    impl_storage!(@convert native $repr);
+    impl_storage!(@read $sign $repr);
   };
   (@wide $sign:ident $repr:ident) => {
     #[inline]
@@ -683,9 +684,12 @@ macro_rules! impl_storage {
       Self::from_limbs(int::$sign::b64::push_digits(self.as_limbs(), bytes, start, end))
     }
 
-    impl_storage!(@convert $repr);
+    impl_storage!(@convert wide $sign);
+    impl_storage!(@read $sign $repr);
   };
-  (@convert $repr:ident) => {
+  // A native source converts through the `ConvertFrom` of the target. A wide source lends its limbs
+  // to the rows of the target, which read them as signed for a signed source.
+  (@convert native $repr:ident) => {
     #[inline]
     fn convert<Target: StorageCore>(&self, token: Token) -> Target {
       <Target as ConvertFrom<$repr>>::convert_from(self, token)
@@ -695,6 +699,71 @@ macro_rules! impl_storage {
     fn checked_convert<Target: StorageCore>(&self, token: Token) -> Option<Target> {
       <Target as ConvertFrom<$repr>>::checked_convert_from(self, token)
     }
+  };
+  (@convert wide signed) => {
+    #[inline]
+    fn convert<Target: StorageCore>(&self, token: Token) -> Target {
+      Target::read_limbs(self.as_limbs(), true, token)
+    }
+
+    #[inline]
+    fn checked_convert<Target: StorageCore>(&self, token: Token) -> Option<Target> {
+      Target::checked_read_limbs(self.as_limbs(), true, token)
+    }
+  };
+  (@convert wide unsigned) => {
+    #[inline]
+    fn convert<Target: StorageCore>(&self, token: Token) -> Target {
+      Target::read_limbs(self.as_limbs(), false, token)
+    }
+
+    #[inline]
+    fn checked_convert<Target: StorageCore>(&self, token: Token) -> Option<Target> {
+      Target::checked_read_limbs(self.as_limbs(), false, token)
+    }
+  };
+  // The rows that read limbs of either sign into a storage of the sign `$sign`. The limbs are
+  // extended by their sign, or truncated, to the limbs of the storage, two for a native one. The
+  // checked row fails where that changes the value or, between signs, where the value is negative
+  // or reaches the sign bit of a signed storage; the storage then checks its own range, which a
+  // native storage narrower than two limbs needs.
+  (@read $sign:ident $repr:ident) => {
+    #[inline]
+    fn read_limbs<const N: usize>(limbs: &[u64; N], signed: bool, _: Token) -> Self {
+      let limbs = if signed {
+        int::signed::b64::resize(limbs)
+      } else {
+        int::unsigned::b64::resize(limbs)
+      };
+      int::$repr::from_limbs(limbs)
+    }
+
+    #[inline]
+    fn checked_read_limbs<const N: usize>(
+      limbs: &[u64; N],
+      signed: bool,
+      _: Token,
+    ) -> Option<Self> {
+      let limbs = if signed {
+        impl_storage!(@checked_resize signed $sign limbs)
+      } else {
+        impl_storage!(@checked_resize unsigned $sign limbs)
+      };
+      limbs.and_then(int::$repr::checked_from_limbs)
+    }
+  };
+  // The checked resize of limbs of the first sign into a storage of the second sign.
+  (@checked_resize unsigned unsigned $limbs:ident) => {
+    int::unsigned::b64::checked_resize($limbs)
+  };
+  (@checked_resize signed signed $limbs:ident) => {
+    int::signed::b64::checked_resize($limbs)
+  };
+  (@checked_resize signed unsigned $limbs:ident) => {
+    int::signed::b64::checked_to_unsigned($limbs)
+  };
+  (@checked_resize unsigned signed $limbs:ident) => {
+    int::signed::b64::checked_from_unsigned($limbs)
   };
 }
 
@@ -709,17 +778,19 @@ impl_storage!(
     u512 [U155, U8],
 );
 
-/// Implements [`ConvertFrom`] for every ordered pair of the listed storages, each written as
-/// `(name sign kind)` with the sign `signed` or `unsigned` and the kind `native` or `wide`.
+/// Implements [`ConvertFrom`] for every ordered pair of the listed native storages, each written as
+/// `(name sign)` with the sign `signed` or `unsigned`, and from each of them to the arrays of both
+/// signs.
 ///
-/// Between native storages, a conversion is a cast or a native `TryFrom`. Any other conversion
-/// goes through limbs: the source's limbs are extended by the source's sign, or truncated, to the
-/// target's limb count. The checked conversion fails when that changes the value or, between signs,
-/// when the value is negative or reaches the sign bit of a signed target; the target then checks
-/// its own range, which a native storage narrower than two limbs needs.
+/// Between native storages, a conversion is a cast or a native `TryFrom`. Into an array, the two
+/// limbs of the native value are extended by its sign, or truncated, to the limbs of the array. The
+/// checked conversion fails when that changes the value or, between signs, when the value is
+/// negative or reaches the sign bit of a signed target. A wide source converts through the rows
+/// `read_limbs` and `checked_read_limbs` of the target, so no pair names a wide storage.
 macro_rules! impl_convert {
   ([$($storage:tt),+ $(,)?]) => {
     impl_convert!(@sources [$($storage),+] to [$($storage),+]);
+    $(impl_convert!(@arrays $storage);)+
   };
   (@sources [$($source:tt),+] to $targets:tt) => {
     $(impl_convert!(@pairs $source to $targets);)+
@@ -727,9 +798,7 @@ macro_rules! impl_convert {
   (@pairs $source:tt to [$($target:tt),+]) => {
     $(impl_convert!(@pair $source to $target);)+
   };
-  (@pair
-    ($source:ident $source_sign:ident native) to ($target:ident $target_sign:ident native)
-  ) => {
+  (@pair ($source:ident $source_sign:ident) to ($target:ident $target_sign:ident)) => {
     impl ConvertFrom<$source> for $target {
       #[inline]
       fn convert_from(value: &$source, _: Token) -> Self {
@@ -742,33 +811,40 @@ macro_rules! impl_convert {
       }
     }
   };
-  (@pair
-    ($source:ident $source_sign:ident $source_kind:ident)
-    to ($target:ident $target_sign:ident $target_kind:ident)
-  ) => {
-    impl ConvertFrom<$source> for $target {
+  // These hold for every width that fills its array, a storage of a decimal or not, which is
+  // harmless: the trait is sealed. Filling the array is the bound of `from_limbs`.
+  (@arrays ($source:ident $sign:ident)) => {
+    impl<B, const N: usize> ConvertFrom<$source> for Uint<B, [u64; N]>
+    where
+      B: FillsRepr<[u64; N]>,
+    {
       #[inline]
       fn convert_from(value: &$source, _: Token) -> Self {
-        let limbs = impl_convert!(@limbs $source_kind $source value);
-        int::$target::from_limbs(impl_convert!(@resize $source_sign limbs))
+        Self::from_limbs(impl_convert!(@resize $sign &int::$source::to_limbs(*value)))
       }
 
       #[inline]
       fn checked_convert_from(value: &$source, _: Token) -> Option<Self> {
-        let limbs = impl_convert!(@limbs $source_kind $source value);
-        match impl_convert!(@checked_resize $source_sign $target_sign limbs) {
-          Some(limbs) => int::$target::checked_from_limbs(limbs),
-          None => None,
-        }
+        impl_convert!(@checked_resize $sign unsigned &int::$source::to_limbs(*value))
+          .map(Self::from_limbs)
       }
     }
-  };
-  // The limbs of the source: a native value converts to two limbs, and a wide value lends its own.
-  (@limbs native $source:ident $value:ident) => {
-    &int::$source::to_limbs(*$value)
-  };
-  (@limbs wide $source:ident $value:ident) => {
-    $value.as_limbs()
+
+    impl<B, const N: usize> ConvertFrom<$source> for Int<B, [u64; N]>
+    where
+      B: FillsRepr<[u64; N]>,
+    {
+      #[inline]
+      fn convert_from(value: &$source, _: Token) -> Self {
+        Self::from_limbs(impl_convert!(@resize $sign &int::$source::to_limbs(*value)))
+      }
+
+      #[inline]
+      fn checked_convert_from(value: &$source, _: Token) -> Option<Self> {
+        impl_convert!(@checked_resize $sign signed &int::$source::to_limbs(*value))
+          .map(Self::from_limbs)
+      }
+    }
   };
   (@resize unsigned $limbs:expr) => {
     int::unsigned::b64::resize($limbs)
@@ -791,28 +867,16 @@ macro_rules! impl_convert {
 }
 
 impl_convert!([
-  (i8 signed native),
-  (i16 signed native),
-  (i32 signed native),
-  (i64 signed native),
-  (i128 signed native),
-  (u8 unsigned native),
-  (u16 unsigned native),
-  (u32 unsigned native),
-  (u64 unsigned native),
-  (u128 unsigned native),
-  (i192 signed wide),
-  (i256 signed wide),
-  (i320 signed wide),
-  (i384 signed wide),
-  (i448 signed wide),
-  (i512 signed wide),
-  (u192 unsigned wide),
-  (u256 unsigned wide),
-  (u320 unsigned wide),
-  (u384 unsigned wide),
-  (u448 unsigned wide),
-  (u512 unsigned wide),
+  (i8 signed),
+  (i16 signed),
+  (i32 signed),
+  (i64 signed),
+  (i128 signed),
+  (u8 unsigned),
+  (u16 unsigned),
+  (u32 unsigned),
+  (u64 unsigned),
+  (u128 unsigned),
 ]);
 
 /// Implements [`WidenRepr`] from every unsigned storage to every storage, and from every signed
