@@ -351,6 +351,30 @@ fn scales_above_255_parse_back() {
   }
 }
 
+/// 300 significant digits after the point: `1` to `9` in turn.
+fn fraction_of_300_digits() -> String {
+  (0..300)
+    .map(|index| char::from(b'1' + (index % 9) as u8))
+    .collect()
+}
+
+/// A `Scaled` over the type of 308 fraction digits, with 300 significant fraction digits and with
+/// the scale 308, which writes every fraction digit of the type: each writes its text and parses
+/// back to the value and the scale.
+#[test]
+fn scaled_texts_of_308_fraction_digits() {
+  type S = Scaled<Decimal<U0, U308, u1024>>;
+  let digits = fraction_of_300_digits();
+  let text = format!("0.{digits}");
+  let short: S = value(&text);
+  assert_text(&short, &text, 300);
+  assert_eq!(short.value().fraction_digits(), 300);
+  let widest = Scaled::new(*short.value(), 308);
+  let text = format!("0.{digits}{}", "0".repeat(8));
+  assert_text(&widest, &text, 308);
+  assert_text(&value::<S>(&text), &text, 308);
+}
+
 #[test]
 fn display_flags_and_precision() {
   let positive: WideS = value("1.25");
@@ -1401,7 +1425,7 @@ mod with_serde {
 
   use super::{
     ConstFixedDecimal, Decimal, FixedDecimal, Narrow, NarrowS, Scaled, U0, U1, U153, U154, U307,
-    U308, WideS, assert_text, i512, i1024, u512, u1024, value,
+    U308, WideS, assert_text, fraction_of_300_digits, i512, i1024, u512, u1024, value,
   };
 
   #[test]
@@ -1667,6 +1691,26 @@ mod with_serde {
       check_formats::<Decimal<U1, U1, i8>>(scale);
       check_formats::<Decimal<U154, U0, u512>>(scale);
       check_formats::<Decimal<U308, U0, u1024>>(scale);
+    }
+  }
+
+  /// A `Scaled` over the type of 308 fraction digits, with 300 significant fraction digits and
+  /// with the scale 308, through JSON and postcard: each format writes the text and reads back the
+  /// value and the scale.
+  #[test]
+  fn scaled_texts_of_308_fraction_digits_in_every_format() {
+    type S = Scaled<Decimal<U0, U308, u1024>>;
+    let short: S = value(&format!("0.{}", fraction_of_300_digits()));
+    for scaled in [short, Scaled::new(*short.value(), 308)] {
+      let text = scaled.to_string();
+      let json = serde_json::to_string(&scaled).unwrap();
+      assert_eq!(json, format!("\"{text}\""));
+      let read: S = serde_json::from_str(&json).unwrap();
+      assert_text(&read, &text, scaled.scale());
+      let bytes = postcard::to_stdvec(&scaled).unwrap();
+      assert_eq!(bytes, postcard::to_stdvec(&text).unwrap(), "{text}");
+      let read: S = postcard::from_bytes(&bytes).unwrap();
+      assert_text(&read, &text, scaled.scale());
     }
   }
 

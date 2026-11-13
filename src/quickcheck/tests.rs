@@ -5,15 +5,16 @@ use std::vec::Vec;
 
 use ::quickcheck::{Arbitrary, Gen};
 use num_bigint::BigInt;
-use typenum::{U0, U18};
+use typenum::{U0, U18, U307, U308};
 
 use crate::{
-  Decimal, RoundingMode,
+  Decimal, RoundingMode, i1024,
   layout::{InlineStorage, Layout, LayoutDigits},
   sample::{
     MODES,
     tests::{SAMPLES, big, candidates, check_values, for_each_type},
   },
+  u1024,
 };
 
 /// A generator with a fixed seed.
@@ -56,6 +57,18 @@ macro_rules! check_type {
 #[test]
 fn drawn_values_cover_digits_signs_and_edges_and_shrink() {
   for_each_type!(check_type);
+}
+
+/// `shrink` of a coefficient of 308 digits, or of 307 with a sign, yields its 308 candidates, past
+/// the 255th.
+#[test]
+fn shrinking_yields_every_candidate_of_308_digits() {
+  let unsigned = Decimal::<U308, U0, u1024>::MAX;
+  check_shrink(unsigned);
+  assert_eq!(unsigned.shrink().count(), 308);
+  let signed = Decimal::<U0, U307, i1024>::MIN;
+  check_shrink(signed);
+  assert_eq!(signed.shrink().count(), 308);
 }
 
 type D = Decimal<U18, U0, i64>;

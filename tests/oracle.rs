@@ -35,13 +35,13 @@ use bigdecimal::BigDecimal;
 use num_bigint::{BigInt, Sign};
 use numo::{
   ConvertError, Decimal, DivideError, ParseErrorKind, QuantizeError, RoundingMode, i192, i256,
-  i320, i384, i448, i512,
+  i320, i384, i448, i512, i576, i768, i1024,
   typenum::{
     U0, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U14, U16, U17, U18, U19, U20, U22, U26,
     U28, U30, U36, U37, U38, U39, U49, U58, U59, U60, U61, U69, U70, U76, U78, U79, U90, U96, U97,
-    U98, U116, U117, U135, U153, U154,
+    U98, U116, U117, U135, U153, U154, U155, U173, U212, U231, U289, U307, U308,
   },
-  u192, u256, u320, u384, u448, u512,
+  u192, u256, u320, u384, u448, u512, u576, u768, u1024,
 };
 use proptest::{prelude::*, test_runner::RngSeed};
 
@@ -164,12 +164,18 @@ wide_repr!(
   i384: true, 6,
   i448: true, 7,
   i512: true, 8,
+  i576: true, 9,
+  i768: true, 12,
+  i1024: true, 16,
   u192: false, 3,
   u256: false, 4,
   u320: false, 5,
   u384: false, 6,
   u448: false, 7,
-  u512: false, 8
+  u512: false, 8,
+  u576: false, 9,
+  u768: false, 12,
+  u1024: false, 16
 );
 
 /// The shortest exact text of `coeff / 10^fraction`, padded to at least `precision` fraction
@@ -739,8 +745,9 @@ macro_rules! suite {
         /// short are farther apart than the spacing of `f64`: the texts must be equal. The `f64`
         /// is parsed from the decimal's text, which rounds correctly, where `powi` does not. From
         /// 16 digits the digits differ: 9007199254740993 is 2^53 + 1, whose nearest `f64` is 2^53,
-        /// and prints as 9.007199254740992e15. Every exponent of a decimal is within the range of
-        /// the normal `f64`s, and the comparison has no precision, which `f64` rounds.
+        /// and prints as 9.007199254740992e15. Every decimal is a normal `f64` but `1e-308` and
+        /// `2e-308`, the two smallest values of 308 fraction digits, whose one digit the subnormal
+        /// `f64`s keep, and the comparison has no precision, which `f64` rounds.
         #[test]
         fn exp_matches_f64_for_short_values(a in short_value()) {
           let text = a.to_string();
@@ -893,9 +900,22 @@ suite!(uw98x18: Decimal<U98, U18, u448>, u448, unsigned, integral = 98, fraction
 suite!(uw116x18: Decimal<U116, U18, u448>, u448, unsigned, integral = 116, fraction = 18);
 suite!(uw117x18: Decimal<U117, U18, u512>, u512, unsigned, integral = 117, fraction = 18);
 suite!(uw135x18: Decimal<U135, U18, u512>, u512, unsigned, integral = 135, fraction = 18);
-// 154 digits, one more than any signed storage holds.
+// 154 digits, one more than `i512` holds.
 suite!(uw154x0: Decimal<U154, U0, u512>, u512, unsigned, integral = 154, fraction = 0);
 suite!(uw0x154: Decimal<U0, U154, u512>, u512, unsigned, integral = 0, fraction = 154);
+
+// Three of the storages from 576 to 1024 bits, the narrowest, a middle one and the widest, at the
+// most digits that each holds: the limb code is generic over the limb count, so another width runs
+// the same code, and the unit tests check each storage at its own limits.
+suite!(w155x18: Decimal<U155, U18, i576>, i576, signed, integral = 155, fraction = 18);
+suite!(w212x18: Decimal<U212, U18, i768>, i768, signed, integral = 212, fraction = 18);
+suite!(w289x18: Decimal<U289, U18, i1024>, i1024, signed, integral = 289, fraction = 18);
+suite!(w0x307: Decimal<U0, U307, i1024>, i1024, signed, integral = 0, fraction = 307);
+
+suite!(uw173x0: Decimal<U173, U0, u576>, u576, unsigned, integral = 173, fraction = 0);
+suite!(uw231x0: Decimal<U231, U0, u768>, u768, unsigned, integral = 231, fraction = 0);
+suite!(uw308x0: Decimal<U308, U0, u1024>, u1024, unsigned, integral = 308, fraction = 0);
+suite!(uw0x308: Decimal<U0, U308, u1024>, u1024, unsigned, integral = 0, fraction = 308);
 
 // Operands for products and conversions.
 suite!(d10x10: Decimal<U10, U10>, i128, signed, integral = 10, fraction = 10);

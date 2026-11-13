@@ -545,8 +545,9 @@ fn decimals_between_adjacent_floats_round_to_the_nearer_and_ties_to_even() {
 
 /// The largest `f32`, the tie above it, `2^128 - 2^103`, one unit of the last digit on either side
 /// of the tie, and `2^128`, each of either sign, give the largest float or the infinity of their
-/// sign: the carry out of the largest float and the exponent above the largest. `MAX` of the type
-/// with the most integral digits is an infinity as an `f32` and a finite `f64`.
+/// sign: the carry out of the largest float and the exponent above the largest. `MAX` of the types
+/// with the most integral digits, of 512 and of 1024 bits, is an infinity as an `f32` and a finite
+/// `f64`.
 #[test]
 fn decimals_beyond_the_largest_f32_give_infinities() {
   let largest = BigInt::from((1u32 << 24) - 1) << 104u32;
@@ -584,6 +585,41 @@ fn decimals_beyond_the_largest_f32_give_infinities() {
   let parsed: f64 = Du512::MAX.to_string().parse().expect("a float");
   assert_eq!(Du512::MAX.to_f64().to_bits(), parsed.to_bits());
   assert!(parsed.is_finite());
+  assert_eq!(Du1024::MAX.to_f32().to_bits(), f32::INFINITY.to_bits());
+  let parsed: f64 = Du1024::MAX.to_string().parse().expect("a float");
+  assert_eq!(Du1024::MAX.to_f64().to_bits(), parsed.to_bits());
+  assert!(parsed.is_finite());
+}
+
+/// `to_f64` gives a subnormal float only below `2^-1022`, which only the two smallest values above
+/// zero of the type with 308 fraction digits are: `1e-308` and `2e-308` give the subnormal floats
+/// that the standard library parses from their texts, and `3e-308` a normal one, by the bits.
+#[test]
+fn the_two_smallest_values_of_308_fraction_digits_give_subnormal_floats() {
+  for (text, subnormal) in [("1e-308", true), ("2e-308", true), ("3e-308", false)] {
+    let decimal: D0x308 = value(text);
+    let parsed: f64 = text.parse().expect("a float");
+    assert_eq!(decimal.to_f64().to_bits(), parsed.to_bits(), "{text}");
+    assert_eq!(parsed.is_subnormal(), subnormal, "{text}");
+  }
+}
+
+/// The two largest subnormal `f64`s, which are above half a unit of the last of 308 fraction
+/// digits, read into that type in every mode as the exact rational rounds them.
+#[test]
+fn the_largest_subnormal_floats_read_into_308_fraction_digits() {
+  let largest = f64::from_bits((1 << 52) - 1);
+  let below = f64::from_bits((1 << 52) - 2);
+  for x in [largest, below] {
+    assert!(x.is_subnormal(), "{x:e}");
+    for mode in MODES {
+      assert_eq!(
+        D0x308::round_from_f64(x, mode),
+        rounded_binary::<D0x308, f64>(x, mode),
+        "{x:e}, {mode}"
+      );
+    }
+  }
 }
 
 /// Checks the subnormal floats and the zeros of `f32` in `T`, a type with at least 150 fraction
@@ -1202,9 +1238,10 @@ fn the_edge_of_the_limbs<F: Float>(fraction: u32, exponent: i32) {
 /// The coefficient of the float `2^k` at `F` fraction digits, `5^F * 2^(F + k)`, has
 /// `k + F + bits(5^F)` bits: `round_coefficient` gives it where that is 512, and `None` one power
 /// of two above, in every mode, at no fraction digits and at 77, which only an `f64` reaches, and
-/// at 116 and 154, which both formats reach. Through the API, the widest type holds `2^511` and
-/// not `2^512`, and one is beyond the range of 154 fraction digits by the comparison with the
-/// largest coefficient, within the 512 bits.
+/// at 116 and 154, which both formats reach. Through the API, the widest type of 512 bits holds
+/// `2^511` and not `2^512`, and that of 1024 bits holds `2^1023` and not the largest `f64` of
+/// either sign; one is beyond the range of 154 and of 308 fraction digits by the comparison with
+/// the largest coefficient, within the limbs.
 #[test]
 fn floats_at_the_edge_of_the_scratch_overflow() {
   for (fraction, exponent) in [(0u32, 511i32), (77, 256), (116, 126), (154, 0)] {
@@ -1235,6 +1272,30 @@ fn floats_at_the_edge_of_the_scratch_overflow() {
     );
     assert_eq!(
       D0x154::round_from_f32(1.0, mode),
+      Err(FromFloatError::PosOverflow),
+      "{mode}"
+    );
+  }
+  let power: Du1024 = of_coefficient(&(BigInt::from(1u8) << 1023u32));
+  for mode in MODES {
+    assert_eq!(
+      Du1024::round_from_f64(pow2(1023), mode),
+      Ok(power),
+      "{mode}"
+    );
+    for (x, error) in [
+      (f64::MAX, FromFloatError::PosOverflow),
+      (-f64::MAX, FromFloatError::NegOverflow),
+    ] {
+      assert_eq!(Du1024::round_from_f64(x, mode), Err(error), "{x:e}, {mode}");
+    }
+    assert_eq!(
+      D0x308::round_from_f64(1.0, mode),
+      Err(FromFloatError::PosOverflow),
+      "{mode}"
+    );
+    assert_eq!(
+      D0x308::round_from_f32(1.0, mode),
       Err(FromFloatError::PosOverflow),
       "{mode}"
     );

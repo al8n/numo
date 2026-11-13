@@ -20,17 +20,17 @@ use num_bigint::{BigInt, Sign};
 use super::Chain;
 use super::{MODES, Source, coefficient, generate};
 use crate::{
-  Decimal, RoundingMode, bigint, i256, i512,
+  Decimal, RoundingMode, bigint, i256, i512, i1024,
   layout::{InlineStorage, Layout, LayoutDigits, Storage, Token},
-  u256, u512,
+  u256, u512, u1024,
 };
 
 /// The number of values that each test draws for each type.
 pub(crate) const SAMPLES: usize = 4096;
 
 /// Calls `$check!(Type)` for each decimal type that the tests of every feature draw: native and
-/// wide storages, signed and unsigned, of 2, 18, 19, 38, 76, 77, 153 and 154 digits, among them
-/// layouts with only fraction digits and with none.
+/// wide storages, signed and unsigned, of 2, 18, 19, 38, 76, 77, 153, 154, 307 and 308 digits,
+/// among them layouts with only fraction digits and with none.
 macro_rules! for_each_type {
   ($check:ident) => {
     $check!($crate::Decimal<::typenum::U1, ::typenum::U1, i8>);
@@ -47,6 +47,8 @@ macro_rules! for_each_type {
     $check!($crate::Decimal<::typenum::U59, ::typenum::U18, $crate::u256>);
     $check!($crate::Decimal<::typenum::U0, ::typenum::U153, $crate::i512>);
     $check!($crate::Decimal<::typenum::U154, ::typenum::U0, $crate::u512>);
+    $check!($crate::Decimal<::typenum::U0, ::typenum::U307, $crate::i1024>);
+    $check!($crate::Decimal<::typenum::U308, ::typenum::U0, $crate::u1024>);
   };
 }
 
@@ -171,9 +173,9 @@ fn leaves<R: InlineStorage>(
 /// `coeff` as a big integer, read through the widest storage of its sign.
 pub(crate) fn big<R: InlineStorage>(coeff: R) -> BigInt {
   if R::SIGNED {
-    bigint::from_limbs(&coeff.convert::<i512>(Token::new()).to_limbs(), true)
+    bigint::from_limbs(&coeff.convert::<i1024>(Token::new()).to_limbs(), true)
   } else {
-    bigint::from_limbs(&coeff.convert::<u512>(Token::new()).to_limbs(), false)
+    bigint::from_limbs(&coeff.convert::<u1024>(Token::new()).to_limbs(), false)
   }
 }
 
@@ -418,6 +420,8 @@ fn every_edge_path_gives_an_edge_value_of_its_kind() {
     check_edges::<u256>(77, 18),
     check_edges::<i512>(153, 153),
     check_edges::<u512>(154, 0),
+    check_edges::<i1024>(307, 307),
+    check_edges::<u1024>(308, 0),
   ];
   // The branch, the kind, an exponent and a sign at most: never the longest path.
   assert!(edges.iter().all(|&longest| longest <= 4));
@@ -456,6 +460,32 @@ fn widest_longest_paths() {
   assert_eq!(scripted::<i512>(153, 9, &nines(153, true)), -max(153));
   assert_eq!(scripted::<u256>(77, 77, &nines(77, false)), max(77));
   assert_eq!(scripted::<i256>(76, 0, &nines(76, true)), -max(76));
+  assert_eq!(scripted::<u1024>(308, 0, &nines(308, false)), max(308));
+  assert_eq!(scripted::<i1024>(307, 307, &nines(307, true)), -max(307));
+}
+
+/// Every number of digits of the widest types is drawn, from one to all of them: the digit-wise
+/// branch, a length chosen among more than 256, a first digit `1` and then zeros, no zeroing, and
+/// the plus sign of a signed storage.
+#[test]
+fn every_length_of_the_widest_types() {
+  for (digits, fraction, signed) in [(308, 0, false), (307, 307, true)] {
+    for len in 1..=digits {
+      // The first digit is one of `1..=9` for several digits, and of `0..=9` for one.
+      let mut answers = vec![1, len - 1, u32::from(len == 1)];
+      answers.extend(core::iter::repeat_n(0, len as usize - 1));
+      answers.push(1);
+      if signed {
+        answers.push(0);
+      }
+      let coeff = if signed {
+        scripted::<i1024>(digits, fraction, &answers)
+      } else {
+        scripted::<u1024>(digits, fraction, &answers)
+      };
+      assert_eq!(coeff, bigint::pow10(len - 1), "{len} of {digits} digits");
+    }
+  }
 }
 
 /// Trailing zeros keep the first digit, and with it the number of digits.
@@ -465,6 +495,12 @@ fn trailing_zeros_keep_the_number_of_digits() {
   answers.extend(core::iter::repeat_n(9, 153));
   answers.extend([0, 153]);
   assert_eq!(scripted::<u512>(154, 0, &answers), bigint::pow10(153));
+
+  // At 308 digits, the number of zeros is a choice among more than 256.
+  let mut answers = vec![1, 307, 0];
+  answers.extend(core::iter::repeat_n(9, 307));
+  answers.extend([0, 307]);
+  assert_eq!(scripted::<u1024>(308, 0, &answers), bigint::pow10(307));
 
   let mut answers = vec![1, 17, 4];
   answers.extend(core::iter::repeat_n(3, 17));

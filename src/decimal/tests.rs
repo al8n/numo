@@ -22,9 +22,9 @@ use typenum::{
 
 use super::{ConvertError, Decimal, DivideError, ParseError, ParseErrorKind, QuantizeError};
 use crate::{
-  DivIntermediate, InlineStorage, Layout, RoundingMode, Storage, bigint, i192, i256, i320, i384,
-  i448, i512, i576, i640, i704, i768, i832, i896, i960, i1024, u192, u256, u320, u384, u448, u512,
-  u576, u640, u704, u768, u832, u896, u960, u1024,
+  DivIntermediate, InlineStorage, Layout, RoundingMode, Storage, bigint, dec, i192, i256, i320,
+  i384, i448, i512, i576, i640, i704, i768, i832, i896, i960, i1024, u192, u256, u320, u384, u448,
+  u512, u576, u640, u704, u768, u832, u896, u960, u1024,
 };
 
 /// `i8` at its 2-digit limit.
@@ -2625,6 +2625,67 @@ fn wide_from_repr_checks_the_decimal_range() {
   assert_eq!(D308x0u1024::from_repr(u1024::ZERO), Some(D308x0u1024::ZERO));
 }
 
+/// The storage of a decimal type, by `TypeId`.
+fn storage_of<I, F, R: 'static>(_: &Decimal<I, F, R>) -> TypeId {
+  TypeId::of::<R>()
+}
+
+/// Checks, for each listed type at the digit limit of its storage, whose limbs follow it, against
+/// `num-bigint`: the coefficients of `MAX` and `MIN` are `10^DIGITS - 1` and its negation, or zero
+/// for an unsigned storage, `from_repr` gives them back, and it refuses `10^DIGITS` and, for a
+/// signed storage, its negation. Each type checks in a function of its own.
+macro_rules! limits_hold {
+  ($($ty:ty: $limbs:literal),+ $(,)?) => {$({
+    #[inline(never)]
+    fn storage() {
+      type T = $ty;
+      type R = <T as crate::FixedDecimal>::Repr;
+      let big = |value: T| bigint::from_limbs(&value.repr().to_limbs(), T::SIGNED);
+      let repr = |value: &BigInt| {
+        R::from_limbs(bigint::to_limbs::<$limbs>(value, T::SIGNED).expect("the storage holds it"))
+      };
+      let max = bigint::pow10(T::DIGITS) - 1u8;
+      let min = if T::SIGNED { -&max } else { BigInt::ZERO };
+      assert_eq!((big(T::MAX), big(T::MIN)), (max.clone(), min.clone()));
+      assert_eq!(T::from_repr(repr(&max)), Some(T::MAX));
+      assert_eq!(T::from_repr(repr(&min)), Some(T::MIN));
+      let beyond = bigint::pow10(T::DIGITS);
+      assert_eq!(T::from_repr(repr(&beyond)), None);
+      if T::SIGNED {
+        assert_eq!(T::from_repr(repr(&-beyond)), None);
+      }
+    }
+    storage();
+  })+};
+}
+
+/// Each storage from 576 to 1024 bits holds every value at its digit limit, 173, 192, 211, 230 or
+/// 231, 250, 269, 288, and 307 or 308 digits, and not one unit beyond; and 154 digits, which only a
+/// `u512` held at 512 bits, have the default storage `i576`.
+#[test]
+fn limits_of_the_storages_above_512_bits() {
+  limits_hold!(
+    Decimal<U155, U18, i576>: 9,
+    Decimal<U173, U0, u576>: 9,
+    Decimal<U174, U18, i640>: 10,
+    Decimal<U192, U0, u640>: 10,
+    Decimal<U193, U18, i704>: 11,
+    Decimal<U211, U0, u704>: 11,
+    Decimal<U212, U18, i768>: 12,
+    Decimal<U231, U0, u768>: 12,
+    Decimal<U232, U18, i832>: 13,
+    Decimal<U250, U0, u832>: 13,
+    Decimal<U251, U18, i896>: 14,
+    Decimal<U269, U0, u896>: 14,
+    Decimal<U270, U18, i960>: 15,
+    Decimal<U288, U0, u960>: 15,
+    Decimal<U289, U18, i1024>: 16,
+    Decimal<U308, U0, u1024>: 16,
+  );
+  assert_eq!(storage_of(&Decimal::<U154, U0>::ZERO), TypeId::of::<i576>());
+  assert_eq!(storage_of(&Decimal::<U77, U77>::ZERO), TypeId::of::<i576>());
+}
+
 /// The statements of the example of the bytes in the docs of `Decimal`.
 #[test]
 fn the_example_of_the_bytes_in_the_docs() {
@@ -2813,6 +2874,38 @@ fn wide_checked_add_and_sub_at_the_storage_limit() {
   assert_eq!(D97x18u384::MAX.checked_add(&D97x18u384::MAX), None);
   assert_eq!(D116x18::MAX.checked_add(&D116x18::MAX), None);
   assert_eq!(D153x0::MIN.checked_add(&D153x0::MIN), None);
+
+  // From 576 to 1024 bits, twice the largest coefficient overflows `i576`, `u768`, `i832` and
+  // `u1024` themselves, and only the range of the type in the other storages: each sum is refused.
+  largest_sums_are_refused::<Decimal<U155, U18, i576>>();
+  largest_sums_are_refused::<Decimal<U173, U0, u576>>();
+  largest_sums_are_refused::<Decimal<U174, U18, i640>>();
+  largest_sums_are_refused::<Decimal<U192, U0, u640>>();
+  largest_sums_are_refused::<Decimal<U193, U18, i704>>();
+  largest_sums_are_refused::<Decimal<U211, U0, u704>>();
+  largest_sums_are_refused::<Decimal<U212, U18, i768>>();
+  largest_sums_are_refused::<Decimal<U231, U0, u768>>();
+  largest_sums_are_refused::<Decimal<U232, U18, i832>>();
+  largest_sums_are_refused::<Decimal<U250, U0, u832>>();
+  largest_sums_are_refused::<Decimal<U251, U18, i896>>();
+  largest_sums_are_refused::<Decimal<U269, U0, u896>>();
+  largest_sums_are_refused::<Decimal<U270, U18, i960>>();
+  largest_sums_are_refused::<Decimal<U288, U0, u960>>();
+  largest_sums_are_refused::<Decimal<U289, U18, i1024>>();
+  largest_sums_are_refused::<Decimal<U308, U0, u1024>>();
+}
+
+/// Checks that `T` refuses twice its largest value and, for a signed storage, twice its smallest
+/// and the difference of the two, whether the result overflows the storage or only the range of
+/// the type.
+#[inline(never)]
+fn largest_sums_are_refused<T: crate::FixedDecimal>() {
+  let (max, min) = (T::max_value(), T::min_value());
+  assert_eq!(max.checked_add(&max), None);
+  if T::SIGNED {
+    assert_eq!(min.checked_add(&min), None);
+    assert_eq!(max.checked_sub(&min), None);
+  }
 }
 
 #[test]
@@ -3029,6 +3122,27 @@ fn wide_exp_at_the_limits() {
   );
 }
 
+/// The longest texts of the types of 1024 bits: the largest value of 308 fraction digits and the
+/// smallest of 307 write 310 bytes, and one unit of the last of 308 fraction digits writes
+/// `1e-308`, and `10e-309` in engineering notation, the lowest exponent of any text; each text
+/// reads back.
+#[test]
+fn the_longest_texts_of_1024_bits() {
+  let max = D0x308u1024::MAX.to_string();
+  assert_eq!(max, format!("0.{}", nines(308)));
+  assert_eq!(max.len(), 310);
+  assert_eq!(max.parse::<D0x308u1024>(), Ok(D0x308u1024::MAX));
+  let min = D0x307::MIN.to_string();
+  assert_eq!(min, format!("-0.{}", nines(307)));
+  assert_eq!(min.len(), 310);
+  assert_eq!(min.parse::<D0x307>(), Ok(D0x307::MIN));
+  let unit: D0x308u1024 = "1e-308".parse().unwrap();
+  assert_eq!(format!("{unit:e}"), "1e-308");
+  assert_eq!(format!("{unit:#e}"), "10e-309");
+  assert_eq!(format!("{unit:#E}"), "10E-309");
+  assert_eq!("10e-309".parse::<D0x308u1024>(), Ok(unit));
+}
+
 #[test]
 fn wide_exact_mul() {
   // Two 38-digit native coefficients give a 76-digit product in `i256` or `u256`.
@@ -3108,6 +3222,29 @@ fn wide_exact_mul() {
   );
   let widest: Decimal<U153, U0, u512> = D77x0u256::MAX.exact_mul(&Decimal::<U76, U0, u256>::MAX);
   assert_eq!(widest.repr().to_string(), (&max_77 * &max_76).to_string());
+
+  // The product of any two decimals of at most 512 bits has a storage: 306 and 307 digits in
+  // `i1024`, and 308 in `u1024` for two unsigned operands.
+  let max_153 = bigint::pow10(153) - 1u8;
+  let max_154 = bigint::pow10(154) - 1u8;
+  let square = D153x0::MAX.exact_mul(&D153x0::MIN);
+  assert_eq!(storage_of(&square), TypeId::of::<i1024>());
+  assert_eq!(
+    bigint::from_limbs(&square.repr().to_limbs(), true),
+    -(&max_153 * &max_153)
+  );
+  let mixed = D153x0::MAX.exact_mul(&D154x0u512::MAX);
+  assert_eq!(storage_of(&mixed), TypeId::of::<i1024>());
+  assert_eq!(
+    bigint::from_limbs(&mixed.repr().to_limbs(), true),
+    &max_153 * &max_154
+  );
+  let widest = D154x0u512::MAX.exact_mul(&D154x0u512::MAX);
+  assert_eq!(storage_of(&widest), TypeId::of::<u1024>());
+  assert_eq!(
+    bigint::from_limbs(&widest.repr().to_limbs(), false),
+    &max_154 * &max_154
+  );
 }
 
 #[test]
@@ -3357,6 +3494,36 @@ fn wide_methods_in_const_context() {
     Ok(format!("1{}", zeros(307)))
   );
   assert_eq!(WIDEST_1024_OVERFLOW, None);
+}
+
+/// `MAX`, `MIN`, `ONE` and a literal of 308 digits in `const` items of the widest types: 308
+/// integral digits in a `u1024`, and 289 integral and 18 fraction digits in an `i1024`, whose
+/// literal has a leading zero.
+#[test]
+fn constants_of_the_widest_types() {
+  const UNSIGNED: [D308x0u1024; 4] = [
+    D308x0u1024::MAX,
+    D308x0u1024::MIN,
+    D308x0u1024::ONE,
+    dec!(99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999),
+  ];
+  const SIGNED: [D289x18; 4] = [
+    D289x18::MAX,
+    D289x18::MIN,
+    D289x18::ONE,
+    dec!(-09999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999.999999999999999999),
+  ];
+  assert_eq!(UNSIGNED[0].to_string(), nines(308));
+  assert_eq!(UNSIGNED[1], D308x0u1024::ZERO);
+  assert_eq!(UNSIGNED[2].to_string(), "1");
+  assert_eq!(UNSIGNED[3], UNSIGNED[0]);
+  assert_eq!(
+    SIGNED[0].to_string(),
+    format!("{}.{}", nines(289), nines(18))
+  );
+  assert_eq!(SIGNED[1], -SIGNED[0]);
+  assert_eq!(SIGNED[2].to_string(), "1");
+  assert_eq!(SIGNED[3], SIGNED[1]);
 }
 
 #[test]
@@ -4871,8 +5038,8 @@ fn div_round_storage_families() {
   assert_eq!(down.to_string(), "810.00006642000544644");
 }
 
-/// The widest intermediates: 153 digits with the dividend scaled or with the divisor scaled, and
-/// 154 digits for two unsigned storages.
+/// The widest intermediates of 512 bits: 153 digits with the dividend scaled or with the divisor
+/// scaled, and 154 digits for two unsigned storages.
 #[test]
 fn div_round_with_the_widest_intermediates() {
   let tick: Price = "0.00000001".parse().unwrap();
@@ -4933,6 +5100,37 @@ fn div_round_with_the_widest_intermediates() {
   for mode in bigint::MODES {
     let quotient: D144x10u512 = D136x10u512::MAX.div_round(&tick, mode).unwrap();
     assert_eq!(quotient.to_string(), expected, "{mode:?}");
+  }
+}
+
+/// A division whose intermediate has 307 digits, the most that a signed storage holds, and one of
+/// 308, which two unsigned operands allow: the limits of the widest dividends by three, in every
+/// mode, against the quotient in `num-bigint`.
+#[test]
+fn div_round_with_the_intermediates_of_1024_bits() {
+  let three: Price = "3".parse().unwrap();
+  let three_unsigned: Decimal<U10, U8, u64> = "3".parse().unwrap();
+  // Both divisors are `3 * 10^8` units of `10^-8`, and the quotients have 10 fraction digits, so
+  // a quotient is the coefficient of the dividend, in units of `10^-18`, by that of the divisor.
+  let divisor = BigInt::from(300_000_000u32);
+  for mode in bigint::MODES {
+    for dividend in [D289x18::MAX, D289x18::MIN] {
+      let quotient: Decimal<U289, U10> = dividend.div_round(&three, mode).unwrap();
+      let coefficient = bigint::from_limbs(&dividend.repr().to_limbs(), true);
+      assert_eq!(
+        bigint::from_limbs(&quotient.repr().to_limbs(), true),
+        bigint::round(&coefficient, &divisor, mode),
+        "{dividend}, {mode:?}"
+      );
+    }
+    let dividend = Decimal::<U290, U18, u1024>::MAX;
+    let quotient: Decimal<U290, U10, u1024> = dividend.div_round(&three_unsigned, mode).unwrap();
+    let coefficient = bigint::from_limbs(&dividend.repr().to_limbs(), false);
+    assert_eq!(
+      bigint::from_limbs(&quotient.repr().to_limbs(), false),
+      bigint::round(&coefficient, &divisor, mode),
+      "{mode:?}"
+    );
   }
 }
 
