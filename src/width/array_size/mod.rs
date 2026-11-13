@@ -1,18 +1,23 @@
-//! The numbers of limbs of the array storages, from 0 to 1024, as `typenum` numbers.
+//! The array lengths from 0 to 1024 as `typenum` numbers, for the limbs of the array storages and
+//! the buffers of the decimals, and an array whose length is such a number.
+
+use core::ops::{Deref, DerefMut};
 
 use typenum::Unsigned;
 
 use super::TypenumNumber;
 
 /// Maps a [`typenum`] number of limbs, from 0 to 1024, to the array of that many elements:
-/// `<U4 as ArraySize>::ArrayType<u64>` is `[u64; 4]`.
+/// `<U4 as ArraySize>::ArrayType<u64>` is `[u64; 4]`. Every array meets the bounds of
+/// `ArrayType`, `AsRef<[T]>` and `AsMut<[T]>`, so generic code reads and writes it as a slice.
 ///
 /// Stable Rust cannot turn a `typenum` number into an array length, so each number from `U0` to
 /// `U1024` has an implementation, written by a macro, as in the `hybrid-array` crate. The other
 /// direction, from an array length to a number, is `typenum`'s `U<N>`.
 /// [`LimbArray`](crate::LimbArray) computes the number of limbs of a width, and
-/// [`Limbs`](crate::Limbs) names the array. This trait is sealed and cannot be implemented outside
-/// this crate.
+/// [`Limbs`](crate::Limbs) names the array. The crate also takes from this trait the lengths of the
+/// buffers in which a decimal computes, each the length that its storage needs. This trait is
+/// sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "an array of limbs computed from a width has 0 to 1024 limbs",
   label = "the number of limbs is greater than 1024",
@@ -21,7 +26,45 @@ use super::TypenumNumber;
 )]
 pub trait ArraySize: TypenumNumber + Unsigned {
   /// `[T; Self]`.
-  type ArrayType<T>;
+  type ArrayType<T>: AsRef<[T]> + AsMut<[T]>;
+}
+
+// `ArrayLength` and `Array` are `pub` in this private module, and re-exported only to the crate:
+// the sealed core of the decimal storages, which every crate reaches through `Storage`, names
+// both, and a crate-private item there would be a private bound or a private interface.
+
+/// Builds the array of a length, which safe code can do only in a function written for that
+/// length. Implemented for every length that implements [`ArraySize`].
+pub trait ArrayLength: ArraySize {
+  /// The array whose element at each index is `f` of the index.
+  fn array_from_fn<T, F: FnMut(usize) -> T>(f: F) -> Self::ArrayType<T>;
+}
+
+/// An array whose length is a `typenum` number: `Array<u8, U19>` holds a `[u8; 19]`.
+pub struct Array<T, N: ArraySize>(pub(crate) N::ArrayType<T>);
+
+impl<T, N: ArraySize> Deref for Array<T, N> {
+  type Target = [T];
+
+  #[inline]
+  fn deref(&self) -> &[T] {
+    self.0.as_ref()
+  }
+}
+
+impl<T, N: ArraySize> DerefMut for Array<T, N> {
+  #[inline]
+  fn deref_mut(&mut self) -> &mut [T] {
+    self.0.as_mut()
+  }
+}
+
+impl<T: Default, N: ArrayLength> Default for Array<T, N> {
+  /// Returns the array of `N` default values.
+  #[inline]
+  fn default() -> Self {
+    Self(N::array_from_fn(|_| T::default()))
+  }
 }
 
 /// Passes every number of limbs to `$callback`, written `Count = length`, where `Count` is the
@@ -184,6 +227,13 @@ macro_rules! impl_array_size {
   ($($count:ident = $len:literal),+ $(,)?) => {$(
     impl ArraySize for typenum::consts::$count {
       type ArrayType<T> = [T; $len];
+    }
+
+    impl ArrayLength for typenum::consts::$count {
+      #[inline]
+      fn array_from_fn<T, F: FnMut(usize) -> T>(f: F) -> [T; $len] {
+        core::array::from_fn(f)
+      }
     }
   )+};
 }

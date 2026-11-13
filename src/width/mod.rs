@@ -16,6 +16,7 @@ use typenum::{
 };
 
 pub use array_size::ArraySize;
+pub(crate) use array_size::{Array, ArrayLength};
 #[cfg(any(
   feature = "std",
   feature = "alloc",
