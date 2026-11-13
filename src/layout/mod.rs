@@ -1,12 +1,15 @@
 //! Type-level digit counts and the storage types that hold them.
 
-use core::{hash::Hash, ops::Add};
+use core::{
+  hash::Hash,
+  ops::{Add, BitOr, Not},
+};
 
-use typenum::{B0, B1, IsLessOrEqual, LeEq, Sum, Unsigned};
+use typenum::{B0, B1, IsLessOrEqual, LeEq, Or, Sum, Unsigned};
 
 use sealed::{
   ConvertFrom, DigitsOf, FractionNotReduced, HasDivIntermediate, IntegralNotReduced, ReprWidensTo,
-  SignPick, WidensTo,
+  SignKept, SignPick, WidensTo,
 };
 pub(crate) use sealed::{LayoutDigits, StorageCore, Token};
 
@@ -203,6 +206,18 @@ mod sealed {
   pub trait FractionNotReduced {}
 
   impl FractionNotReduced for typenum::B1 {}
+
+  /// Implemented only for `B1`, the result of "the source storage is unsigned, or the target
+  /// storage is signed" when widening keeps the sign of every value.
+  #[diagnostic::on_unimplemented(
+    message = "`widen` cannot convert from a signed storage to an unsigned storage",
+    label = "the source storage is signed and the target storage is unsigned",
+    note = "use `try_convert` for a conversion that can fail",
+    note = "the compiler writes `u192`, `u256`, `u320`, `u384`, `u448` and `u512` as `Uint` with the limbs `[u64; 3]`, `[u64; 4]`, `[u64; 5]`, `[u64; 6]`, `[u64; 7]` and `[u64; 8]`, and `i192`, `i256`, `i320`, `i384`, `i448` and `i512` as `Int` with the same limbs"
+  )]
+  pub trait SignKept {}
+
+  impl SignKept for typenum::B1 {}
 }
 
 /// An integer type that can store the coefficient of a [`Decimal`](crate::Decimal).
@@ -411,12 +426,6 @@ where
 /// [`Decimal::try_convert`](crate::Decimal::try_convert). This trait covers only the sign;
 /// [`Layout`] checks that `Target` holds the digits. This trait is sealed and cannot be implemented
 /// outside this crate.
-// As for `FitsDigits`, the diagnostic does not print the storages.
-#[diagnostic::on_unimplemented(
-  message = "`widen` cannot convert from a signed storage to an unsigned storage",
-  note = "use `try_convert` for a conversion that can fail",
-  note = "the compiler writes `u192`, `u256`, `u320`, `u384`, `u448` and `u512` as `Uint` with the limbs `[u64; 3]`, `[u64; 4]`, `[u64; 5]`, `[u64; 6]`, `[u64; 7]` and `[u64; 8]`, and `i192`, `i256`, `i320`, `i384`, `i448` and `i512` as `Int` with the same limbs"
-)]
 pub trait WidenRepr<Target>: ReprWidensTo<Target> {}
 
 /// Implements [`StorageCore`] and [`Storage`] for the native storages, written `native`, whose
@@ -879,29 +888,22 @@ impl_convert!([
   (u128 unsigned),
 ]);
 
-/// Implements [`WidenRepr`] from every unsigned storage to every storage, and from every signed
-/// storage to every signed storage.
-macro_rules! impl_widen_repr {
-  (signed: [$($int:ident),+], unsigned: [$($uint:ident),+] $(,)?) => {
-    impl_widen_repr!(@from [$($uint),+] to [$($int,)+ $($uint),+]);
-    impl_widen_repr!(@from [$($int),+] to [$($int),+]);
-  };
-  (@from [$($source:ident),+] to $targets:tt) => {
-    $(impl_widen_repr!(@pairs $source to $targets);)+
-  };
-  (@pairs $source:ident to [$($target:ident),+]) => {
-    $(
-      impl ReprWidensTo<$target> for $source {}
-
-      impl WidenRepr<$target> for $source {}
-    )+
-  };
+// The rule holds from every unsigned storage to every storage, and from every signed storage to
+// every signed storage. It is computed as a bit, "the source is unsigned or the target is signed",
+// which a marker implemented for `B1` alone requires, as `Widen` requires its comparisons: a bound
+// on the bits of the parameters themselves would report the bit that it expected and the one that
+// it found, where the marker reports its message.
+impl<S, T> ReprWidensTo<T> for S
+where
+  S: StorageCore,
+  T: StorageCore,
+  T::IsUnsigned: Not,
+  S::IsUnsigned: BitOr<<T::IsUnsigned as Not>::Output>,
+  Or<S::IsUnsigned, <T::IsUnsigned as Not>::Output>: SignKept,
+{
 }
 
-impl_widen_repr!(
-  signed: [i8, i16, i32, i64, i128, i192, i256, i320, i384, i448, i512],
-  unsigned: [u8, u16, u32, u64, u128, u192, u256, u320, u384, u448, u512],
-);
+impl<S, T> WidenRepr<T> for S where S: ReprWidensTo<T> {}
 
 /// Passes the digit-count table to `$callback`.
 ///
