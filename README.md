@@ -52,7 +52,7 @@ cargo add numo
 | `arbitrary` | `Arbitrary` for fuzzing; the `arbitrary` crate uses `std` |
 | `proptest` | `Arbitrary` and strategies for property tests, with the `std` feature of `proptest` |
 | `quickcheck` | `Arbitrary` for property tests; the `quickcheck` crate uses `std` |
-| `triomphe` | `triomphe::Arc<[L; N]>` as a read-only heap storage, on a target with atomic pointers |
+| `triomphe` | `triomphe::Arc<[L; N]>` as a read-only heap storage, on a target with atomic pointers; on another target it turns nothing on |
 
 With no feature the crate is `no_std` and does not allocate. `std` and `alloc` are independent:
 either one gives the heap storages `Box<[L; N]>`, `Rc<[L; N]>` and `Arc<[L; N]>`, and neither turns

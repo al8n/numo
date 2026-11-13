@@ -42,8 +42,11 @@ arbitrary = { version = "1", optional = true }
 proptest = { version = "1", default-features = false, features = ["std"], optional = true }
 quickcheck = { version = "1", default-features = false, optional = true }
 serde_core = { version = "1", default-features = false, optional = true }
-triomphe = { version = "0.1", default-features = false, optional = true }
 
+# `triomphe` builds only where pointers are atomic, so the dependency exists only there: on
+# another target the `triomphe` feature turns nothing on.
+[target.'cfg(target_has_atomic = "ptr")'.dependencies]
+triomphe = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 bigdecimal = "0.4"
