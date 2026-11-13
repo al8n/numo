@@ -1758,3 +1758,54 @@ fn the_example_of_from_f32_shortest_in_the_docs() -> Result<(), Box<dyn core::er
   assert_eq!(widened.to_string(), "0.10000000149011612");
   Ok(())
 }
+
+/// The example of the section on the floats in the docs of `Decimal`, which no local build
+/// compiles: the same statements, with `crate::` for `numo::`, and the floats compared by their
+/// bits.
+#[test]
+fn the_example_of_the_floats_in_the_docs() -> Result<(), Box<dyn core::error::Error>> {
+  type Price = Decimal<U10, U2>;
+  type Fine = Decimal<U10, U28>;
+
+  let price: Price = "64250.5".parse()?;
+  assert_eq!(price.to_f64().to_bits(), 64250.5_f64.to_bits());
+
+  // The exact binary value of `0.1_f64`, and its shortest text.
+  let exact = Fine::round_from_f64(0.1, RoundingMode::HalfEven)?;
+  assert_eq!(exact.to_string(), "0.1000000000000000055511151231");
+  let text = Fine::from_f64_shortest(0.1 + 0.2, RoundingMode::HalfEven)?;
+  assert_eq!(text.to_string(), "0.30000000000000004");
+
+  // `2.675_f64` is below 2.675, so the two readings round apart.
+  assert_eq!(
+    Price::round_from_f64(2.675, RoundingMode::HalfUp)?.to_string(),
+    "2.67"
+  );
+  assert_eq!(
+    Price::from_f64_shortest(2.675, RoundingMode::HalfUp)?.to_string(),
+    "2.68"
+  );
+
+  // The shortest text of an `f32` is its own.
+  assert_eq!(
+    Fine::from_f32_shortest(0.1, RoundingMode::HalfEven)?.to_string(),
+    "0.1"
+  );
+  let widened = Fine::from_f64_shortest(f64::from(0.1_f32), RoundingMode::HalfEven)?;
+  assert_eq!(widened.to_string(), "0.10000000149011612");
+
+  // `to_f32` rounds once: this value is just above the tie of two `f32`s.
+  let above: Decimal<U1, U26> = "1.00000005960464477539062501".parse()?;
+  assert_eq!(above.to_f32().to_bits(), (1.0 + f32::EPSILON).to_bits());
+  assert_eq!((above.to_f64() as f32).to_bits(), 1.0_f32.to_bits());
+
+  assert_eq!(
+    Price::round_from_f64(f64::NAN, RoundingMode::Down),
+    Err(FromFloatError::Nan)
+  );
+  assert_eq!(
+    Price::round_from_f64(-0.0, RoundingMode::Down),
+    Ok(Price::ZERO)
+  );
+  Ok(())
+}

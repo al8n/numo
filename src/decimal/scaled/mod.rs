@@ -95,9 +95,9 @@ mod tests;
 ///
 /// Every decimal trait of this crate is implemented for `Scaled<D>` once, for every decimal `D`
 /// that implements it: [`FixedDecimal`], [`ConstFixedDecimal`], [`SignedFixedDecimal`],
-/// [`UnsignedFixedDecimal`], [`DecimalOne`] and [`ConstDecimalOne`], and between `Scaled` types
-/// [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`]. Generic code bounded by them takes a
-/// `Scaled` and a bare decimal alike. The operators `+`, `-`, `+=` and `-=` and
+/// [`UnsignedFixedDecimal`], [`DecimalOne`], [`ConstDecimalOne`] and [`DecimalFloat`], and between
+/// `Scaled` types [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`]. Generic code bounded
+/// by them takes a `Scaled` and a bare decimal alike. The operators `+`, `-`, `+=` and `-=` and
 /// [`Sum`](core::iter::Sum) are implemented as for a decimal, and panic where `checked_add` and
 /// `checked_sub` return `None`; the methods of a `Scaled` are reached through the traits, with the
 /// trait in scope. A `Scaled` relates only to a `Scaled`: no trait converts a bare decimal into a
@@ -127,6 +127,9 @@ mod tests;
 ///   [`is_integer`](FixedDecimal::is_integer) are those of the value, whatever the scale: `2.50`
 ///   has one fraction digit and scale 2, and `2.00` is an integer;
 /// - negation and [`abs`](SignedFixedDecimal::abs) keep the scale;
+/// - [`round_from_f64`](DecimalFloat::round_from_f64) and its `f32` form take the fraction digits
+///   of the type, and [`from_f64_shortest`](DecimalFloat::from_f64_shortest) and its `f32` form the
+///   fraction digits of the shortest text, at most those of the type, so that `0.5` has scale 1;
 /// - zero, the limits, one and a value made by [`from_repr`](FixedDecimal::from_repr) have scale
 ///   0, and `Scaled::new` gives a coefficient another scale.
 ///

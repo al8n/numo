@@ -21,6 +21,17 @@ FEATURES
     `is_integer`, `order_of_magnitude`, `significant_digits` and `fraction_digits`, the digits of a
     value as `{:e}` and `Display` write them.
   - `exact_mul`, `widen` and `try_convert` between decimal types.
+  - The conversions with the floats, for interchange and display, not for arithmetic that must be
+    exact. `to_f64` and `to_f32`, `const fn`s of every storage, return the nearest float, ties to
+    even, rounded once, the float that parsing the text of the decimal gives; like `trunc`, `floor`
+    and `ceil`, they round without a `RoundingMode`. `to_f32` gives the infinity of the sign of the
+    value for a magnitude that rounds to `2^128` or more, a subnormal float for one that rounds
+    below `2^-126`, and a zero with the sign of the value from `2^-150` down. From a float, each
+    reading is rounded once with a `RoundingMode` to the fraction digits of the type:
+    `round_from_f64` and `round_from_f32`, `const fn`s, read the exact binary value, and
+    `from_f64_shortest` and `from_f32_shortest` the shortest text that parses back to the float, so
+    that `0.1` reads as `0.1`. NaN and the infinities are reported by `FromFloatError`, and `-0.0`
+    is zero. The sealed trait `DecimalFloat` gives the six to generic code.
   - Exact parsing through `FromStr`, and the shortest exact text through `Display` and `Debug`.
   - Parsing accepts the numeric strings of the General Decimal Arithmetic specification, every
     form that `f64` parses (signs, `.5`, `5.`, exponents) and `_` separators as in Rust literals,
@@ -92,20 +103,23 @@ FEATURES
     larger scale of its operands, and a sum over an iterator the largest scale of its items.
   - Every decimal trait, implemented once for every decimal that implements it, so that generic
     code takes a `Scaled` and a bare decimal alike: `FixedDecimal`, `ConstFixedDecimal`, the sign
-    traits, `DecimalOne` and `ConstDecimalOne`, and `ExactMul`, `WidenTo`, `ConvertTo` and
-    `DivRound` between `Scaled` types, with no mixed implementations. Sums, differences and
-    remainders take the larger scale, also where they saturate to a limit, exact products the sum
-    of the scales, saturating at 255, quantized values the scale of the step, widened and exactly
-    converted values their own, values of `round_to` and quotients the fraction digits of their
-    target type, and zero, the limits, one and a value made from a coefficient scale 0. `trunc`,
-    `floor` and `ceil` give scale 0, `fract` keeps the scale, `round_significant` gives the scale
-    that the significant digits of its result need, at most 255, and `is_integer` and the digits of
-    a value are those of the value, whatever the scale. A concrete
+    traits, `DecimalOne`, `ConstDecimalOne` and `DecimalFloat`, and `ExactMul`, `WidenTo`,
+    `ConvertTo` and `DivRound` between `Scaled` types, with no mixed implementations. Sums,
+    differences and remainders take the larger scale, also where they saturate to a limit, exact
+    products the sum of the scales, saturating at 255, quantized values the scale of the step,
+    widened and exactly converted values their own, values of `round_to` and quotients the fraction
+    digits of their target type, and zero, the limits, one and a value made from a coefficient
+    scale 0. `trunc`, `floor` and `ceil` give scale 0, `fract` keeps the scale, `round_significant`
+    gives the scale that the significant digits of its result need, at most 255, and `is_integer`
+    and the digits of a value are those of the value, whatever the scale. A value read from the
+    binary value of a float takes the fraction digits of the type, and one read from its shortest
+    text the fraction digits of that text, at most those of the type. A concrete
     `Scaled<Decimal<I, F, R>>` needs no bound; code generic over the decimal `D` adds the bound
     `Scaled<D>: FixedDecimal`.
 - `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`,
   `HalfEven` and `Up05`. Rounding happens only where a mode is given, but for `trunc`, `floor` and
-  `ceil`, which round in their own direction, for native and wide storages alike:
+  `ceil`, which round in their own direction, and for `to_f64` and `to_f32`, which round to the
+  nearest float, for native and wide storages alike:
   - `round_to` converts to any decimal type as `try_convert` does, but rounds dropped fraction
     digits with the mode instead of failing. It reports `OutOfRange` if the rounded value does not
     fit, so a negative value converts to an unsigned storage only when it rounds to zero.
@@ -120,6 +134,8 @@ FEATURES
   - `const fn` `round_significant` rounds to a number of significant digits with the mode, in the
     type of the value, and reports `OutOfRange` where a carry leaves the range. The count is a
     `NonZero<u32>`, so a count of zero cannot be written.
+  - `round_from_f64` and `from_f64_shortest`, and their `f32` forms, round a float once with the
+    mode to the fraction digits of a type.
   - `const fn` `is_multiple_of` checks a value against a step without rounding it.
   - `Up05` is the `ROUND_05UP` of the General Decimal Arithmetic: away from zero if the last digit
     of the truncated result is 0 or 5. Its name is `up05` and its predicate `is_up05`.
@@ -441,18 +457,18 @@ FEATURES
     `RoundingMode`, at every magnitude, so that `HalfEven` rounds to the nearest integer and `0.5`
     to zero, and a negative value that rounds to zero converts; and `exact_from_f64`, which converts
     a float only if it is an integer of the range, `-0.0` included. Each has an `f32` form, which
-    converts as the `f64` of the same value does. The new error `FromFloatError`, a
-    `#[non_exhaustive]` enum with a predicate for each kind, reports NaN, the infinities, a value
-    above `MAX` and one below `MIN` apart, the rounded value for `round_from_f64`, so that `-0.4`
-    converts to zero with `HalfEven`, and a fraction, `Inexact`, which only `exact_from_f64`
-    reports, after the range, which it judges on the value itself: `255.5` is above 8 unsigned bits
-    and `-0.5` below them. The sealed trait `IntegerFloat` gives the conversions to generic code,
-    for every storage, and `B: BitWidth` gives it on `Uint<B>` and `Int<B>`. `From` converts a
-    `Uint` of at most 53 bits and an `Int` of at most 54 into `f64`, and one of at most 24 and 25
-    bits into `f32`, which hold every value of such a width, with a diagnostic for a wider one, and
-    with the `TryFrom` that the standard library derives from it, whose error is `Infallible`; no
-    other `TryFrom` converts between the integers and the floats. The conversions compute with the
-    bits of the floats, so they evaluate in constant contexts.
+    converts as the `f64` of the same value does. The new error `FromFloatError`, for the integers
+    and the decimals, a `#[non_exhaustive]` enum with a predicate for each kind, reports NaN, the
+    infinities, a value above `MAX` and one below `MIN` apart, the rounded value for
+    `round_from_f64`, so that `-0.4` converts to zero with `HalfEven`, and a fraction, `Inexact`,
+    which only `exact_from_f64` reports, after the range, which it judges on the value itself:
+    `255.5` is above 8 unsigned bits and `-0.5` below them. The sealed trait `IntegerFloat` gives
+    the conversions to generic code, for every storage, and `B: BitWidth` gives it on `Uint<B>` and
+    `Int<B>`. `From` converts a `Uint` of at most 53 bits and an `Int` of at most 54 into `f64`, and
+    one of at most 24 and 25 bits into `f32`, which hold every value of such a width, with a
+    diagnostic for a wider one, and with the `TryFrom` that the standard library derives from it,
+    whose error is `Infallible`; no other `TryFrom` converts between the integers and the floats.
+    The conversions compute with the bits of the floats, so they evaluate in constant contexts.
   - The sealed traits `OverflowingOps`, `CheckedOps`, `WrappingOps`, `SaturatingOps`, `StrictOps`,
     `UncheckedOps` and `IntegerOne`, each with one implementation for every storage; `is_one`, the
     operators, their compound assignments and `Sum` on `FixedInteger`, the methods of each sign on

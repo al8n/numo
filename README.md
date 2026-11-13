@@ -109,10 +109,11 @@ fn main() -> Result<(), ParseError> {
   `checked_sub` return `None` outside the range, `exact_mul` returns a wider type that always holds
   the product, up to 153 digits, `widen` converts to a type with at least as many digits, and
   `try_convert` reports `OutOfRange` or `Inexact` instead of rounding. Rounding happens only where
-  it is asked for: `trunc`, `floor` and `ceil` round to an integer in their own direction, and every
-  other rounding takes an explicit `RoundingMode`: `round_to` converts to fewer fraction digits,
-  `quantize` rounds to a multiple of a step, `div_round` divides into any decimal type, and
-  `round_significant` rounds to a number of significant digits.
+  it is asked for: `trunc`, `floor` and `ceil` round to an integer in their own direction, `to_f64`
+  and `to_f32` round to the nearest float, and every other rounding takes an explicit
+  `RoundingMode`: `round_to` converts to fewer fraction digits, `quantize` rounds to a multiple of a
+  step, `div_round` divides into any decimal type, and `round_significant` rounds to a number of
+  significant digits.
   The modes are `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`, `HalfEven` and `Up05`.
 - The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
   references, and `Sum` adds the values or the references of an iterator. They are exact too: a
@@ -128,6 +129,10 @@ fn main() -> Result<(), ParseError> {
   and any other product is signed. `widen` converts an unsigned storage to any storage, but a
   signed storage only to a signed one. `try_convert` reports a negative value converted to an
   unsigned storage as `OutOfRange`.
+- The conversions with `f64` and `f32` are for interchange and display. `to_f64` and `to_f32` return
+  the nearest float, rounded once. `round_from_f64` reads the exact binary value of a float and
+  `from_f64_shortest` its shortest text, so that `0.1` reads as `0.1`; each rounds once with a
+  `RoundingMode`, and each has an `f32` form. `DecimalFloat` has the six for generic code.
 - Methods that depend only on the storage are `const fn`, so constants can be parsed and computed
   at compile time.
 - The constants `INTEGRAL`, `FRACTION` and `DIGITS` give the digit counts of a type, and `SIGNED`
@@ -139,8 +144,8 @@ fn main() -> Result<(), ParseError> {
   constants `ZERO`, `MAX`, `MIN` and `ONE`. The const layer, `ConstFixedDecimal` and
   `ConstDecimalOne`, adds `Copy`, the assignments `+=` and `-=` and the constants themselves,
   which a generic `const fn` can read. `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound` have the
-  methods between decimal types. Code generic over `Decimal<I, F, R>` adds the bound
-  `Decimal<I, F, R>: FixedDecimal`.
+  methods between decimal types, and `DecimalFloat` the conversions with the floats. Code generic
+  over `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`.
 - `parse` accepts ASCII text with an optional sign, point and exponent, and `_` separators as in
   Rust literals: the numeric strings of the General Decimal Arithmetic specification and every
   form that `f64` parses, such as `-1.5`, `+.5`, `5.`, `2.5E-3` and `1_000`. Infinity and NaN are
@@ -183,11 +188,12 @@ that the text showed, for code that must write a text back as it came. It parses
 of `Decimal::parse`, in a `const fn` of each storage and through `FromStr`, writes at least as many
 fraction digits as its scale, and compares, orders and hashes by value only. Every decimal trait is
 implemented for it over any decimal, so generic code takes a `Scaled` and a bare decimal alike: a
-sum takes the larger scale, an exact product the sum of the scales, and a value of `round_to` or a
-quotient the fraction digits of its target type. The operators `+`, `-`, `+=` and `-=` and `Sum`
-work as for a decimal, and their result takes the larger scale. A scale above 255 is
-`ScaleTooLarge`, which only the `parse` of `Scaled` reports. A literal of `dec!` keeps its scale
-too: `dec!(1.50)` writes `1.50`.
+sum takes the larger scale, an exact product the sum of the scales, a value of `round_to` or a
+quotient the fraction digits of its target type, and a value read from a float those of the type or,
+by its shortest text, those of the text. The operators `+`, `-`, `+=` and `-=` and `Sum` work as for
+a decimal, and their result takes the larger scale. A scale above 255 is `ScaleTooLarge`, which only
+the `parse` of `Scaled` reports. A literal of `dec!` keeps its scale too: `dec!(1.50)` writes
+`1.50`.
 
 ```rust
 use numo::{

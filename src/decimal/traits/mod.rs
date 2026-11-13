@@ -7,10 +7,12 @@
 //! concrete types reach without the trait. The const layer, [`ConstFixedDecimal`] and
 //! [`ConstDecimalOne`], adds `Copy` and the constants themselves, which are the inherent constants
 //! and which a generic `const fn` can read. Each of these traits has one implementation for each
-//! storage, which `storage_decimal!` emits next to the inherent items. [`ExactMul`], [`WidenTo`],
-//! [`ConvertTo`] and [`DivRound`], which relate two or three decimal types, mirror inherent methods
-//! of the same names, and each has a single implementation for every combination of them, with the
-//! bounds of the inherent method it calls.
+//! storage, which `storage_decimal!` emits next to the inherent items. [`DecimalFloat`], the
+//! conversions with the floats, has one implementation for each storage too, and mirrors the
+//! inherent functions of the same names. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`],
+//! which relate two or three decimal types, mirror inherent methods of the same names, and each has
+//! a single implementation for every combination of them, with the bounds of the inherent method it
+//! calls.
 //!
 //! The operators come with the layers as supertraits. [`FixedDecimal`] requires `+` and `-` on two
 //! values and `Sum` over values, and [`ConstFixedDecimal`] the assignments `+=` and `-=`, which

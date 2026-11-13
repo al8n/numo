@@ -113,12 +113,13 @@ mod tests;
 /// [`MIN`](Self::MIN) and [`ONE`](Self::ONE). The const layer, [`ConstFixedDecimal`] and
 /// [`ConstDecimalOne`], adds `Copy`, the assignments `+=` and `-=` and these constants, which a
 /// generic `const fn` can read. [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] carry the
-/// bounds of the methods between decimal types. Because the implementations are per storage, code
-/// generic over the storage adds the bound `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and
-/// `(I, F): Layout<R>` do not imply. Every type also has the constants
-/// [`INTEGRAL`](Self::INTEGRAL), [`FRACTION`](Self::FRACTION) and [`DIGITS`](Self::DIGITS), its
-/// digit counts, and [`SIGNED`](Self::SIGNED), whether its storage is signed, for generic code that
-/// derives a display scale or a step from the fraction digits of the type:
+/// bounds of the methods between decimal types. [`DecimalFloat`] has the conversions with the
+/// floats. Because the implementations are per storage, code generic over the storage adds the
+/// bound `Decimal<I, F, R>: FixedDecimal`, which `R: Storage` and `(I, F): Layout<R>` do not imply.
+/// Every type also has the constants [`INTEGRAL`](Self::INTEGRAL), [`FRACTION`](Self::FRACTION) and
+/// [`DIGITS`](Self::DIGITS), its digit counts, and [`SIGNED`](Self::SIGNED), whether its storage is
+/// signed, for generic code that derives a display scale or a step from the fraction digits of the
+/// type:
 ///
 /// ```
 /// use numo::{
@@ -203,13 +204,14 @@ mod tests;
 /// returns `None` below zero.
 ///
 /// Rounding happens only where it is asked for. [`trunc`](Self::trunc), [`floor`](Self::floor) and
-/// [`ceil`](Self::ceil) round to an integer in the direction that their names give, and every other
-/// rounding takes an explicit [`RoundingMode`]: [`round_to`](Self::round_to) converts to a type
-/// with fewer fraction digits, [`div_round`](Self::div_round) divides and rounds the quotient to a
-/// type of the caller's choice, [`quantize`](Self::quantize) rounds to a multiple of a step, such
-/// as a price to a tick size, and [`round_significant`](Self::round_significant) rounds to a number
-/// of significant digits. [`is_multiple_of`](Self::is_multiple_of) checks a value against a step
-/// without rounding it.
+/// [`ceil`](Self::ceil) round to an integer in the direction that their names give,
+/// [`to_f64`](Self::to_f64) and [`to_f32`](Self::to_f32) round to the nearest float, and every
+/// other rounding takes an explicit [`RoundingMode`]: [`round_to`](Self::round_to) converts to a
+/// type with fewer fraction digits, [`div_round`](Self::div_round) divides and rounds the quotient
+/// to a type of the caller's choice, [`quantize`](Self::quantize) rounds to a multiple of a step,
+/// such as a price to a tick size, and [`round_significant`](Self::round_significant) rounds to a
+/// number of significant digits. [`is_multiple_of`](Self::is_multiple_of) checks a value against a
+/// step without rounding it.
 ///
 /// The parts of a value are those that the methods of [`f64`] of the same names give, in the type
 /// of the value: [`trunc`](Self::trunc) is the integral part toward zero, [`fract`](Self::fract)
@@ -445,6 +447,66 @@ mod tests;
 /// // `u320::MAX` has 97 digits, more than `TokenAmount` holds.
 /// assert_eq!(TokenAmount::from_repr(u320::from_le_bytes([0xff; 40])), None);
 /// # Ok::<(), numo::ParseError>(())
+/// ```
+///
+/// # Floats
+///
+/// The conversions with `f64` and `f32` are for interchange and display, not for arithmetic that
+/// must be exact: a binary float holds almost no decimal fraction, so a value that passes through
+/// one is rounded on the way.
+///
+/// [`to_f64`](Self::to_f64) and [`to_f32`](Self::to_f32) return the float nearest to the value,
+/// ties to even, rounded once: the float that parsing the text of the decimal gives. They take no
+/// rounding mode: a float has one rule, the nearest float with ties to even.
+///
+/// A float is read in one of two ways, and either reading is then rounded once, with a
+/// [`RoundingMode`], to the fraction digits of the type. [`round_from_f64`](Self::round_from_f64)
+/// and [`round_from_f32`](Self::round_from_f32) read the exact binary value of the float.
+/// [`from_f64_shortest`](Self::from_f64_shortest) and
+/// [`from_f32_shortest`](Self::from_f32_shortest) read the shortest decimal text that parses back
+/// to the float, the text that `Display` of the float writes. The two differ where a reader of
+/// decimal digits looks: `2.675_f64` is below 2.675, so to two fraction digits with `HalfUp` its
+/// binary value rounds to `2.67` and its text to `2.68`. The shortest text of an `f32` is its own.
+///
+/// NaN and the infinities are errors, and `-0.0` is zero. A decimal is always within the range of
+/// `f64`; `to_f32` gives an infinity for a magnitude that rounds beyond the largest `f32`, and a
+/// subnormal float or a zero for one that rounds below the smallest normal one.
+///
+/// ```
+/// use numo::{
+///   Decimal, FromFloatError, RoundingMode,
+///   typenum::{U1, U2, U10, U26, U28},
+/// };
+///
+/// type Price = Decimal<U10, U2>;
+/// type Fine = Decimal<U10, U28>;
+///
+/// let price: Price = "64250.5".parse()?;
+/// assert_eq!(price.to_f64(), 64250.5);
+///
+/// // The exact binary value of `0.1_f64`, and its shortest text.
+/// let exact = Fine::round_from_f64(0.1, RoundingMode::HalfEven)?;
+/// assert_eq!(exact.to_string(), "0.1000000000000000055511151231");
+/// let text = Fine::from_f64_shortest(0.1 + 0.2, RoundingMode::HalfEven)?;
+/// assert_eq!(text.to_string(), "0.30000000000000004");
+///
+/// // `2.675_f64` is below 2.675, so the two readings round apart.
+/// assert_eq!(Price::round_from_f64(2.675, RoundingMode::HalfUp)?.to_string(), "2.67");
+/// assert_eq!(Price::from_f64_shortest(2.675, RoundingMode::HalfUp)?.to_string(), "2.68");
+///
+/// // The shortest text of an `f32` is its own.
+/// assert_eq!(Fine::from_f32_shortest(0.1, RoundingMode::HalfEven)?.to_string(), "0.1");
+/// let widened = Fine::from_f64_shortest(f64::from(0.1_f32), RoundingMode::HalfEven)?;
+/// assert_eq!(widened.to_string(), "0.10000000149011612");
+///
+/// // `to_f32` rounds once: this value is just above the tie of two `f32`s.
+/// let above: Decimal<U1, U26> = "1.00000005960464477539062501".parse()?;
+/// assert_eq!(above.to_f32(), 1.0 + f32::EPSILON);
+/// assert_eq!(above.to_f64() as f32, 1.0);
+///
+/// assert_eq!(Price::round_from_f64(f64::NAN, RoundingMode::Down), Err(FromFloatError::Nan));
+/// assert_eq!(Price::round_from_f64(-0.0, RoundingMode::Down), Ok(Price::ZERO));
+/// # Ok::<(), Box<dyn core::error::Error>>(())
 /// ```
 #[repr(transparent)]
 pub struct Decimal<Integral, Fraction, Repr = <Sum<Integral, Fraction> as DigitCount>::Signed> {

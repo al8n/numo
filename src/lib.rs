@@ -35,17 +35,18 @@
 //! they panic, in every build, and [`saturating_add`](Decimal::saturating_add) and
 //! [`saturating_sub`](Decimal::saturating_sub) return the limit that the result passes. Rounding
 //! is asked for by name: [`trunc`](Decimal::trunc), [`floor`](Decimal::floor) and
-//! [`ceil`](Decimal::ceil) round to an integer in their own direction, and the other roundings take
-//! an explicit [`RoundingMode`]: [`round_to`](Decimal::round_to) converts to fewer fraction digits,
+//! [`ceil`](Decimal::ceil) round to an integer in their own direction, [`to_f64`](Decimal::to_f64)
+//! and [`to_f32`](Decimal::to_f32) round to the nearest float, and the other roundings take an
+//! explicit [`RoundingMode`]: [`round_to`](Decimal::round_to) converts to fewer fraction digits,
 //! [`quantize`](Decimal::quantize) rounds to a multiple of a step,
 //! [`div_round`](Decimal::div_round) divides into any decimal type and
 //! [`round_significant`](Decimal::round_significant) rounds to a number of significant digits,
-//! while [`is_multiple_of`](Decimal::is_multiple_of) checks a value against a step without
-//! rounding it. A value also gives its parts, such as [`fract`](Decimal::fract) and
+//! while [`is_multiple_of`](Decimal::is_multiple_of) checks a value against a step without rounding
+//! it. A value also gives its parts, such as [`fract`](Decimal::fract) and
 //! [`is_integer`](Decimal::is_integer), and its digits, such as
 //! [`significant_digits`](Decimal::significant_digits). Parsing accepts decimal and exponent
-//! notation with `_` separators, including every form that `f64` parses, and rejects infinity,
-//! NaN, a negative number for an unsigned storage and digits that do not fit; formatting writes the
+//! notation with `_` separators, including every form that `f64` parses, and rejects infinity, NaN,
+//! a negative number for an unsigned storage and digits that do not fit; formatting writes the
 //! shortest exact text, and engineering notation under `{:#e}`. [`dec!`] writes a value in the
 //! source as a literal, which `parse` reads when the crate is compiled, so a literal that the type
 //! does not hold fails to compile. See [`Decimal`] for the details.
@@ -59,9 +60,10 @@
 //! but not `Copy`; its functions return the inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The
 //! const layer, [`ConstFixedDecimal`] and [`ConstDecimalOne`], adds `Copy`, the assignments `+=`
 //! and `-=` and these constants, which a generic `const fn` can read. [`ExactMul`], [`WidenTo`],
-//! [`ConvertTo`] and [`DivRound`] have the methods between decimal types. Code generic over the
-//! storage adds the bound `Decimal<I, F, R>: FixedDecimal`. The trait methods are not `const`, so
-//! constant contexts call the inherent `const fn`s.
+//! [`ConvertTo`] and [`DivRound`] have the methods between decimal types, and [`DecimalFloat`] the
+//! conversions with the floats. Code generic over the storage adds the bound
+//! `Decimal<I, F, R>: FixedDecimal`. The trait methods are not `const`, so constant contexts call
+//! the inherent `const fn`s.
 //!
 //! # The scale of a text
 //!
