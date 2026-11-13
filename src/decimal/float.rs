@@ -58,10 +58,10 @@ pub(super) const fn float_bits<const N: usize>(
   let (power, _) = b64::overflowing_pow(&b64::from_u64(5), fraction);
   let power_length = bit_length(&power);
   // The magnitude is shifted so that the quotient has at least `precision + 2` bits: the kept
-  // bits, the guard and one more. A long magnitude needs no shift, so the lengths are compared
-  // before one is subtracted from the other.
+  // bits, the guard and one more. A magnitude of `wanted` bits or more needs no shift, so the
+  // shift saturates at zero.
   let wanted = power_length + precision + 2;
-  let shift = if wanted > length { wanted - length } else { 0 };
+  let shift = wanted.saturating_sub(length);
   // At most `max(length, 358 + precision + 2) <= 512` bits, and a shift that passed the limbs
   // would cut the magnitude without a word.
   debug_assert!(
