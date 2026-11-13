@@ -6,21 +6,28 @@
 //! calls of the allocator around one operation, on the thread of its test, and compares them with
 //! what the heap storages promise: an operation builds only the integers that it returns, none
 //! when it returns `None` or an error, and one that takes its integer by value stores its result
-//! in that allocation, where the storage holds its value in place, as a `Box` does. A shared
-//! storage never writes a value that it holds, so every result of one is a new allocation, and an
-//! integer that an operation takes gives up its share, which frees its allocation only where no
-//! other owner holds it. The casts between two types are the exception for every storage: they
-//! build their target from the words of their source.
+//! in that allocation, where the storage holds its value in place, as a `Box` does. The casts of
+//! the cast traits, such as `checked_cast` and `widen`, are the exception there: they build their
+//! target from the words of their source. A shared storage never writes a value that it holds: a
+//! result is a new allocation, unless it is the allocation of an operand, which it then shares or
+//! takes over, as the absolute value of a value that is not negative and the conversions into a
+//! non-zero integer do, and an integer that an operation takes gives up its share unless the
+//! result is its allocation, which frees the allocation only where no other owner holds it.
 
-#![cfg(any(feature = "std", feature = "alloc"))]
+#![cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
 
-#[cfg(target_has_atomic = "ptr")]
+#[cfg(any(feature = "std", feature = "alloc"))]
+use std::rc::Rc;
+#[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
 use std::sync::Arc;
 use std::{
   alloc::{GlobalAlloc, Layout, System},
   cell::Cell,
   hint::black_box,
-  rc::Rc,
   thread::LocalKey,
 };
 
@@ -128,398 +135,428 @@ macro_rules! allocates {
   }};
 }
 
-/// An unsigned integer of 256 bits in a box of four limbs.
-type Boxed = Uint<U256, Box<[u64; 4]>>;
-
-/// The signed integer of the same width and storage.
-type BoxedInt = Int<U256, Box<[u64; 4]>>;
-
-/// The non-zero integer over `Boxed`.
-type BoxedNonZero = NonZeroUint<U256, Box<[u64; 4]>>;
-
-/// The non-zero integer over `BoxedInt`.
-type BoxedNonZeroInt = NonZeroInt<U256, Box<[u64; 4]>>;
-
 /// The inline twin of `Boxed`.
 type Inline = Uint<U256, [u64; 4]>;
-
-/// The boxed unsigned integer of `value`, observed.
-fn boxed(value: u64) -> Boxed {
-  black_box(Boxed::from(value))
-}
-
-/// The boxed signed integer of `value`, observed.
-fn boxed_int(value: i64) -> BoxedInt {
-  black_box(BoxedInt::from(value))
-}
-
-/// Two boxed integers, a larger and a smaller one.
-fn pair() -> (Boxed, Boxed) {
-  (boxed(1_000_000), boxed(7))
-}
-
-/// A boxed non-zero integer.
-fn divisor() -> BoxedNonZero {
-  black_box(BoxedNonZero::new(boxed(3)).expect("not zero"))
-}
-
-/// The largest boxed unsigned integer, observed.
-fn largest() -> Boxed {
-  black_box(<Boxed as FixedInteger>::max_value())
-}
-
-/// The smallest boxed signed integer, observed.
-fn smallest() -> BoxedInt {
-  black_box(<BoxedInt as FixedInteger>::min_value())
-}
 
 /// The address of the limbs of `value`: that of its allocation.
 fn address<T: ArrayInteger>(value: &T) -> *const T::Array {
   std::ptr::from_ref(value.as_limbs())
 }
 
-/// An operation on references that returns an integer allocates that integer, and nothing else.
-#[test]
-fn operations_on_references_allocate_their_result() {
-  let (a, b) = pair();
-  allocates!(1, 0; &a + &b);
-  allocates!(1, 0; &a - &b);
-  allocates!(1, 0; &a * &b);
-  allocates!(1, 0; &a / &b);
-  allocates!(1, 0; &a % &b);
-  allocates!(1, 0; &a & &b);
-  allocates!(1, 0; &a | &b);
-  allocates!(1, 0; &a ^ &b);
-  allocates!(1, 0; !&a);
-  allocates!(1, 0; &a << 7u32);
-  allocates!(1, 0; &a >> 7u32);
-  allocates!(1, 0; a.isqrt());
-  allocates!(1, 0; a.wrapping_pow(3));
-  allocates!(1, 0; a.checked_add(&b));
-  allocates!(1, 0; a.wrapping_mul(&b));
-  let divisor = divisor();
-  allocates!(1, 0; &a / &divisor);
-  allocates!(1, 0; &a % &divisor);
-  let negative = boxed_int(-1_000_000);
-  allocates!(1, 0; -&negative);
-}
+/// The checks of the storage that holds its value in place, `Box<[u64; 4]>` at 256 bits.
+#[cfg(any(feature = "std", feature = "alloc"))]
+mod boxed {
+  use super::*;
 
-/// An operator with an owned operand stores its result in the allocation of that operand, the left
-/// one of two, and frees the other operand that it owns.
-#[test]
-fn operators_with_an_owned_operand_reuse_its_allocation() {
-  let (a, b) = pair();
-  allocates!(0, 1; a + b);
-  let (a, b) = pair();
-  allocates!(0, 0; a + &b);
-  let (a, b) = pair();
-  allocates!(0, 0; &a - b);
-  let (a, b) = pair();
-  allocates!(0, 1; a * b);
-  let (a, b) = pair();
-  allocates!(0, 1; a / b);
-  let (a, b) = pair();
-  allocates!(0, 0; &a % b);
-  let (a, b) = pair();
-  allocates!(0, 0; a ^ &b);
-  let (a, _) = pair();
-  allocates!(0, 0; !a);
-  let (a, _) = pair();
-  allocates!(0, 0; a << 3u32);
-  let (a, _) = pair();
-  allocates!(0, 0; a >> 3u32);
-  let negative = boxed_int(-1_000_000);
-  allocates!(0, 0; -negative);
+  /// An unsigned integer of 256 bits in a box of four limbs.
+  type Boxed = Uint<U256, Box<[u64; 4]>>;
 
-  // By a non-zero divisor: the dividend that the operator owns holds the result, or else the
-  // divisor that it owns.
-  let (a, _) = pair();
-  let by = divisor();
-  allocates!(0, 1; a / by);
-  let (a, _) = pair();
-  let by = divisor();
-  allocates!(0, 0; a % &by);
-  let (a, _) = pair();
-  let by = divisor();
-  allocates!(0, 0; &a / by);
-}
+  /// The signed integer of the same width and storage.
+  type BoxedInt = Int<U256, Box<[u64; 4]>>;
 
-/// A compound assignment, `set_bit` and `clone_from` store in the allocation of their target. An
-/// operand that the assignment owns is freed.
-#[test]
-fn assignments_store_in_their_target() {
-  let (mut a, b) = pair();
-  allocates!(0, 0; a += &b);
-  allocates!(0, 0; a -= &b);
-  allocates!(0, 0; a *= &b);
-  allocates!(0, 0; a /= &b);
-  allocates!(0, 0; a %= &b);
-  allocates!(0, 0; a &= &b);
-  allocates!(0, 0; a |= &b);
-  allocates!(0, 0; a ^= &b);
-  allocates!(0, 0; a <<= 9u32);
-  allocates!(0, 0; a >>= 2u32);
-  allocates!(0, 0; a.set_bit(100, true));
-  allocates!(0, 0; a.clone_from(&b));
-  let by = divisor();
-  allocates!(0, 0; a /= &by);
-  allocates!(0, 0; a %= &by);
-  let (_, owned) = pair();
-  allocates!(0, 1; a += owned);
-  let owned = divisor();
-  allocates!(0, 1; a /= owned);
-}
+  /// The non-zero integer over `Boxed`.
+  type BoxedNonZero = NonZeroUint<U256, Box<[u64; 4]>>;
 
-/// `Sum` and `Product` compute on the stack and store once: of values in the allocation of the
-/// first item, with the other items freed, and of references, or of no item, in a new allocation.
-#[test]
-fn folds_store_once() {
-  let values = [boxed(3), boxed(5), boxed(7)];
-  allocates!(1, 0; values.iter().sum::<Boxed>());
-  allocates!(1, 0; values.iter().product::<Boxed>());
-  let first = address(&values[0]);
-  let sum = allocates!(0, 2; values.into_iter().sum::<Boxed>());
-  assert_eq!(address(&sum), first);
+  /// The non-zero integer over `BoxedInt`.
+  type BoxedNonZeroInt = NonZeroInt<U256, Box<[u64; 4]>>;
 
-  let values = [boxed(3), boxed(5), boxed(7)];
-  let first = address(&values[0]);
-  let product = allocates!(0, 2; values.into_iter().product::<Boxed>());
-  assert_eq!(address(&product), first);
+  /// The boxed unsigned integer of `value`, observed.
+  fn boxed(value: u64) -> Boxed {
+    black_box(Boxed::from(value))
+  }
 
-  allocates!(1, 0; std::iter::empty::<Boxed>().sum::<Boxed>());
-  allocates!(1, 0; std::iter::empty::<Boxed>().product::<Boxed>());
-  allocates!(1, 0; std::iter::empty::<&Boxed>().sum::<Boxed>());
-  allocates!(1, 0; std::iter::empty::<&Boxed>().product::<Boxed>());
-}
+  /// The boxed signed integer of `value`, observed.
+  fn boxed_int(value: i64) -> BoxedInt {
+    black_box(BoxedInt::from(value))
+  }
 
-/// Each way of building an integer allocates once: zero in zeroed memory, and every other value
-/// from its array. `clone` allocates the copy.
-#[test]
-fn construction_allocates_once() {
-  let zeroed = ZEROED.get();
-  allocates!(1, 0; <Boxed as FixedInteger>::zero());
-  allocates!(1, 0; Boxed::default());
-  assert_eq!(
-    ZEROED.get().wrapping_sub(zeroed),
-    2,
-    "zero takes zeroed memory"
-  );
-  allocates!(1, 0; <Boxed as IntegerOne>::one());
-  allocates!(1, 0; <Boxed as FixedInteger>::min_value());
-  allocates!(1, 0; <Boxed as FixedInteger>::max_value());
-  allocates!(1, 0; <BoxedInt as FixedInteger>::min_value());
-  allocates!(1, 0; Boxed::from(5u64));
-  allocates!(1, 0; Boxed::checked_cast_from(5u64));
-  let parsed = allocates!(1, 0; "340282366920938463463374607431768211456".parse::<Boxed>());
-  assert!(parsed.is_ok());
-  let inline = black_box(Inline::from(5u64));
-  allocates!(1, 0; Boxed::widen_from(&inline));
-  let (a, _) = pair();
-  allocates!(1, 0; a.clone());
-}
+  /// Two boxed integers, a larger and a smaller one.
+  fn pair() -> (Boxed, Boxed) {
+    (boxed(1_000_000), boxed(7))
+  }
 
-/// The pointer moves into an integer and out of it without a copy, an array of limbs is put in one
-/// allocation, and the limbs of an integer that is taken leave its allocation, which is freed.
-#[test]
-fn pointers_move_and_limbs_are_stored_once() {
-  let pointer = black_box(Box::new([1u64, 2, 3, 4]));
-  let limbs = std::ptr::from_ref(&*pointer);
-  let integer = allocates!(0, 0; Boxed::from(pointer));
-  assert_eq!(address(&integer), limbs);
-  let pointer = allocates!(0, 0; Box::<[u64; 4]>::from(integer));
-  assert_eq!(std::ptr::from_ref(&*pointer), limbs);
-  allocates!(1, 0; Boxed::from_limbs(*pointer));
-  let integer = allocates!(1, 0; Boxed::checked_from_limbs(*pointer)).expect("in range");
-  allocates!(0, 1; integer.into_limbs());
-}
+  /// A boxed non-zero integer.
+  fn divisor() -> BoxedNonZero {
+    black_box(BoxedNonZero::new(boxed(3)).expect("not zero"))
+  }
 
-/// What reads a value without returning an integer in a heap storage does not allocate: the casts
-/// into an inline integer, the comparisons and the queries of the bits.
-#[test]
-fn reads_do_not_allocate() {
-  let (a, b) = pair();
-  allocates!(0, 0; u64::checked_cast_from(&a));
-  allocates!(0, 0; Inline::widen_from(&a));
-  allocates!(0, 0; a == b);
-  allocates!(0, 0; a < b);
-  allocates!(0, 0; a.cmp(&b));
-  allocates!(0, 0; a.count_ones());
-  allocates!(0, 0; a.leading_zeros());
-  allocates!(0, 0; a.bit(3));
-}
+  /// The largest boxed unsigned integer, observed.
+  fn largest() -> Boxed {
+    black_box(<Boxed as FixedInteger>::max_value())
+  }
 
-/// The text of a boxed integer allocates what the text of its inline twin does: the `String`.
-#[test]
-fn text_allocates_as_for_the_inline_twin() {
-  let (a, _) = pair();
-  let twin = black_box(Inline::from(1_000_000u64));
-  let (inline, expected) = counted(|| twin.to_string());
-  let (boxed, counts) = counted(|| a.to_string());
-  assert_eq!((boxed, counts), (inline, expected));
-  let (inline, expected) = counted(|| format!("{twin:x}"));
-  let (boxed, counts) = counted(|| format!("{a:x}"));
-  assert_eq!((boxed, counts), (inline, expected));
-}
+  /// The smallest boxed signed integer, observed.
+  fn smallest() -> BoxedInt {
+    black_box(<BoxedInt as FixedInteger>::min_value())
+  }
 
-/// The pointer is its own non-zero storage: the conversions between an integer and its non-zero
-/// integer and the casts between the signs move it. A row that returns no integer lends it, and
-/// one that returns an integer allocates that integer.
-#[test]
-fn nonzero_integers_move_and_lend_their_pointer() {
-  let (a, b) = pair();
-  let nonzero = allocates!(0, 0; BoxedNonZero::new(a)).expect("not zero");
-  let integer = allocates!(0, 0; nonzero.get());
-  let nonzero = allocates!(0, 0; BoxedNonZero::try_from(integer)).expect("not zero");
-  let signed = allocates!(0, 0; nonzero.cast_signed());
-  let nonzero = allocates!(0, 0; signed.cast_unsigned());
-  allocates!(0, 0; nonzero.leading_zeros());
-  allocates!(0, 0; nonzero.count_ones());
-  let other = BoxedNonZero::new(b).expect("not zero");
-  allocates!(1, 0; nonzero.checked_mul(&other));
-  let negative = black_box(BoxedNonZeroInt::new(boxed_int(-5)).expect("not zero"));
-  allocates!(1, 0; negative.unsigned_abs());
-  allocates!(1, 0; <BoxedNonZero as NonZeroLimits>::min_value());
-  allocates!(1, 0; <BoxedNonZero as NonZeroLimits>::max_value());
-  allocates!(1, 0; <BoxedNonZeroInt as NonZeroLimits>::min_value());
-}
+  /// An operation on references that returns an integer allocates that integer, and nothing else.
+  #[test]
+  fn operations_on_references_allocate_their_result() {
+    let (a, b) = pair();
+    allocates!(1, 0; &a + &b);
+    allocates!(1, 0; &a - &b);
+    allocates!(1, 0; &a * &b);
+    allocates!(1, 0; &a / &b);
+    allocates!(1, 0; &a % &b);
+    allocates!(1, 0; &a & &b);
+    allocates!(1, 0; &a | &b);
+    allocates!(1, 0; &a ^ &b);
+    allocates!(1, 0; !&a);
+    allocates!(1, 0; &a << 7u32);
+    allocates!(1, 0; &a >> 7u32);
+    allocates!(1, 0; a.isqrt());
+    allocates!(1, 0; a.wrapping_pow(3));
+    allocates!(1, 0; a.checked_add(&b));
+    allocates!(1, 0; a.wrapping_mul(&b));
+    let divisor = divisor();
+    allocates!(1, 0; &a / &divisor);
+    allocates!(1, 0; &a % &divisor);
+    let negative = boxed_int(-1_000_000);
+    allocates!(1, 0; -&negative);
+  }
 
-/// A checked method that returns `None` builds no integer, and one that returns `Some` builds that
-/// one.
-#[test]
-fn checked_methods_build_nothing_for_none() {
-  let (a, b) = pair();
-  let most = largest();
-  assert!(allocates!(0, 0; most.checked_add(&b)).is_none());
-  assert!(allocates!(0, 0; b.checked_sub(&a)).is_none());
-  assert!(allocates!(0, 0; most.checked_mul(&a)).is_none());
-  assert!(allocates!(0, 0; a.checked_neg()).is_none());
-  assert!(allocates!(0, 0; most.checked_pow(2)).is_none());
-  assert!(allocates!(0, 0; a.checked_shl(256)).is_none());
-  assert!(allocates!(0, 0; a.checked_shr(256)).is_none());
-  assert!(allocates!(1, 0; a.checked_sub(&b)).is_some());
-  let least = smallest();
-  assert!(allocates!(0, 0; least.checked_abs()).is_none());
-  assert!(allocates!(0, 0; least.checked_neg()).is_none());
-}
+  /// An operator with an owned operand stores its result in the allocation of that operand, the
+  /// left one of two, and frees the other operand that it owns.
+  #[test]
+  fn operators_with_an_owned_operand_reuse_its_allocation() {
+    let (a, b) = pair();
+    allocates!(0, 1; a + b);
+    let (a, b) = pair();
+    allocates!(0, 0; a + &b);
+    let (a, b) = pair();
+    allocates!(0, 0; &a - b);
+    let (a, b) = pair();
+    allocates!(0, 1; a * b);
+    let (a, b) = pair();
+    allocates!(0, 1; a / b);
+    let (a, b) = pair();
+    allocates!(0, 0; &a % b);
+    let (a, b) = pair();
+    allocates!(0, 0; a ^ &b);
+    let (a, _) = pair();
+    allocates!(0, 0; !a);
+    let (a, _) = pair();
+    allocates!(0, 0; a << 3u32);
+    let (a, _) = pair();
+    allocates!(0, 0; a >> 3u32);
+    let negative = boxed_int(-1_000_000);
+    allocates!(0, 0; -negative);
 
-/// A saturating method that saturates builds its bound, and no wrapped result beside it.
-#[test]
-fn saturating_methods_build_their_bound_alone() {
-  let (a, b) = pair();
-  let most = largest();
-  allocates!(1, 0; most.saturating_add(&b));
-  allocates!(1, 0; b.saturating_sub(&a));
-  allocates!(1, 0; most.saturating_mul(&a));
-  allocates!(1, 0; most.saturating_pow(2));
-  let least = smallest();
-  let one = boxed_int(1);
-  let minus_one = boxed_int(-1);
-  allocates!(1, 0; least.saturating_add(&minus_one));
-  allocates!(1, 0; least.saturating_sub(&one));
-  allocates!(1, 0; least.saturating_mul(&minus_one));
-  allocates!(1, 0; least.saturating_div(&minus_one));
-  allocates!(1, 0; least.saturating_pow(3));
-  allocates!(1, 0; least.saturating_neg());
-  allocates!(1, 0; least.saturating_abs());
-}
+    // By a non-zero divisor: the dividend that the operator owns holds the result, or else the
+    // divisor that it owns.
+    let (a, _) = pair();
+    let by = divisor();
+    allocates!(0, 1; a / by);
+    let (a, _) = pair();
+    let by = divisor();
+    allocates!(0, 0; a % &by);
+    let (a, _) = pair();
+    let by = divisor();
+    allocates!(0, 0; &a / by);
+  }
 
-/// The carrying addition and the borrowing subtraction build their result alone, also with a carry
-/// or a borrow to take in, whatever flag they return.
-#[test]
-fn carries_and_borrows_build_one_integer() {
-  let (a, b) = pair();
-  let most = largest();
-  let (_, carry) = allocates!(1, 0; a.carrying_add(&b, true));
-  assert!(!carry);
-  let (_, carry) = allocates!(1, 0; most.carrying_add(&b, true));
-  assert!(carry);
-  let (_, borrow) = allocates!(1, 0; a.borrowing_sub(&b, true));
-  assert!(!borrow);
-  let (_, borrow) = allocates!(1, 0; b.borrowing_sub(&a, true));
-  assert!(borrow);
-}
+  /// A compound assignment, `set_bit` and `clone_from` store in the allocation of their target. An
+  /// operand that the assignment owns is freed.
+  #[test]
+  fn assignments_store_in_their_target() {
+    let (mut a, b) = pair();
+    allocates!(0, 0; a += &b);
+    allocates!(0, 0; a -= &b);
+    allocates!(0, 0; a *= &b);
+    allocates!(0, 0; a /= &b);
+    allocates!(0, 0; a %= &b);
+    allocates!(0, 0; a &= &b);
+    allocates!(0, 0; a |= &b);
+    allocates!(0, 0; a ^= &b);
+    allocates!(0, 0; a <<= 9u32);
+    allocates!(0, 0; a >>= 2u32);
+    allocates!(0, 0; a.set_bit(100, true));
+    allocates!(0, 0; a.clone_from(&b));
+    let by = divisor();
+    allocates!(0, 0; a /= &by);
+    allocates!(0, 0; a %= &by);
+    let (_, owned) = pair();
+    allocates!(0, 1; a += owned);
+    let owned = divisor();
+    allocates!(0, 1; a /= owned);
+  }
 
-/// The exact division builds its quotient, and nothing for a division that leaves a remainder.
-#[test]
-fn exact_division_builds_only_a_quotient() {
-  let (a, b) = pair();
-  assert!(allocates!(0, 0; a.div_exact(&b)).is_none());
-  let by = boxed(1_000);
-  assert!(allocates!(1, 0; a.div_exact(&by)).is_some());
-}
+  /// `Sum` and `Product` compute on the stack and store once: of values in the allocation of the
+  /// first item, with the other items freed, and of references, or of no item, in a new allocation.
+  #[test]
+  fn folds_store_once() {
+    let values = [boxed(3), boxed(5), boxed(7)];
+    allocates!(1, 0; values.iter().sum::<Boxed>());
+    allocates!(1, 0; values.iter().product::<Boxed>());
+    let first = address(&values[0]);
+    let sum = allocates!(0, 2; values.into_iter().sum::<Boxed>());
+    assert_eq!(address(&sum), first);
 
-/// The casts between the signs, the saturating ones that change the value too, and the
-/// conversions from a byte order keep the allocation of the integer that they take.
-#[test]
-fn casts_and_byte_orders_keep_the_allocation() {
-  let (a, b) = pair();
-  let limbs = address(&a);
-  let signed = allocates!(0, 0; a.cast_signed());
-  assert_eq!(address(&signed), limbs);
+    let values = [boxed(3), boxed(5), boxed(7)];
+    let first = address(&values[0]);
+    let product = allocates!(0, 2; values.into_iter().product::<Boxed>());
+    assert_eq!(address(&product), first);
 
-  // The largest unsigned value is above every signed one, and saturates.
-  let most = largest();
-  let limbs = address(&most);
-  let signed = allocates!(0, 0; most.saturating_cast_signed());
-  assert_eq!(address(&signed), limbs);
-  assert_eq!(signed, <BoxedInt as FixedInteger>::max_value());
+    allocates!(1, 0; std::iter::empty::<Boxed>().sum::<Boxed>());
+    allocates!(1, 0; std::iter::empty::<Boxed>().product::<Boxed>());
+    allocates!(1, 0; std::iter::empty::<&Boxed>().sum::<Boxed>());
+    allocates!(1, 0; std::iter::empty::<&Boxed>().product::<Boxed>());
+  }
 
-  // A negative value saturates to zero.
-  let negative = boxed_int(-5);
-  let limbs = address(&negative);
-  let unsigned = allocates!(0, 0; negative.saturating_cast_unsigned());
-  assert_eq!(address(&unsigned), limbs);
-  assert_eq!(unsigned, <Boxed as FixedInteger>::zero());
+  /// Each way of building an integer allocates once: zero in zeroed memory, and every other value
+  /// from its array. `clone` allocates the copy.
+  #[test]
+  fn construction_allocates_once() {
+    let zeroed = ZEROED.get();
+    allocates!(1, 0; <Boxed as FixedInteger>::zero());
+    allocates!(1, 0; Boxed::default());
+    assert_eq!(
+      ZEROED.get().wrapping_sub(zeroed),
+      2,
+      "zero takes zeroed memory"
+    );
+    allocates!(1, 0; <Boxed as IntegerOne>::one());
+    allocates!(1, 0; <Boxed as FixedInteger>::min_value());
+    allocates!(1, 0; <Boxed as FixedInteger>::max_value());
+    allocates!(1, 0; <BoxedInt as FixedInteger>::min_value());
+    allocates!(1, 0; Boxed::from(5u64));
+    allocates!(1, 0; Boxed::checked_cast_from(5u64));
+    let parsed = allocates!(1, 0; "340282366920938463463374607431768211456".parse::<Boxed>());
+    assert!(parsed.is_ok());
+    let inline = black_box(Inline::from(5u64));
+    allocates!(1, 0; Boxed::widen_from(&inline));
+    let (a, _) = pair();
+    allocates!(1, 0; a.clone());
+  }
 
-  // One of the two reverses the bytes, on every target.
-  let limbs = address(&b);
-  let b = allocates!(0, 0; <Boxed as IntegerByteOrder>::from_be(b));
-  assert_eq!(address(&b), limbs);
-  let b = allocates!(0, 0; <Boxed as IntegerByteOrder>::from_le(b));
-  assert_eq!(address(&b), limbs);
-}
+  /// The pointer moves into an integer and out of it without a copy, an array of limbs is put in
+  /// one allocation, and the limbs of an integer that is taken leave its allocation, which is
+  /// freed.
+  #[test]
+  fn pointers_move_and_limbs_are_stored_once() {
+    let pointer = black_box(Box::new([1u64, 2, 3, 4]));
+    let limbs = std::ptr::from_ref(&*pointer);
+    let integer = allocates!(0, 0; Boxed::from(pointer));
+    assert_eq!(address(&integer), limbs);
+    let pointer = allocates!(0, 0; Box::<[u64; 4]>::from(integer));
+    assert_eq!(std::ptr::from_ref(&*pointer), limbs);
+    allocates!(1, 0; Boxed::from_limbs(*pointer));
+    let integer = allocates!(1, 0; Boxed::checked_from_limbs(*pointer)).expect("in range");
+    allocates!(0, 1; integer.into_limbs());
+  }
 
-/// The rows of the non-zero integers build what they return: nothing for `None`, and the bound
-/// alone where they saturate. `|=` builds its result and frees the value that it replaces.
-#[test]
-fn nonzero_methods_build_only_what_they_return() {
-  let least = black_box(<BoxedNonZeroInt as NonZeroLimits>::min_value());
-  assert!(allocates!(0, 0; least.checked_neg()).is_none());
-  allocates!(1, 0; least.saturating_neg());
-  assert!(allocates!(0, 0; least.checked_abs()).is_none());
-  allocates!(1, 0; least.saturating_abs());
-  allocates!(1, 0; least.unsigned_abs());
+  /// What reads a value without returning an integer in a heap storage does not allocate: the casts
+  /// into an inline integer, the comparisons and the queries of the bits.
+  #[test]
+  fn reads_do_not_allocate() {
+    let (a, b) = pair();
+    allocates!(0, 0; u64::checked_cast_from(&a));
+    allocates!(0, 0; Inline::widen_from(&a));
+    allocates!(0, 0; a == b);
+    allocates!(0, 0; a < b);
+    allocates!(0, 0; a.cmp(&b));
+    allocates!(0, 0; a.count_ones());
+    allocates!(0, 0; a.leading_zeros());
+    allocates!(0, 0; a.bit(3));
+  }
 
-  let most = black_box(<BoxedNonZero as NonZeroLimits>::max_value());
-  let one = boxed(1);
-  assert!(allocates!(0, 0; most.checked_mul(&most)).is_none());
-  allocates!(1, 0; most.saturating_mul(&most));
-  assert!(allocates!(0, 0; most.checked_pow(2)).is_none());
-  allocates!(1, 0; most.saturating_pow(2));
-  assert!(allocates!(0, 0; most.checked_add(&one)).is_none());
-  allocates!(1, 0; most.saturating_add(&one));
+  /// The text of a boxed integer allocates what the text of its inline twin does: the `String`.
+  #[test]
+  fn the_text_allocates_as_for_the_inline_twin() {
+    let (a, _) = pair();
+    let twin = black_box(Inline::from(1_000_000u64));
+    let (inline, expected) = counted(|| twin.to_string());
+    let (boxed, counts) = counted(|| a.to_string());
+    assert_eq!((boxed, counts), (inline, expected));
+    let (inline, expected) = counted(|| format!("{twin:x}"));
+    let (boxed, counts) = counted(|| format!("{a:x}"));
+    assert_eq!((boxed, counts), (inline, expected));
+  }
 
-  let mut target = divisor();
-  let other = divisor();
-  allocates!(1, 1; target |= &other);
-}
+  /// The pointer is its own non-zero storage: the conversions between an integer and its non-zero
+  /// integer and the casts between the signs move it. A row that returns no integer lends it, and
+  /// one that returns an integer allocates that integer.
+  #[test]
+  fn nonzero_integers_move_and_lend_their_pointer() {
+    let (a, b) = pair();
+    let nonzero = allocates!(0, 0; BoxedNonZero::new(a)).expect("not zero");
+    let integer = allocates!(0, 0; nonzero.get());
+    let nonzero = allocates!(0, 0; BoxedNonZero::try_from(integer)).expect("not zero");
+    let signed = allocates!(0, 0; nonzero.cast_signed());
+    let nonzero = allocates!(0, 0; signed.cast_unsigned());
+    allocates!(0, 0; nonzero.leading_zeros());
+    allocates!(0, 0; nonzero.count_ones());
+    let other = BoxedNonZero::new(b).expect("not zero");
+    allocates!(1, 0; nonzero.checked_mul(&other));
+    let negative = black_box(BoxedNonZeroInt::new(boxed_int(-5)).expect("not zero"));
+    allocates!(1, 0; negative.unsigned_abs());
+    allocates!(1, 0; <BoxedNonZero as NonZeroLimits>::min_value());
+    allocates!(1, 0; <BoxedNonZero as NonZeroLimits>::max_value());
+    allocates!(1, 0; <BoxedNonZeroInt as NonZeroLimits>::min_value());
+  }
 
-/// A conversion that fails on its last check builds no integer: the text of zero and the cast of
-/// zero into a non-zero integer, and the exact conversion of a float with a fraction.
-#[test]
-fn errors_build_nothing() {
-  assert!(allocates!(0, 0; "0".parse::<BoxedNonZero>()).is_err());
-  assert!(allocates!(1, 0; "5".parse::<BoxedNonZero>()).is_ok());
-  assert!(allocates!(0, 0; BoxedNonZero::checked_cast_from(0u64)).is_none());
-  assert!(allocates!(1, 0; BoxedNonZero::checked_cast_from(5u64)).is_some());
-  assert!(allocates!(0, 0; Boxed::exact_from_f64(0.5)).is_err());
-  assert!(allocates!(1, 0; Boxed::exact_from_f64(5.0)).is_ok());
+  /// A checked method that returns `None` builds no integer, and one that returns `Some` builds
+  /// that one.
+  #[test]
+  fn checked_methods_build_nothing_for_none() {
+    let (a, b) = pair();
+    let most = largest();
+    assert!(allocates!(0, 0; most.checked_add(&b)).is_none());
+    assert!(allocates!(0, 0; b.checked_sub(&a)).is_none());
+    assert!(allocates!(0, 0; most.checked_mul(&a)).is_none());
+    assert!(allocates!(0, 0; a.checked_neg()).is_none());
+    assert!(allocates!(0, 0; most.checked_pow(2)).is_none());
+    assert!(allocates!(0, 0; a.checked_shl(256)).is_none());
+    assert!(allocates!(0, 0; a.checked_shr(256)).is_none());
+    assert!(allocates!(1, 0; a.checked_sub(&b)).is_some());
+    let least = smallest();
+    assert!(allocates!(0, 0; least.checked_abs()).is_none());
+    assert!(allocates!(0, 0; least.checked_neg()).is_none());
+  }
+
+  /// A saturating method that saturates builds its bound, and no wrapped result beside it.
+  #[test]
+  fn saturating_methods_build_their_bound_alone() {
+    let (a, b) = pair();
+    let most = largest();
+    allocates!(1, 0; most.saturating_add(&b));
+    allocates!(1, 0; b.saturating_sub(&a));
+    allocates!(1, 0; most.saturating_mul(&a));
+    allocates!(1, 0; most.saturating_pow(2));
+    let least = smallest();
+    let one = boxed_int(1);
+    let minus_one = boxed_int(-1);
+    allocates!(1, 0; least.saturating_add(&minus_one));
+    allocates!(1, 0; least.saturating_sub(&one));
+    allocates!(1, 0; least.saturating_mul(&minus_one));
+    allocates!(1, 0; least.saturating_div(&minus_one));
+    allocates!(1, 0; least.saturating_pow(3));
+    allocates!(1, 0; least.saturating_neg());
+    allocates!(1, 0; least.saturating_abs());
+  }
+
+  /// The carrying addition and the borrowing subtraction build their result alone, also with a
+  /// carry or a borrow to take in, whatever flag they return.
+  #[test]
+  fn carries_and_borrows_build_one_integer() {
+    let (a, b) = pair();
+    let most = largest();
+    let (_, carry) = allocates!(1, 0; a.carrying_add(&b, true));
+    assert!(!carry);
+    let (_, carry) = allocates!(1, 0; most.carrying_add(&b, true));
+    assert!(carry);
+    let (_, borrow) = allocates!(1, 0; a.borrowing_sub(&b, true));
+    assert!(!borrow);
+    let (_, borrow) = allocates!(1, 0; b.borrowing_sub(&a, true));
+    assert!(borrow);
+  }
+
+  /// The exact division builds its quotient, and nothing for a division that leaves a remainder.
+  #[test]
+  fn exact_division_builds_only_a_quotient() {
+    let (a, b) = pair();
+    assert!(allocates!(0, 0; a.div_exact(&b)).is_none());
+    let by = boxed(1_000);
+    assert!(allocates!(1, 0; a.div_exact(&by)).is_some());
+  }
+
+  /// The casts between the signs, the saturating ones that change the value too, and the
+  /// conversions from a byte order keep the allocation of the integer that they take.
+  #[test]
+  fn casts_and_byte_orders_keep_the_allocation() {
+    let (a, b) = pair();
+    let limbs = address(&a);
+    let signed = allocates!(0, 0; a.cast_signed());
+    assert_eq!(address(&signed), limbs);
+
+    // The largest unsigned value is above every signed one, and saturates.
+    let most = largest();
+    let limbs = address(&most);
+    let signed = allocates!(0, 0; most.saturating_cast_signed());
+    assert_eq!(address(&signed), limbs);
+    assert_eq!(signed, <BoxedInt as FixedInteger>::max_value());
+
+    // A negative value saturates to zero.
+    let negative = boxed_int(-5);
+    let limbs = address(&negative);
+    let unsigned = allocates!(0, 0; negative.saturating_cast_unsigned());
+    assert_eq!(address(&unsigned), limbs);
+    assert_eq!(unsigned, <Boxed as FixedInteger>::zero());
+
+    // One of the two reverses the bytes, on every target.
+    let limbs = address(&b);
+    let b = allocates!(0, 0; <Boxed as IntegerByteOrder>::from_be(b));
+    assert_eq!(address(&b), limbs);
+    let b = allocates!(0, 0; <Boxed as IntegerByteOrder>::from_le(b));
+    assert_eq!(address(&b), limbs);
+
+    // The conversions to a byte order borrow their integer, and each builds one of its own.
+    allocates!(2, 0; (b.to_be(), b.to_le()));
+  }
+
+  /// The rows of the non-zero integers build what they return: nothing for `None`, and the bound
+  /// alone where they saturate. `|=` builds its result and frees the value that it replaces.
+  #[test]
+  fn nonzero_methods_build_only_what_they_return() {
+    let least = black_box(<BoxedNonZeroInt as NonZeroLimits>::min_value());
+    assert!(allocates!(0, 0; least.checked_neg()).is_none());
+    allocates!(1, 0; least.saturating_neg());
+    assert!(allocates!(0, 0; least.checked_abs()).is_none());
+    allocates!(1, 0; least.saturating_abs());
+    allocates!(1, 0; least.unsigned_abs());
+
+    let most = black_box(<BoxedNonZero as NonZeroLimits>::max_value());
+    let one = boxed(1);
+    assert!(allocates!(0, 0; most.checked_mul(&most)).is_none());
+    allocates!(1, 0; most.saturating_mul(&most));
+    assert!(allocates!(0, 0; most.checked_pow(2)).is_none());
+    allocates!(1, 0; most.saturating_pow(2));
+    assert!(allocates!(0, 0; most.checked_add(&one)).is_none());
+    allocates!(1, 0; most.saturating_add(&one));
+
+    let mut target = divisor();
+    let other = divisor();
+    allocates!(1, 1; target |= &other);
+
+    // The absolute value of a value that is not negative is a copy of it.
+    let positive = black_box(BoxedNonZeroInt::new(boxed_int(5)).expect("not zero"));
+    assert!(allocates!(1, 0; positive.checked_abs()).is_some());
+
+    // An operator that takes its non-zero integer stores its result in it.
+    allocates!(0, 0; target | &other);
+    let negative = black_box(BoxedNonZeroInt::new(boxed_int(-5)).expect("not zero"));
+    allocates!(0, 0; -negative);
+  }
+
+  /// A conversion that fails on its last check builds no integer: the text of zero and the cast of
+  /// zero into a non-zero integer, and the exact conversion of a float with a fraction.
+  #[test]
+  fn errors_build_nothing() {
+    assert!(allocates!(0, 0; "0".parse::<BoxedNonZero>()).is_err());
+    assert!(allocates!(1, 0; "5".parse::<BoxedNonZero>()).is_ok());
+    assert!(allocates!(0, 0; BoxedNonZero::checked_cast_from(0u64)).is_none());
+    assert!(allocates!(1, 0; BoxedNonZero::checked_cast_from(5u64)).is_some());
+    assert!(allocates!(0, 0; Boxed::exact_from_f64(0.5)).is_err());
+    assert!(allocates!(1, 0; Boxed::exact_from_f64(5.0)).is_ok());
+  }
+
+  /// The casts of the cast traits build their target from the words of their source, also where
+  /// both are one type: a cast allocates its target, and frees a source that it is given.
+  #[test]
+  fn casts_build_their_target() {
+    let (a, b) = pair();
+    assert!(allocates!(1, 1; Boxed::checked_cast_from(a)).is_some());
+    assert!(allocates!(1, 0; Boxed::checked_cast_from(&b)).is_some());
+    assert!(allocates!(1, 1; BoxedInt::checked_cast_from(b)).is_some());
+  }
 }
 
 /// Emits the checks of a shared storage, the pointer `$pointer` of four limbs at 256 bits, in the
-/// module `$module`. Every result is a new allocation, also where a `Box` stores in place, and an
-/// integer that an operation takes gives up its share: the allocation is freed where the integer
-/// was its only owner, and kept, with its value, where another owner holds it.
+/// module `$module`. A result is a new allocation, also where a `Box` stores in place, unless it is
+/// the allocation of an operand, and an integer that an operation takes gives up its share unless
+/// the result is its allocation: the allocation is freed where the integer was its only owner, and
+/// kept, with its value, where another owner holds it.
 macro_rules! shared_storage {
   ($module:ident, $pointer:ident) => {
     mod $module {
@@ -875,6 +912,10 @@ macro_rules! shared_storage {
         // One of the two reverses the bytes, on every target, and the other returns its integer.
         let twice = allocates!(1, 1; Shared::from_le(Shared::from_be(b)));
         assert_eq!(twice, shared(7).swap_bytes());
+
+        // The conversions to a byte order borrow their integer: the one that reverses the bytes
+        // builds an integer, and the other shares the value.
+        allocates!(1, 0; (twice.to_be(), twice.to_le()));
       }
 
       /// The rows of the non-zero integers build what they return: nothing for `None`, and the
@@ -896,6 +937,17 @@ macro_rules! shared_storage {
         allocates!(1, 0; most.saturating_pow(2));
         assert!(allocates!(0, 0; most.checked_add(&one)).is_none());
         allocates!(1, 0; most.saturating_add(&one));
+
+        // The absolute value of a value that is not negative is that value, which it shares.
+        let positive = black_box(SharedNonZeroInt::new(shared_int(5)).expect("not zero"));
+        let same = allocates!(0, 0; positive.checked_abs()).expect("in range");
+        assert_eq!(address(&same.get()), address(&positive.get()));
+
+        // An operator that takes its non-zero integer allocates its result and gives up its share.
+        let (taken, other) = (divisor(), divisor());
+        allocates!(1, 1; taken | &other);
+        let negative = black_box(SharedNonZeroInt::new(shared_int(-5)).expect("not zero"));
+        allocates!(1, 1; -negative);
       }
 
       /// A conversion that fails on its last check builds no integer.
@@ -908,12 +960,26 @@ macro_rules! shared_storage {
         assert!(allocates!(0, 0; Shared::exact_from_f64(0.5)).is_err());
         assert!(allocates!(1, 0; Shared::exact_from_f64(5.0)).is_ok());
       }
+
+      /// The casts of the cast traits build their target from the words of their source, also
+      /// where both are one type: a cast allocates its target, and a source that it is given gives
+      /// up its share.
+      #[test]
+      fn casts_build_their_target() {
+        let (a, b) = pair();
+        assert!(allocates!(1, 1; Shared::checked_cast_from(a)).is_some());
+        assert!(allocates!(1, 0; Shared::checked_cast_from(&b)).is_some());
+        let other = b.clone();
+        assert!(allocates!(1, 0; SharedInt::checked_cast_from(b)).is_some());
+        assert_eq!(other.to_string(), "7");
+      }
     }
   };
 }
 
+#[cfg(any(feature = "std", feature = "alloc"))]
 shared_storage!(rc, Rc);
-#[cfg(target_has_atomic = "ptr")]
+#[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
 shared_storage!(arc, Arc);
 #[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
 shared_storage!(triomphe_arc, TriompheArc);
