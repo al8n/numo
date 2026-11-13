@@ -16,8 +16,7 @@ use core::marker::PhantomData;
 #[cfg(any(feature = "proptest", feature = "quickcheck"))]
 use crate::Decimal;
 use crate::{
-  int::{DIGIT_BUF_LEN, DigitBuf},
-  layout::{Layout, LayoutDigits, Storage, StorageCore, Token},
+  layout::{DigitBuf, Layout, LayoutDigits, Storage, StorageCore, Token},
   rounding::RoundingMode,
 };
 
@@ -151,7 +150,8 @@ fn edge<R: Storage>(source: &mut impl Source, digits: u32, fraction: u32) -> R {
 /// all, set to zero with probability 1/4.
 fn digit_wise<R: Storage>(source: &mut impl Source, digits: u32) -> R {
   let len = 1 + source.below(digits) as usize;
-  let mut buf: DigitBuf = [b'0'; DIGIT_BUF_LEN];
+  // The bytes from `len` on are not digits: only the first `len` are written and read.
+  let mut buf = DigitBuf::<R>::default();
   // A first digit of zero would leave a longer number fewer digits.
   let first = if len >= 2 {
     1 + source.below(9)
@@ -175,10 +175,13 @@ fn small<R: Storage>(value: u8) -> R {
   value.convert(Token::new())
 }
 
-/// `10^count - 1`, which is `count` nines. Requires `count <= DIGIT_BUF_LEN` and `R` to hold it.
+/// `10^count - 1`, which is `count` nines. Requires `R` to hold it, so that its digit buffer holds
+/// the nines.
 fn nines<R: Storage>(count: u32) -> R {
-  const NINES: DigitBuf = [b'9'; DIGIT_BUF_LEN];
-  small::<R>(0).push_digits(&NINES, 0, count as usize, Token::new())
+  let count = count as usize;
+  let mut buf = DigitBuf::<R>::default();
+  buf[..count].fill(b'9');
+  small::<R>(0).push_digits(&buf, 0, count, Token::new())
 }
 
 /// Marks a type that produces `Decimal<I, F, R>` values without holding one. The marker of a
@@ -205,11 +208,11 @@ where
 {
   /// Returns the candidates for `value`, a coefficient in the range of `Decimal<I, F, R>`.
   pub(crate) fn new(value: R) -> Self {
-    let mut buf = [0; DIGIT_BUF_LEN];
+    let mut buf = DigitBuf::<R>::default();
     let start = value.write_digits(&mut buf, Token::new());
     Self {
       value,
-      digits: (DIGIT_BUF_LEN - start) as u32,
+      digits: (buf.len() - start) as u32,
       next: 0,
       decimal: PhantomData,
     }

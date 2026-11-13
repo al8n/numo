@@ -2,7 +2,7 @@
 #![allow(non_snake_case)]
 
 use core::{any::TypeId, fmt::Debug};
-use std::{vec, vec::Vec};
+use std::{string::ToString, vec, vec::Vec};
 
 use num_bigint::{BigInt, BigUint};
 use typenum::{
@@ -11,8 +11,8 @@ use typenum::{
 };
 
 use super::{
-  DigitCount, DivIntermediate, FitsDigits, Layout, LayoutDigits, Pick, StorageCore, Token,
-  WidenRepr,
+  DigitBuf, DigitCount, DivIntermediate, FitsDigits, Layout, LayoutDigits, Pick, StorageCore,
+  Token, WidenRepr,
 };
 use crate::{bigint, i192, i256, i320, i384, i448, i512, u192, u256, u320, u384, u448, u512};
 
@@ -432,4 +432,57 @@ fn conversions_between_every_pair() {
       u8, u16, u32, u64, u128, u192, u256, u320, u384, u448, u512
     ]
   );
+}
+
+/// Checks, against `num-bigint`, that the digit buffer of `R` has as many bytes as its widest
+/// magnitude has digits, `|MIN|` for a signed storage of `bits` bits and `MAX` for an unsigned one,
+/// that the row writes them from the first byte, and that the text buffer has two bytes more.
+#[inline(never)]
+fn check_buffer_lengths<R: Value>(bits: u32) {
+  let widest = if R::SIGNED {
+    bigint::min(bits, true)
+  } else {
+    bigint::max(bits, false)
+  };
+  let digits = widest.magnitude().to_string();
+  assert_eq!(<R::DigitLen as Unsigned>::USIZE, digits.len(), "{widest}");
+  assert_eq!(
+    <R::TextLen as Unsigned>::USIZE,
+    digits.len() + 2,
+    "{widest}"
+  );
+  let value = R::from_big(&widest).expect("the storage holds its widest value");
+  let mut buf = DigitBuf::<R>::default();
+  assert_eq!(value.write_digits(&mut buf, Token::new()), 0, "{widest}");
+  assert_eq!(&buf[..], digits.as_bytes());
+}
+
+#[test]
+#[cfg_attr(
+  all(miri, target_pointer_width = "32"),
+  ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+)]
+fn buffer_lengths_of_every_storage() {
+  check_buffer_lengths::<i8>(8);
+  check_buffer_lengths::<i16>(16);
+  check_buffer_lengths::<i32>(32);
+  check_buffer_lengths::<i64>(64);
+  check_buffer_lengths::<i128>(128);
+  check_buffer_lengths::<i192>(192);
+  check_buffer_lengths::<i256>(256);
+  check_buffer_lengths::<i320>(320);
+  check_buffer_lengths::<i384>(384);
+  check_buffer_lengths::<i448>(448);
+  check_buffer_lengths::<i512>(512);
+  check_buffer_lengths::<u8>(8);
+  check_buffer_lengths::<u16>(16);
+  check_buffer_lengths::<u32>(32);
+  check_buffer_lengths::<u64>(64);
+  check_buffer_lengths::<u128>(128);
+  check_buffer_lengths::<u192>(192);
+  check_buffer_lengths::<u256>(256);
+  check_buffer_lengths::<u320>(320);
+  check_buffer_lengths::<u384>(384);
+  check_buffer_lengths::<u448>(448);
+  check_buffer_lengths::<u512>(512);
 }

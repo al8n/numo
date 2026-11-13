@@ -88,10 +88,10 @@ fn every_one_limb_value_matches_u8() {
         ([quotient as u8], [remainder as u8])
       );
     }
-    let mut buf = [0xff; DIGIT_BUF_LEN];
-    let start = write_digits(&[a], &mut buf);
+    let mut buf = [0xff; DIGITS_PER_LIMB];
+    let start = write_digits_into(&[a], &mut buf);
     assert_eq!(&buf[start..], a.to_string().as_bytes());
-    assert_eq!(push_digits(&[0], &buf, start, DIGIT_BUF_LEN), [a]);
+    assert_eq!(push_digits(&[0], &buf, start, buf.len()), [a]);
     // Every width from zero bits to one bit more than the limb.
     for bits in 0..=9 {
       assert_eq!(

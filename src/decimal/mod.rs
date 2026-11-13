@@ -21,8 +21,8 @@ pub use traits::{
 use crate::{
   FromFloatError, int,
   layout::{
-    DigitCount, DivIntermediate, Layout, LayoutDigits, Pick, Storage, StorageCore, Token, Widen,
-    WidenRepr,
+    DigitBuf, DigitCount, DivIntermediate, Layout, LayoutDigits, Pick, Storage, StorageCore, Token,
+    Widen, WidenRepr,
   },
   rounding::{self, RoundingMode},
 };
@@ -1184,7 +1184,7 @@ where
   /// Writes the shortest exact form, honoring width, fill, alignment, `+`, `0` and precision as
   /// described on [`Decimal`]. Precision never rounds or truncates.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let mut buf = [0; int::DIGIT_BUF_LEN];
+    let mut buf = DigitBuf::<R>::default();
     let start = self.repr.write_digits(&mut buf, Token::new());
     format::write(
       f,
@@ -1224,7 +1224,7 @@ where
   /// point of a text that would have none, and the exponent formats of the primitive floats and
   /// of [`Uint`](crate::Uint) and [`Int`](crate::Int) ignore it, so neither meaning holds here.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let mut buf = [0; int::DIGIT_BUF_LEN];
+    let mut buf = DigitBuf::<R>::default();
     let start = self.repr.write_digits(&mut buf, Token::new());
     format::write_exp(
       f,
@@ -1252,7 +1252,7 @@ where
   /// point of a text that would have none, and the exponent formats of the primitive floats and
   /// of [`Uint`](crate::Uint) and [`Int`](crate::Int) ignore it, so neither meaning holds here.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let mut buf = [0; int::DIGIT_BUF_LEN];
+    let mut buf = DigitBuf::<R>::default();
     let start = self.repr.write_digits(&mut buf, Token::new());
     format::write_exp(
       f,

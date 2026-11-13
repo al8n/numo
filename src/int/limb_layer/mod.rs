@@ -29,7 +29,6 @@ macro_rules! limb_layer {
     use $crate::{
       FromFloatError,
       int::{
-        DigitBuf,
         float::{self, FloatFormat, Rounded},
         order, parse_errors, slice,
       },
@@ -576,17 +575,6 @@ macro_rules! limb_layer {
         quotient
       };
       (rounded, remainder, away)
-    }
-
-    /// Writes the decimal digits of `value` to the end of `buf`, without leading zeros (zero is a
-    /// single `0`), and returns the index of the first digit. Requires `value` to have at most
-    /// `DIGIT_BUF_LEN` digits, which holds for `B * N <= 512`.
-    #[inline]
-    pub(crate) const fn write_digits<const N: usize>(
-      value: &[Limb; N],
-      buf: &mut DigitBuf,
-    ) -> usize {
-      write_digits_into(value, buf)
     }
 
     /// Writes the decimal digits of `value` to the end of `buf`, without leading zeros (zero is a
@@ -2124,7 +2112,6 @@ macro_rules! limb_layer {
     use $crate::{
       FromFloatError,
       int::{
-        DigitBuf,
         float::{self, FloatFormat, Rounded},
         order, parse_errors, slice,
       },
@@ -2409,14 +2396,14 @@ macro_rules! limb_layer {
     }
 
     /// Writes the decimal digits of `|value|` to the end of `buf`, without leading zeros (zero is a
-    /// single `0`), and returns the index of the first digit. Requires `|value|` to have at most
-    /// `DIGIT_BUF_LEN` digits, which holds for `B * N <= 512`.
+    /// single `0`), and returns the index of the first digit. Requires `buf` to hold every digit
+    /// of `|value|`, which `DIGITS_PER_LIMB * N` bytes of the lower layer do.
     #[inline]
-    pub(crate) const fn write_digits<const N: usize>(
+    pub(crate) const fn write_digits_into<const N: usize>(
       value: &[Limb; N],
-      buf: &mut DigitBuf,
+      buf: &mut [u8],
     ) -> usize {
-      $unsigned::write_digits(&unsigned_abs(value), buf)
+      $unsigned::write_digits_into(&unsigned_abs(value), buf)
     }
 
     /// Appends the ASCII digits in `bytes[start..end]` to `value`, computing `value * 10 + d` for

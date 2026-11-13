@@ -8,7 +8,9 @@ use super::{
   SignedFixedDecimal, UnsignedFixedDecimal, float, literal, parse,
 };
 use crate::{
-  FromFloatError, i192, i256, i320, i384, i448, i512, int, layout::Layout, rounding::RoundingMode,
+  FromFloatError, i192, i256, i320, i384, i448, i512, int,
+  layout::{Layout, StorageCore},
+  rounding::RoundingMode,
   u192, u256, u320, u384, u448, u512,
 };
 
@@ -1204,14 +1206,17 @@ macro_rules! storage_decimal {
       /// The number of digits of the magnitude of the coefficient, and the number of zeros that
       /// end them. Zero is the one digit `0`, which no zero ends.
       const fn coefficient_digits(&self) -> (u32, u32) {
-        let mut buf = [0; int::DIGIT_BUF_LEN];
+        // The digit length of the storage, as a constant of its own: a nested item takes no
+        // parameter of the impl around it.
+        const LEN: usize = <<$repr as StorageCore>::DigitLen as typenum::Unsigned>::USIZE;
+        let mut buf = [0; LEN];
         let start = int::$repr::write_digits($($by)* self.repr, &mut buf);
-        let mut end = int::DIGIT_BUF_LEN;
+        let mut end = buf.len();
         while end - start > 1 && buf[end - 1] == b'0' {
           end -= 1;
         }
-        // At most 155 digits, so both counts fit.
-        ((int::DIGIT_BUF_LEN - start) as u32, (int::DIGIT_BUF_LEN - end) as u32)
+        // Both counts are at most the length of the buffer, so both fit.
+        ((buf.len() - start) as u32, (buf.len() - end) as u32)
       }
 
       /// Returns the exponent of the first significant digit, the exponent that `{:e}` writes:

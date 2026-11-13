@@ -14,8 +14,8 @@ use typenum::{
 
 use crate::{
   ArrayInteger, BitWidth, ConstFixedInteger, FixedInteger, Int, Limbs, TryNewError, Uint, bigint,
-  i7, i192, i256, i320, i384, i448, i512, i768, i1024, i2048, i4096, int::DIGIT_BUF_LEN, u7, u192,
-  u256, u320, u384, u448, u512, u768, u1024, u2048, u4096,
+  i7, i192, i256, i320, i384, i448, i512, i768, i1024, i2048, i4096, u7, u192, u256, u320, u384,
+  u448, u512, u768, u1024, u2048, u4096,
 };
 
 /// Records the calls that a `Hash` implementation makes.
@@ -391,15 +391,12 @@ fn signed_order_runs_from_min_to_max() {
 #[test]
 fn the_widest_values_fill_the_digit_buffer() {
   // `u512::MAX` has 155 digits, and `i512::MIN` has 154 and a sign.
-  assert_eq!(
-    u512::from_limbs([u64::MAX; 8]).to_string().len(),
-    DIGIT_BUF_LEN
-  );
+  assert_eq!(u512::from_limbs([u64::MAX; 8]).to_string().len(), 155);
   assert_eq!(
     i512::from_limbs([0, 0, 0, 0, 0, 0, 0, 1 << 63])
       .to_string()
       .len(),
-    DIGIT_BUF_LEN
+    155
   );
 }
 

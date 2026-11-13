@@ -15,8 +15,8 @@ use super::{
   UnsignedFixedDecimal, WidenTo, float, format, ops::overflow,
 };
 use crate::{
-  FromFloatError, int,
-  layout::{StorageCore, Token},
+  FromFloatError,
+  layout::{DigitBuf, StorageCore, Token},
   rounding::RoundingMode,
 };
 
@@ -302,7 +302,7 @@ where
   /// rounded or truncated.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let repr = self.value.clone().repr();
-    let mut buf = [0; int::DIGIT_BUF_LEN];
+    let mut buf = DigitBuf::<D::Repr>::default();
     let start = repr.write_digits(&mut buf, Token::new());
     let scale = usize::from(self.scale);
     let min_fraction = f

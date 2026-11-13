@@ -14,8 +14,8 @@
 //! would be off by a power of ten. A [`Scaled`] is written as its text with its scale and read with
 //! the scale of the text, in the same way, and a [`RoundingMode`] as its lowercase name, read from
 //! a name of any case. A decimal, and a `Scaled` whose scale is at most the fraction digits of its
-//! decimal, is written through a buffer on the stack, and a `Scaled` with a larger scale through
-//! `collect_str`.
+//! decimal, is written through a buffer on the stack of the length of its storage, and a `Scaled`
+//! with a larger scale through `collect_str`.
 //!
 //! An integer, a [`Uint`](crate::Uint) or an [`Int`](crate::Int), is written in a form that depends
 //! only on its width, its sign and its value, in every format and every storage: up to 128 bits as
@@ -165,8 +165,9 @@ use serde_core::{
 };
 
 use crate::{
-  Decimal, FixedDecimal, ParseError, RoundingMode, Scaled, int,
-  layout::{Layout, Storage},
+  Decimal, FixedDecimal, ParseError, RoundingMode, Scaled,
+  layout::{Layout, Storage, StorageCore},
+  width::{Array, ArrayLength, ArraySize},
 };
 
 pub(crate) use sealed::{
@@ -241,21 +242,16 @@ mod sealed {
   }
 }
 
-/// Length of a buffer that holds the text of any decimal. The widest texts are those of
-/// `Decimal<U0, U154, u512>::MAX`, `0.` and 154 digits, and `Decimal<U0, U153, i512>::MIN`, `-0.`
-/// and 153 digits: 156 bytes each.
-const TEXT_LEN: usize = int::DIGIT_BUF_LEN + 2;
-
 /// A fixed buffer of `N` bytes that `Display` writes into, failing once it is full.
-struct Text<const N: usize> {
-  buf: [u8; N],
+struct Text<N: ArraySize> {
+  buf: Array<u8, N>,
   len: usize,
 }
 
-impl<const N: usize> fmt::Write for Text<N> {
+impl<N: ArraySize> fmt::Write for Text<N> {
   fn write_str(&mut self, s: &str) -> fmt::Result {
     let end = match self.len.checked_add(s.len()) {
-      Some(end) if end <= N => end,
+      Some(end) if end <= self.buf.len() => end,
       _ => return Err(fmt::Error),
     };
     self.buf[self.len..end].copy_from_slice(s.as_bytes());
@@ -266,13 +262,14 @@ impl<const N: usize> fmt::Write for Text<N> {
 
 /// Serializes the text that `value` writes with [`Display`](fmt::Display) as a string, through a
 /// buffer of `N` bytes.
-fn serialize_text<const N: usize, T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_text<N, T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
 where
+  N: ArrayLength,
   T: fmt::Display,
   S: Serializer,
 {
   let mut text = Text::<N> {
-    buf: [0; N],
+    buf: Array::default(),
     len: 0,
   };
   // `Display` fails only when the buffer is full, which no value fills; the error is reported
@@ -294,7 +291,7 @@ where
   where
     S: Serializer,
   {
-    serialize_text::<TEXT_LEN, _, _>(self, serializer)
+    serialize_text::<R::TextLen, _, _>(self, serializer)
   }
 }
 
@@ -311,10 +308,10 @@ where
     S: Serializer,
   {
     // A scale of at most the fraction digits of `D` gives a text with no more fraction digits than
-    // a text of `D`, which the buffer of a decimal holds. A larger scale asks for up to 65535
-    // fraction digits, which `collect_str` streams with no buffer.
+    // a text of `D`, which the text buffer of its storage holds. A larger scale asks for up to
+    // 65535 fraction digits, which `collect_str` streams with no buffer.
     if u32::from(self.scale()) <= D::FRACTION {
-      serialize_text::<TEXT_LEN, _, _>(self, serializer)
+      serialize_text::<<D::Repr as StorageCore>::TextLen, _, _>(self, serializer)
     } else {
       serializer.collect_str(self)
     }
