@@ -1,0 +1,18 @@
+error[E0382]: use of moved value: `value`
+ --> tests/ui/storage_has_no_copy.rs:6:11
+  |
+5 | fn pair<I, F, R: Storage>(value: Decimal<I, F, R>) -> [Decimal<I, F, R>; 2] {
+  |                           ----- move occurs because `value` has type `Decimal<I, F, R>`, which does not implement the `Copy` trait
+6 |   [value, value]
+  |    -----  ^^^^^ value used here after move
+  |    |
+  |    value moved here
+  |
+help: consider cloning the value if the performance cost is acceptable
+  |
+6 |   [value.clone(), value]
+  |         ++++++++
+help: consider further restricting type parameter `R` with trait `Copy`
+  |
+5 | fn pair<I, F, R: Storage + Copy>(value: Decimal<I, F, R>) -> [Decimal<I, F, R>; 2] {
+  |                          ++++++
