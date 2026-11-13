@@ -162,7 +162,8 @@ mod tests;
 /// mix: `a + &b` does not compile, and `a + *b` adds them. There is no `*`, `/` or `%` operator:
 /// [`exact_mul`](Self::exact_mul) returns the product in the type that holds it,
 /// [`div_round`](Self::div_round) rounds the quotient with a mode, and `checked_rem` gives the
-/// remainder.
+/// remainder. The right operand can be a literal of [`dec!`](crate::dec), as in
+/// `price + dec!(0.5)`, which takes the type of the left one.
 ///
 /// ```
 /// use numo::{
@@ -268,7 +269,8 @@ mod tests;
 /// [`NotFinite`](crate::ParseErrorKind::NotFinite), because a decimal is always finite. The value
 /// must fit exactly: once the exponent has moved the point, digits beyond `Integral` and `Fraction`
 /// are accepted only when they are leading or trailing zeros; anything else is an error, never a
-/// rounded value. See [`parse`](Self::parse) for the grammar.
+/// rounded value. See [`parse`](Self::parse) for the grammar. [`dec!`](crate::dec) reads a literal
+/// of the source with `parse`, when the crate is compiled.
 ///
 /// [`Display`](fmt::Display) writes the shortest exact form: an optional `-`, the integral part
 /// without leading zeros (at least one digit), then `.` and the fraction digits without trailing

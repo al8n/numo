@@ -70,7 +70,8 @@ mod tests;
 /// exceed the fraction digits of `D`: a type with 8 fraction digits keeps
 /// `9999999999.0000000000000000` with scale 16 and writes it back. A scale above 255 is
 /// [`ScaleTooLarge`](crate::ParseErrorKind::ScaleTooLarge), which only a text that
-/// `Decimal::parse` accepts can give.
+/// `Decimal::parse` accepts can give. [`dec!`](crate::dec) reads a literal in the same way and
+/// keeps its scale, so `dec!(1.50)` writes `1.50`.
 ///
 /// The text comes back as written except for these forms: a `+` sign; an exponent, which is
 /// written out with the same scale, so `25e-1` comes back as `2.5` and `1E+2` as `100`; `_`

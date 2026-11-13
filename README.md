@@ -139,8 +139,33 @@ fn main() -> Result<(), ParseError> {
   form that `f64` parses, such as `-1.5`, `+.5`, `5.`, `2.5E-3` and `1_000`. Infinity and NaN are
   recognized and reported as `NotFinite`, because a `Decimal` is always finite. A value that does
   not fit is `OutOfRange` or `Inexact`, never rounded.
+- `dec!` writes a decimal literal in the source, which `parse` reads when the crate is compiled,
+  of the type that its context expects or that `as` names: `dec!(0.01)`,
+  `dec!(-2.5e-3 as Price)`. A literal that the type does not hold fails to compile: in a `const`
+  or a `static` item and with `as` when the code is checked, and elsewhere when the code is
+  generated.
 - `Display` writes the shortest exact text, without an exponent, and `{:e}` and `{:E}` write it in
   scientific notation, such as `6.42505e4`. Format precision pads with zeros but never rounds.
+
+```rust
+use numo::{
+  Decimal, Scaled, dec,
+  typenum::{U8, U10},
+};
+
+type Price = Decimal<U10, U8>;
+
+fn main() {
+  const TICK: Price = dec!(0.01);
+  let mut price: Price = dec!(64_250.5);
+  price += dec!(0.25);
+  let ask = price + dec!(1e-2);
+  assert!(ask == dec!(64_250.76));
+  assert_eq!(dec!(0.5 as Price).checked_add(&TICK), Some(dec!(0.51 as Price)));
+  let quoted: Scaled<Price> = dec!(1.50);
+  assert_eq!(quoted.to_string(), "1.50");
+}
+```
 
 ## `Scaled`
 
@@ -153,7 +178,8 @@ implemented for it over any decimal, so generic code takes a `Scaled` and a bare
 sum takes the larger scale, an exact product the sum of the scales, and a rounded value or a
 quotient the fraction digits of its target type. The operators `+`, `-`, `+=` and `-=` and `Sum`
 work as for a decimal, and their result takes the larger scale. A scale above 255 is
-`ScaleTooLarge`, which only the `parse` of `Scaled` reports.
+`ScaleTooLarge`, which only the `parse` of `Scaled` reports. A literal of `dec!` keeps its scale
+too: `dec!(1.50)` writes `1.50`.
 
 ```rust
 use numo::{

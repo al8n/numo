@@ -40,7 +40,9 @@
 //! [`is_multiple_of`](Decimal::is_multiple_of) checks a value against a step without rounding it.
 //! Parsing accepts decimal and exponent notation with `_` separators, including every form that
 //! `f64` parses, and rejects infinity, NaN, a negative number for an unsigned storage and digits
-//! that do not fit; formatting writes the shortest exact text. See [`Decimal`] for the details.
+//! that do not fit; formatting writes the shortest exact text. [`dec!`] writes a value in the
+//! source as a literal, which `parse` reads when the crate is compiled, so a literal that the type
+//! does not hold fails to compile. See [`Decimal`] for the details.
 //!
 //! Every decimal type has the constants `INTEGRAL`, `FRACTION` and `DIGITS`, its digit counts, and
 //! `SIGNED`, whether its storage is signed. Generic code reaches the constants and methods through
