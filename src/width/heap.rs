@@ -709,6 +709,36 @@ macro_rules! heap_storage {
       }
 
       #[inline]
+      fn checked_read_digits(
+        digits: &[u8],
+        big_endian: bool,
+        radix: u32,
+        bits: u32,
+        token: Token,
+      ) -> Option<Self> {
+        <[L; N] as UintCore>::checked_read_digits(digits, big_endian, radix, bits, token).map(uint)
+      }
+
+      #[inline]
+      fn checked_mul_add_u64(
+        &self,
+        factor: u64,
+        addend: u64,
+        bits: u32,
+        token: Token,
+      ) -> Option<Self> {
+        <[L; N] as UintCore>::checked_mul_add_u64(self.borrow(), factor, addend, bits, token)
+          .map(uint)
+      }
+
+      #[inline]
+      fn div_rem_u64(&self, divisor: u64, token: Token) -> (Self, u64) {
+        let (quotient, remainder) =
+          <[L; N] as UintCore>::div_rem_u64(self.borrow(), divisor, token);
+        (uint(quotient), remainder)
+      }
+
+      #[inline]
       fn lend_nonzero<B>(nonzero: &Uint<B, Self>, _: Token) -> View<'_, Uint<B, Self>> {
         View::Lent(nonzero)
       }

@@ -10,6 +10,8 @@
 //! storages of a build join: those in `tests/ui/inline` need a build without the `std`, the `alloc`
 //! and the `triomphe` features, as `--no-default-features` gives, and those in `tests/ui/heap` one
 //! with `std` or `alloc` and without `triomphe`. A build with `triomphe` takes neither.
+//! `tests/ui/heap` also holds the cases that implement a trait whose items the `std` or the `alloc`
+//! feature adds, which need those items to print one error.
 
 use std::process::Command;
 
@@ -20,8 +22,10 @@ fn ui() {
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/*.rs");
     // trybuild builds the cases with the features of this test build, which it reads from the
-    // fingerprint of the build. Where it cannot read them, it builds the cases with the default
-    // features, and the serde cases fail on `numo::serde`, which needs `serde`.
+    // fingerprint of the build, and a case can read them with `cfg(feature = "..")`, as the impl of
+    // `tests/ui/fixed_non_zero_is_sealed.rs` does. Where trybuild cannot read them, it builds the
+    // cases with the default features: the serde cases fail on `numo::serde`, which needs `serde`,
+    // and a case that reads the features fails as well.
     #[cfg(feature = "serde")]
     cases.compile_fail("tests/ui/serde/*.rs");
     // A list of implementors includes the heap storages in a build that has them.

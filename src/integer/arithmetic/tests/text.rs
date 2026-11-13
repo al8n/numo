@@ -1256,3 +1256,252 @@ fn nonzero_errors_constants_and_panics() {
     panics_here!(<Wide as FixedNonZero>::from_str_radix("0", radix), message);
   }
 }
+
+/// The radixes at which `to_str_radix` is checked at a width of up to 16 bits: every radix from 2
+/// to 36 in a storage that every tier checks, `primary`, of up to 8 bits, and 2, 10, 16 and 36
+/// elsewhere, in an optimized build; 2, 7, 10, 16 and 36, or 2, 10 and 36, in an unoptimized one;
+/// and 10 and 36 under Miri.
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn str_radixes(bits: u32, primary: bool) -> Vec<u32> {
+  match (tier(), primary && bits <= 8) {
+    (Tier::Full, true) => (2..=36).collect(),
+    (Tier::Full, false) => vec![2, 10, 16, 36],
+    (Tier::Debug, true) => vec![2, 7, 10, 16, 36],
+    (Tier::Debug, false) => vec![2, 10, 36],
+    (Tier::Miri, _) => vec![10, 36],
+  }
+}
+
+/// Checks `to_str_radix` of `$ty`, of `$bits` bits, at each value of `$values`, created by `$from`,
+/// in the radixes of [`str_radixes`]: the text of the model, `-` and the digits of the magnitude
+/// of a negative value, inherent and through `FixedInteger`; `from_str_radix` reads it back;
+/// in the radix 10 it is `Display`'s text, and for a value that is not negative the radixes 2, 8
+/// and 16 give the texts of `{:b}`, `{:o}` and `{:x}`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+macro_rules! sweep_str_radix {
+  (
+    $primary:literal,
+    $sign:ident;
+    $ty:ty,
+    $bits:expr,
+    $values:expr,
+    $from:expr,
+    $value:expr,
+    $magnitude:expr
+  ) => {{
+    let (bits, primary): (u32, bool) = ($bits, $primary);
+    let from: fn(i128) -> $ty = $from;
+    for a in $values {
+      let x = from(a);
+      for radix in str_radixes(bits, primary) {
+        let sign = if a < 0 { "-" } else { "" };
+        let expected = format!("{sign}{}", bigint::radix_digits(a.unsigned_abs(), radix));
+        let what = format!("{a} in radix {radix} at {bits} bits");
+        assert_eq!(x.to_str_radix(radix), expected, "{what}");
+        assert_eq!(FixedInteger::to_str_radix(&x, radix), expected, "{what}");
+        assert_eq!(<$ty>::from_str_radix(&expected, radix), Ok(x), "{what}");
+        match radix {
+          10 => assert_eq!(expected, x.to_string(), "{what}"),
+          2 if a >= 0 => assert_eq!(expected, format!("{x:b}"), "{what}"),
+          8 if a >= 0 => assert_eq!(expected, format!("{x:o}"), "{what}"),
+          16 if a >= 0 => assert_eq!(expected, format!("{x:x}"), "{what}"),
+          _ => {}
+        }
+      }
+    }
+  }};
+}
+
+/// [`sweep_str_radix!`] in a storage that every tier checks.
+#[cfg(any(feature = "std", feature = "alloc"))]
+macro_rules! primary_str_radix {
+  ($($rest:tt)*) => {
+    sweep_str_radix!(true, $($rest)*)
+  };
+}
+
+/// [`sweep_str_radix!`] in another storage.
+#[cfg(any(feature = "std", feature = "alloc"))]
+macro_rules! secondary_str_radix {
+  ($($rest:tt)*) => {
+    sweep_str_radix!(false, $($rest)*)
+  };
+}
+
+/// Checks `to_str_radix` at the width `B`, `bits` bits, at most 8, in the storages of
+/// [`text_of_small_widths`].
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn str_radix_of_small_widths<B>(bits: u32)
+where
+  B: FitsBits<u8> + FitsBits<i8> + FitsBits<u16> + FitsBits<i16> + FitsBits<u128> + FitsBits<i128>,
+  B: FitsBits<[u8; 1]> + FitsBits<[u8; 2]> + FitsBits<[u16; 1]>,
+  B: FitsBits<[u64; 1]> + FitsBits<[u128; 1]>,
+{
+  let primary = |bits, signed| text_values(bits, signed, true);
+  let secondary = |bits, signed| text_values(bits, signed, false);
+  sweep_storage!(primary_str_radix, primary, native B, bits, u8, i8);
+  sweep_storage!(primary_str_radix, primary, array B, bits, [u8; 2]);
+  if !tier().is_miri() {
+    sweep_storage!(primary_str_radix, primary, array B, bits, [u8; 1]);
+    sweep_storage!(primary_str_radix, primary, array B, bits, [u16; 1]);
+    sweep_storage!(secondary_str_radix, secondary, native B, bits, u16, i16);
+    sweep_storage!(secondary_str_radix, secondary, native B, bits, u128, i128);
+    sweep_storage!(secondary_str_radix, secondary, array B, bits, [u64; 1]);
+    sweep_storage!(secondary_str_radix, secondary, array B, bits, [u128; 1]);
+  }
+}
+
+/// Checks `to_str_radix` at the width `B`, `bits` bits, from 9 to 16, in `[u8; 2]`, `u16` and
+/// `i16` and `[u16; 1]`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn str_radix_of_large_widths<B>(bits: u32)
+where
+  B: FitsBits<u16> + FitsBits<i16> + FitsBits<[u8; 2]> + FitsBits<[u16; 1]>,
+{
+  let values = |bits, signed| text_values(bits, signed, true);
+  sweep_storage!(secondary_str_radix, values, array B, bits, [u8; 2]);
+  if !tier().is_miri() {
+    sweep_storage!(secondary_str_radix, values, native B, bits, u16, i16);
+    sweep_storage!(secondary_str_radix, values, array B, bits, [u16; 1]);
+  }
+}
+
+/// `to_str_radix` of both signs at the widths up to 16 bits, against the model of the text, read
+/// back by `from_str_radix`, and the texts of `Display` and of the radix formats where they agree.
+#[test]
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn to_str_radix_of_small_widths() {
+  str_radix_of_small_widths::<U0>(0);
+  str_radix_of_small_widths::<U1>(1);
+  str_radix_of_small_widths::<U7>(7);
+  str_radix_of_small_widths::<U8>(8);
+  str_radix_of_large_widths::<U16>(16);
+  if !tier().is_miri() {
+    str_radix_of_small_widths::<U3>(3);
+    str_radix_of_large_widths::<U9>(9);
+  }
+}
+
+/// Checks `to_str_radix` of the `Uint` `U` and the `Int` `I`, of `bits` bits, at the patterns of
+/// `patterns`, against `num-bigint` in the radixes 2, 3, 10, 16 and 36, read back.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn wide_str_radix_at<U, I>(bits: u32, patterns: &[Vec<bool>])
+where
+  U: Patterned + FixedInteger,
+  I: Patterned + FixedInteger,
+{
+  for p in patterns {
+    let (x, y) = (U::from_pattern(p), I::from_pattern(p));
+    let (big_x, big_y) = (big_of(p, false), big_of(p, true));
+    for radix in [2, 3, 10, 16, 36] {
+      let what = format!("{} in radix {radix} at {bits} bits", model::text(p));
+      let (text_x, text_y) = (x.to_str_radix(radix), y.to_str_radix(radix));
+      assert_eq!(text_x, big_x.to_str_radix(radix), "{what}");
+      assert_eq!(text_y, big_y.to_str_radix(radix), "{what}");
+      assert_eq!(U::from_str_radix(&text_x, radix), Ok(x), "{what}");
+      assert_eq!(I::from_str_radix(&text_y, radix), Ok(y), "{what}");
+    }
+  }
+}
+
+/// `to_str_radix` of wide values of both signs against `num-bigint`: 65 bits in `[u64; 2]`, 129
+/// in `[u8; 17]` and 200 in `[u32; 7]` and `[u128; 2]`, and in an optimized build 256, 1024 and
+/// 4096 bits in `[u64; N]`.
+#[test]
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(miri, ignore = "num-bigint, the oracle, is slow under Miri")]
+fn wide_to_str_radix_matches_big_integers() {
+  wide_str_radix_at::<Uint<U65, [u64; 2]>, Int<U65, [u64; 2]>>(65, &wide_patterns::<2>(65));
+  wide_str_radix_at::<Uint<U129, [u8; 17]>, Int<U129, [u8; 17]>>(129, &wide_patterns::<3>(129));
+  wide_str_radix_at::<Uint<U200, [u32; 7]>, Int<U200, [u32; 7]>>(200, &wide_patterns::<4>(200));
+  wide_str_radix_at::<Uint<U200, [u128; 2]>, Int<U200, [u128; 2]>>(200, &wide_patterns::<4>(200));
+  if tier().is_full() {
+    wide_str_radix_at::<Uint<U256, [u64; 4]>, Int<U256, [u64; 4]>>(256, &wide_patterns::<4>(256));
+    let patterns = wide_patterns::<16>(1024);
+    wide_str_radix_at::<Uint<U1024, [u64; 16]>, Int<U1024, [u64; 16]>>(1024, &patterns);
+    let patterns = wide_patterns::<64>(4096);
+    wide_str_radix_at::<Uint<U4096, [u64; 64]>, Int<U4096, [u64; 64]>>(4096, &patterns);
+  }
+}
+
+/// Checks that `to_str_radix(10)` of the `Uint` `U` and the `Int` `I`, of `bits` bits, is the text
+/// of `Display`, at the patterns of [`text_patterns`].
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn decimal_str_radix_at<
+  U: Patterned + FixedInteger,
+  I: Patterned + FixedInteger,
+  const K: usize,
+>(
+  bits: u32,
+) {
+  for p in text_patterns::<K>(bits) {
+    let (x, y) = (U::from_pattern(&p), I::from_pattern(&p));
+    assert_eq!(x.to_str_radix(10), x.to_string(), "{}", model::text(&p));
+    assert_eq!(y.to_str_radix(10), y.to_string(), "{}", model::text(&p));
+  }
+}
+
+/// In every tier, the text of the radix 10 is that of `Display` at wide widths, in `u8` and `u64`
+/// limbs.
+#[test]
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn wide_to_str_radix_in_decimal_is_display() {
+  decimal_str_radix_at::<Uint<U65, [u8; 9]>, Int<U65, [u8; 9]>, 2>(65);
+  decimal_str_radix_at::<Uint<U129, [u64; 3]>, Int<U129, [u64; 3]>, 3>(129);
+}
+
+/// Checks `to_str_radix` of the non-zero `$nonzero` of `$value`, a value of `$ty`, against its
+/// integer's, inherent and through `FixedNonZero`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+macro_rules! nonzero_str_radix_agrees {
+  ($nonzero:ty, $value:expr) => {{
+    let value = $value;
+    let nonzero = <$nonzero as FixedNonZero>::new(value.clone()).expect("not zero");
+    for radix in [2, 10, 16, 36] {
+      let expected = value.to_str_radix(radix);
+      assert_eq!(nonzero.to_str_radix(radix), expected, "{expected}");
+      assert_eq!(
+        FixedNonZero::to_str_radix(&nonzero, radix),
+        expected,
+        "{expected}"
+      );
+    }
+  }};
+}
+
+/// The text of the non-zero integers is that of their integers, on a native, an array and with a
+/// box; a radix outside 2 to 36 panics and reports the caller, for the four types, inherent and
+/// through the traits.
+#[test]
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn to_str_radix_of_nonzero_integers_and_its_panics() {
+  nonzero_str_radix_agrees!(NonZeroUint<U7>, u7::new(100));
+  nonzero_str_radix_agrees!(NonZeroInt<U7>, i7::new(-64));
+  nonzero_str_radix_agrees!(NonZeroUint<U200, [u64; 4]>, Uint::<U200>::MAX);
+  nonzero_str_radix_agrees!(NonZeroInt<U200, [u64; 4]>, Int::<U200>::MIN);
+  type Boxed = Int<U200, Box<[u64; 4]>>;
+  let boxed = Boxed::from_str_radix("-123", 10).expect("200 bits");
+  assert_eq!(boxed.to_str_radix(10), "-123");
+  nonzero_str_radix_agrees!(NonZeroInt<U200, Box<[u64; 4]>>, boxed);
+  let message = "to_str_radix: radix must lie in the range `[2, 36]`".to_string();
+  type U = Uint<U200>;
+  type I = Int<U200>;
+  type Nu = NonZeroUint<U7>;
+  type Ni = NonZeroInt<U200, [u64; 4]>;
+  let (u, i) = (U::MAX, I::MIN);
+  let (nu, ni) = (Nu::MAX, Ni::MIN);
+  for radix in [0, 1, 37, u32::MAX] {
+    panics_here!(u.to_str_radix(radix), message);
+    panics_here!(i.to_str_radix(radix), message);
+    panics_here!(nu.to_str_radix(radix), message);
+    panics_here!(ni.to_str_radix(radix), message);
+    panics_here!(FixedInteger::to_str_radix(&u, radix), message);
+    panics_here!(FixedInteger::to_str_radix(&i, radix), message);
+    panics_here!(FixedNonZero::to_str_radix(&nu, radix), message);
+    panics_here!(FixedNonZero::to_str_radix(&ni, radix), message);
+  }
+}

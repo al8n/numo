@@ -619,6 +619,12 @@ where
       );
     }
     row!(UintCore::next_power_of_two_bits(&x => a; bits));
+    for (factor, addend) in [(0, 0), (0, 1), (1, 0), (10, 9), (u64::MAX, u64::MAX)] {
+      row!(UintCore::checked_mul_add_u64(&x => a; factor, addend, bits));
+    }
+    for divisor in [1, 10, u64::MAX] {
+      row!(UintCore::div_rem_u64(&x => a; divisor));
+    }
     let (before, other) = (address(x.array()), witness(&x));
     let cast = UintCore::cast_signed_bits(x, bits, Token::new());
     let expected = UintCore::cast_signed_bits(*a, bits, Token::new());
@@ -642,6 +648,29 @@ where
       panic!("lend_nonzero of {a:?} returns a copy");
     };
     assert!(core::ptr::eq(lent, &integer), "lend_nonzero of {a:?}");
+  }
+  // No digits, a zero, a one, a digit that is not below the radix, and the largest digit once for
+  // each byte of the storage and once more, so that each width has a value and a `None`.
+  let storage_bytes = size_of::<[L; N]>();
+  for radix in [2u32, 10, 256] {
+    let top = (radix - 1) as u8;
+    let mut sequences = vec![
+      vec![],
+      vec![0],
+      vec![1],
+      vec![top; storage_bytes],
+      vec![top; storage_bytes + 1],
+    ];
+    if radix < 256 {
+      sequences.push(vec![radix as u8]);
+    }
+    for digits in &sequences {
+      for big_endian in [false, true] {
+        row!(UintCore::checked_read_digits(
+          digits, big_endian, radix, bits
+        ));
+      }
+    }
   }
   for (a, b) in &samples.pairs {
     let (x, y) = (P::new(*a), P::new(*b));
@@ -1292,13 +1321,69 @@ where
 pub(super) fn text<T: FixedInteger + ArrayInteger<Array: Debug>>(a: &T) -> Vec<String> {
   let decimal = a.to_string();
   let hex = format!("{a:x}");
-  vec![
+  let results = vec![
     format!("{a} {a:+} {a:_>40} {a:?} {a:b} {a:o} {a:x} {a:X} {a:#x} {a:#010b}"),
     format!("{a:e} {a:E} {a:.3e} {a:+.1E} {a:>30e}"),
     format!("{:?}", decimal.parse::<T>().map(limbs)),
     format!("{:?}", T::from_str_radix(&hex, 16).map(limbs)),
     format!("{:?}", T::from_str_radix(&decimal, 10).map(limbs)),
-  ]
+  ];
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  let results = {
+    let mut results = results;
+    results.push(format!(
+      "{} {} {}",
+      a.to_str_radix(2),
+      a.to_str_radix(10),
+      a.to_str_radix(36)
+    ));
+    results
+  };
+  results
+}
+
+/// The digits of `a` through `UnsignedDigits`: in the bases 10, `2^32 + 1` and `u64::MAX` the
+/// digits of `to_base_le` and the limbs of the integers that both readers of iterators read back
+/// from them; the integers read back from the digits of the radix 256 as bytes, from slices; and
+/// the `None` of a digit equal to the base and of one digit 255 more in the radix 256 than the
+/// bytes of the width, from a slice and from an iterator.
+#[inline(never)]
+pub(super) fn digits<T>(a: &T) -> Vec<String>
+where
+  T: UnsignedDigits + IntegerBytes + ArrayInteger<Array: Debug>,
+{
+  let mut results = Vec::new();
+  for base in [10, (1 << 32) + 1, u64::MAX] {
+    let le: Vec<u64> = a.to_base_le(base).collect();
+    results.push(format!(
+      "{le:?} {:?} {:?} {:?}",
+      T::checked_from_base_le(le.iter().copied(), base).map(limbs),
+      T::checked_from_base_be(le.iter().rev().copied(), base).map(limbs),
+      T::checked_from_base_le([base], base).map(limbs),
+    ));
+  }
+  let mut bytes: Vec<u8> = a.to_base_le(256).map(|digit| digit as u8).collect();
+  let le = T::checked_from_radix_le(&bytes, 256).map(limbs);
+  bytes.reverse();
+  let be = T::checked_from_radix_be(&bytes, 256).map(limbs);
+  let over = vec![255; T::BYTES + 1];
+  results.push(format!(
+    "{le:?} {be:?} {:?} {:?} {:?}",
+    T::checked_from_radix_le(&over, 256).map(limbs),
+    T::checked_from_base_be(over.iter().map(|&digit| u64::from(digit)), 256).map(limbs),
+    T::checked_from_radix_be(&[10], 10).map(limbs),
+  ));
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  for radix in [2, 10, 256] {
+    results.push(format!(
+      "{:?} {:?}",
+      a.to_radix_le(radix),
+      a.to_radix_be(radix)
+    ));
+  }
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  results.push(format!("{:?}", a.to_base_be(10).collect::<Vec<u64>>()));
+  results
 }
 
 /// The bytes of `a` through `IntegerBytes`: each byte, and the bytes copied to buffers of each
@@ -1319,6 +1404,14 @@ pub(super) fn bytes<T: IntegerBytes>(a: &T) -> Vec<String> {
     );
     results.push(format!("{written:?} {little:?} {big:?}"));
   }
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  results.push(format!(
+    "{:?} {:?} {:?} {:?}",
+    a.to_le_bytes_vec(),
+    a.to_be_bytes_vec(),
+    a.to_le_bytes_trimmed_vec(),
+    a.to_be_bytes_trimmed_vec()
+  ));
   results
 }
 
@@ -1480,6 +1573,7 @@ macro_rules! uint_results {
     results.extend(unsigned_methods(a, b));
     results.extend(text(a));
     results.extend(bytes(a));
+    results.extend(digits(a));
     results.extend(uint_conversions(a, b));
     results.extend(uint_operators::<_, $repr>(a, b, n));
     results
@@ -1604,7 +1698,7 @@ where
   T: FixedNonZero<Integer: ArrayInteger<Array: Debug>>,
 {
   let value = |x: T| limbs(x.get());
-  vec![
+  let results = vec![
     format!(
       "{:?}",
       [
@@ -1641,7 +1735,19 @@ where
         a == b,
       )
     ),
-  ]
+  ];
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  let results = {
+    let mut results = results;
+    results.push(format!(
+      "{} {} {}",
+      a.to_str_radix(2),
+      a.to_str_radix(10),
+      a.to_str_radix(36)
+    ));
+    results
+  };
+  results
 }
 
 /// The results of the methods of `UnsignedNonZero` on `a` and `b`, as the limbs of the integers of

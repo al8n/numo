@@ -369,10 +369,11 @@
 //! # `no_std`
 //!
 //! The crate is `no_std` without the `std` feature, which is a default feature. The `std` and the
-//! `alloc` features are independent: either one gives the heap storages, and `alloc` gives them to
-//! a `no_std` build, through the `alloc` crate. The crate allocates only in the heap storages and
-//! in the boxed iterator that the `quickcheck` feature returns from shrinking, as the `quickcheck`
-//! trait requires, so with no feature it never allocates.
+//! `alloc` features are independent: either one gives the heap storages and the forms that return
+//! a `Vec` or a `String`, such as `to_str_radix` and `to_radix_be`, and `alloc` gives them to a
+//! `no_std` build, through the `alloc` crate. The crate allocates only in the heap storages, in
+//! those forms, and in the boxed iterator that the `quickcheck` feature returns from shrinking, as
+//! the `quickcheck` trait requires, so with no feature it never allocates.
 //!
 //! # `serde`
 //!
@@ -532,7 +533,7 @@ pub use integer::{
   IntegerMath, IntegerNonZero, IntegerOne, NativeInteger, NonZeroInt, NonZeroLimits, NonZeroOf,
   NonZeroUint, OverflowingOps, SaturatingOps, SignedBits, SignedFixedInteger, SignedMath,
   SignedNonZero, StrictOps, TruncateFrom, TryNewError, Uint, UncheckedOps, UnsignedBits,
-  UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WidenFrom, WrappingOps,
+  UnsignedDigits, UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WidenFrom, WrappingOps,
 };
 pub use layout::{
   DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,

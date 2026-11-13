@@ -1608,3 +1608,206 @@ fn nonzero_byte_order_in_constant_contexts() {
   };
   assert_eq!(BYTES, (swapped, in_big));
 }
+
+/// The shortest bytes, least significant first, of the value whose `BYTES` bytes are `le`: without
+/// the zero bytes at the top for an unsigned value, and for a signed one without each top byte
+/// that only copies the sign of the byte below it; none for zero.
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn trimmed_model(le: &[u8], signed: bool) -> Vec<u8> {
+  let mut bytes = le.to_vec();
+  while bytes.len() >= 2 {
+    let (below, top) = (bytes[bytes.len() - 2], bytes[bytes.len() - 1]);
+    let copies = if signed {
+      (top == 0x00 && below < 0x80) || (top == 0xff && below >= 0x80)
+    } else {
+      top == 0
+    };
+    if !copies {
+      break;
+    }
+    bytes.pop();
+  }
+  if bytes == [0] {
+    bytes.clear();
+  }
+  bytes
+}
+
+/// Checks the byte vectors of `x` through `IntegerBytes`, read in two's complement if `signed`:
+/// the whole vectors are the bytes that `copy_le_bytes_to` and `copy_be_bytes_to` write, the
+/// trimmed ones those of [`trimmed_model`], which read back in both orders, and without their top
+/// byte do not.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn byte_vectors_at<T: IntegerBytes + Debug + PartialEq>(x: &T, signed: bool) {
+  let (mut le, mut be) = (vec![0; T::BYTES], vec![0; T::BYTES]);
+  x.copy_le_bytes_to(&mut le);
+  x.copy_be_bytes_to(&mut be);
+  assert_eq!(x.to_le_bytes_vec(), le, "{x:?}");
+  assert_eq!(x.to_be_bytes_vec(), be, "{x:?}");
+  let trimmed = trimmed_model(&le, signed);
+  let reversed: Vec<u8> = trimmed.iter().rev().copied().collect();
+  assert_eq!(x.to_le_bytes_trimmed_vec(), trimmed, "{x:?}");
+  assert_eq!(x.to_be_bytes_trimmed_vec(), reversed, "{x:?}");
+  assert!(trimmed.len() <= T::BYTES, "{x:?}");
+  assert_eq!(T::checked_from_le_slice(&trimmed).as_ref(), Some(x));
+  assert_eq!(T::checked_from_be_slice(&reversed).as_ref(), Some(x));
+  if let Some((_, shorter)) = trimmed.split_last() {
+    assert_ne!(T::checked_from_le_slice(shorter).as_ref(), Some(x));
+  }
+}
+
+/// Checks the byte vectors of `$ty` at each value of `$values`, created by `$from`, through
+/// [`byte_vectors_at`], and the inherent methods against those of `IntegerBytes`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+macro_rules! sweep_byte_vectors {
+  ($sign:ident; $ty:ty, $bits:expr, $values:expr, $from:expr, $value:expr, $magnitude:expr) => {{
+    let from: fn(i128) -> $ty = $from;
+    for a in $values {
+      let x = from(a);
+      byte_vectors_at(&x, is_signed!($sign));
+      assert_eq!(
+        [
+          x.to_le_bytes_vec(),
+          x.to_be_bytes_vec(),
+          x.to_le_bytes_trimmed_vec(),
+          x.to_be_bytes_trimmed_vec(),
+        ],
+        [
+          IntegerBytes::to_le_bytes_vec(&x),
+          IntegerBytes::to_be_bytes_vec(&x),
+          IntegerBytes::to_le_bytes_trimmed_vec(&x),
+          IntegerBytes::to_be_bytes_trimmed_vec(&x),
+        ],
+        "{a}"
+      );
+    }
+  }};
+}
+
+/// Checks the byte vectors at the width `B`, `bits` bits, at most 8, in `u8` and `i8`, `[u8; 2]`
+/// and `[u16; 1]`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn byte_vectors_of_narrow_widths<B>(bits: u32)
+where
+  B: FitsBits<u8> + FitsBits<i8> + FitsBits<[u8; 2]> + FitsBits<[u16; 1]>,
+{
+  let values = |bits, signed| byte_values(bits, signed, true);
+  sweep_storage!(sweep_byte_vectors, values, native B, bits, u8, i8);
+  sweep_storage!(sweep_byte_vectors, values, array B, bits, [u8; 2]);
+  sweep_storage!(sweep_byte_vectors, values, array B, bits, [u16; 1]);
+}
+
+/// Checks the byte vectors at the width `B`, `bits` bits, from 9 to 16, in `u16` and `i16` and
+/// `[u8; 2]`.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn byte_vectors_of_wider_widths<B>(bits: u32)
+where
+  B: FitsBits<u16> + FitsBits<i16> + FitsBits<[u8; 2]>,
+{
+  let values = |bits, signed| byte_values(bits, signed, true);
+  sweep_storage!(sweep_byte_vectors, values, native B, bits, u16, i16);
+  sweep_storage!(sweep_byte_vectors, values, array B, bits, [u8; 2]);
+}
+
+/// The byte vectors of both signs at widths up to 16 bits: the whole ones are the bytes of the
+/// value, and the trimmed ones the shortest bytes that read back, against the model; and the
+/// examples of the docs as literals.
+#[test]
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn byte_vectors_of_small_widths() {
+  byte_vectors_of_narrow_widths::<U0>(0);
+  byte_vectors_of_narrow_widths::<U1>(1);
+  byte_vectors_of_narrow_widths::<U7>(7);
+  byte_vectors_of_narrow_widths::<U8>(8);
+  byte_vectors_of_wider_widths::<U9>(9);
+  byte_vectors_of_wider_widths::<U16>(16);
+  if !tier().is_miri() {
+    byte_vectors_of_narrow_widths::<U3>(3);
+    byte_vectors_of_wider_widths::<U12>(12);
+  }
+  type I16 = Int<U16>;
+  assert_eq!(I16::new(-1).to_le_bytes_trimmed_vec(), [0xff]);
+  assert_eq!(I16::new(-128).to_le_bytes_trimmed_vec(), [0x80]);
+  assert_eq!(I16::new(128).to_le_bytes_trimmed_vec(), [0x80, 0x00]);
+  assert_eq!(I16::new(-129).to_le_bytes_trimmed_vec(), [0x7f, 0xff]);
+  assert_eq!(I16::new(-129).to_be_bytes_trimmed_vec(), [0xff, 0x7f]);
+  assert_eq!(i7::new(-64).to_le_bytes_trimmed_vec(), [0xc0]);
+  assert_eq!(i7::new(63).to_le_bytes_trimmed_vec(), [0x3f]);
+  assert_eq!(i1::new(-1).to_le_bytes_trimmed_vec(), [0xff]);
+  assert_eq!(Uint::<U16>::new(0x80).to_le_bytes_trimmed_vec(), [0x80]);
+  assert!(I16::ZERO.to_le_bytes_trimmed_vec().is_empty());
+  assert!(u7::ZERO.to_be_bytes_trimmed_vec().is_empty());
+  assert_eq!(u7::ZERO.to_le_bytes_vec(), [0]);
+  assert!(u0::ZERO.to_le_bytes_vec().is_empty() && i0::ZERO.to_be_bytes_vec().is_empty());
+}
+
+/// Checks the byte vectors of the `Uint` `U` and the `Int` `I`, of `bits` bits, at the patterns
+/// of [`wide_patterns`] in `K` words, through [`byte_vectors_at`].
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn wide_byte_vectors_at<U, I, const K: usize>(bits: u32)
+where
+  U: Patterned + IntegerBytes,
+  I: Patterned + IntegerBytes,
+{
+  for p in wide_patterns::<K>(bits) {
+    byte_vectors_at(&U::from_pattern(&p), false);
+    byte_vectors_at(&I::from_pattern(&p), true);
+  }
+}
+
+/// The byte vectors of wide values, above the 8192 bits of the arrays of bytes too: 200, 256 and
+/// 16384 bits, and in an optimized build 4096 and 8192 bits.
+#[test]
+#[cfg(any(feature = "std", feature = "alloc"))]
+fn wide_byte_vectors() {
+  wide_byte_vectors_at::<Uint<U200, [u8; 25]>, Int<U200, [u8; 25]>, 4>(200);
+  wide_byte_vectors_at::<Uint<U256, [u64; 4]>, Int<U256, [u64; 4]>, 4>(256);
+  wide_byte_vectors_at::<Uint<U16384, [u64; 256]>, Int<U16384, [u64; 256]>, 256>(16384);
+  if tier().is_full() {
+    wide_byte_vectors_at::<Uint<U4096, [u32; 128]>, Int<U4096, [u32; 128]>, 64>(4096);
+    wide_byte_vectors_at::<Uint<U8192, [u64; 128]>, Int<U8192, [u64; 128]>, 128>(8192);
+  }
+}
+
+/// Checks the byte vectors of the `Uint` `U` and the `Int` `I`, of `bits` bits, at the patterns
+/// of [`wide_patterns`] in `K` words, against `num-bigint`: the whole vectors are its bytes
+/// extended to `BYTES`, and the trimmed ones its bytes, but for zero, which has none.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(never)]
+fn byte_vectors_against_big_integers<U, I, const K: usize>(bits: u32)
+where
+  U: Patterned + IntegerBytes,
+  I: Patterned + IntegerBytes,
+{
+  for p in wide_patterns::<K>(bits) {
+    let (x, y) = (U::from_pattern(&p), I::from_pattern(&p));
+    let unsigned = bigint::from_limbs(&bigint::limbs_of_pattern::<u64, K>(&p, false), false);
+    let signed = bigint::from_limbs(&bigint::limbs_of_pattern::<u64, K>(&p, true), true);
+    let zero = !p.contains(&true);
+    let mut expected = unsigned.to_bytes_le().1;
+    if zero {
+      expected.clear();
+    }
+    assert_eq!(x.to_le_bytes_trimmed_vec(), expected, "{}", model::text(&p));
+    expected.resize(U::BYTES, 0);
+    assert_eq!(x.to_le_bytes_vec(), expected, "{}", model::text(&p));
+    let mut expected = signed.to_signed_bytes_le();
+    if zero {
+      expected.clear();
+    }
+    assert_eq!(y.to_le_bytes_trimmed_vec(), expected, "{}", model::text(&p));
+  }
+}
+
+/// The byte vectors of wide values against `num-bigint`, at 200 and 4096 bits.
+#[test]
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(miri, ignore = "num-bigint is slow under Miri")]
+fn wide_byte_vectors_match_big_integers() {
+  byte_vectors_against_big_integers::<Uint<U200, [u32; 7]>, Int<U200, [u32; 7]>, 4>(200);
+  byte_vectors_against_big_integers::<Uint<U4096, [u64; 64]>, Int<U4096, [u64; 64]>, 64>(4096);
+}

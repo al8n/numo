@@ -43,6 +43,7 @@ miri_groups=(
   "7 integer::arithmetic::tests::floats::"
   "6 integer::arithmetic::tests::heap::"
   "9 integer::arithmetic::tests::shared::"
+  "8 integer::arithmetic::tests::digits::"
   "1 integer::arithmetic::"
   "2 integer::tests::int_"
   "2 integer::tests::uint_"

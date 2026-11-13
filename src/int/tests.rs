@@ -1701,7 +1701,9 @@ mod bits {
 /// own `from_str_radix`, and at narrower widths against `bigint::parse`, the model of the native
 /// parser at the width. Under Miri, every full width, and two narrower widths of `u8` and `i8`.
 mod text {
-  use std::{string::String, vec::Vec};
+  use std::{string::String, vec, vec::Vec};
+
+  use num_bigint::BigInt;
 
   use crate::{bigint, int};
 
@@ -1780,6 +1782,80 @@ mod text {
     check_native!(u32, i32, &narrow_widths(&[], &[]));
     check_native!(u64, i64, &narrow_widths(&[33, 63], &[]));
     check_native!(u128, i128, &narrow_widths(&[65, 127], &[]));
+  }
+
+  /// The divisors at which the division of a native integer by a chunk is checked.
+  const CHUNK_DIVISORS: [u64; 7] = [1, 2, 3, 10, 256, (1 << 32) + 1, u64::MAX];
+
+  /// Checks the digit functions of the native layer `$uint` at its full width and at each width of
+  /// 0, 1, 7 and 9 bits that it holds, at the values of `bigint::structured_patterns` of the
+  /// width: `div_rem_chunk` and `checked_mul_add_chunk` against `u128` and `num-bigint`,
+  /// and `checked_read_digits` against the model at every sequence of the digits 0, 1,
+  /// `radix - 1`, `radix` and 255 in the radixes 2 and 10, and 0, 1 and 255 in the radix 256, of
+  /// up to `bigint::digit_sequence_len()` digits, in both orders.
+  macro_rules! check_native_digits {
+    ($uint:ident) => {{
+      let mut widths: Vec<u32> = [0, 1, 7, 9]
+        .into_iter()
+        .filter(|&width| width < $uint::BITS)
+        .collect();
+      widths.push($uint::BITS);
+      for &width in &widths {
+        let max = BigInt::from(1) << width;
+        for value in bigint::structured_patterns(width) {
+          let x = value as $uint;
+          for divisor in CHUNK_DIVISORS {
+            let (quotient, remainder) = int::$uint::div_rem_chunk(x, divisor);
+            let divisor = u128::from(divisor);
+            assert_eq!(
+              (quotient as u128, u128::from(remainder)),
+              (value / divisor, value % divisor),
+              "{value} by {divisor}"
+            );
+          }
+          for (factor, addend) in [(0, 0), (0, 1), (1, 0), (10, 9), (u64::MAX, u64::MAX)] {
+            let exact = BigInt::from(value) * factor + addend;
+            let expected = (exact < max).then(|| u128::try_from(exact).expect("in range"));
+            assert_eq!(
+              int::$uint::checked_mul_add_chunk(x, factor, addend, width).map(u128::from),
+              expected,
+              "{value} * {factor} + {addend} at {width} bits"
+            );
+          }
+        }
+        for radix in [2u32, 10, 256] {
+          let set: Vec<u8> = if radix == 256 {
+            vec![0, 1, 255]
+          } else {
+            vec![0, 1, radix as u8 - 1, radix as u8, 255]
+          };
+          for digits in bigint::digit_sequences(&set, bigint::digit_sequence_len()) {
+            for big_endian in [false, true] {
+              let expected = bigint::digits_value(&digits, big_endian, radix.into())
+                .filter(|value| *value < max);
+              assert_eq!(
+                int::$uint::checked_read_digits(&digits, big_endian, radix, width)
+                  .map(BigInt::from),
+                expected,
+                "{digits:?} in radix {radix}, big-endian {big_endian}, at {width} bits"
+              );
+            }
+          }
+        }
+      }
+    }};
+  }
+
+  /// The digit functions of the native layers: the division and the multiply-add by a chunk
+  /// against `u128`, and the reader of digits against the model, which reads the radix 256 that
+  /// a `u8` does not hold, at every native width and at narrower ones.
+  #[test]
+  fn native_digits_match_u128() {
+    check_native_digits!(u8);
+    check_native_digits!(u16);
+    check_native_digits!(u32);
+    check_native_digits!(u64);
+    check_native_digits!(u128);
   }
 }
 

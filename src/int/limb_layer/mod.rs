@@ -317,6 +317,39 @@ macro_rules! limb_layer {
       (quotient, remainder)
     }
 
+    /// Quotient and remainder of `value / divisor`, a divisor of up to 64 bits, which a limb
+    /// narrower than 64 bits does not hold. Requires `divisor != 0`.
+    #[inline]
+    pub(crate) const fn div_rem_chunk<const N: usize>(
+      value: &[Limb; N],
+      divisor: u64,
+    ) -> ([Limb; N], u64) {
+      let mut quotient = [0; N];
+      let mut remainder: u64 = 0;
+      let mut i = N;
+      while i > 0 {
+        i -= 1;
+        // `remainder < divisor`, so each quotient is below `2^B`, a limb.
+        if Limb::BITS >= 64 {
+          // A limb of 64 bits or more holds the divisor and the remainder.
+          let (limb, rest) = $div_rem_wide(remainder as Limb, value[i], divisor as Limb);
+          quotient[i] = limb;
+          remainder = rest as u64;
+        } else {
+          // The shift by the bits of a narrow limb does not overflow; a wider one took the other
+          // branch.
+          let high = match (remainder as u128).checked_shl(Limb::BITS) {
+            Some(high) => high,
+            None => 0,
+          };
+          let wide = high | value[i] as u128;
+          quotient[i] = (wide / divisor as u128) as Limb;
+          remainder = (wide % divisor as u128) as u64;
+        }
+      }
+      (quotient, remainder)
+    }
+
     /// Quotient and remainder of `value / 10^exp`.
     pub(crate) const fn div_rem_pow10<const N: usize>(
       value: &[Limb; N],
@@ -630,8 +663,8 @@ macro_rules! limb_layer {
     }
 
     /// The number of digits of `radix` that a `u64` gathers before they are appended: the largest
-    /// `k` with `radix^k <= u64::MAX`, such as 63 for binary, 19 for decimal and 12 for radix 36.
-    /// Requires `2 <= radix <= 36`.
+    /// `k` with `radix^k <= u64::MAX`, such as 63 for binary, 19 for decimal, 12 for radix 36 and 7
+    /// for radix 256. Requires `2 <= radix <= 256`.
     #[inline]
     const fn chunk_digits(radix: u32) -> u32 {
       u64::MAX.ilog(radix as u64)
@@ -677,7 +710,7 @@ macro_rules! limb_layer {
 
     /// `value * scale + chunk` if it is at most `2^limit - 1`, or `2^limit` if `power`, and `None`
     /// otherwise. Requires `limit <= B * N`, and `limit < B * N` if `power`.
-    const fn append_chunk<const N: usize>(
+    pub(crate) const fn append_chunk<const N: usize>(
       value: &[Limb; N],
       scale: u64,
       chunk: u64,
@@ -758,6 +791,49 @@ macro_rules! limb_layer {
         [b'+', digits @ ..] => parse_magnitude(digits, radix, bits, false, false),
         digits => parse_magnitude(digits, radix, bits, false, false),
       }
+    }
+
+    /// The integer whose digits in `radix`, a byte each, are `digits`, most significant first if
+    /// `big_endian` and least significant first otherwise, as a value of `bits` bits, or `None` if
+    /// a digit is not below `radix` or the value is `2^bits` or more. No digits are zero. Requires
+    /// `2 <= radix <= 256` and `bits <= B * N`.
+    ///
+    /// The digits are read from the most significant down, whatever the order of the slice, and
+    /// appended `chunk_digits(radix)` at a time, as [`parse_magnitude`] appends them.
+    pub(crate) const fn checked_read_digits<const N: usize>(
+      digits: &[u8],
+      big_endian: bool,
+      radix: u32,
+      bits: u32,
+    ) -> Option<[Limb; N]> {
+      let per_chunk = chunk_digits(radix);
+      let mut value = [0; N];
+      // The digits since the last append, `radix` to their number, and their number: the first
+      // two stay at most `radix^per_chunk <= u64::MAX`.
+      let (mut chunk, mut scale, mut count) = (0, 1, 0);
+      let mut i = 0;
+      while i < digits.len() {
+        let digit = if big_endian {
+          digits[i]
+        } else {
+          digits[digits.len() - 1 - i]
+        };
+        if digit as u32 >= radix {
+          return None;
+        }
+        chunk = chunk * radix as u64 + digit as u64;
+        scale *= radix as u64;
+        count += 1;
+        if count == per_chunk {
+          value = match append_chunk(&value, scale, chunk, bits, false) {
+            Some(value) => value,
+            None => return None,
+          };
+          (chunk, scale, count) = (0, 1, 0);
+        }
+        i += 1;
+      }
+      append_chunk(&value, scale, chunk, bits, false)
     }
 
     /// Returns `true` if `value < 2^bits`: every bit at index `bits` or above is zero.

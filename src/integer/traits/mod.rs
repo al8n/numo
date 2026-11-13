@@ -191,6 +191,19 @@ pub trait FixedInteger:
   #[track_caller]
   fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError>;
 
+  /// The text of the value in `radix`, from 2 to 36, which `from_str_radix` reads back, as the
+  /// inherent `to_str_radix` writes it: `-` before the digits of the magnitude of a negative
+  /// value, lowercase letters, and `"0"` for zero.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 36, reporting the caller.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String;
+
   integer_query_table!(trait_items![]);
 }
 
@@ -1067,6 +1080,19 @@ pub trait FixedNonZero:
   #[track_caller]
   fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError>;
 
+  /// The text of the value in `radix`, from 2 to 36, which `from_str_radix` reads back, as the
+  /// inherent `to_str_radix` writes it: `-` before the digits of the magnitude of a negative
+  /// value, and lowercase letters.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 36, reporting the caller.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String;
+
   nonzero_table!(Uint, trait_items![]);
 }
 
@@ -1276,6 +1302,13 @@ impl<B: FitsBits<R>, R: UintRepr + Clone> FixedInteger for Uint<B, R> {
     R::from_str_radix_bits(src.as_bytes(), radix, B::U32, Token::new()).map(Self::wrap)
   }
 
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String {
+    Self::to_str_radix(self, radix)
+  }
+
   integer_query_table!(generic_items![]);
 }
 
@@ -1303,6 +1336,13 @@ impl<B: FitsBits<R>, R: IntRepr + Clone> FixedInteger for Int<B, R> {
   fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
     check_radix(radix);
     R::from_str_radix_bits(src.as_bytes(), radix, B::U32, Token::new()).map(Self::wrap)
+  }
+
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String {
+    Self::to_str_radix(self, radix)
   }
 
   integer_query_table!(generic_items![]);
@@ -1773,6 +1813,13 @@ impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> FixedNonZero for NonZeroUint<B
     parse_unsigned(src, radix)
   }
 
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String {
+    Self::to_str_radix(self, radix)
+  }
+
   nonzero_table!(Uint, generic_items![]);
 }
 
@@ -1813,6 +1860,13 @@ impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> FixedNonZero for NonZeroInt<B, 
   fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
     check_radix(radix);
     parse_signed(src, radix)
+  }
+
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[inline]
+  #[track_caller]
+  fn to_str_radix(&self, radix: u32) -> std::string::String {
+    Self::to_str_radix(self, radix)
   }
 
   nonzero_table!(Int, generic_items![]);

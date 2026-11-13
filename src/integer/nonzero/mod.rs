@@ -446,6 +446,21 @@ macro_rules! nonzero_int_table {
 impl<B: FitsBits<R::Integer>, R: NonZeroUintRepr> NonZeroUint<B, R> {
   /// The number of bits, `Bits`.
   pub const BITS: u32 = B::U32;
+
+  /// The text of the value in `radix`, from 2 to 36, as
+  /// [`Uint::to_str_radix`](crate::Uint::to_str_radix) writes it.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 36, reporting the caller.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[inline]
+  #[track_caller]
+  pub fn to_str_radix(&self, radix: u32) -> std::string::String {
+    self.integer().to_str_radix(radix)
+  }
 }
 
 impl<B: FitsBits<R::Integer> + NonZero, R: NonZeroUintRepr> NonZeroUint<B, R>
@@ -471,6 +486,22 @@ where
 impl<B: FitsBits<R::Integer>, R: NonZeroIntRepr> NonZeroInt<B, R> {
   /// The number of bits, `Bits`, including the sign bit.
   pub const BITS: u32 = B::U32;
+
+  /// The text of the value in `radix`, from 2 to 36, as
+  /// [`Int::to_str_radix`](crate::Int::to_str_radix) writes it: `-` before the digits of the
+  /// magnitude of a negative value.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `radix` is not from 2 to 36, reporting the caller.
+  #[cfg(any(feature = "std", feature = "alloc"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+  #[must_use]
+  #[inline]
+  #[track_caller]
+  pub fn to_str_radix(&self, radix: u32) -> std::string::String {
+    self.integer().to_str_radix(radix)
+  }
 }
 
 impl<B: FitsBits<R::Integer> + NonZero, R: NonZeroIntRepr> NonZeroInt<B, R>
