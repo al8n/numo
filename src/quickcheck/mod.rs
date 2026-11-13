@@ -20,12 +20,12 @@ use crate::{
   sample::{self, Chain, MODES, Source},
 };
 
-/// `0..=255` in order, so that `Gen::choose` picks a uniform value below `n` from `INDEX[..n]`.
-const INDEX: [u8; 256] = {
-  let mut index = [0; 256];
+/// `0..=511` in order, so that `Gen::choose` picks a uniform value below `n` from `INDEX[..n]`.
+const INDEX: [u16; 512] = {
+  let mut index = [0; 512];
   let mut i = 0;
   while i < index.len() {
-    index[i] = i as u8;
+    index[i] = i as u16;
     i += 1;
   }
   index

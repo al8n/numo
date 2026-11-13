@@ -23,7 +23,7 @@ use crate::{
 /// A source of random choices: the bytes of `arbitrary`, or the random number generator of
 /// `proptest` or `quickcheck`.
 pub(crate) trait Source {
-  /// Returns a value in `0..n`. Requires `1 <= n <= 256`.
+  /// Returns a value in `0..n`. Requires `1 <= n <= 512`.
   fn below(&mut self, n: u32) -> u32;
 }
 

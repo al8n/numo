@@ -107,7 +107,7 @@ pub struct DecimalValueTree<I, F, R> {
   current: R,
   /// The index of `current` among the candidates for `parent`, or `None` when `current` is
   /// `parent`.
-  cursor: Option<u8>,
+  cursor: Option<u16>,
   /// `true` once every candidate for `parent` has passed.
   exhausted: bool,
   decimal: DecimalMarker<I, F, R>,
@@ -135,7 +135,7 @@ where
 {
   /// Moves to the candidate for `parent` at `index` and returns `true`, or, past the last
   /// candidate, back to `parent`, which is then exhausted, and returns `false`.
-  fn move_to(&mut self, index: u8) -> bool {
+  fn move_to(&mut self, index: u16) -> bool {
     // The candidates are computed in the twin of the parent, and only the one that the tree moves
     // to is stored.
     let chain = Chain::<I, F, R, R::Inline>::new(self.parent.twin(Token::new()));

@@ -113,7 +113,7 @@ struct Odometer<'p> {
 
 impl Source for Odometer<'_> {
   fn below(&mut self, n: u32) -> u32 {
-    assert!((1..=256).contains(&n), "a choice among {n} values");
+    assert!((1..=512).contains(&n), "a choice among {n} values");
     let answer = match self.path.get_mut(self.next) {
       Some((answer, bound)) => {
         // The same answers lead to the same choices; a prefix records its bounds on the first
