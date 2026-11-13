@@ -4841,5 +4841,6 @@ mod with_serde {
 }
 
 mod digits;
+mod floats;
 mod literal;
 mod operators;

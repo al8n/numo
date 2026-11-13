@@ -407,8 +407,14 @@ fn exact_conversions_report_the_first_error() {
 fn errors_write_their_kinds() {
   use FromFloatError::{Inexact, Infinite, Nan, NegOverflow, PosOverflow};
   let (above, below) = super::casts::errors();
-  assert_eq!(Nan.to_string(), "NaN has no integer value");
-  assert_eq!(Infinite.to_string(), "infinity has no integer value");
+  assert_eq!(
+    Nan.to_string(),
+    "NaN cannot be converted to the target type"
+  );
+  assert_eq!(
+    Infinite.to_string(),
+    "infinity cannot be converted to the target type"
+  );
   assert_eq!(PosOverflow.to_string(), above.to_string());
   assert_eq!(NegOverflow.to_string(), below.to_string());
   assert_eq!(Inexact.to_string(), "the value is not an integer");

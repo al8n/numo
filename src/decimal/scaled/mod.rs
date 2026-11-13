@@ -10,12 +10,12 @@ use core::{
 };
 
 use super::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, DecimalOne, DivRound, DivideError,
-  ExactMul, FixedDecimal, ParseError, QuantizeError, SignedFixedDecimal, UnsignedFixedDecimal,
-  WidenTo, format, ops::overflow,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, DecimalFloat, DecimalOne, DivRound,
+  DivideError, ExactMul, FixedDecimal, ParseError, QuantizeError, SignedFixedDecimal,
+  UnsignedFixedDecimal, WidenTo, float, format, ops::overflow,
 };
 use crate::{
-  int,
+  FromFloatError, int,
   layout::{StorageCore, Token},
   rounding::RoundingMode,
 };
@@ -95,9 +95,9 @@ mod tests;
 ///
 /// Every decimal trait of this crate is implemented for `Scaled<D>` once, for every decimal `D`
 /// that implements it: [`FixedDecimal`], [`ConstFixedDecimal`], [`SignedFixedDecimal`],
-/// [`UnsignedFixedDecimal`], [`DecimalOne`] and [`ConstDecimalOne`], and between `Scaled` types
-/// [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`]. Generic code bounded by them takes a
-/// `Scaled` and a bare decimal alike. The operators `+`, `-`, `+=` and `-=` and
+/// [`UnsignedFixedDecimal`], [`DecimalOne`], [`ConstDecimalOne`] and [`DecimalFloat`], and between
+/// `Scaled` types [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`]. Generic code bounded
+/// by them takes a `Scaled` and a bare decimal alike. The operators `+`, `-`, `+=` and `-=` and
 /// [`Sum`](core::iter::Sum) are implemented as for a decimal, and panic where `checked_add` and
 /// `checked_sub` return `None`; the methods of a `Scaled` are reached through the traits, with the
 /// trait in scope. A `Scaled` relates only to a `Scaled`: no trait converts a bare decimal into a
@@ -127,6 +127,9 @@ mod tests;
 ///   [`is_integer`](FixedDecimal::is_integer) are those of the value, whatever the scale: `2.50`
 ///   has one fraction digit and scale 2, and `2.00` is an integer;
 /// - negation and [`abs`](SignedFixedDecimal::abs) keep the scale;
+/// - [`round_from_f64`](DecimalFloat::round_from_f64) and its `f32` form take the fraction digits
+///   of the type, and [`from_f64_shortest`](DecimalFloat::from_f64_shortest) and its `f32` form the
+///   fraction digits of the shortest text, at most those of the type, so that `0.5` has scale 1;
 /// - zero, the limits, one and a value made by [`from_repr`](FixedDecimal::from_repr) have scale
 ///   0, and `Scaled::new` gives a coefficient another scale.
 ///
@@ -317,6 +320,16 @@ where
 /// has at most 154.
 fn fraction_scale<T: FixedDecimal>() -> u8 {
   u8::try_from(T::FRACTION).unwrap_or(u8::MAX)
+}
+
+/// The scale of a value read from the shortest text of a float into `T`: the fraction digits of
+/// the text, whose last digit has the exponent `exponent`, at most those of `T`.
+fn text_scale<T: FixedDecimal>(exponent: i32) -> u8 {
+  // A text whose last digit is at the point or above it has no fraction digit.
+  let digits = u32::try_from(-i64::from(exponent))
+    .unwrap_or(0)
+    .min(T::FRACTION);
+  u8::try_from(digits).unwrap_or(u8::MAX)
 }
 
 // `parse` and `FromStr` are per storage, emitted by `storage_decimal!` beside `Decimal::parse`, so
@@ -749,6 +762,72 @@ where
 {
   /// One with scale 0.
   const ONE: Self = Self::new(D::ONE, 0);
+}
+
+// The bound of the operators, which names the supertrait itself: `D: DecimalFloat` alone would
+// hold one level further out too, and give the conversions to a `Scaled<Scaled<D>>`.
+impl<D> DecimalFloat for Scaled<D>
+where
+  D: DecimalFloat,
+  Self: FixedDecimal,
+{
+  /// Converts the value to the nearest `f64`, whatever the scale.
+  #[inline]
+  fn to_f64(&self) -> f64 {
+    self.value.to_f64()
+  }
+
+  /// Converts the value to the nearest `f32`, whatever the scale.
+  #[inline]
+  fn to_f32(&self) -> f32 {
+    self.value.to_f32()
+  }
+
+  /// Converts the exact binary value of `value` as `D` does. The result takes the fraction digits
+  /// of `D` as its scale, also for zero.
+  #[inline]
+  fn round_from_f64(value: f64, mode: RoundingMode) -> Result<Self, FromFloatError> {
+    Ok(Self::new(
+      D::round_from_f64(value, mode)?,
+      fraction_scale::<Self>(),
+    ))
+  }
+
+  /// Converts the exact binary value of `value` as `D` does. The result takes the fraction digits
+  /// of `D` as its scale, also for zero.
+  #[inline]
+  fn round_from_f32(value: f32, mode: RoundingMode) -> Result<Self, FromFloatError> {
+    Ok(Self::new(
+      D::round_from_f32(value, mode)?,
+      fraction_scale::<Self>(),
+    ))
+  }
+
+  /// Converts the decimal that the shortest text of `value` names as `D` does. The result takes
+  /// the fraction digits of the text as its scale, at most those of `D`: `0.5` has scale 1 and
+  /// `1e21` scale 0, `1.9999` into two fraction digits is `2.00` with scale 2, and `-0.0` is zero
+  /// with scale 0.
+  fn from_f64_shortest(value: f64, mode: RoundingMode) -> Result<Self, FromFloatError> {
+    // `D` reports NaN and the infinities first: only a finite float has a text to take the scale
+    // from.
+    let decimal = D::from_f64_shortest(value, mode)?;
+    Ok(Self::new(
+      decimal,
+      text_scale::<Self>(float::shortest(value).1),
+    ))
+  }
+
+  /// Converts the decimal that the shortest text of `value` names as `D` does. The result takes
+  /// the fraction digits of the text of the `f32` as its scale, at most those of `D`.
+  fn from_f32_shortest(value: f32, mode: RoundingMode) -> Result<Self, FromFloatError> {
+    // `D` reports NaN and the infinities first: only a finite float has a text to take the scale
+    // from.
+    let decimal = D::from_f32_shortest(value, mode)?;
+    Ok(Self::new(
+      decimal,
+      text_scale::<Self>(float::shortest(value).1),
+    ))
+  }
 }
 
 // Every `Scaled` that the implementations below relate is a `FixedDecimal`, so that a `Scaled` over

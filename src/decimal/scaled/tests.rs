@@ -15,9 +15,10 @@ use typenum::{U0, U1, U2, U4, U8, U10, U11, U12, U16, U18, U20, U22, U36, U40, U
 
 use super::Scaled;
 use crate::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalOne, DivRound,
-  DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError, RoundingMode,
-  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo, bigint::MODES, dec, i256, i512, u256, u512,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalFloat, DecimalOne,
+  DivRound, DivideError, ExactMul, FixedDecimal, FromFloatError, ParseError, ParseErrorKind,
+  QuantizeError, RoundingMode, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo, bigint::MODES,
+  dec, i256, i512, u256, u512,
 };
 
 /// 20 integral and 18 fraction digits in an `i128`.
@@ -923,6 +924,129 @@ fn digits_are_the_values_and_rounding_takes_the_scale_of_its_digits() {
   check_digits::<Narrow>();
   check_digits::<Decimal<U40, U36, i256>>();
   check_digits::<Decimal<U40, U36, u256>>();
+}
+
+/// Checks, for a `Scaled` over `D`, that each reading of a float gives the value of the decimal's
+/// own function, or its error, with the scale of its reading: the fraction digits of `D` for the
+/// binary value, and for the shortest text the fraction digits of the text that `Display` writes
+/// for the float, at most those of `D`. At a few floats of each format, in two modes. And that
+/// `to_f64` and `to_f32` are those of the value, whatever the scale: at zero, the limits and `1.5`,
+/// each with the scales 0, 3 and 255.
+#[inline(never)]
+fn check_floats<D>()
+where
+  D: ConstFixedDecimal + DecimalFloat,
+  Scaled<D>: DecimalFloat,
+{
+  let fraction = u8::try_from(D::FRACTION).expect("a scale");
+  // The fraction digits of the text that `Display` writes, at most those of `D`.
+  let text_scale = |text: String| {
+    let digits = text.split_once('.').map_or(0, |(_, digits)| digits.len());
+    u8::try_from(digits.min(D::FRACTION as usize)).expect("a scale")
+  };
+  for x in [0.5, -2.5, 0.1, 1e-3, 123.456, 1e21, -0.0, 5e-324] {
+    let narrow = x as f32;
+    for mode in [RoundingMode::HalfEven, RoundingMode::Up] {
+      assert_eq!(
+        Scaled::<D>::round_from_f64(x, mode).map(Scaled::into_parts),
+        D::round_from_f64(x, mode).map(|value| (value, fraction)),
+        "{x:e}, {mode}"
+      );
+      assert_eq!(
+        Scaled::<D>::round_from_f32(narrow, mode).map(Scaled::into_parts),
+        D::round_from_f32(narrow, mode).map(|value| (value, fraction)),
+        "{narrow:e}, {mode}"
+      );
+      assert_eq!(
+        Scaled::<D>::from_f64_shortest(x, mode).map(Scaled::into_parts),
+        D::from_f64_shortest(x, mode).map(|value| (value, text_scale(x.to_string()))),
+        "{x:e}, {mode}"
+      );
+      assert_eq!(
+        Scaled::<D>::from_f32_shortest(narrow, mode).map(Scaled::into_parts),
+        D::from_f32_shortest(narrow, mode).map(|value| (value, text_scale(narrow.to_string()))),
+        "{narrow:e}, {mode}"
+      );
+    }
+  }
+  let decimals: [D; 4] = [D::ZERO, D::MIN, D::MAX, value("1.5")];
+  for decimal in decimals {
+    for scale in [0u8, 3, 255] {
+      let scaled = Scaled::new(decimal, scale);
+      assert_eq!(
+        (scaled.to_f64().to_bits(), scaled.to_f32().to_bits()),
+        (decimal.to_f64().to_bits(), decimal.to_f32().to_bits()),
+        "{decimal}, scale {scale}"
+      );
+    }
+  }
+}
+
+/// The readings of a float through `Scaled` take the scale of their reading: the binary value the
+/// fraction digits of the type, and the shortest text its own fraction digits, at most those of
+/// the type, so that a text rounded to the type keeps them all and `-0.0` reads as zero with scale
+/// 0. NaN and the infinities are the errors of the decimal's own readings, which `Scaled` returns
+/// before it formats the float. `to_f64` and `to_f32` are those of the value.
+#[test]
+fn floats_read_with_the_scale_of_their_reading() {
+  let (down, even, half_up) = (
+    RoundingMode::Down,
+    RoundingMode::HalfEven,
+    RoundingMode::HalfUp,
+  );
+  assert_text(&Price::round_from_f64(0.5, even).unwrap(), "0.50000000", 8);
+  assert_text(&Price::from_f64_shortest(0.5, even).unwrap(), "0.5", 1);
+  let large = Scaled::<Decimal<U22, U16>>::from_f64_shortest(1e21, down).unwrap();
+  assert_text(&large, "1000000000000000000000", 0);
+  assert_text(&Cents::from_f64_shortest(1.9999, even).unwrap(), "2.00", 2);
+  assert_text(
+    &Cents::from_f64_shortest(2.675, half_up).unwrap(),
+    "2.68",
+    2,
+  );
+  assert_text(&Cents::round_from_f64(2.675, half_up).unwrap(), "2.67", 2);
+  assert_text(&Price::from_f32_shortest(0.1, even).unwrap(), "0.1", 1);
+  let widened = Price::from_f64_shortest(f64::from(0.1_f32), even).unwrap();
+  assert_text(&widened, "0.10000000", 8);
+  for zero in [
+    Price::from_f64_shortest(-0.0, down),
+    Price::from_f32_shortest(-0.0, down),
+  ] {
+    assert_text(&zero.unwrap(), "0", 0);
+  }
+  for zero in [
+    Price::round_from_f64(-0.0, down),
+    Price::round_from_f32(-0.0, down),
+  ] {
+    assert_text(&zero.unwrap(), "0.00000000", 8);
+  }
+
+  for mode in [down, even] {
+    for (x, error) in [
+      (f64::NAN, FromFloatError::Nan),
+      (f64::INFINITY, FromFloatError::Infinite),
+      (f64::NEG_INFINITY, FromFloatError::Infinite),
+    ] {
+      let narrow = x as f32;
+      assert_eq!(Price::round_from_f64(x, mode), Err(error), "{x}, {mode}");
+      assert_eq!(
+        Price::round_from_f32(narrow, mode),
+        Err(error),
+        "{x}, {mode}"
+      );
+      assert_eq!(Price::from_f64_shortest(x, mode), Err(error), "{x}, {mode}");
+      assert_eq!(
+        Price::from_f32_shortest(narrow, mode),
+        Err(error),
+        "{x}, {mode}"
+      );
+    }
+  }
+
+  check_floats::<Decimal<U2, U2>>();
+  check_floats::<Narrow>();
+  check_floats::<Decimal<U40, U36, i256>>();
+  check_floats::<Decimal<U40, U36, u256>>();
 }
 
 /// The operators take the larger scale of their operands, as `checked_add` and `checked_sub` do,
