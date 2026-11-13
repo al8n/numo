@@ -11,9 +11,11 @@
 //!
 //! Rounding is checked against a reference that picks the nearer of the two bracketing multiples by
 //! distance, and `round_to` also against `bigdecimal`, which decides from the first dropped digit
-//! and whether any later one is nonzero; neither shares the crate's rule. Values at and next to
-//! ties are generated for every number of dropped digits, and every mode is checked on each value,
-//! together with the symmetry between a value and its negation.
+//! and whether any later one is nonzero; neither shares the crate's rule. `Up05` has no distance:
+//! the reference reads the last digit of the quotient toward zero, and `bigdecimal` 0.4, which has
+//! no such mode, is not compared for it. Values at and next to ties are generated for every number
+//! of dropped digits, and every mode is checked on each value, together with the symmetry between a
+//! value and its negation.
 //!
 //! Division is checked against the same reference, applied to the exact quotient with both operands
 //! scaled and a divisor of either sign, on random operands, the extremes of each type and quotients
@@ -1465,7 +1467,7 @@ proptest! {
 }
 
 /// Every rounding mode.
-const MODES: [RoundingMode; 7] = [
+const MODES: [RoundingMode; 8] = [
   RoundingMode::Up,
   RoundingMode::Down,
   RoundingMode::Ceiling,
@@ -1473,6 +1475,7 @@ const MODES: [RoundingMode; 7] = [
   RoundingMode::HalfUp,
   RoundingMode::HalfDown,
   RoundingMode::HalfEven,
+  RoundingMode::Up05,
 ];
 
 /// The mode that rounds `-x` as `mode` rounds `x`, negated: `Ceiling` and `Floor` swap, and every
@@ -1489,8 +1492,9 @@ fn mirror(mode: RoundingMode) -> RoundingMode {
 ///
 /// Picks between the integers below and above the exact quotient by their distances to it, scaled
 /// by `|divisor|`, and breaks a tie by direction or parity, taking the direction from the sign of
-/// the exact quotient. The crate instead makes the divisor positive and compares the remainder of a
-/// division toward zero with its distance to the divisor.
+/// the exact quotient. `Up05` has no distance: it reads the last digit of the integer toward zero.
+/// The crate instead makes the divisor positive and compares the remainder of a division toward zero
+/// with its distance to the divisor.
 fn oracle_round(value: &BigInt, divisor: &BigInt, mode: RoundingMode) -> BigInt {
   // `/` rounds toward zero, which is the floor unless the exact quotient is negative and not an
   // integer.
@@ -1526,6 +1530,8 @@ fn oracle_round(value: &BigInt, divisor: &BigInt, mode: RoundingMode) -> BigInt 
         },
       }
     }
+    RoundingMode::Up05 if (&toward_zero % 5u8).sign() == Sign::NoSign => away_from_zero,
+    RoundingMode::Up05 => toward_zero,
   }
 }
 
@@ -1556,14 +1562,15 @@ fn oracle_round_to(
   in_target(oracle_round(coeff, &pow10(from - to), mode), digits, signed)
 }
 
-/// The same rounding by `bigdecimal`, from the text of the value.
+/// The same rounding by `bigdecimal`, from the text of the value, or `None` for `Up05`, which
+/// `bigdecimal` 0.4 does not have.
 fn bigdecimal_round_to(
   text: &str,
   to: u32,
   digits: u32,
   signed: bool,
   mode: RoundingMode,
-) -> Result<BigInt, ConvertError> {
+) -> Option<Result<BigInt, ConvertError>> {
   let mode = match mode {
     RoundingMode::Up => bigdecimal::RoundingMode::Up,
     RoundingMode::Down => bigdecimal::RoundingMode::Down,
@@ -1572,6 +1579,7 @@ fn bigdecimal_round_to(
     RoundingMode::HalfUp => bigdecimal::RoundingMode::HalfUp,
     RoundingMode::HalfDown => bigdecimal::RoundingMode::HalfDown,
     RoundingMode::HalfEven => bigdecimal::RoundingMode::HalfEven,
+    RoundingMode::Up05 => return None,
   };
   let value: BigDecimal = text.parse().expect("decimal text");
   let (coeff, scale) = value
@@ -1580,7 +1588,7 @@ fn bigdecimal_round_to(
   assert_eq!(scale, i64::from(to));
   // `bigdecimal` has its own version of `num-bigint`, so the coefficient crosses as text.
   let coeff: BigInt = coeff.to_string().parse().expect("integer text");
-  in_target(coeff, digits, signed)
+  Some(in_target(coeff, digits, signed))
 }
 
 /// The multiple of `step` that `mode` selects for `coeff`, with `digits` digits in total.
@@ -1681,7 +1689,9 @@ macro_rules! round {
           prop_assert_eq!(&rounded, &expected, "{} {:?}", text, mode);
           let decimal =
             bigdecimal_round_to(&text, $target::FRACTION, $target::DIGITS, $target::SIGNED, mode);
-          prop_assert_eq!(&rounded, &decimal, "{} {:?} against bigdecimal", text, mode);
+          if let Some(decimal) = decimal {
+            prop_assert_eq!(&rounded, &decimal, "{} {:?} against bigdecimal", text, mode);
+          }
           if $target::FRACTION >= $source::FRACTION {
             let converted: Result<$target::T, ConvertError> = a.try_convert();
             prop_assert_eq!(&rounded, &converted.map($target::big), "{} {:?}", text, mode);

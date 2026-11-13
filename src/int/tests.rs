@@ -2299,8 +2299,9 @@ mod float {
   /// A value below one half whose exponent is below `-precision`, which no shift of the
   /// significand reaches: `0.0005`, whose `-exponent` is from 54 to 63, `0.0001`, whose
   /// `-exponent` is above 63, the subnormals and the smallest normal float, of both signs and both
-  /// formats, round to one in the modes that round it away from zero, `Up`, `Ceiling` of a positive
-  /// value and `Floor` of a negative one, and to zero in every other mode.
+  /// formats, round to one in the modes that round it away from zero, `Up`, `Up05` (whose quotient,
+  /// zero, ends in 0), `Ceiling` of a positive value and `Floor` of a negative one, and to zero in
+  /// every other mode.
   #[test]
   fn values_below_one_half_round_in_every_mode() {
     let f64_parts = |value: f64| float_parts_f64(value).expect("finite");
@@ -2328,7 +2329,7 @@ mod float {
         let parts = int::float::FloatParts { negative, ..parts };
         for mode in MODES {
           let away = match mode {
-            RoundingMode::Up => true,
+            RoundingMode::Up | RoundingMode::Up05 => true,
             RoundingMode::Ceiling => !negative,
             RoundingMode::Floor => negative,
             _ => false,

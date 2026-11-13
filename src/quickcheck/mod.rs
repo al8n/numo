@@ -72,7 +72,7 @@ impl Arbitrary for RoundingMode {
   }
 
   /// Returns the modes before this one in the order `Down`, `Up`, `Ceiling`, `Floor`, `HalfUp`,
-  /// `HalfDown`, `HalfEven`, so shrinking moves toward [`Down`](RoundingMode::Down).
+  /// `HalfDown`, `HalfEven`, `Up05`, so shrinking moves toward [`Down`](RoundingMode::Down).
   fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
     let mode = *self;
     let before = MODES

@@ -2,7 +2,7 @@ use core::cmp::Ordering;
 
 use super::{RoundingMode, increments};
 
-const MODES: [RoundingMode; 7] = [
+const MODES: [RoundingMode; 8] = [
   RoundingMode::Up,
   RoundingMode::Down,
   RoundingMode::Ceiling,
@@ -10,10 +10,12 @@ const MODES: [RoundingMode; 7] = [
   RoundingMode::HalfUp,
   RoundingMode::HalfDown,
   RoundingMode::HalfEven,
+  RoundingMode::Up05,
 ];
 
 /// Rounds `quarters / 4` to an integer with `mode`, choosing between the integers below and above
-/// it by their distances, independently of `increments`.
+/// it by their distances, independently of `increments`. `Up05` has no distance: it reads the last
+/// digit of the integer toward zero.
 fn round_quarters(quarters: i64, mode: RoundingMode) -> i64 {
   let floor = quarters.div_euclid(4);
   if quarters.rem_euclid(4) == 0 {
@@ -44,16 +46,18 @@ fn round_quarters(quarters: i64, mode: RoundingMode) -> i64 {
         },
       }
     }
+    RoundingMode::Up05 if toward_zero % 5 == 0 => away_from_zero,
+    RoundingMode::Up05 => toward_zero,
   }
 }
 
-/// Every combination of inputs, against values a quarter, a half and three quarters past a
-/// quotient of each parity, of either sign.
+/// Every combination of inputs, against values a quarter, a half and three quarters past each
+/// quotient from 0 to 9, which takes every parity and every last digit, of either sign.
 #[test]
 fn increments_matches_rounding_by_distance() {
   for mode in MODES {
     for negative in [false, true] {
-      for quotient in [0i64, 1, 2, 3] {
+      for quotient in 0i64..10 {
         for (quarters, half) in [
           (1, Ordering::Less),
           (2, Ordering::Equal),
@@ -63,15 +67,27 @@ fn increments_matches_rounding_by_distance() {
           let value = if negative { -magnitude } else { magnitude };
           let away = round_quarters(value, mode).abs() > quotient;
           assert_eq!(
-            increments(mode, negative, false, half, quotient % 2 == 1),
+            increments(
+              mode,
+              negative,
+              false,
+              half,
+              quotient % 2 == 1,
+              quotient % 5 == 0
+            ),
             away,
             "{mode:?}, value {value}/4"
           );
         }
-        // An exact quotient never moves, whatever `half` says.
+        // An exact quotient never moves, whatever `half` and the last digit say.
         for half in [Ordering::Less, Ordering::Equal, Ordering::Greater] {
           for odd in [false, true] {
-            assert!(!increments(mode, negative, true, half, odd), "{mode:?}");
+            for ends_in_0_or_5 in [false, true] {
+              assert!(
+                !increments(mode, negative, true, half, odd, ends_in_0_or_5),
+                "{mode:?}"
+              );
+            }
           }
         }
       }
@@ -83,29 +99,65 @@ fn increments_matches_rounding_by_distance() {
 #[test]
 fn increments_per_mode() {
   use Ordering::{Equal, Greater, Less};
-  use RoundingMode::{Ceiling, Down, Floor, HalfDown, HalfEven, HalfUp, Up};
+  use RoundingMode::{Ceiling, Down, Floor, HalfDown, HalfEven, HalfUp, Up, Up05};
 
-  for negative in [false, true] {
-    for half in [Less, Equal, Greater] {
-      for odd in [false, true] {
-        assert!(increments(Up, negative, false, half, odd));
-        assert!(!increments(Down, negative, false, half, odd));
-        assert_eq!(increments(Ceiling, negative, false, half, odd), !negative);
-        assert_eq!(increments(Floor, negative, false, half, odd), negative);
+  // No mode but `Up05` reads the last digit.
+  for ends in [false, true] {
+    for negative in [false, true] {
+      for half in [Less, Equal, Greater] {
+        for odd in [false, true] {
+          assert!(increments(Up, negative, false, half, odd, ends));
+          assert!(!increments(Down, negative, false, half, odd, ends));
+          assert_eq!(
+            increments(Ceiling, negative, false, half, odd, ends),
+            !negative
+          );
+          assert_eq!(
+            increments(Floor, negative, false, half, odd, ends),
+            negative
+          );
+        }
+        // The half modes ignore the sign; only a tie looks further.
+        assert!(!increments(HalfUp, negative, false, Less, false, ends));
+        assert!(increments(HalfUp, negative, false, Equal, false, ends));
+        assert!(increments(HalfUp, negative, false, Greater, false, ends));
+        assert!(!increments(HalfDown, negative, false, Less, true, ends));
+        assert!(!increments(HalfDown, negative, false, Equal, true, ends));
+        assert!(increments(HalfDown, negative, false, Greater, true, ends));
+        assert!(!increments(HalfEven, negative, false, Less, true, ends));
+        assert!(!increments(HalfEven, negative, false, Equal, false, ends));
+        assert!(increments(HalfEven, negative, false, Equal, true, ends));
+        assert!(increments(HalfEven, negative, false, Greater, false, ends));
+        // `Up05` reads the last digit alone, and an exact quotient stays.
+        for odd in [false, true] {
+          assert_eq!(increments(Up05, negative, false, half, odd, ends), ends);
+          assert!(!increments(Up05, negative, true, half, odd, ends));
+        }
       }
-      // The half modes ignore the sign; only a tie looks further.
-      assert!(!increments(HalfUp, negative, false, Less, false));
-      assert!(increments(HalfUp, negative, false, Equal, false));
-      assert!(increments(HalfUp, negative, false, Greater, false));
-      assert!(!increments(HalfDown, negative, false, Less, true));
-      assert!(!increments(HalfDown, negative, false, Equal, true));
-      assert!(increments(HalfDown, negative, false, Greater, true));
-      assert!(!increments(HalfEven, negative, false, Less, true));
-      assert!(!increments(HalfEven, negative, false, Equal, false));
-      assert!(increments(HalfEven, negative, false, Equal, true));
-      assert!(increments(HalfEven, negative, false, Greater, false));
     }
   }
+}
+
+/// The predicate of `Up05` is written by hand, named as `as_str` names the mode; the derived ones
+/// are false for it.
+#[test]
+fn up05_has_its_predicate_and_name() {
+  const { assert!(RoundingMode::Up05.is_up05()) };
+  const { assert!(!RoundingMode::Down.is_up05()) };
+  for mode in MODES {
+    assert_eq!(mode.is_up05(), mode == RoundingMode::Up05, "{mode:?}");
+  }
+  let mode = RoundingMode::Up05;
+  assert!(!mode.is_up());
+  assert!(!mode.is_down());
+  assert!(!mode.is_ceiling());
+  assert!(!mode.is_floor());
+  assert!(!mode.is_half_up());
+  assert!(!mode.is_half_down());
+  assert!(!mode.is_half_even());
+  assert_eq!(mode.as_str(), "up05");
+  assert_eq!(std::format!("{mode}"), "up05");
+  assert_eq!(std::format!("{mode:?}"), "Up05");
 }
 
 #[test]

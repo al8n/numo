@@ -109,6 +109,7 @@ fn main() -> Result<(), ParseError> {
   `try_convert` reports `OutOfRange` or `Inexact` instead of rounding. Rounding happens only where
   an explicit `RoundingMode` is given: `round_to` converts to fewer fraction digits, `quantize`
   rounds to a multiple of a step, and `div_round` divides into any decimal type.
+  The modes are `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`, `HalfEven` and `Up05`.
 - The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
   references, and `Sum` adds the values or the references of an iterator. They are exact too: a
   result outside the range panics in every build, whatever `overflow-checks` is, with the message

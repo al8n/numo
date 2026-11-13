@@ -497,7 +497,7 @@ where
 
 /// The names of the rounding modes, in the order of the variants.
 const MODE_NAMES: &[&str] = &[
-  "up", "down", "ceiling", "floor", "halfup", "halfdown", "halfeven",
+  "up", "down", "ceiling", "floor", "halfup", "halfdown", "halfeven", "up05",
 ];
 
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
@@ -516,6 +516,7 @@ impl Serialize for RoundingMode {
       Self::HalfUp => "halfup",
       Self::HalfDown => "halfdown",
       Self::HalfEven => "halfeven",
+      Self::Up05 => "up05",
     })
   }
 }
@@ -525,7 +526,8 @@ impl<'de> Deserialize<'de> for RoundingMode {
   /// Reads the name of a mode from a string. Surrounding whitespace is ignored and the case does
   /// not matter, so `"halfeven"`, `"HalfEven"` and `" HALFEVEN "` all read as `HalfEven`. The names
   /// of the half modes may also separate their two words with one space, `-` or `_`, as in
-  /// `"half even"`, `"half-even"` and `"half_even"`. Any other input is rejected.
+  /// `"half even"`, `"half-even"` and `"half_even"`, and so may `up` and `05` in `"up05"`, as in
+  /// `"up 05"`. Any other input is rejected.
   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
   where
     D: Deserializer<'de>,
@@ -574,6 +576,13 @@ impl Visitor<'_> for ModeVisitor {
         || name.eq_ignore_ascii_case("half_even") =>
       {
         RoundingMode::HalfEven
+      }
+      () if name.eq_ignore_ascii_case("up05")
+        || name.eq_ignore_ascii_case("up 05")
+        || name.eq_ignore_ascii_case("up-05")
+        || name.eq_ignore_ascii_case("up_05") =>
+      {
+        RoundingMode::Up05
       }
       _ => return Err(E::unknown_variant(name, MODE_NAMES)),
     })

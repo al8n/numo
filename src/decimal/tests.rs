@@ -3046,17 +3046,19 @@ type D0x154u512 = Decimal<U0, U154, u512>;
 
 /// The table in the documentation of `RoundingMode`: coefficients with one fraction digit, and
 /// what they round to with no fraction digits, in the order of `bigint::MODES`.
-const MODE_TABLE: [(i8, [i8; 7]); 10] = [
-  (55, [6, 5, 6, 5, 6, 5, 6]),
-  (25, [3, 2, 3, 2, 3, 2, 2]),
-  (16, [2, 1, 2, 1, 2, 2, 2]),
-  (11, [2, 1, 2, 1, 1, 1, 1]),
-  (10, [1, 1, 1, 1, 1, 1, 1]),
-  (-10, [-1, -1, -1, -1, -1, -1, -1]),
-  (-11, [-2, -1, -1, -2, -1, -1, -1]),
-  (-16, [-2, -1, -1, -2, -2, -2, -2]),
-  (-25, [-3, -2, -2, -3, -3, -2, -2]),
-  (-55, [-6, -5, -5, -6, -6, -5, -6]),
+const MODE_TABLE: [(i8, [i8; bigint::MODES.len()]); 12] = [
+  (55, [6, 5, 6, 5, 6, 5, 6, 6]),
+  (25, [3, 2, 3, 2, 3, 2, 2, 2]),
+  (16, [2, 1, 2, 1, 2, 2, 2, 1]),
+  (11, [2, 1, 2, 1, 1, 1, 1, 1]),
+  (10, [1, 1, 1, 1, 1, 1, 1, 1]),
+  (1, [1, 0, 1, 0, 0, 0, 0, 1]),
+  (-1, [-1, 0, 0, -1, 0, 0, 0, -1]),
+  (-10, [-1, -1, -1, -1, -1, -1, -1, -1]),
+  (-11, [-2, -1, -1, -2, -1, -1, -1, -1]),
+  (-16, [-2, -1, -1, -2, -2, -2, -2, -1]),
+  (-25, [-3, -2, -2, -3, -3, -2, -2, -2]),
+  (-55, [-6, -5, -5, -6, -6, -5, -6, -6]),
 ];
 
 #[test]
@@ -3064,7 +3066,7 @@ fn rounding_mode_table() {
   for (coeff, row) in MODE_TABLE {
     let value = D1x1::from_repr(coeff).unwrap();
     let wide: Decimal<U1, U1, i512> = value.widen();
-    for (mode, expected) in bigint::MODES.into_iter().zip(row) {
+    for (mode, expected) in per_mode(row) {
       assert_eq!(
         value.round_to::<U1, U0, i8>(mode).map(|v| v.repr()),
         Ok(expected),
@@ -3080,6 +3082,105 @@ fn rounding_mode_table() {
         Ok(expected * 10),
         "{value} {mode:?}"
       );
+    }
+  }
+}
+
+/// The results of `ROUND_05UP` that `bigdecimal` documents: coefficients with one fraction digit,
+/// rounded to none, in a native and in a wide storage.
+#[test]
+fn up05_rounds_as_documented() {
+  for (coeff, expected) in [
+    (55, 6),
+    (25, 2),
+    (16, 1),
+    (11, 1),
+    (9, 1),
+    (1, 1),
+    (0, 0),
+    (-1, -1),
+    (-11, -1),
+    (-16, -1),
+    (-25, -2),
+    (-55, -6),
+  ] {
+    let value = D1x1::from_repr(coeff).unwrap();
+    let wide: Decimal<U1, U1, i512> = value.widen();
+    assert_eq!(
+      value
+        .round_to::<U1, U0, i8>(RoundingMode::Up05)
+        .map(|v| v.repr()),
+      Ok(expected),
+      "{value}"
+    );
+    assert_eq!(
+      wide
+        .round_to::<U1, U0, i8>(RoundingMode::Up05)
+        .map(|v| v.repr()),
+      Ok(expected),
+      "{value}"
+    );
+  }
+}
+
+/// With `Up05`, `quantize` reads the last digit of the number of steps toward zero, which for a
+/// step that is not a power of ten is not a digit of the result: `2.3` is four steps of `0.5` and
+/// stays at `2`, though `2.0` ends in 0, and `1.6` is five steps of `0.3` and goes to `1.8`.
+#[test]
+fn up05_quantize_reads_the_number_of_steps() {
+  for (value, step, expected) in [
+    ("2.3", "0.5", "2"),
+    ("2.7", "0.5", "3"),
+    ("5.1", "0.5", "5.5"),
+    ("1", "0.3", "0.9"),
+    ("1.6", "0.3", "1.8"),
+    ("-0.2", "0.3", "-0.3"),
+    ("2.5", "0.5", "2.5"),
+  ] {
+    let value: D1x1 = value.parse().unwrap();
+    let step: D1x1 = step.parse().unwrap();
+    let expected: D1x1 = expected.parse().unwrap();
+    assert_eq!(
+      value.quantize(&step, RoundingMode::Up05),
+      Ok(expected),
+      "{value} by {step}"
+    );
+    let wide: Decimal<U1, U1, i512> = value.widen();
+    let wide_step: Decimal<U1, U1, i512> = step.widen();
+    assert_eq!(
+      wide.quantize(&wide_step, RoundingMode::Up05),
+      Ok(expected.widen()),
+      "{value} by {step}"
+    );
+  }
+}
+
+/// A result of `Up05` that is not exact never ends in 0 or 5, so rounding it again to fewer digits,
+/// in any mode, gives what rounding the exact value once gives, whether the second rounding drops
+/// one digit or two: through three fraction digits to two, through two to one, and through three
+/// to one. The last three digits take every value under a first fraction digit of 0, 1 and 5, of
+/// both signs, so that each digit that a rounding reads takes every value.
+#[test]
+fn up05_then_any_mode_rounds_as_once() {
+  let (firsts, lasts): (&[i32], Vec<i32>) = if bigint::tier().is_miri() {
+    (&[5], [0, 5, 50, 499, 501].into())
+  } else {
+    (&[0, 1, 5], (0..1000).collect())
+  };
+  for &first in firsts {
+    for &last in &lasts {
+      for coeff in [first * 1000 + last, -(first * 1000 + last)] {
+        let value = Decimal::<U1, U4, i32>::from_repr(coeff).unwrap();
+        let three: Decimal<U1, U3, i16> = value.round_to(RoundingMode::Up05).unwrap();
+        let two: Decimal<U1, U2, i16> = value.round_to(RoundingMode::Up05).unwrap();
+        for mode in bigint::MODES {
+          let to_two: Result<Decimal<U1, U2, i16>, ConvertError> = value.round_to(mode);
+          let to_one: Result<Decimal<U1, U1, i8>, ConvertError> = value.round_to(mode);
+          assert_eq!(three.round_to(mode), to_two, "{value} {mode:?}");
+          assert_eq!(two.round_to(mode), to_one, "{value} {mode:?}");
+          assert_eq!(three.round_to(mode), to_one, "{value} {mode:?}");
+        }
+      }
     }
   }
 }
@@ -3247,11 +3348,11 @@ fn round_to_checks_the_range_after_rounding() {
 /// eight limbs.
 #[test]
 fn round_to_across_limb_steps() {
-  use RoundingMode::{Ceiling, Down, Floor, HalfDown, HalfEven, HalfUp, Up};
+  use RoundingMode::{Ceiling, Down, Floor, HalfDown, HalfEven, HalfUp, Up, Up05};
 
   let half: D0x154u512 = "0.5".parse().unwrap();
   let below: D0x154u512 = format!("0.4{}", nines(153)).parse().unwrap();
-  for (mode, at_half, below_half) in [
+  let rows: [(RoundingMode, u8, u8); bigint::MODES.len()] = [
     (Up, 1, 1),
     (Down, 0, 0),
     (Ceiling, 1, 1),
@@ -3259,7 +3360,9 @@ fn round_to_across_limb_steps() {
     (HalfUp, 1, 0),
     (HalfDown, 0, 0),
     (HalfEven, 0, 0),
-  ] {
+    (Up05, 1, 1),
+  ];
+  for (mode, at_half, below_half) in rows {
     assert_eq!(
       half.round_to::<U1, U0, u8>(mode).map(|v| v.repr()),
       Ok(at_half),
@@ -3298,7 +3401,7 @@ fn round_to_across_limb_steps() {
   let tie: Decimal<U1, U20> = format!("1.5{}", zeros(19)).parse().unwrap();
   let tie_38: D1x38 = "-2.5".parse().unwrap();
   let above_38: D1x38 = format!("-2.5{}1", zeros(36)).parse().unwrap();
-  for (mode, tie_20, tie_38_expected, above_38_expected) in [
+  let rows: [(RoundingMode, i8, i8, i8); bigint::MODES.len()] = [
     (Up, 2, -3, -3),
     (Down, 1, -2, -2),
     (Ceiling, 2, -2, -2),
@@ -3306,7 +3409,9 @@ fn round_to_across_limb_steps() {
     (HalfUp, 2, -3, -3),
     (HalfDown, 1, -2, -3),
     (HalfEven, 2, -2, -3),
-  ] {
+    (Up05, 1, -2, -2),
+  ];
+  for (mode, tie_20, tie_38_expected, above_38_expected) in rows {
     assert_eq!(
       tie.round_to::<U1, U0, i8>(mode).map(|v| v.repr()),
       Ok(tie_20),
@@ -3822,21 +3927,21 @@ fn div_round_by_zero() {
 /// than the exact quotient has and to as many, in the order of `bigint::MODES`.
 #[test]
 fn div_round_quarters() {
-  let rows: [(i8, i8, [i8; 7]); 8] = [
-    (10, 4, [3, 2, 3, 2, 3, 2, 2]),
-    (-10, 4, [-3, -2, -2, -3, -3, -2, -2]),
-    (10, -4, [-3, -2, -2, -3, -3, -2, -2]),
-    (-10, -4, [3, 2, 3, 2, 3, 2, 2]),
-    (1, 4, [1, 0, 1, 0, 0, 0, 0]),
-    (-1, 4, [-1, 0, 0, -1, 0, 0, 0]),
-    (1, -4, [-1, 0, 0, -1, 0, 0, 0]),
-    (-1, -4, [1, 0, 1, 0, 0, 0, 0]),
+  let rows: [(i8, i8, [i8; bigint::MODES.len()]); 8] = [
+    (10, 4, [3, 2, 3, 2, 3, 2, 2, 2]),
+    (-10, 4, [-3, -2, -2, -3, -3, -2, -2, -2]),
+    (10, -4, [-3, -2, -2, -3, -3, -2, -2, -2]),
+    (-10, -4, [3, 2, 3, 2, 3, 2, 2, 2]),
+    (1, 4, [1, 0, 1, 0, 0, 0, 0, 1]),
+    (-1, 4, [-1, 0, 0, -1, 0, 0, 0, -1]),
+    (1, -4, [-1, 0, 0, -1, 0, 0, 0, -1]),
+    (-1, -4, [1, 0, 1, 0, 0, 0, 0, 1]),
   ];
   for (a, b, row) in rows {
     let (a, b) = (D2x0::from_repr(a).unwrap(), D1x0::from_repr(b).unwrap());
     // With 38 fraction digits, the divisor is scaled instead of the dividend, in an `i192`.
     let wide: D2x38 = a.widen();
-    for (mode, expected) in bigint::MODES.into_iter().zip(row) {
+    for (mode, expected) in per_mode(row) {
       assert_eq!(
         a.div_round::<U2, U0, i8, _, _, _>(&b, mode)
           .map(|q| q.repr()),
@@ -3854,13 +3959,13 @@ fn div_round_quarters() {
   }
   // To one fraction digit, `0.25` is a tie.
   for (a, b, row) in [
-    (1, 4, [3, 2, 3, 2, 3, 2, 2]),
-    (-1, 4, [-3, -2, -2, -3, -3, -2, -2]),
-    (1, -4, [-3, -2, -2, -3, -3, -2, -2]),
-    (-1, -4, [3, 2, 3, 2, 3, 2, 2]),
+    (1, 4, [3, 2, 3, 2, 3, 2, 2, 2]),
+    (-1, 4, [-3, -2, -2, -3, -3, -2, -2, -2]),
+    (1, -4, [-3, -2, -2, -3, -3, -2, -2, -2]),
+    (-1, -4, [3, 2, 3, 2, 3, 2, 2, 2]),
   ] {
     let (a, b) = (D2x0::from_repr(a).unwrap(), D1x0::from_repr(b).unwrap());
-    for (mode, expected) in bigint::MODES.into_iter().zip(row) {
+    for (mode, expected) in per_mode(row) {
       assert_eq!(
         a.div_round::<U1, U1, i8, _, _, _>(&b, mode)
           .map(|q| q.repr()),
@@ -4004,7 +4109,7 @@ fn div_round_negative_quotient_into_an_unsigned_target() {
 #[test]
 fn div_round_checks_the_range_after_rounding() {
   use DivideError::OutOfRange;
-  use RoundingMode::{Ceiling, Down, Floor, HalfDown, HalfEven, HalfUp, Up};
+  use RoundingMode::{Ceiling, Down, Floor, HalfDown, HalfEven, HalfUp, Up, Up05};
 
   let two: D1x0 = "2".parse().unwrap();
   let at_max: Decimal<U3, U2> = "199.98".parse().unwrap();
@@ -4019,9 +4124,10 @@ fn div_round_checks_the_range_after_rounding() {
     );
   }
   // `99.995` rounds to `99.99` or to `100.00`, which an `i16` holds but two integral digits do
-  // not; with `HalfEven`, the quotient toward zero, `9999`, is odd.
+  // not; with `HalfEven`, the quotient toward zero, `9999`, is odd, and with `Up05` it ends in 9.
   let past: Decimal<U3, U2> = "199.99".parse().unwrap();
-  for (mode, positive, negative) in [
+  type Quotient = Result<D2x2, DivideError>;
+  let rows: [(RoundingMode, Quotient, Quotient); bigint::MODES.len()] = [
     (Up, Err(OutOfRange), Err(OutOfRange)),
     (Down, Ok(D2x2::MAX), Ok(D2x2::MIN)),
     (Ceiling, Err(OutOfRange), Ok(D2x2::MIN)),
@@ -4029,7 +4135,9 @@ fn div_round_checks_the_range_after_rounding() {
     (HalfUp, Err(OutOfRange), Err(OutOfRange)),
     (HalfDown, Ok(D2x2::MAX), Ok(D2x2::MIN)),
     (HalfEven, Err(OutOfRange), Err(OutOfRange)),
-  ] {
+    (Up05, Ok(D2x2::MAX), Ok(D2x2::MIN)),
+  ];
+  for (mode, positive, negative) in rows {
     assert_eq!(
       past.div_round::<U2, U2, i16, _, _, _>(&two, mode),
       positive,
@@ -4133,10 +4241,11 @@ fn div_round_storage_families() {
   // Native operands with a native intermediate: the quantity that a budget buys at a price.
   let budget: Budget = "1000".parse().unwrap();
   let price: Price = "64250.5".parse().unwrap();
-  for (mode, expected) in bigint::MODES.into_iter().zip([
+  for (mode, expected) in per_mode([
     "0.01556409",
     "0.01556408",
     "0.01556409",
+    "0.01556408",
     "0.01556408",
     "0.01556408",
     "0.01556408",
@@ -4149,20 +4258,22 @@ fn div_round_storage_families() {
   // Native operands with a wide intermediate of 39 digits.
   let divisor: D1x1 = "0.7".parse().unwrap();
   let seventh = "14285714285714285714.2857142857142857";
-  for (mode, last) in bigint::MODES
-    .into_iter()
-    .zip(["142", "141", "142", "141", "141", "141", "141"])
-  {
+  for (mode, last) in per_mode(["142", "141", "142", "141", "141", "141", "141", "141"]) {
     let quotient: D20x19 = D19x19::MAX.div_round(&divisor, mode).unwrap();
     assert_eq!(quotient.to_string(), format!("{seventh}{last}"), "{mode:?}");
   }
 
   // A native dividend by a 39-digit divisor, whose digits alone need an `i192`.
-  for (mode, (positive, negative)) in
-    bigint::MODES
-      .into_iter()
-      .zip([(1, -1), (0, 0), (1, 0), (0, -1), (0, 0), (0, 0), (0, 0)])
-  {
+  for (mode, (positive, negative)) in per_mode([
+    (1, -1),
+    (0, 0),
+    (1, 0),
+    (0, -1),
+    (0, 0),
+    (0, 0),
+    (0, 0),
+    (1, -1),
+  ]) {
     assert_eq!(
       D1x1::MAX
         .div_round::<U2, U0, i8, _, _, _>(&D20x19::MAX, mode)
@@ -4182,7 +4293,7 @@ fn div_round_storage_families() {
   // Wide operands, with a 76-digit intermediate.
   let seven: D20x19 = "7".parse().unwrap();
   let digits = "142857142857142857142857142857142857142.857142857142857";
-  for (mode, positive, negative) in [
+  let rows: [(RoundingMode, &str, &str); bigint::MODES.len()] = [
     (RoundingMode::Up, "143", "143"),
     (RoundingMode::Down, "142", "142"),
     (RoundingMode::Ceiling, "143", "142"),
@@ -4190,7 +4301,9 @@ fn div_round_storage_families() {
     (RoundingMode::HalfUp, "143", "143"),
     (RoundingMode::HalfDown, "143", "143"),
     (RoundingMode::HalfEven, "143", "143"),
-  ] {
+    (RoundingMode::Up05, "142", "142"),
+  ];
+  for (mode, positive, negative) in rows {
     let quotient: D39x18 = D39x18::MAX.div_round(&seven, mode).unwrap();
     assert_eq!(
       quotient.to_string(),
@@ -4211,11 +4324,12 @@ fn div_round_storage_families() {
   assert_eq!(quotient.to_string(), "3333333333.333333333");
   let one: D10x9u64 = "1".parse().unwrap();
   let minus_three: Price = "-3".parse().unwrap();
-  for (mode, expected) in bigint::MODES.into_iter().zip([
+  for (mode, expected) in per_mode([
     "-0.33333334",
     "-0.33333333",
     "-0.33333333",
     "-0.33333334",
+    "-0.33333333",
     "-0.33333333",
     "-0.33333333",
     "-0.33333333",
@@ -4230,11 +4344,16 @@ fn div_round_storage_families() {
   let two: D38x0 = "2".parse().unwrap();
   let almost_ten: D1x30 = format!("9.{}", nines(30)).parse().unwrap();
   let large: D38x0 = format!("1{}", zeros(37)).parse().unwrap();
-  for (mode, (tie, tiny)) in
-    bigint::MODES
-      .into_iter()
-      .zip([(3, 1), (2, 0), (3, 1), (2, 0), (3, 0), (2, 0), (2, 0)])
-  {
+  for (mode, (tie, tiny)) in per_mode([
+    (3, 1),
+    (2, 0),
+    (3, 1),
+    (2, 0),
+    (3, 0),
+    (2, 0),
+    (2, 0),
+    (2, 1),
+  ]) {
     assert_eq!(
       five
         .div_round::<U1, U0, i8, _, _, _>(&two, mode)
@@ -4279,7 +4398,7 @@ fn div_round_with_the_widest_intermediates() {
     let quotient: D143x10 = D135x18::MAX.div_round(&tick, mode).unwrap();
     assert_eq!(quotient.to_string(), max_by_tick, "{mode:?}");
   }
-  for (mode, expected) in bigint::MODES.into_iter().zip([
+  for (mode, expected) in per_mode([
     format!("1{}", zeros(135)),
     format!("{}.{}", nines(135), nines(10)),
     format!("1{}", zeros(135)),
@@ -4287,6 +4406,7 @@ fn div_round_with_the_widest_intermediates() {
     format!("1{}", zeros(135)),
     format!("1{}", zeros(135)),
     format!("1{}", zeros(135)),
+    format!("{}.{}", nines(135), nines(10)),
   ]) {
     let quotient: D143x10 = D135x18::MAX.div_round(&one, mode).unwrap();
     assert_eq!(quotient.to_string(), expected, "{mode:?}");
@@ -4298,11 +4418,16 @@ fn div_round_with_the_widest_intermediates() {
   let three: D1x0 = "3".parse().unwrap();
   let quarter: D0x153 = "0.25".parse().unwrap();
   let unit: D1x0 = "1".parse().unwrap();
-  for (mode, (third, tie)) in
-    bigint::MODES
-      .into_iter()
-      .zip([(4, 3), (3, 2), (4, 3), (3, 2), (3, 3), (3, 2), (3, 2)])
-  {
+  for (mode, (third, tie)) in per_mode([
+    (4, 3),
+    (3, 2),
+    (4, 3),
+    (3, 2),
+    (3, 3),
+    (3, 2),
+    (3, 2),
+    (3, 2),
+  ]) {
     assert_eq!(
       D0x153::MAX
         .div_round::<U1, U1, i8, _, _, _>(&three, mode)
@@ -4336,6 +4461,12 @@ fn mirror(mode: RoundingMode) -> RoundingMode {
   }
 }
 
+/// Each mode of `bigint::MODES` with its entry of `row`. The row has one entry per mode, so a row
+/// that misses a mode does not compile.
+fn per_mode<T>(row: [T; bigint::MODES.len()]) -> impl Iterator<Item = (RoundingMode, T)> {
+  bigint::MODES.into_iter().zip(row)
+}
+
 #[cfg(feature = "serde")]
 mod with_serde {
   use serde_test::{Configure, Token, assert_de_tokens, assert_de_tokens_error, assert_tokens};
@@ -4343,7 +4474,7 @@ mod with_serde {
 
   use super::{
     D0x153, D0x154u512, D1x1, D1x1u8, D2x2, D153x0, D154x0u512, Decimal, Price, TokenAmount, U1,
-    U2, nines,
+    U2, nines, per_mode,
   };
   use crate::{RoundingMode, bigint};
 
@@ -4446,9 +4577,9 @@ mod with_serde {
   #[test]
   fn rounding_modes_are_their_names() {
     let names = [
-      "up", "down", "ceiling", "floor", "halfup", "halfdown", "halfeven",
+      "up", "down", "ceiling", "floor", "halfup", "halfdown", "halfeven", "up05",
     ];
-    for (mode, name) in bigint::MODES.into_iter().zip(names) {
+    for (mode, name) in per_mode(names) {
       assert_eq!(mode.as_str(), name);
       assert_tokens(&mode.readable(), &[Token::Str(name)]);
       assert_tokens(&mode.compact(), &[Token::Str(name)]);
@@ -4458,8 +4589,8 @@ mod with_serde {
     }
 
     // Reading ignores the case and the whitespace around the name, and a half mode may separate
-    // its two words with one space, `-` or `_`.
-    let accepted: [(RoundingMode, &[&str]); 7] = [
+    // its two words with one space, `-` or `_`, as `up05` may separate `up` and `05`.
+    let accepted: [(RoundingMode, &[&str]); bigint::MODES.len()] = [
       (
         RoundingMode::Up,
         &["up", "Up", "UP", " up", "up ", "\t\nUp\r "],
@@ -4517,6 +4648,22 @@ mod with_serde {
           "\thalf-even\n",
         ],
       ),
+      (
+        RoundingMode::Up05,
+        &[
+          "up05",
+          "Up05",
+          "UP05",
+          "up 05",
+          "Up 05",
+          "up-05",
+          "UP-05",
+          "up_05",
+          "Up_05",
+          " up05 ",
+          "\tup-05\n",
+        ],
+      ),
     ];
     for (mode, inputs) in accepted {
       for input in inputs {
@@ -4531,7 +4678,7 @@ mod with_serde {
     }
 
     // Anything else is rejected, and the error names the trimmed input and the written names.
-    let expected = "`up`, `down`, `ceiling`, `floor`, `halfup`, `halfdown`, `halfeven`";
+    let expected = "`up`, `down`, `ceiling`, `floor`, `halfup`, `halfdown`, `halfeven`, `up05`";
     for rejected in [
       "half",
       "halfeven2",
@@ -4542,6 +4689,15 @@ mod with_serde {
       "round_half_even",
       "ROUND_HALF_EVEN",
       "ups",
+      "up5",
+      "up 5",
+      "up  05",
+      "up-_05",
+      "up05x",
+      "up005",
+      "round_05up",
+      "ROUND_05UP",
+      "05up",
       "",
       " ",
     ] {

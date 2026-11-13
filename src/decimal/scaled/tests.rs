@@ -914,13 +914,15 @@ fn products_at_the_extremes_and_rounding_in_every_mode() {
   for mode in MODES {
     let rounded: WideS = tiny.round_to(mode).unwrap();
     let expected = match mode {
-      RoundingMode::Up | RoundingMode::Ceiling => "0.000000000000000001",
+      RoundingMode::Up | RoundingMode::Ceiling | RoundingMode::Up05 => "0.000000000000000001",
       _ => "0.000000000000000000",
     };
     assert_text(&rounded, expected, 18);
     let rounded_tie: WideS = tie.round_to(mode).unwrap();
     let expected_tie = match mode {
-      RoundingMode::Up | RoundingMode::Ceiling | RoundingMode::HalfUp => "0.000000000000000001",
+      RoundingMode::Up | RoundingMode::Ceiling | RoundingMode::HalfUp | RoundingMode::Up05 => {
+        "0.000000000000000001"
+      }
       _ => "0.000000000000000000",
     };
     assert_text(&rounded_tie, expected_tie, 18);

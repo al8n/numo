@@ -460,7 +460,8 @@ macro_rules! storage_decimal {
       /// selects among the two multiples bracketing `self`, as [`RoundingMode`] describes. A
       /// multiple of `step` is returned unchanged, and a negative value that rounds to zero gives
       /// zero, which has no sign. With [`HalfEven`](RoundingMode::HalfEven), a tie goes to the
-      /// multiple with the even quotient.
+      /// multiple with the even quotient. With [`Up05`](RoundingMode::Up05), the digit that decides
+      /// is the last decimal digit of the quotient toward zero, the number of steps.
       ///
       /// `step` has the type of `self`; [`try_convert`](Self::try_convert) a step of another type
       /// first. To round a quantity that may be negative down to a step, use
@@ -785,9 +786,11 @@ macro_rules! storage_decimal {
       /// Rounds to a multiple of `step` with `mode`: returns the multiple of `step` that `mode`
       /// selects among the two multiples bracketing `self`, as [`RoundingMode`] describes. A
       /// multiple of `step` is returned unchanged. With [`HalfEven`](RoundingMode::HalfEven), a tie
-      /// goes to the multiple with the even quotient. The value is never negative, so
-      /// [`Ceiling`](RoundingMode::Ceiling) rounds as [`Up`](RoundingMode::Up) does and
-      /// [`Floor`](RoundingMode::Floor) as [`Down`](RoundingMode::Down) does.
+      /// goes to the multiple with the even quotient. With [`Up05`](RoundingMode::Up05), the digit
+      /// that decides is the last decimal digit of the quotient toward zero, the number of steps.
+      /// The value is never negative, so [`Ceiling`](RoundingMode::Ceiling) rounds as
+      /// [`Up`](RoundingMode::Up) does and [`Floor`](RoundingMode::Floor) as
+      /// [`Down`](RoundingMode::Down) does.
       ///
       /// `step` has the type of `self`; [`try_convert`](Self::try_convert) a step of another type
       /// first.
