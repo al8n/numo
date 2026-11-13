@@ -1,8 +1,10 @@
 //! Decimals over the heap storages, a wide integer whose limbs are in a `Box`, an `Rc`, an `Arc`
 //! or a `triomphe::Arc`, against their twins, the decimals with the same digit counts over the
-//! integer of the same width and sign over the array itself: the conversions between a heap
-//! decimal and its twin and into other types, the exact product, the texts, the order and the
-//! hash, and the layout and the auto traits. The oracle of each check is the twin.
+//! integer of the same width and sign over the array itself: every item of the general layer of
+//! the traits, with its `None` and its errors; the conversions between a heap decimal and its twin
+//! and into other types, and the exact product; the texts and their parsing, the order, the hash
+//! and serde; the generators; a `Scaled` over a heap decimal; code generic over the decimal and
+//! over the storage; and the layout and the auto traits. The oracle of each check is the twin.
 //!
 //! The checks of each pointer run for one type of each of six storages, of 192 to 1024 bits and of
 //! both signs, each at the digit limit of its storage. Each type checks in a function of its own,
@@ -15,6 +17,7 @@ use core::{
   any::TypeId,
   fmt::{Debug, Display, LowerExp, UpperExp},
   hash::BuildHasher,
+  num::NonZero,
 };
 #[cfg(all(any(feature = "std", feature = "alloc"), target_has_atomic = "ptr"))]
 use std::sync::Arc;
@@ -27,21 +30,31 @@ use std::{
   vec::Vec,
 };
 
+#[cfg(feature = "proptest")]
+use ::proptest::{
+  arbitrary::any,
+  strategy::{Strategy, ValueTree},
+  test_runner::{Config, RngAlgorithm, TestRng, TestRunner},
+};
+#[cfg(feature = "serde")]
+use serde_core::{Serialize, de::DeserializeOwned};
 #[cfg(all(feature = "triomphe", target_has_atomic = "ptr"))]
 use triomphe::Arc as TriompheArc;
 use typenum::{
-  U0, U1, U2, U18, U20, U39, U40, U58, U78, U135, U155, U192, U256, U308, U320, U512, U576, U1024,
+  U0, U1, U2, U8, U10, U18, U20, U39, U40, U58, U78, U135, U155, U192, U256, U308, U320, U512,
+  U576, U1024,
 };
 
 use crate::{
-  ConstFixedDecimal, ConvertError, Decimal, DivideError, FixedDecimal, Int, Layout, RoundingMode,
-  Storage, Uint,
+  ArrayInteger, ConstFixedDecimal, ConvertError, Decimal, DecimalAssign, DecimalFloat, DecimalOne,
+  DivideError, FixedDecimal, FixedInteger, FromLimbs, Int, Layout, MutableStorage, ParseError,
+  RoundingMode, Scaled, SignedFixedDecimal, Storage, Uint, UnsignedFixedDecimal,
   bigint::{MODES, floats::Words, tier},
 };
 
 /// The values at which a type is checked, as values of its twin `T`: zero, the limits, one, two
 /// and 25 units of the last digit, negated too for a signed storage, and random coefficients of
-/// random lengths and, for a signed storage, signs, 16 in the Full tier and 3 in the Debug tier;
+/// random lengths and, for a signed storage, signs, 12 in the Full tier and 2 in the Debug tier;
 /// under Miri, zero and the limits. Each value is listed once.
 fn samples<T: ConstFixedDecimal>() -> Vec<T> {
   let mut candidates = Vec::from([T::ZERO, T::MIN, T::MAX]);
@@ -52,7 +65,7 @@ fn samples<T: ConstFixedDecimal>() -> Vec<T> {
         candidates.push(units_of(-units));
       }
     }
-    let count = if tier().is_full() { 16 } else { 3 };
+    let count = if tier().is_full() { 12 } else { 2 };
     let mut words = Words::new(seed::<T>());
     candidates.extend((0..count).map(|_| random::<T>(&mut words)));
   }
@@ -117,6 +130,19 @@ fn modes() -> &'static [RoundingMode] {
   }
 }
 
+/// The values that a generator draws for each type: 64 in the Full tier and 8 in the Debug tier;
+/// under Miri, one.
+#[cfg(any(feature = "arbitrary", feature = "proptest", feature = "quickcheck"))]
+fn draws() -> usize {
+  if tier().is_full() {
+    64
+  } else if tier().is_miri() {
+    1
+  } else {
+    8
+  }
+}
+
 /// The texts of `value` in the formats of a decimal, with a width, a precision and the flags among
 /// them.
 fn texts<T>(value: &T) -> [String; 9]
@@ -178,10 +204,515 @@ where
   }
 }
 
+/// Checks every item of the general layer of the heap decimal `T` against its twin, the trait of
+/// the twin named in each call: the four constants; zero, the limits, `Default` and one; at each
+/// sample, the predicates, the counts, the parts, the rounding to significant digits in the modes
+/// of the tier and the conversions to the floats, compared by their bits; at each pair of samples,
+/// the checked and the saturating sums and differences, the remainder, `quantize` in the modes of
+/// the tier and `is_multiple_of`; and the readings of floats, the special ones and those of the
+/// samples, in the same modes. A result is that of the twin, stored, and each `None` and each error
+/// are those of the twin.
+#[inline(never)]
+fn check_trait_layer<T>()
+where
+  T: DecimalOne + DecimalFloat,
+  T::Inline: DecimalOne + DecimalFloat,
+{
+  assert_eq!(
+    [T::INTEGRAL, T::FRACTION, T::DIGITS],
+    [
+      <T::Inline as FixedDecimal>::INTEGRAL,
+      <T::Inline as FixedDecimal>::FRACTION,
+      <T::Inline as FixedDecimal>::DIGITS,
+    ]
+  );
+  assert_eq!(T::SIGNED, <T::Inline as FixedDecimal>::SIGNED);
+  let zero = <T::Inline as ConstFixedDecimal>::ZERO;
+  assert_eq!(T::zero().to_inline(), zero);
+  assert_eq!(T::default().to_inline(), zero);
+  assert_eq!(
+    T::max_value().to_inline(),
+    <T::Inline as ConstFixedDecimal>::MAX
+  );
+  assert_eq!(
+    T::min_value().to_inline(),
+    <T::Inline as ConstFixedDecimal>::MIN
+  );
+  assert_eq!(T::one().to_inline(), <T::Inline as DecimalOne>::one());
+
+  let values = pairs(T::from_inline);
+  for (a, x) in &values {
+    assert_eq!(x.to_inline(), *a);
+    assert_eq!(x.is_zero(), a.is_zero(), "{a}");
+    assert_eq!(x.is_positive(), a.is_positive(), "{a}");
+    assert_eq!(x.is_integer(), a.is_integer(), "{a}");
+    assert_eq!(x.order_of_magnitude(), a.order_of_magnitude(), "{a}");
+    assert_eq!(x.significant_digits(), a.significant_digits(), "{a}");
+    assert_eq!(x.fraction_digits(), a.fraction_digits(), "{a}");
+    assert_eq!(x.trunc().to_inline(), a.trunc(), "{a}");
+    assert_eq!(x.fract().to_inline(), a.fract(), "{a}");
+    assert_eq!(x.floor().map(|v| v.to_inline()), a.floor(), "{a}");
+    assert_eq!(x.ceil().map(|v| v.to_inline()), a.ceil(), "{a}");
+    for count in [1, 2, T::DIGITS] {
+      let digits = NonZero::new(count).expect("a count of digits");
+      for &mode in modes() {
+        assert_eq!(
+          x.round_significant(digits, mode).map(|v| v.to_inline()),
+          a.round_significant(digits, mode),
+          "{a} {count} {mode:?}"
+        );
+      }
+    }
+    assert_eq!(x.to_f64().to_bits(), a.to_f64().to_bits(), "{a}");
+    assert_eq!(x.to_f32().to_bits(), a.to_f32().to_bits(), "{a}");
+    for (b, y) in &values {
+      assert_eq!(
+        x.checked_add(y).map(|v| v.to_inline()),
+        a.checked_add(b),
+        "{a} + {b}"
+      );
+      assert_eq!(
+        x.checked_sub(y).map(|v| v.to_inline()),
+        a.checked_sub(b),
+        "{a} - {b}"
+      );
+      assert_eq!(
+        x.checked_rem(y).map(|v| v.to_inline()),
+        a.checked_rem(b),
+        "{a} % {b}"
+      );
+      assert_eq!(
+        x.saturating_add(y).to_inline(),
+        a.saturating_add(b),
+        "{a} + {b}"
+      );
+      assert_eq!(
+        x.saturating_sub(y).to_inline(),
+        a.saturating_sub(b),
+        "{a} - {b}"
+      );
+      assert_eq!(x.is_multiple_of(y), a.is_multiple_of(b), "{a}, {b}");
+      for &mode in modes() {
+        assert_eq!(
+          x.quantize(y, mode).map(|v| v.to_inline()),
+          a.quantize(b, mode),
+          "{a} to {b} {mode:?}"
+        );
+      }
+    }
+  }
+
+  let specials = [
+    0.0,
+    -0.0,
+    0.1,
+    -1.5,
+    2.675,
+    1e-30,
+    1e30,
+    f64::MIN_POSITIVE,
+    f64::MAX,
+    f64::NAN,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+  ];
+  let floats = specials
+    .into_iter()
+    .chain(values.iter().map(|(a, _)| a.to_f64()));
+  for value in floats {
+    let narrow = value as f32;
+    for &mode in modes() {
+      assert_eq!(
+        T::round_from_f64(value, mode).map(|v| v.to_inline()),
+        <T::Inline as DecimalFloat>::round_from_f64(value, mode),
+        "{value} {mode:?}"
+      );
+      assert_eq!(
+        T::from_f64_shortest(value, mode).map(|v| v.to_inline()),
+        <T::Inline as DecimalFloat>::from_f64_shortest(value, mode),
+        "{value} {mode:?}"
+      );
+      assert_eq!(
+        T::round_from_f32(narrow, mode).map(|v| v.to_inline()),
+        <T::Inline as DecimalFloat>::round_from_f32(narrow, mode),
+        "{narrow} {mode:?}"
+      );
+      assert_eq!(
+        T::from_f32_shortest(narrow, mode).map(|v| v.to_inline()),
+        <T::Inline as DecimalFloat>::from_f32_shortest(narrow, mode),
+        "{narrow} {mode:?}"
+      );
+    }
+  }
+}
+
+/// Checks the sign trait of the heap decimal `T`, over a signed storage, at each sample against its
+/// twin: `is_negative`, `neg` and `abs` of the trait, and the operator `-` on a value.
+#[inline(never)]
+fn check_signed<T>()
+where
+  T: SignedFixedDecimal,
+  T::Inline: SignedFixedDecimal,
+{
+  for (a, x) in pairs(T::from_inline) {
+    assert_eq!(x.is_negative(), a.is_negative(), "{a}");
+    assert_eq!(
+      SignedFixedDecimal::neg(&x).to_inline(),
+      SignedFixedDecimal::neg(&a),
+      "{a}"
+    );
+    assert_eq!(x.abs().to_inline(), a.abs(), "{a}");
+    assert_eq!((-x).to_inline(), -a, "{a}");
+  }
+}
+
+/// What remains of `budget` after `cost`, or `None` below zero: code bounded by the sign trait of
+/// an unsigned decimal.
+fn remaining<T: UnsignedFixedDecimal>(budget: &T, cost: &T) -> Option<T> {
+  budget.checked_sub(cost)
+}
+
+/// Checks code bounded by `UnsignedFixedDecimal` with the heap decimal `T`, over an unsigned
+/// storage, against its twin, at each pair of samples.
+#[inline(never)]
+fn check_unsigned<T>()
+where
+  T: UnsignedFixedDecimal,
+  T::Inline: UnsignedFixedDecimal,
+{
+  let values = pairs(T::from_inline);
+  for (a, x) in &values {
+    for (b, y) in &values {
+      let left = remaining(x, y).map(|v| v.to_inline());
+      assert_eq!(left, remaining(a, b), "{a} - {b}");
+    }
+  }
+}
+
+/// Checks that a text parses into the heap decimal `T` as into its twin, to the value stored or to
+/// the same error: the texts of each sample in each format, and texts out of the range of `T`, with
+/// a fraction digit more than it holds, negative, and of no number.
+#[inline(never)]
+fn check_parsing<T>()
+where
+  T: FixedDecimal,
+  T::Inline: LowerExp + UpperExp,
+{
+  let max = <T::Inline as ConstFixedDecimal>::MAX;
+  let mut inputs = Vec::from([
+    format!("{max}9"),
+    format!("1e{}", T::INTEGRAL),
+    format!("1e-{}", T::FRACTION + 1),
+    String::from("-1"),
+    String::from("-0"),
+    String::new(),
+    String::from("1.2.3"),
+    String::from("NaN"),
+    String::from("-inf"),
+  ]);
+  for (a, _) in pairs(T::from_inline) {
+    inputs.extend(texts(&a));
+  }
+  for text in &inputs {
+    let parsed: Result<T, ParseError> = text.parse();
+    let expected: Result<T::Inline, ParseError> = text.parse();
+    assert_eq!(parsed.map(|v| v.to_inline()), expected, "{text:?}");
+  }
+}
+
+/// Checks that the heap decimal `T` writes in JSON and in postcard what its twin writes, and reads
+/// it back, at each sample.
+#[cfg(feature = "serde")]
+#[inline(never)]
+fn check_serde<T>()
+where
+  T: FixedDecimal + Serialize + DeserializeOwned,
+  T::Inline: Serialize,
+{
+  for (a, x) in pairs(T::from_inline) {
+    let json = serde_json::to_string(&x).expect("a text");
+    assert_eq!(json, serde_json::to_string(&a).expect("a text"), "{a}");
+    let back: T = serde_json::from_str(&json).expect("a decimal");
+    assert_eq!(back.to_inline(), a, "{a}");
+    let bytes = postcard::to_allocvec(&x).expect("bytes");
+    assert_eq!(bytes, postcard::to_allocvec(&a).expect("bytes"), "{a}");
+    let back: T = postcard::from_bytes(&bytes).expect("a decimal");
+    assert_eq!(back.to_inline(), a, "{a}");
+  }
+}
+
+/// Checks that `quickcheck` draws for the heap decimal `T` the values that it draws for its twin
+/// from the same seed, each in the range of `T`, and that the shrinking candidates of each are
+/// those of its twin.
+#[cfg(feature = "quickcheck")]
+#[inline(never)]
+fn check_quickcheck<T>()
+where
+  T: FixedDecimal + ::quickcheck::Arbitrary,
+  T::Inline: ::quickcheck::Arbitrary,
+{
+  let (min, max) = (
+    <T::Inline as ConstFixedDecimal>::MIN,
+    <T::Inline as ConstFixedDecimal>::MAX,
+  );
+  let mut heap = ::quickcheck::Gen::from_size_and_seed(100, seed::<T>());
+  let mut twin = ::quickcheck::Gen::from_size_and_seed(100, seed::<T>());
+  for _ in 0..draws() {
+    let value = <T as ::quickcheck::Arbitrary>::arbitrary(&mut heap);
+    let expected = <T::Inline as ::quickcheck::Arbitrary>::arbitrary(&mut twin);
+    assert_eq!(value.to_inline(), expected);
+    assert!(min <= expected && expected <= max, "{expected}");
+    let candidates: Vec<T::Inline> = ::quickcheck::Arbitrary::shrink(&value)
+      .map(|candidate| candidate.to_inline())
+      .collect();
+    let expected_candidates: Vec<T::Inline> = ::quickcheck::Arbitrary::shrink(&expected).collect();
+    assert_eq!(candidates, expected_candidates, "{expected}");
+  }
+}
+
+/// A runner of `proptest` with a fixed seed that writes no failure to a file.
+#[cfg(feature = "proptest")]
+fn runner() -> TestRunner {
+  TestRunner::new_with_rng(
+    Config {
+      failure_persistence: None,
+      ..Config::default()
+    },
+    TestRng::deterministic_rng(RngAlgorithm::ChaCha),
+  )
+}
+
+/// Checks that `proptest` draws for the heap decimal `T` the values that it draws for its twin
+/// with the same seed, each in the range of `T`, and that the value tree of each moves through the
+/// candidates of the tree of its twin: from the first, where `simplify` moves to, to the value
+/// again, where `complicate` moves past the last.
+#[cfg(feature = "proptest")]
+#[inline(never)]
+fn check_proptest<T>()
+where
+  T: FixedDecimal + ::proptest::arbitrary::Arbitrary,
+  T::Inline: ::proptest::arbitrary::Arbitrary,
+{
+  let (min, max) = (
+    <T::Inline as ConstFixedDecimal>::MIN,
+    <T::Inline as ConstFixedDecimal>::MAX,
+  );
+  let (mut heap, mut twin) = (runner(), runner());
+  for _ in 0..draws() {
+    let mut tree = any::<T>().new_tree(&mut heap).expect("a tree");
+    let mut expected = any::<T::Inline>().new_tree(&mut twin).expect("a tree");
+    let value = expected.current();
+    assert_eq!(tree.current().to_inline(), value);
+    assert!(min <= value && value <= max, "{value}");
+    let mut moved = tree.simplify();
+    assert_eq!(moved, expected.simplify(), "{value}");
+    while moved {
+      assert_eq!(tree.current().to_inline(), expected.current(), "{value}");
+      moved = tree.complicate();
+      assert_eq!(moved, expected.complicate(), "{value}");
+    }
+  }
+}
+
+/// Checks that `arbitrary` reads for the heap decimal `T` from random bytes the values that it
+/// reads for its twin from the same bytes, each in the range of `T`.
+#[cfg(feature = "arbitrary")]
+#[inline(never)]
+fn check_arbitrary<T>()
+where
+  T: FixedDecimal + for<'a> ::arbitrary::Arbitrary<'a>,
+  T::Inline: for<'a> ::arbitrary::Arbitrary<'a>,
+{
+  let (min, max) = (
+    <T::Inline as ConstFixedDecimal>::MIN,
+    <T::Inline as ConstFixedDecimal>::MAX,
+  );
+  let mut words = Words::new(seed::<T>());
+  for _ in 0..draws() {
+    // More bytes than the longest path of a type of 308 digits reads.
+    let bytes: Vec<u8> = (0..400).map(|_| words.next() as u8).collect();
+    let mut data = ::arbitrary::Unstructured::new(&bytes);
+    let value = <T as ::arbitrary::Arbitrary>::arbitrary(&mut data).expect("a value");
+    let mut data = ::arbitrary::Unstructured::new(&bytes);
+    let expected = <T::Inline as ::arbitrary::Arbitrary>::arbitrary(&mut data).expect("a value");
+    assert_eq!(value.to_inline(), expected);
+    assert!(min <= expected && expected <= max, "{expected}");
+  }
+}
+
+/// Checks `Scaled` over the heap decimal `T` against the `Scaled` over its twin. At each sample
+/// with the scales 0, the fraction digits of `T` and one more: the text, its parsing, and
+/// `to_inline` and `from_inline`, which keep the scale. With those scales by turns: the value and
+/// the scale of each method of the general layer at each sample, and at each pair of samples for
+/// those with an operand.
+#[inline(never)]
+fn check_scaled<T>()
+where
+  T: FixedDecimal,
+  Scaled<T>: FixedDecimal<Inline = Scaled<T::Inline>>,
+  Scaled<T::Inline>: ConstFixedDecimal,
+{
+  let fraction = u16::try_from(T::FRACTION).expect("a scale");
+  let scales = [0, fraction, fraction + 1];
+  let parts = |scaled: Scaled<T>| scaled.to_inline().into_parts();
+  let mut values = Vec::new();
+  for (index, (a, x)) in pairs(T::from_inline).into_iter().enumerate() {
+    for scale in scales {
+      let (twin, heap) = (Scaled::new(a, scale), Scaled::new(x.clone(), scale));
+      let text = twin.to_string();
+      assert_eq!(heap.to_string(), text);
+      let parsed: Scaled<T> = text.parse().expect("the text of a value");
+      let expected: Scaled<T::Inline> = text.parse().expect("the text of a value");
+      assert_eq!(parts(parsed), expected.into_parts(), "{text}");
+      assert_eq!(heap.to_inline().into_parts(), (a, scale), "{text}");
+      assert_eq!(parts(Scaled::<T>::from_inline(twin)), (a, scale), "{text}");
+    }
+    let scale = scales[index % scales.len()];
+    values.push((Scaled::new(a, scale), Scaled::new(x, scale)));
+  }
+  for (a, x) in &values {
+    assert_eq!(parts(x.trunc()), a.trunc().into_parts(), "{a}");
+    assert_eq!(parts(x.fract()), a.fract().into_parts(), "{a}");
+    assert_eq!(
+      x.floor().map(parts),
+      a.floor().map(Scaled::into_parts),
+      "{a}"
+    );
+    assert_eq!(x.ceil().map(parts), a.ceil().map(Scaled::into_parts), "{a}");
+    let digits = NonZero::new(2).expect("two digits");
+    for &mode in modes() {
+      assert_eq!(
+        x.round_significant(digits, mode).map(parts),
+        a.round_significant(digits, mode).map(Scaled::into_parts),
+        "{a} {mode:?}"
+      );
+    }
+    for (b, y) in &values {
+      let sum = x.checked_add(y).map(parts);
+      assert_eq!(sum, a.checked_add(b).map(Scaled::into_parts), "{a} + {b}");
+      let difference = x.checked_sub(y).map(parts);
+      assert_eq!(
+        difference,
+        a.checked_sub(b).map(Scaled::into_parts),
+        "{a} - {b}"
+      );
+      let remainder = x.checked_rem(y).map(parts);
+      assert_eq!(
+        remainder,
+        a.checked_rem(b).map(Scaled::into_parts),
+        "{a} % {b}"
+      );
+      let sum = parts(x.saturating_add(y));
+      assert_eq!(sum, a.saturating_add(b).into_parts(), "{a} + {b}");
+      let difference = parts(x.saturating_sub(y));
+      assert_eq!(difference, a.saturating_sub(b).into_parts(), "{a} - {b}");
+      for &mode in modes() {
+        let quantized = x.quantize(y, mode).map(parts);
+        let expected = a.quantize(b, mode).map(Scaled::into_parts);
+        assert_eq!(quantized, expected, "{a} to {b} {mode:?}");
+      }
+    }
+  }
+}
+
+/// The value doubled, computed in its inline twin and stored once, or `None` outside the range:
+/// code bounded by `FixedDecimal` alone.
+fn doubled<T: FixedDecimal>(value: &T) -> Option<T> {
+  let twin = value.to_inline();
+  twin.checked_add(&twin).map(T::from_inline)
+}
+
+/// The total of the values, each added in place: code bounded by `DecimalAssign`.
+fn total<T: DecimalAssign>(values: &[T]) -> T {
+  let mut total = T::zero();
+  for value in values {
+    total += value.clone();
+  }
+  total
+}
+
+/// The larger of two values and its text: code over any storage, which clones, compares and
+/// formats a value.
+fn larger<I, F, R>(a: &Decimal<I, F, R>, b: &Decimal<I, F, R>) -> (Decimal<I, F, R>, String)
+where
+  R: Storage,
+  (I, F): Layout<R>,
+{
+  let larger = if a >= b { a.clone() } else { b.clone() };
+  let text = larger.to_string();
+  (larger, text)
+}
+
+/// `value` added to `total` in place: code over a storage that holds its coefficient in place.
+fn accumulated<I, F, R>(mut total: Decimal<I, F, R>, value: Decimal<I, F, R>) -> Decimal<I, F, R>
+where
+  R: MutableStorage,
+  Decimal<I, F, R::Inline>: FixedDecimal,
+{
+  total += value;
+  total
+}
+
+/// Checks [`doubled`], bounded by `FixedDecimal`, and [`larger`], over any storage, with
+/// `Decimal<I, F, R>` against its twin, at each sample and each pair of samples.
+#[inline(never)]
+fn check_generic_code<I, F, R>()
+where
+  R: Storage,
+  (I, F): Layout<R>,
+  Decimal<I, F, R>: FixedDecimal,
+  Decimal<I, F, R::Inline>: ConstFixedDecimal,
+{
+  let values = pairs(Decimal::<I, F, R>::from_inline);
+  for (a, x) in &values {
+    assert_eq!(doubled(x).map(|v| v.to_inline()), doubled(a), "{a}");
+    for (b, y) in &values {
+      let expected = if a >= b { *a } else { *b };
+      let (largest, text) = larger(x, y);
+      assert_eq!(largest.to_inline(), expected, "{a}, {b}");
+      assert_eq!(text, expected.to_string(), "{a}, {b}");
+    }
+  }
+}
+
+/// Checks [`total`], bounded by `DecimalAssign`, and [`accumulated`], over a storage that holds its
+/// coefficient in place, with `Decimal<I, F, R>` against its twin, at each pair of samples whose
+/// sum is in the range.
+#[inline(never)]
+fn check_assignments<I, F, R>()
+where
+  R: MutableStorage,
+  (I, F): Layout<R>,
+  Decimal<I, F, R>: DecimalAssign,
+  Decimal<I, F, R::Inline>: ConstFixedDecimal,
+{
+  let values = pairs(Decimal::<I, F, R>::from_inline);
+  for (a, x) in &values {
+    for (b, y) in &values {
+      if let Some(sum) = a.checked_add(b) {
+        let both = [x.clone(), y.clone()];
+        assert_eq!(total(&both).to_inline(), sum, "{a} + {b}");
+        assert_eq!(
+          accumulated(x.clone(), y.clone()).to_inline(),
+          sum,
+          "{a} + {b}"
+        );
+      }
+    }
+  }
+}
+
 /// Checks a type with [`check_values`], written `Integral, Fraction, Storage`.
 macro_rules! values_agree {
   ($integral:ty, $fraction:ty, $repr:ty) => {
     check_values::<$integral, $fraction, $repr>()
+  };
+}
+
+/// Checks a type with [`check_generic_code`], written `Integral, Fraction, Storage`.
+macro_rules! generic_code_agrees {
+  ($integral:ty, $fraction:ty, $repr:ty) => {
+    check_generic_code::<$integral, $fraction, $repr>()
   };
 }
 
@@ -291,6 +822,28 @@ macro_rules! products_agree {
   }};
 }
 
+/// Checks `repr` and `from_repr` of `Decimal<Integral, Fraction, Storage>`, written so, over a heap
+/// storage: at each sample, the storage that `repr` moves out makes the value again; and the
+/// largest value of the storage, built from its limbs, which has a digit more than the type holds,
+/// makes none. Each type checks in a function of its own.
+macro_rules! repr_agrees {
+  ($integral:ty, $fraction:ty, $repr:ty) => {{
+    #[inline(never)]
+    fn check() {
+      type Heap = Decimal<$integral, $fraction, $repr>;
+      type Twin = Decimal<$integral, $fraction, <$repr as Storage>::Inline>;
+      for (twin, heap) in pairs::<Twin, Heap>(Heap::from_inline) {
+        let value = Heap::from_repr(heap.repr()).expect("in range");
+        assert_eq!(value.to_inline(), twin);
+      }
+      let max = <<$repr as Storage>::Inline as FixedInteger>::max_value();
+      let above = <$repr as FromLimbs>::from_limbs(ArrayInteger::into_limbs(max));
+      assert!(Heap::from_repr(above).is_none());
+    }
+    check();
+  }};
+}
+
 /// Runs the check `$check`, a macro written `$check!(Integral, Fraction, Storage)`, for one type of
 /// each of six storages in the heap pointer `$pointer`, each at the digit limit of its storage:
 /// the integers of 192, 256, 320, 512, 576 and 1024 bits, unsigned and signed by turns; under
@@ -304,6 +857,21 @@ macro_rules! for_each_type {
       $check!(U135, U18, Int<U512, $pointer<[u64; 8]>>);
       $check!(U155, U18, Int<U576, $pointer<[u64; 9]>>);
       $check!(U308, U0, Uint<U1024, $pointer<[u64; 16]>>);
+    }
+  };
+}
+
+/// Calls the check `$check`, a function generic over a decimal, for the types of `for_each_type!`
+/// in the heap pointer `$pointer`.
+macro_rules! for_each_decimal {
+  ($check:ident, $pointer:ident) => {
+    $check::<Decimal<U39, U18, Uint<U192, $pointer<[u64; 3]>>>>();
+    $check::<Decimal<U58, U18, Int<U256, $pointer<[u64; 4]>>>>();
+    if !tier().is_miri() {
+      $check::<Decimal<U78, U18, Uint<U320, $pointer<[u64; 5]>>>>();
+      $check::<Decimal<U135, U18, Int<U512, $pointer<[u64; 8]>>>>();
+      $check::<Decimal<U155, U18, Int<U576, $pointer<[u64; 9]>>>>();
+      $check::<Decimal<U308, U0, Uint<U1024, $pointer<[u64; 16]>>>>();
     }
   };
 }
@@ -340,6 +908,87 @@ macro_rules! heap_tests {
       }
     }
 
+    /// Every item of `FixedDecimal`, `DecimalOne` and `DecimalFloat` gives for a value over the
+    /// pointer what it gives for its twin, stored, with the same `None` and errors, for each type
+    /// over the pointer.
+    #[test]
+    fn trait_layer_matches_the_twin() {
+      for_each_decimal!(check_trait_layer, $pointer);
+    }
+
+    /// `repr` moves the storage out and `from_repr` takes it back, and refuses a storage above the
+    /// range of the type, for each type over the pointer.
+    #[test]
+    fn repr_and_from_repr_move_the_storage() {
+      for_each_type!(repr_agrees, $pointer);
+    }
+
+    /// The decimals over a signed storage are `SignedFixedDecimal` and those over an unsigned one
+    /// `UnsignedFixedDecimal`, with the results of their twins.
+    #[test]
+    fn sign_traits_match_the_twin() {
+      check_unsigned::<Decimal<U39, U18, Uint<U192, $pointer<[u64; 3]>>>>();
+      check_signed::<Decimal<U58, U18, Int<U256, $pointer<[u64; 4]>>>>();
+      if !tier().is_miri() {
+        check_unsigned::<Decimal<U78, U18, Uint<U320, $pointer<[u64; 5]>>>>();
+        check_signed::<Decimal<U135, U18, Int<U512, $pointer<[u64; 8]>>>>();
+        check_signed::<Decimal<U155, U18, Int<U576, $pointer<[u64; 9]>>>>();
+        check_unsigned::<Decimal<U308, U0, Uint<U1024, $pointer<[u64; 16]>>>>();
+      }
+    }
+
+    /// A text parses into a type over the pointer as into its twin, for each type over the
+    /// pointer.
+    #[test]
+    fn texts_parse_as_into_the_twin() {
+      for_each_decimal!(check_parsing, $pointer);
+    }
+
+    /// A value over the pointer writes in JSON and in postcard what its twin writes, and reads
+    /// back, for each type over the pointer.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_writes_what_the_twin_writes() {
+      for_each_decimal!(check_serde, $pointer);
+    }
+
+    /// `quickcheck` draws and shrinks a value over the pointer as its twin, for each type over the
+    /// pointer.
+    #[cfg(feature = "quickcheck")]
+    #[test]
+    fn quickcheck_draws_and_shrinks_as_for_the_twin() {
+      for_each_decimal!(check_quickcheck, $pointer);
+    }
+
+    /// `proptest` draws and shrinks a value over the pointer as its twin, for each type over the
+    /// pointer.
+    #[cfg(feature = "proptest")]
+    #[test]
+    fn proptest_draws_and_shrinks_as_for_the_twin() {
+      for_each_decimal!(check_proptest, $pointer);
+    }
+
+    /// `arbitrary` reads a value over the pointer as its twin, for each type over the pointer.
+    #[cfg(feature = "arbitrary")]
+    #[test]
+    fn arbitrary_reads_as_for_the_twin() {
+      for_each_decimal!(check_arbitrary, $pointer);
+    }
+
+    /// A `Scaled` over a decimal over the pointer parses, writes and computes as the `Scaled` over
+    /// its twin, with the same scales, for each type over the pointer.
+    #[test]
+    fn scaled_matches_the_scaled_twin() {
+      for_each_decimal!(check_scaled, $pointer);
+    }
+
+    /// Code bounded by `FixedDecimal` and code over any storage take a decimal over the pointer and
+    /// give the results of its twin, for each type over the pointer.
+    #[test]
+    fn generic_code_takes_the_decimals() {
+      for_each_type!(generic_code_agrees, $pointer);
+    }
+
     /// A decimal over the pointer has the size and the alignment of a pointer, and so has its
     /// `Option`, which takes the niche of the pointer, for each type over the pointer.
     #[test]
@@ -354,6 +1003,15 @@ macro_rules! heap_tests {
       assert_eq!(layout::<Decimal<U308, U0, Uint<U1024, $pointer<[u64; 16]>>>>(), pointer);
     }
   };
+}
+
+/// The generic code of the checks takes a decimal over an inline storage too, as its own twin:
+/// code bounded by `FixedDecimal` and by `DecimalAssign`, over any storage and over a storage that
+/// holds its coefficient in place.
+#[test]
+fn generic_code_takes_an_inline_decimal() {
+  check_generic_code::<U10, U8, i64>();
+  check_assignments::<U10, U8, i64>();
 }
 
 /// `Box<[u64; N]>`, which holds its coefficient in place.
@@ -384,6 +1042,20 @@ mod boxed {
         assert_eq!(type_of(&product), type_of(&expected), "{a} * {b}");
         assert_eq!(product, expected, "{a} * {b}");
       }
+    }
+  }
+
+  /// Code bounded by `DecimalAssign` and code over a storage that holds its coefficient in place
+  /// take the decimals in a `Box`, and give the results of their twins.
+  #[test]
+  fn assignments_take_the_decimals_in_a_box() {
+    check_assignments::<U39, U18, Uint<U192, Box<[u64; 3]>>>();
+    check_assignments::<U58, U18, Int<U256, Box<[u64; 4]>>>();
+    if !tier().is_miri() {
+      check_assignments::<U78, U18, Uint<U320, Box<[u64; 5]>>>();
+      check_assignments::<U135, U18, Int<U512, Box<[u64; 8]>>>();
+      check_assignments::<U155, U18, Int<U576, Box<[u64; 9]>>>();
+      check_assignments::<U308, U0, Uint<U1024, Box<[u64; 16]>>>();
     }
   }
 }

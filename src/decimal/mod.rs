@@ -30,6 +30,12 @@ use crate::{
 mod error;
 mod float;
 mod format;
+#[cfg(any(
+  feature = "std",
+  feature = "alloc",
+  all(feature = "triomphe", target_has_atomic = "ptr")
+))]
+mod heap;
 mod literal;
 mod ops;
 mod parse;
