@@ -136,8 +136,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v7
-      with:
-        fetch-depth: 2
     - name: Cache cargo build and registry
       uses: actions/cache@v6
       with:
@@ -214,29 +212,6 @@ jobs:
         fi
     - name: Run build
       run: cargo hack build --feature-powerset --depth 2
-    # Temporary: the build of the library and of its tests, cold, at the base of the pull request
-    # and at its head. The base is the first parent of the merge commit that a pull request run
-    # checks out. The dependencies are built once before, so that each time is of numo alone.
-    - name: Measure the build without and with the storages above 512 bits
-      if: github.event_name == 'pull_request'
-      shell: bash
-      env:
-        CARGO_TARGET_DIR: ${{ runner.temp }}/measure
-      run: |
-        git worktree add "$RUNNER_TEMP/base" HEAD^1
-        cargo build --lib --no-default-features
-        cargo test --lib --no-default-features --no-run
-        for tree in "$RUNNER_TEMP/base" "$GITHUB_WORKSPACE"; do
-          cd "$tree"
-          echo "::group::The library at $(git rev-parse --short HEAD)"
-          cargo clean -p numo
-          CARGO_INCREMENTAL=0 cargo build --lib --no-default-features
-          echo "::endgroup::"
-          echo "::group::The tests at $(git rev-parse --short HEAD)"
-          cargo clean -p numo
-          CARGO_INCREMENTAL=0 cargo test --lib --no-default-features --no-run
-          echo "::endgroup::"
-        done
   
   test:
     name: test
