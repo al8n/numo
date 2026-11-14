@@ -1408,7 +1408,8 @@ macro_rules! heap_decimal {
     }
 
     /// `repr` and `from_repr` in range move the storage, and `from_repr` out of range drops the
-    /// storage that it was given.
+    /// storage that it was given: the largest value of the storage, and `10^DIGITS` and
+    /// `-10^DIGITS`, the first coefficients beyond the limits of the type.
     #[test]
     fn decimal_storages_move() {
       let (a, _) = pair();
@@ -1416,6 +1417,12 @@ macro_rules! heap_decimal {
       allocates!(0, 0; Heap::from_repr(repr)).expect("in range");
       let beyond = black_box(<Int<U256, $pointer<[u64; 4]>> as FixedInteger>::max_value());
       assert!(allocates!(0, 1; Heap::from_repr(beyond)).is_none());
+      let one = Int::<U256, [u64; 4]>::ONE;
+      for coefficient in [Twin::MAX.repr() + one, Twin::MIN.repr() - one] {
+        let limbs = coefficient.into_limbs();
+        let storage = black_box(<Int<U256, $pointer<[u64; 4]>> as FromLimbs>::from_limbs(limbs));
+        assert!(allocates!(0, 1; Heap::from_repr(storage)).is_none());
+      }
     }
 
     /// A constructor allocates the decimal that it returns, and nothing for an error.
@@ -1434,12 +1441,23 @@ macro_rules! heap_decimal {
       allocates!(1, 0; Heap::round_from_f32(1.5, mode)).expect("in range");
       allocates!(1, 0; Heap::from_f64_shortest(1.5, mode)).expect("in range");
       allocates!(1, 0; Heap::from_f32_shortest(1.5, mode)).expect("in range");
+      // The trait's readings of the shortest text, beside the inherent ones of every storage.
+      allocates!(1, 0; <Heap as DecimalFloat>::from_f64_shortest(1.5, mode)).expect("in range");
+      allocates!(1, 0; <Heap as DecimalFloat>::from_f32_shortest(1.5, mode)).expect("in range");
       assert!(allocates!(0, 0; Heap::round_from_f64(f64::NAN, mode)).is_err());
       assert!(allocates!(0, 0; Heap::round_from_f32(f32::INFINITY, mode)).is_err());
+      // A finite value above the range: the twin reads it, and refuses it.
+      assert!(allocates!(0, 0; Heap::round_from_f64(1e300, mode)).is_err());
       assert!(allocates!(0, 0; Heap::from_f64_shortest(1e300, mode)).is_err());
+      assert!(allocates!(0, 0; <Heap as DecimalFloat>::from_f64_shortest(1e300, mode)).is_err());
       // Every finite `f32` is below `10^39`, which 58 integral digits hold: only a value that is not
-      // finite fails here.
+      // finite fails here, and a finite one above the ten integral digits of `HeapNarrow`.
       assert!(allocates!(0, 0; Heap::from_f32_shortest(f32::NEG_INFINITY, mode)).is_err());
+      assert!(allocates!(0, 0; HeapNarrow::round_from_f32(1e38, mode)).is_err());
+      assert!(allocates!(0, 0; HeapNarrow::from_f32_shortest(1e38, mode)).is_err());
+      assert!(
+        allocates!(0, 0; <HeapNarrow as DecimalFloat>::from_f32_shortest(1e38, mode)).is_err()
+      );
     }
 
     /// `Deserialize` allocates the decimal, here with a deserializer that lends the string, and
@@ -1560,6 +1578,11 @@ macro_rules! heap_decimal {
       );
       allocates!(0, 0; a.div_round::<U58, U18, Int<U256, [u64; 4]>, _, _, _>(&b, mode))
         .expect("in range");
+      // The quotient of the largest value by -0.25 is beyond the ten integral digits of
+      // `HeapNarrow`: it is computed, and refused.
+      let big = largest();
+      let failed: Result<HeapNarrow, _> = allocates!(0, 0; big.div_round(&b, mode));
+      assert!(failed.is_err());
     }
 
     /// A `Scaled` over a heap decimal allocates as its decimal, but for its sums of values, which
@@ -1636,15 +1659,24 @@ mod boxed_decimal {
     allocates!(0, 0; b.clone_from(&a));
     let s = scaled("1.50");
     allocates!(1, 0; s.clone());
+    let mut t = scaled("2.5");
+    allocates!(0, 0; t.clone_from(&s));
   }
 
   /// A `Scaled` over a boxed decimal stores as its decimal: its operator with owned operands
-  /// keeps the left allocation, and its assignment by reference writes in place.
+  /// keeps the left allocation, one with an owned operand keeps the allocation of that operand,
+  /// and its assignment by reference writes in place.
   #[test]
   fn scaled_boxed_decimals_store_in_place() {
     let s = scaled("1234.50");
     let t = scaled("-0.250");
     allocates!(0, 1; s + t);
+    let s = scaled("1234.50");
+    let t = scaled("-0.250");
+    allocates!(0, 0; s + &t);
+    let s = scaled("1234.50");
+    let t = scaled("-0.250");
+    allocates!(0, 0; &s + t);
     let mut s = scaled("1234.50");
     let t = scaled("-0.250");
     allocates!(0, 0; s += &t);
@@ -1706,14 +1738,23 @@ macro_rules! shared_decimal {
         allocates!(0, 1; b.clone_from(&a));
         let s = scaled("1.50");
         allocates!(0, 0; s.clone());
+        let mut t = scaled("2.5");
+        allocates!(0, 1; t.clone_from(&s));
       }
 
-      /// A `Scaled` over a shared decimal allocates as its decimal.
+      /// A `Scaled` over a shared decimal allocates as its decimal: its result is a new allocation,
+      /// and the operands that it takes give up their shares.
       #[test]
       fn scaled_shared_decimals_allocate_their_result() {
         let s = scaled("1234.50");
         let t = scaled("-0.250");
         allocates!(1, 2; s + t);
+        let s = scaled("1234.50");
+        let t = scaled("-0.250");
+        allocates!(1, 1; s + &t);
+        let s = scaled("1234.50");
+        let t = scaled("-0.250");
+        allocates!(1, 1; &s + t);
       }
     }
   };
