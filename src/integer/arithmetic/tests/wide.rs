@@ -3,8 +3,9 @@
 //! storage at the widths of the arithmetic, through the inherent `const fn`s and the traits against
 //! `i128` at every value of up to 3 bits, their relations with the multiplication of the families,
 //! their edges, and their constants; and `widening_mul` against `num-bigint` between widths and
-//! storages that differ, the type that it names, its operands in a `Box`, its widest product, code
-//! generic over the width, and its relation with `carrying_mul`.
+//! storages that differ, a narrow operand by a far wider one among them, the type that it names,
+//! its operands in a `Box`, its widest product, code generic over the width, and its relation with
+//! `carrying_mul`.
 
 use core::any::TypeId;
 
@@ -528,6 +529,36 @@ fn widening_mul_matches_big_integers() {
   if !cfg!(miri) {
     unsigned_widening::<U4096, [u64; 64], U4096, [u64; 64]>(2);
     signed_widening::<U4096, [u64; 64], U4096, [u64; 64]>(2);
+  }
+}
+
+/// The products of a narrow operand and a far wider one, in both orders, against `num-bigint`: the
+/// narrower operand, read into the storage of the wider one, fills its lowest limbs, and the limbs
+/// above are zero, except for a negative `Int`, whose sign fills them. A `u8` and 256 bits in four
+/// limbs by 1024 bits in sixteen, three bytes by 1024 bits in 32-bit limbs, and a `u64` by 4096
+/// bits, which leaves 63 limbs zero, of both signs. Under Miri, the widths of 4096 bits are left
+/// out.
+#[test]
+#[cfg_attr(
+  all(miri, target_pointer_width = "32"),
+  ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+)]
+fn widening_mul_of_a_narrow_operand() {
+  unsigned_widening::<U8, u8, U1024, [u64; 16]>(4);
+  unsigned_widening::<U1024, [u64; 16], U8, u8>(4);
+  signed_widening::<U8, i8, U1024, [u64; 16]>(4);
+  signed_widening::<U1024, [u64; 16], U8, i8>(4);
+  unsigned_widening::<U256, [u64; 4], U1024, [u64; 16]>(4);
+  unsigned_widening::<U1024, [u64; 16], U256, [u64; 4]>(4);
+  signed_widening::<U256, [u64; 4], U1024, [u64; 16]>(4);
+  signed_widening::<U1024, [u64; 16], U256, [u64; 4]>(4);
+  unsigned_widening::<U24, [u8; 3], U1024, [u32; 32]>(4);
+  signed_widening::<U1024, [u32; 32], U24, [u8; 3]>(4);
+  if !cfg!(miri) {
+    unsigned_widening::<U64, u64, U4096, [u64; 64]>(4);
+    unsigned_widening::<U4096, [u64; 64], U64, u64>(4);
+    signed_widening::<U64, i64, U4096, [u64; 64]>(4);
+    signed_widening::<U4096, [u64; 64], U64, i64>(4);
   }
 }
 

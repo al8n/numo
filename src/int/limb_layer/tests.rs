@@ -328,6 +328,63 @@ macro_rules! limb_layer_tests {
       assert_eq!(split_bits(&[0; 3], &[0; 3], 0), ([0; 3], [0; 3]));
     }
 
+    /// Checks `widening_mul` against `num-bigint` at operands of every pair of significant lengths
+    /// in `N` limbs, from zero, which has none, to `N`: the lowest limbs all ones, the top limb
+    /// alone one, and random limbs below a nonzero top limb, with every limb above the top one
+    /// zero. So either operand ends below the other, or below the array, by any number of limbs.
+    fn significant_products<const N: usize>() {
+      let mut rng = Rng(0x5191_f1ca ^ N as u64);
+      let count = if cfg!(miri) { 1 } else { 4 };
+      // The operands of `length` significant limbs.
+      let mut operands = |length: usize| {
+        let mut values = vec![ones_below::<N>(length)];
+        if length > 0 {
+          values.push(boundary::<N>(length - 1));
+          values.extend((0..count).map(|_| rng.significant::<N>(length)));
+        }
+        values
+      };
+      let modulus = bigint::from_limbs(&[Limb::MAX; N], false) + 1u8;
+      let half = |value: BigInt| bigint::to_limbs_of::<Limb, N>(&value, false).expect("fits");
+      for left in 0..=N {
+        let lefts = operands(left);
+        for right in 0..=N {
+          let rights = operands(right);
+          for x in &lefts {
+            for y in &rights {
+              let product = bigint::from_limbs(x, false) * bigint::from_limbs(y, false);
+              assert_eq!(
+                widening_mul(x, y),
+                (half(&product % &modulus), half(&product / &modulus)),
+                "{x:?} * {y:?}"
+              );
+            }
+          }
+        }
+      }
+    }
+
+    /// `widening_mul` against `num-bigint` at every pair of significant lengths of its operands, in
+    /// one limb to eight and in sixteen, or under Miri in one to four.
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn widening_mul_over_every_significant_length() {
+      significant_products::<1>();
+      significant_products::<2>();
+      significant_products::<3>();
+      significant_products::<4>();
+      if !cfg!(miri) {
+        significant_products::<5>();
+        significant_products::<6>();
+        significant_products::<7>();
+        significant_products::<8>();
+        significant_products::<16>();
+      }
+    }
+
     fn division_by_every_power<const N: usize>() {
       let max = bigint::from_limbs(&[Limb::MAX; N], false);
       for value in [
@@ -443,6 +500,23 @@ macro_rules! limb_layer_tests {
           };
         }
         value[count - 1] = (value[count - 1] >> (self.next() % u64::from(B))).max(1);
+        value
+      }
+
+      /// A value of `length` significant limbs: each random, zero or all ones, the top one nonzero,
+      /// and every limb above it zero. Zero has no significant limbs.
+      fn significant<const N: usize>(&mut self, length: usize) -> [Limb; N] {
+        let mut value = [0; N];
+        for limb in &mut value[..length] {
+          *limb = match self.next() % 4 {
+            0 => 0,
+            1 => Limb::MAX,
+            _ => self.limb(),
+          };
+        }
+        if let Some(top) = value[..length].last_mut() {
+          *top = (*top).max(1);
+        }
         value
       }
     }
