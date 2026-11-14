@@ -9,7 +9,7 @@ error[E0080]: evaluation panicked: the decimal literal has more fraction digits 
   | |   i16: signed native,
   | |   i32: signed native,
 ... |
-  | |   u512: unsigned wide,
+  | |   u1024: unsigned wide,
   | | );
   | |_- in this macro invocation
   |
@@ -34,7 +34,7 @@ error[E0080]: evaluation panicked: the decimal literal is out of range of the ty
   | |   i16: signed native,
   | |   i32: signed native,
 ... |
-  | |   u512: unsigned wide,
+  | |   u1024: unsigned wide,
   | | );
   | |_- in this macro invocation
   |
@@ -59,7 +59,7 @@ error[E0080]: evaluation panicked: the decimal literal is negative, and the type
   | |   i16: signed native,
   | |   i32: signed native,
 ... |
-  | |   u512: unsigned wide,
+  | |   u1024: unsigned wide,
   | | );
   | |_- in this macro invocation
   |
@@ -84,7 +84,7 @@ error[E0080]: evaluation panicked: the literal is not a decimal number
   | |   i16: signed native,
   | |   i32: signed native,
 ... |
-  | |   u512: unsigned wide,
+  | |   u1024: unsigned wide,
   | | );
   | |_- in this macro invocation
   |
@@ -109,7 +109,7 @@ error[E0080]: evaluation panicked: the literal is not a decimal number
   | |   i16: signed native,
   | |   i32: signed native,
 ... |
-  | |   u512: unsigned wide,
+  | |   u1024: unsigned wide,
   | | );
   | |_- in this macro invocation
   |

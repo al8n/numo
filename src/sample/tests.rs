@@ -20,17 +20,26 @@ use num_bigint::{BigInt, Sign};
 use super::Chain;
 use super::{MODES, Source, coefficient, generate};
 use crate::{
-  Decimal, RoundingMode, bigint, i256, i512,
+  Decimal, RoundingMode, bigint, i256, i512, i1024,
   layout::{InlineStorage, Layout, LayoutDigits, Storage, Token},
-  u256, u512,
+  u256, u512, u1024,
 };
 
-/// The number of values that each test draws for each type.
+/// The number of values that each test draws for each type, which [`samples`] doubles for the
+/// checks of [`check_values`] above 256 digits.
 pub(crate) const SAMPLES: usize = 4096;
 
+/// The number of values that a test draws for a type of `digits` digits to check them with
+/// [`check_values`]: [`SAMPLES`], or twice as many above 256 digits. In [`SAMPLES`] values, a type
+/// of 308 digits draws each number of digits about 12 times and misses one with a chance of about
+/// `1e-3`; in twice as many, about `4e-9`.
+pub(crate) const fn samples(digits: u32) -> usize {
+  if digits > 256 { 2 * SAMPLES } else { SAMPLES }
+}
+
 /// Calls `$check!(Type)` for each decimal type that the tests of every feature draw: native and
-/// wide storages, signed and unsigned, of 2, 18, 19, 38, 76, 77, 153 and 154 digits, among them
-/// layouts with only fraction digits and with none.
+/// wide storages, signed and unsigned, of 2, 18, 19, 38, 76, 77, 153, 154, 307 and 308 digits,
+/// among them layouts with only fraction digits and with none.
 macro_rules! for_each_type {
   ($check:ident) => {
     $check!($crate::Decimal<::typenum::U1, ::typenum::U1, i8>);
@@ -47,6 +56,8 @@ macro_rules! for_each_type {
     $check!($crate::Decimal<::typenum::U59, ::typenum::U18, $crate::u256>);
     $check!($crate::Decimal<::typenum::U0, ::typenum::U153, $crate::i512>);
     $check!($crate::Decimal<::typenum::U154, ::typenum::U0, $crate::u512>);
+    $check!($crate::Decimal<::typenum::U0, ::typenum::U307, $crate::i1024>);
+    $check!($crate::Decimal<::typenum::U308, ::typenum::U0, $crate::u1024>);
   };
 }
 
@@ -171,9 +182,9 @@ fn leaves<R: InlineStorage>(
 /// `coeff` as a big integer, read through the widest storage of its sign.
 pub(crate) fn big<R: InlineStorage>(coeff: R) -> BigInt {
   if R::SIGNED {
-    bigint::from_limbs(&coeff.convert::<i512>(Token::new()).to_limbs(), true)
+    bigint::from_limbs(&coeff.convert::<i1024>(Token::new()).to_limbs(), true)
   } else {
-    bigint::from_limbs(&coeff.convert::<u512>(Token::new()).to_limbs(), false)
+    bigint::from_limbs(&coeff.convert::<u1024>(Token::new()).to_limbs(), false)
   }
 }
 
@@ -213,7 +224,7 @@ fn edge_kinds(digits: u32, fraction: u32) -> Vec<Vec<BigInt>> {
 /// Checks the values drawn for `Decimal<I, F, R>`: each is in range and a valid coefficient,
 /// every number of digits from one to `Integral + Fraction` occurs, negative values occur exactly
 /// for a signed storage, and every kind of edge value occurs, with every exponent for up to nine
-/// digits.
+/// digits. Their number is [`samples`] for the digits of the type.
 pub(crate) fn check_values<I, F, R>(
   name: &str,
   values: &[Decimal<I, F, R>],
@@ -225,7 +236,7 @@ pub(crate) fn check_values<I, F, R>(
 {
   let digits = <(I, F) as LayoutDigits<R>>::DIGITS;
   let fraction = <(I, F) as LayoutDigits<R>>::FRACTION;
-  assert_eq!(values.len(), SAMPLES, "{name}");
+  assert_eq!(values.len(), samples(digits), "{name}");
   let mut lengths = vec![0usize; digits as usize + 1];
   let mut seen = BTreeSet::new();
   let (mut negative, mut positive) = (false, false);
@@ -286,9 +297,10 @@ pub(crate) fn simplicity(value: &BigInt) -> (bool, bool, u32) {
   )
 }
 
-/// The most choices among two or more values on any path for `digits` digits, which is the
-/// number of bytes that `arbitrary` reads at most: the branch, the number of digits, the digits,
-/// whether to zero trailing digits, how many, and the sign of a signed storage.
+/// The most choices among two or more values on any path for `digits` digits: the branch, the
+/// number of digits, the digits, whether to zero trailing digits, how many, and the sign of a
+/// signed storage. For a type of at most 256 digits, that is the number of bytes that `arbitrary`
+/// reads at most; above, the two choices among the digits take a byte more each.
 fn longest_path(digits: u32, signed: bool) -> usize {
   let several = usize::from(digits >= 2);
   1 + several + digits as usize + 1 + several + usize::from(signed)
@@ -418,6 +430,8 @@ fn every_edge_path_gives_an_edge_value_of_its_kind() {
     check_edges::<u256>(77, 18),
     check_edges::<i512>(153, 153),
     check_edges::<u512>(154, 0),
+    check_edges::<i1024>(307, 307),
+    check_edges::<u1024>(308, 0),
   ];
   // The branch, the kind, an exponent and a sign at most: never the longest path.
   assert!(edges.iter().all(|&longest| longest <= 4));
@@ -456,6 +470,32 @@ fn widest_longest_paths() {
   assert_eq!(scripted::<i512>(153, 9, &nines(153, true)), -max(153));
   assert_eq!(scripted::<u256>(77, 77, &nines(77, false)), max(77));
   assert_eq!(scripted::<i256>(76, 0, &nines(76, true)), -max(76));
+  assert_eq!(scripted::<u1024>(308, 0, &nines(308, false)), max(308));
+  assert_eq!(scripted::<i1024>(307, 307, &nines(307, true)), -max(307));
+}
+
+/// Every number of digits of the widest types is drawn, from one to all of them: the digit-wise
+/// branch, a length chosen among more than 256, a first digit `1` and then zeros, no zeroing, and
+/// the plus sign of a signed storage.
+#[test]
+fn every_length_of_the_widest_types() {
+  for (digits, fraction, signed) in [(308, 0, false), (307, 307, true)] {
+    for len in 1..=digits {
+      // The first digit is one of `1..=9` for several digits, and of `0..=9` for one.
+      let mut answers = vec![1, len - 1, u32::from(len == 1)];
+      answers.extend(core::iter::repeat_n(0, len as usize - 1));
+      answers.push(1);
+      if signed {
+        answers.push(0);
+      }
+      let coeff = if signed {
+        scripted::<i1024>(digits, fraction, &answers)
+      } else {
+        scripted::<u1024>(digits, fraction, &answers)
+      };
+      assert_eq!(coeff, bigint::pow10(len - 1), "{len} of {digits} digits");
+    }
+  }
 }
 
 /// Trailing zeros keep the first digit, and with it the number of digits.
@@ -465,6 +505,12 @@ fn trailing_zeros_keep_the_number_of_digits() {
   answers.extend(core::iter::repeat_n(9, 153));
   answers.extend([0, 153]);
   assert_eq!(scripted::<u512>(154, 0, &answers), bigint::pow10(153));
+
+  // At 308 digits, the number of zeros is a choice among more than 256.
+  let mut answers = vec![1, 307, 0];
+  answers.extend(core::iter::repeat_n(9, 307));
+  answers.extend([0, 307]);
+  assert_eq!(scripted::<u1024>(308, 0, &answers), bigint::pow10(307));
 
   let mut answers = vec![1, 17, 4];
   answers.extend(core::iter::repeat_n(3, 17));
@@ -487,7 +533,9 @@ fn trailing_zeros_keep_the_number_of_digits() {
 macro_rules! check_draws {
   ($t:ty) => {{
     let mut source = SplitMix(0x5eed_0001);
-    let values: Vec<$t> = (0..SAMPLES).map(|_| draw(&mut source)).collect();
+    let values: Vec<$t> = (0..samples(<$t>::DIGITS))
+      .map(|_| draw(&mut source))
+      .collect();
     check_values(stringify!($t), &values, <$t>::repr, <$t>::from_repr);
   }};
 }

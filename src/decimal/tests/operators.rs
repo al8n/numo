@@ -27,12 +27,14 @@ use std::{
 
 use num_bigint::BigInt;
 use typenum::{
-  U0, U1, U2, U4, U5, U8, U9, U10, U18, U19, U39, U58, U77, U78, U96, U97, U116, U135, U154,
+  U0, U1, U2, U4, U5, U8, U9, U10, U18, U19, U39, U58, U77, U78, U96, U97, U116, U135, U154, U155,
+  U173, U174, U192, U193, U211, U212, U231, U232, U250, U251, U269, U270, U288, U289, U307, U308,
 };
 
 use crate::{
   ConstFixedDecimal, Decimal, FixedDecimal, Layout, Scaled, Storage, bigint::tier, i192, i256,
-  i320, i384, i448, i512, u192, u256, u320, u384, u448, u512,
+  i320, i384, i448, i512, i576, i640, i704, i768, i832, i896, i960, i1024, u192, u256, u320, u384,
+  u448, u512, u576, u640, u704, u768, u832, u896, u960, u1024,
 };
 
 // One type of each storage, most of them at the digit limit of the storage, where a sum can leave
@@ -48,6 +50,15 @@ type Di320 = Decimal<U96, U0, i320>;
 type Di384 = Decimal<U97, U18, i384>;
 type Di448 = Decimal<U116, U18, i448>;
 type Di512 = Decimal<U135, U18, i512>;
+type Di576 = Decimal<U155, U18, i576>;
+type Di640 = Decimal<U174, U18, i640>;
+type Di704 = Decimal<U193, U18, i704>;
+type Di768 = Decimal<U212, U18, i768>;
+type Di832 = Decimal<U232, U18, i832>;
+type Di896 = Decimal<U251, U18, i896>;
+type Di960 = Decimal<U270, U18, i960>;
+type Di1024 = Decimal<U289, U18, i1024>;
+type D0x307 = Decimal<U0, U307, i1024>;
 type Du8 = Decimal<U1, U1, u8>;
 type Du16 = Decimal<U2, U2, u16>;
 type Du32 = Decimal<U0, U9, u32>;
@@ -59,6 +70,15 @@ type Du320 = Decimal<U78, U18, u320>;
 type Du384 = Decimal<U97, U18, u384>;
 type Du448 = Decimal<U116, U18, u448>;
 type Du512 = Decimal<U154, U0, u512>;
+type Du576 = Decimal<U173, U0, u576>;
+type Du640 = Decimal<U192, U0, u640>;
+type Du704 = Decimal<U211, U0, u704>;
+type Du768 = Decimal<U231, U0, u768>;
+type Du832 = Decimal<U250, U0, u832>;
+type Du896 = Decimal<U269, U0, u896>;
+type Du960 = Decimal<U288, U0, u960>;
+type Du1024 = Decimal<U308, U0, u1024>;
+type D0x308 = Decimal<U0, U308, u1024>;
 
 /// The values at which a type is checked: zero, the limits, one, two and 25 units of the last
 /// digit, negated too for a signed storage, and the values one unit inside the limits, each once;
@@ -172,9 +192,13 @@ fn methods_match_the_coefficients() {
   if tier().is_miri() {
     return;
   }
-  methods_agree!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
   methods_agree!(
-    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, Di576, Di640, Di704, Di768, Di832,
+    Di896, Di960, Di1024, D0x307
+  );
+  methods_agree!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, Du576, Du640, Du704, Du768,
+    Du832, Du896, Du960, Du1024, D0x308
   );
 }
 
@@ -477,9 +501,13 @@ fn operators_match_the_checked_methods() {
   if tier().is_miri() {
     return;
   }
-  operators_agree!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
   operators_agree!(
-    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, Di576, Di640, Di704, Di768, Di832,
+    Di896, Di960, Di1024, D0x307
+  );
+  operators_agree!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, Du576, Du640, Du704, Du768,
+    Du832, Du896, Du960, Du1024, D0x308
   );
 }
 
@@ -492,9 +520,13 @@ fn sums_match_the_fold_of_checked_add() {
   if tier().is_miri() {
     return;
   }
-  sums_agree!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
   sums_agree!(
-    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, Di576, Di640, Di704, Di768, Di832,
+    Di896, Di960, Di1024, D0x307
+  );
+  sums_agree!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, Du576, Du640, Du704, Du768,
+    Du832, Du896, Du960, Du1024, D0x308
   );
 }
 

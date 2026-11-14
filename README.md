@@ -3,7 +3,7 @@
 </div>
 <div align="center">
 
-Exact fixed-point decimal numbers of up to 153 digits, or 154 with an explicit `u512`, whose digit counts and storage are part of the type, for `no_std` without allocation.
+Exact fixed-point decimal numbers of up to 307 digits, or 308 in an explicit `u1024`, whose digit counts and storage are part of the type, for `no_std` without allocation.
 
 [<img alt="github" src="https://img.shields.io/badge/github-al8n/numo-8da0cb?style=for-the-badge&logo=Github" height="22">][Github-url]
 [<img alt="Build" src="https://img.shields.io/github/actions/workflow/status/al8n/numo/ci.yml?logo=Github-Actions&style=for-the-badge" height="22">][CI-url]
@@ -20,13 +20,13 @@ Exact fixed-point decimal numbers of up to 153 digits, or 154 with an explicit `
 
 `numo` provides number types whose sizes are type-level numbers from
 [`typenum`](https://crates.io/crates/typenum) and whose storage is an integer named in the type: a
-native integer, or a 192-, 256-, 320-, 384-, 448- or 512-bit integer of this crate. Capacity is
-checked during type checking, so no value can be created for a type that cannot hold its digits.
-The arithmetic methods take the receiver and the operands by reference, as in `a.checked_add(&b)`,
-so that a call does not copy a wide value, while the operators keep the signatures of their
-standard traits. The casts, such as `checked_cast` and `cast_signed`, and the bitwise `const fn`s,
-such as `bitand`, take their operands by value, as the native casts and the methods of the operator
-traits do.
+native integer, or an integer of this crate of 192 to 1024 bits, every 64 bits. Capacity is checked
+during type checking, so no value can be created for a type that cannot hold its digits. The
+arithmetic methods take the receiver and the operands by reference, as in `a.checked_add(&b)`, so
+that a call does not copy a wide value, while the operators keep the signatures of their standard
+traits. The casts, such as `checked_cast` and `cast_signed`, and the bitwise `const fn`s, such as
+`bitand`, take their operands by value, as the native casts and the methods of the operator traits
+do.
 
 | Family | Status |
 |---|---|
@@ -90,30 +90,32 @@ fn main() -> Result<(), ParseError> {
 - The value is `c / 10^Fraction`, where the coefficient `c` is stored in `Repr` and
   `|c| <= 10^(Integral + Fraction) - 1`, like SQL `NUMERIC(Integral + Fraction, Fraction)`. There
   is no NaN, infinity or negative zero.
-- `Repr` is a signed or unsigned integer. It defaults to the smallest signed integer that holds
-  the digits: `i8` up to 2 digits, `i16` up to 4, `i32` up to 9, `i64` up to 18, `i128` up to 38,
-  and the wide integers `i192` up to 57, `i256` up to 76, `i320` up to 96, `i384` up to 115, `i448`
-  up to 134 and `i512` up to 153. A wider `Repr` can be named explicitly, and so can an unsigned
-  one: `u8` up to 2 digits, `u16` up to 4, `u32` up to 9, `u64` up to 19, `u128` up to 38, `u192`
-  up to 57, `u256` up to 77, `u320` up to 96, `u384` up to 115, `u448` up to 134 and `u512` up to
-  154. The type has the size, alignment and ABI of `Repr`.
+- `Repr` is a signed or unsigned integer. It defaults to the smallest signed integer that holds the
+  digits: `i8` up to 2 digits, `i16` up to 4, `i32` up to 9, `i64` up to 18, `i128` up to 38, and
+  the wide integers `i192` up to 57, `i256` up to 76, `i320` up to 96, `i384` up to 115, `i448` up
+  to 134, `i512` up to 153, `i576` up to 173, `i640` up to 192, `i704` up to 211, `i768` up to 230,
+  `i832` up to 250, `i896` up to 269, `i960` up to 288 and `i1024` up to 307. A wider `Repr` can be
+  named explicitly, and so can an unsigned one: `u8` up to 2 digits, `u16` up to 4, `u32` up to 9,
+  `u64` up to 19, `u128` up to 38, `u192` up to 57, `u256` up to 77, `u320` up to 96, `u384` up to
+  115, `u448` up to 134, `u512` up to 154, `u576` up to 173, `u640` up to 192, `u704` up to 211,
+  `u768` up to 231, `u832` up to 250, `u896` up to 269, `u960` up to 288 and `u1024` up to 308. The
+  type has the size, alignment and ABI of `Repr`.
 - With a signed `Repr`, the range is symmetric and `Neg` is implemented. With an unsigned `Repr`,
   values run from zero to `MAX`, there is no negation, `checked_sub` returns `None` below zero,
   and parsing rejects a negative number as `Negative`, even `-0`.
-- Zero digits, more than 154 digits, or a `Repr` that is too small are rejected during type
-  checking. With the default `Repr`, zero or more than 153 digits fail wherever the type is
-  written; with an explicit `Repr`, the type's constants and constructors fail, so no value of it
-  can be created. The type itself has no bounds, so generic code can store and pass values
-  without any.
+- Zero digits, more than 308 digits, or a `Repr` that is too small are rejected during type
+  checking. With the default `Repr`, zero or more than 307 digits fail wherever the type is written;
+  with an explicit `Repr`, the type's constants and constructors fail, so no value of it can be
+  created. The type itself has no bounds, so generic code can store and pass values without any.
 - Every operation is exact or fails, unless it is asked to round or to saturate. `checked_add` and
   `checked_sub` return `None` outside the range, `exact_mul` returns a wider type that always holds
-  the product, up to 153 digits, `widen` converts to a type with at least as many digits, and
-  `try_convert` reports `OutOfRange` or `Inexact` instead of rounding. Rounding happens only where
-  it is asked for: `trunc`, `floor` and `ceil` round to an integer in their own direction, `to_f64`
-  and `to_f32` round to the nearest float, and every other rounding takes an explicit
-  `RoundingMode`: `round_to` converts to fewer fraction digits, `quantize` rounds to a multiple of a
-  step, `div_round` divides into any decimal type, and `round_significant` rounds to a number of
-  significant digits.
+  the product, up to 307 digits, or 308 for two unsigned operands, `widen` converts to a type with
+  at least as many digits, and `try_convert` reports `OutOfRange` or `Inexact` instead of rounding.
+  Rounding happens only where it is asked for: `trunc`, `floor` and `ceil` round to an integer in
+  their own direction, `to_f64` and `to_f32` round to the nearest float, and every other rounding
+  takes an explicit `RoundingMode`: `round_to` converts to fewer fraction digits, `quantize` rounds
+  to a multiple of a step, `div_round` divides into any decimal type, and `round_significant` rounds
+  to a number of significant digits.
   The modes are `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`, `HalfEven` and `Up05`.
 - The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
   references, and `Sum` adds the values or the references of an iterator. They are exact too: a
@@ -219,13 +221,14 @@ fn main() -> Result<(), ParseError> {
 
 ## Wide storage
 
-Decimals with more than 38 digits are stored in `i192`, `i256`, `i320`, `i384`, `i448` and `i512`,
-or `u192`, `u256`, `u320`, `u384`, `u448` and `u512`: aliases of `Int` and `Uint` with three to
-eight 64-bit limbs. Any uint256 amount, such as a token balance, has at most 78 digits and fits a
-`u320`. The 154th digit fits only a `u512`, which must be named explicitly, as in
-`Decimal<U154, U0, u512>`: no signed storage holds 154 digits, so the default storage and the
-product of `exact_mul` stop at 153. A wide coefficient is built from its limbs, least significant
-first, and `from_repr` checks its range; decimal text with an exponent parses to the same value.
+Decimals with more than 38 digits are stored in `i192` to `i1024` or `u192` to `u1024`, every 64
+bits: aliases of `Int` and `Uint` with three to sixteen 64-bit limbs. Any uint256 amount, such as a
+token balance, has at most 78 digits and fits a `u320`. The 308th digit fits only a `u1024`, which
+must be named explicitly, as in `Decimal<U308, U0, u1024>`: no signed storage holds 308 digits, so
+the default storage stops at 307, and so does the product of `exact_mul` but for two unsigned
+operands, which have a product of up to 308 digits: the product of any two decimals of at most 512
+bits has a type. A wide coefficient is built from its limbs, least significant first, and
+`from_repr` checks its range; decimal text with an exponent parses to the same value.
 
 ```rust
 use numo::{

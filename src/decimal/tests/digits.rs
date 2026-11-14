@@ -21,13 +21,15 @@ use std::{
 use num_bigint::{BigInt, Sign};
 use typenum::{
   U0, U1, U2, U4, U5, U8, U9, U10, U18, U19, U38, U39, U58, U77, U78, U96, U97, U116, U135, U153,
-  U154,
+  U154, U155, U173, U174, U192, U193, U211, U212, U231, U232, U250, U251, U269, U270, U288, U289,
+  U307, U308,
 };
 
 use crate::{
   ConvertError, Decimal, FixedDecimal, RoundingMode,
   bigint::{self, tier},
-  i192, i256, i320, i384, i448, i512, u192, u256, u320, u384, u448, u512,
+  i192, i256, i320, i384, i448, i512, i576, i640, i704, i768, i832, i896, i960, i1024, u192, u256,
+  u320, u384, u448, u512, u576, u640, u704, u768, u832, u896, u960, u1024,
 };
 
 // One type of each storage, most of them at the digit limit of the storage, among them types
@@ -44,6 +46,15 @@ type Di320 = Decimal<U96, U0, i320>;
 type Di384 = Decimal<U97, U18, i384>;
 type Di448 = Decimal<U116, U18, i448>;
 type Di512 = Decimal<U135, U18, i512>;
+type Di576 = Decimal<U155, U18, i576>;
+type Di640 = Decimal<U174, U18, i640>;
+type Di704 = Decimal<U193, U18, i704>;
+type Di768 = Decimal<U212, U18, i768>;
+type Di832 = Decimal<U232, U18, i832>;
+type Di896 = Decimal<U251, U18, i896>;
+type Di960 = Decimal<U270, U18, i960>;
+type Di1024 = Decimal<U289, U18, i1024>;
+type D0x307 = Decimal<U0, U307, i1024>;
 type Du8 = Decimal<U1, U1, u8>;
 type Du16 = Decimal<U2, U2, u16>;
 type Du32 = Decimal<U0, U9, u32>;
@@ -56,6 +67,15 @@ type Du384 = Decimal<U97, U18, u384>;
 type Du448 = Decimal<U116, U18, u448>;
 type Du512 = Decimal<U154, U0, u512>;
 type D0x154 = Decimal<U0, U154, u512>;
+type Du576 = Decimal<U173, U0, u576>;
+type Du640 = Decimal<U192, U0, u640>;
+type Du704 = Decimal<U211, U0, u704>;
+type Du768 = Decimal<U231, U0, u768>;
+type Du832 = Decimal<U250, U0, u832>;
+type Du896 = Decimal<U269, U0, u896>;
+type Du960 = Decimal<U288, U0, u960>;
+type Du1024 = Decimal<U308, U0, u1024>;
+type D0x308 = Decimal<U0, U308, u1024>;
 
 /// A type with room for the literals.
 type Price = Decimal<U10, U8>;
@@ -186,9 +206,13 @@ fn parts_match_the_coefficients() {
   if tier().is_miri() {
     return;
   }
-  parts_agree!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
   parts_agree!(
-    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, Di576, Di640, Di704, Di768, Di832,
+    Di896, Di960, Di1024, D0x307
+  );
+  parts_agree!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154, Du576, Du640, Du704,
+    Du768, Du832, Du896, Du960, Du1024, D0x308
   );
 }
 
@@ -253,9 +277,13 @@ fn digits_match_the_digit_strings_and_the_texts() {
   if tier().is_miri() {
     return;
   }
-  digits_agree!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
   digits_agree!(
-    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, Di576, Di640, Di704, Di768, Di832,
+    Di896, Di960, Di1024, D0x307
+  );
+  digits_agree!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154, Du576, Du640, Du704,
+    Du768, Du832, Du896, Du960, Du1024, D0x308
   );
 }
 
@@ -328,9 +356,13 @@ fn rounding_to_significant_digits_matches_the_coefficients() {
   if tier().is_miri() {
     return;
   }
-  rounding_agrees!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
   rounding_agrees!(
-    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, Di576, Di640, Di704, Di768, Di832,
+    Di896, Di960, Di1024, D0x307
+  );
+  rounding_agrees!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154, Du576, Du640, Du704,
+    Du768, Du832, Du896, Du960, Du1024, D0x308
   );
 }
 
@@ -528,6 +560,11 @@ fn digits_of_literals() {
   assert_digits(&Du512::MAX, 153, 154, 0);
   assert_digits(&value::<Du512>("1e153"), 153, 1, 0);
   assert_digits(&Decimal::<U153, U0>::MIN, 152, 153, 0);
+  assert_digits(&value::<D0x308>("1e-308"), -308, 1, 308);
+  assert_digits(&D0x308::MAX, -1, 308, 308);
+  assert_digits(&Du1024::MAX, 307, 308, 0);
+  assert_digits(&value::<Du1024>("1e307"), 307, 1, 0);
+  assert_digits(&Decimal::<U307, U0>::MIN, 306, 307, 0);
 }
 
 /// The results that rust-decimal documents for `round_sf` and `round_sf_with_strategy`, at its
@@ -718,9 +755,13 @@ fn engineering_notation_moves_the_point_of_scientific_notation() {
   if tier().is_miri() {
     return;
   }
-  engineering_agrees!(Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512);
   engineering_agrees!(
-    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154
+    Di16, Di32, Di64, Di128, Di192, Di320, Di384, Di448, Di512, Di576, Di640, Di704, Di768, Di832,
+    Di896, Di960, Di1024, D0x307
+  );
+  engineering_agrees!(
+    Du8, Du16, Du32, Du128, Du192, Du256, Du320, Du384, Du448, Du512, D0x154, Du576, Du640, Du704,
+    Du768, Du832, Du896, Du960, Du1024, D0x308
   );
 }
 
@@ -783,10 +824,13 @@ fn engineering_notation_of_literals() {
     format!("{:#e}", value::<Decimal<U0, U38>>("1e-38")),
     "10e-39"
   );
-  // One digit and two zeros, at the smallest exponent of any text.
+  // One digit and two zeros, and one digit and one zero at the smallest exponent of any text.
   let unit: D0x154 = value("1e-154");
   assert_eq!(format!("{unit:#e}"), "100e-156");
   assert_eq!(format!("{unit:#E}"), "100E-156");
+  let unit: D0x308 = value("1e-308");
+  assert_eq!(format!("{unit:#e}"), "10e-309");
+  assert_eq!(format!("{unit:#E}"), "10E-309");
 
   assert_eq!(format!("{:#e}", value::<Du512>("1e153")), "1e153");
   assert_eq!(
@@ -796,6 +840,15 @@ fn engineering_notation_of_literals() {
   assert_eq!(
     format!("{:#e}", Decimal::<U153, U0>::MIN),
     format!("-999.{}e150", "9".repeat(150))
+  );
+  assert_eq!(format!("{:#e}", value::<Du1024>("1e307")), "10e306");
+  assert_eq!(
+    format!("{:#e}", Du1024::MAX),
+    format!("99.{}e306", "9".repeat(306))
+  );
+  assert_eq!(
+    format!("{:#e}", Decimal::<U307, U0>::MIN),
+    format!("-9.{}e306", "9".repeat(306))
   );
 }
 

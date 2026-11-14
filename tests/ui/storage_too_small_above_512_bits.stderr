@@ -1,0 +1,49 @@
+error[E0599]: the associated function or constant `ZERO` exists for struct `Decimal<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B1>, B1>, B1>, B0>, UTerm, numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 9]>>`, but its trait bounds were not satisfied
+ --> tests/ui/storage_too_small_above_512_bits.rs:8:42
+  |
+8 |   let _zero = Decimal::<U174, U0, i576>::ZERO;
+  |                                          ^^^^ associated function or constant cannot be called due to unsatisfied trait bounds
+  |
+ ::: $CARGO/typenum-$VERSION/src/uint.rs
+  |
+  | pub struct UInt<U, B> {
+  | --------------------- doesn't satisfy `_: FitsDigits<Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 9]>>`
+  |
+  = note: the following trait bounds were not satisfied:
+          `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B1>, B1>, B1>, B0>: FitsDigits<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 9]>>`
+          which is required by `(UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B1>, B1>, B1>, B0>, UTerm): numo::Layout<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 9]>>`
+
+error[E0277]: the storage `Repr` cannot hold `Integral + Fraction` decimal digits
+  --> tests/ui/storage_too_small_above_512_bits.rs:10:58
+   |
+10 |   let _converted = Decimal::<U2, U2>::ZERO.try_convert::<U174, U0, i576>();
+   |                                                          ^^^^ `Integral + Fraction` does not fit in `Repr`
+   |
+   = help: the trait `FitsDigits<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 9]>>` is not implemented for `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B1>, B1>, B1>, B0>`
+   = note: `Integral + Fraction` must be at least 1; `i8` and `u8` hold up to 2 digits, `i16` and `u16` up to 4, `i32` and `u32` up to 9, `i64` up to 18, `u64` up to 19, `i128` and `u128` up to 38, `i192` and `u192` up to 57, `i256` up to 76, `u256` up to 77, `i320` and `u320` up to 96, `i384` and `u384` up to 115, `i448` and `u448` up to 134, `i512` up to 153, `u512` up to 154, `i576` and `u576` up to 173, `i640` and `u640` up to 192, `i704` and `u704` up to 211, `i768` up to 230, `u768` up to 231, `i832` and `u832` up to 250, `i896` and `u896` up to 269, `i960` and `u960` up to 288, `i1024` up to 307 and `u1024` up to 308
+   = note: the compiler writes `u192` to `u1024` as `Uint` with the limbs `[u64; 3]` to `[u64; 16]`, one limb for each 64 bits, and `i192` to `i1024` as `Int` with the same limbs
+   = help: `UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B1>, B1>, B1>, B0>` implements trait `FitsDigits<Repr>`:
+             FitsDigits<Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 16]>>
+             FitsDigits<Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 10]>>
+             FitsDigits<Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 11]>>
+             FitsDigits<Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 12]>>
+             FitsDigits<Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 13]>>
+             FitsDigits<Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 14]>>
+             FitsDigits<Uint<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 15]>>
+             FitsDigits<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 16]>>
+             FitsDigits<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 10]>>
+             FitsDigits<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 11]>>
+             FitsDigits<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 12]>>
+             FitsDigits<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 13]>>
+             FitsDigits<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 14]>>
+             FitsDigits<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B1>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 15]>>
+   = note: required for `(UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, B1>, B1>, B1>, B0>, UTerm)` to implement `numo::Layout<numo::Int<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>, B0>, B0>, B0>, B0>, B0>, [u64; 9]>>`
+note: required by a bound in `Decimal::<I, F, R>::try_convert`
+  --> src/decimal/mod.rs
+   |
+   | impl<I, F, R> Decimal<I, F, R>
+...
+   |   pub fn try_convert<I2, F2, R2>(self) -> Result<Decimal<I2, F2, R2>, ConvertError>
+...
+   |     (I2, F2): Layout<R2>,
+   |               ^^^^^^^^^^ required by this bound in `Decimal::<I, F, R>::try_convert`

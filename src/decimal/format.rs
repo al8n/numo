@@ -2,10 +2,10 @@ use core::fmt::{self, Formatter, Write};
 
 use crate::format::{ascii, pad, write_zeros};
 
-/// Bytes of the longest exponent text, `e-156`: the marker, a sign and three digits. A coefficient
-/// has between 1 and 154 digits and a decimal at most 154 fraction digits, so the exponent of
-/// scientific notation is between -154 and 153, and engineering notation lowers an exponent by at
-/// most two: the exponent of any text is between -156 and 153.
+/// Bytes of the longest exponent text, `e-309`: the marker, a sign and three digits. A coefficient
+/// has between 1 and 308 digits and a decimal at most 308 fraction digits, so the exponent of
+/// scientific notation is between -308 and 307, and engineering notation lowers an exponent by at
+/// most two: the exponent of any text is between -309 and 307.
 const EXPONENT_LEN: usize = 5;
 
 /// The pieces of the text of a decimal, in output order.
@@ -193,7 +193,7 @@ pub(super) fn write_exp(
 }
 
 /// Writes `marker` and `exponent`, as in `e-4`, to the end of `buf` and returns them as a string.
-/// Requires `-156 <= exponent <= 153`, so that they fit.
+/// Requires `-309 <= exponent <= 307`, so that they fit.
 fn exponent_text(
   buf: &mut [u8; EXPONENT_LEN],
   marker: u8,

@@ -14,9 +14,10 @@ use sealed::{
 pub(crate) use sealed::{InlineCore, LayoutDigits, StorageCore, Token};
 
 use crate::{
-  Int, Uint, i192, i256, i320, i384, i448, i512, int,
+  Int, Uint, i192, i256, i320, i384, i448, i512, i576, i640, i704, i768, i832, i896, i960, i1024,
+  int,
   rounding::RoundingMode,
-  u192, u256, u320, u384, u448, u512,
+  u192, u256, u320, u384, u448, u512, u576, u640, u704, u768, u832, u896, u960, u1024,
   width::{Array, ArraySize, FillsRepr, TypenumNumber},
 };
 
@@ -63,7 +64,7 @@ mod sealed {
     ///
     /// A copy, where the integers lend their inline storage: a storage that holds its limbs behind
     /// a pointer could lend the limbs, but an integer over them only through a cast between
-    /// references. A coefficient is at most 64 bytes, and for an inline storage, its own twin, the
+    /// references. A coefficient is at most 128 bytes, and for an inline storage, its own twin, the
     /// copy is the one that passing the coefficient by value made before.
     fn twin(&self, token: Token) -> Self::Twin;
 
@@ -246,7 +247,7 @@ mod sealed {
     message = "`widen` cannot convert from a signed storage to an unsigned storage",
     label = "the source storage is signed and the target storage is unsigned",
     note = "use `try_convert` for a conversion that can fail",
-    note = "the compiler writes `u192`, `u256`, `u320`, `u384`, `u448` and `u512` as `Uint` with the limbs `[u64; 3]`, `[u64; 4]`, `[u64; 5]`, `[u64; 6]`, `[u64; 7]` and `[u64; 8]`, and `i192`, `i256`, `i320`, `i384`, `i448` and `i512` as `Int` with the same limbs"
+    note = "the compiler writes `u192` to `u1024` as `Uint` with the limbs `[u64; 3]` to `[u64; 16]`, one limb for each 64 bits, and `i192` to `i1024` as `Int` with the same limbs"
   )]
   pub trait SignKept {}
 
@@ -256,11 +257,15 @@ mod sealed {
 /// An integer type that can store the coefficient of a [`Decimal`](crate::Decimal).
 ///
 /// Implemented for the native signed integers `i8`, `i16`, `i32`, `i64` and `i128`, the native
-/// unsigned integers `u8`, `u16`, `u32`, `u64` and `u128`, and the wide integers
-/// [`i192`](crate::i192), [`i256`](crate::i256), [`i320`](crate::i320), [`i384`](crate::i384),
-/// [`i448`](crate::i448), [`i512`](crate::i512), [`u192`](crate::u192), [`u256`](crate::u256),
-/// [`u320`](crate::u320), [`u384`](crate::u384), [`u448`](crate::u448) and [`u512`](crate::u512).
-/// A decimal with an unsigned storage is never negative.
+/// unsigned integers `u8`, `u16`, `u32`, `u64` and `u128`, and the wide integers of 192 to 1024
+/// bits, every 64 bits: [`i192`](crate::i192), [`i256`](crate::i256), [`i320`](crate::i320),
+/// [`i384`](crate::i384), [`i448`](crate::i448), [`i512`](crate::i512), [`i576`](crate::i576),
+/// [`i640`](crate::i640), [`i704`](crate::i704), [`i768`](crate::i768), [`i832`](crate::i832),
+/// [`i896`](crate::i896), [`i960`](crate::i960), [`i1024`](crate::i1024), [`u192`](crate::u192),
+/// [`u256`](crate::u256), [`u320`](crate::u320), [`u384`](crate::u384), [`u448`](crate::u448),
+/// [`u512`](crate::u512), [`u576`](crate::u576), [`u640`](crate::u640), [`u704`](crate::u704),
+/// [`u768`](crate::u768), [`u832`](crate::u832), [`u896`](crate::u896), [`u960`](crate::u960) and
+/// [`u1024`](crate::u1024). A decimal with an unsigned storage is never negative.
 ///
 /// `R: Storage` gives generic code `Clone`, the comparisons and the hash of `Decimal<I, F, R>`.
 /// Each of these storages holds the coefficient inline and in place, and is its own
@@ -268,7 +273,7 @@ mod sealed {
 /// [`MutableStorage`]. This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not a storage of `Decimal`",
-  note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `u192`, `u256`, `u320`, `u384`, `u448` or `u512`"
+  note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `i576`, `i640`, `i704`, `i768`, `i832`, `i896`, `i960`, `i1024`, `u192`, `u256`, `u320`, `u384`, `u448`, `u512`, `u576`, `u640`, `u704`, `u768`, `u832`, `u896`, `u960` or `u1024`"
 )]
 pub trait Storage: StorageCore<Twin = <Self as Storage>::Inline> + Clone + Ord + Hash {
   /// The inline storage of the same width and sign, in which the coefficients of this storage are
@@ -285,7 +290,7 @@ pub trait Storage: StorageCore<Twin = <Self as Storage>::Inline> + Clone + Ord +
 /// and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not an inline storage of `Decimal`",
-  note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `u192`, `u256`, `u320`, `u384`, `u448` or `u512`"
+  note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `i576`, `i640`, `i704`, `i768`, `i832`, `i896`, `i960`, `i1024`, `u192`, `u256`, `u320`, `u384`, `u448`, `u512`, `u576`, `u640`, `u704`, `u768`, `u832`, `u896`, `u960` or `u1024`"
 )]
 pub trait InlineStorage: MutableStorage + Storage<Inline = Self> + InlineCore + Copy {}
 
@@ -314,17 +319,28 @@ pub trait MutableStorage: Storage + InPlace {}
 /// | 97-115 | [`i384`](crate::i384) | [`u384`](crate::u384) |
 /// | 116-134 | [`i448`](crate::i448) | [`u448`](crate::u448) |
 /// | 135-153 | [`i512`](crate::i512) | [`u512`](crate::u512) |
+/// | 154 | [`i576`](crate::i576) | [`u512`](crate::u512) |
+/// | 155-173 | [`i576`](crate::i576) | [`u576`](crate::u576) |
+/// | 174-192 | [`i640`](crate::i640) | [`u640`](crate::u640) |
+/// | 193-211 | [`i704`](crate::i704) | [`u704`](crate::u704) |
+/// | 212-230 | [`i768`](crate::i768) | [`u768`](crate::u768) |
+/// | 231 | [`i832`](crate::i832) | [`u768`](crate::u768) |
+/// | 232-250 | [`i832`](crate::i832) | [`u832`](crate::u832) |
+/// | 251-269 | [`i896`](crate::i896) | [`u896`](crate::u896) |
+/// | 270-288 | [`i960`](crate::i960) | [`u960`](crate::u960) |
+/// | 289-307 | [`i1024`](crate::i1024) | [`u1024`](crate::u1024) |
 ///
-/// Implemented for `U1` through `U153`. [`Decimal`](crate::Decimal) uses `Signed` as its default
+/// Implemented for `U1` through `U307`. [`Decimal`](crate::Decimal) uses `Signed` as its default
 /// storage, and [`exact_mul`](crate::Decimal::exact_mul) stores a product of two unsigned storages
-/// in `Unsigned`. No signed storage holds 154 digits, which only a [`u512`](crate::u512) does, so
-/// `U154` has no `DigitCount`: such a type names its storage, as in `Decimal<U154, U0, u512>`, and
-/// a product of 154 digits does not compile. This trait is sealed and cannot be implemented
-/// outside this crate.
+/// in `Unsigned`. No signed storage holds 308 digits, which only a [`u1024`](crate::u1024) does, so
+/// `U308` has no `DigitCount`: such a type names its storage, as in `Decimal<U308, U0, u1024>`. A
+/// product of 308 digits has a storage only when both operands have unsigned storages, a `u1024`,
+/// which [`Pick`] picks with `B1`. This trait is sealed and cannot be implemented outside this
+/// crate.
 #[diagnostic::on_unimplemented(
-  message = "a `Decimal` must have between 1 and 153 digits in total",
-  label = "`Integral + Fraction` is zero or greater than 153",
-  note = "an explicit `u512` storage holds up to 154 digits, as in `Decimal<I, F, u512>`"
+  message = "a `Decimal` must have between 1 and 307 digits in total",
+  label = "`Integral + Fraction` is zero or greater than 307",
+  note = "an explicit `u1024` storage holds up to 308 digits, as in `Decimal<I, F, u1024>`"
 )]
 pub trait DigitCount: TypenumNumber {
   /// The smallest signed integer type that holds every value with `Self` decimal digits.
@@ -338,17 +354,19 @@ pub trait DigitCount: TypenumNumber {
 ///
 /// `Self` is a type-level number of digits. Implemented for every pair that fits: `i8` and `u8`
 /// hold up to 2 digits, `i16` and `u16` up to 4, `i32` and `u32` up to 9, `i64` up to 18, `u64` up
-/// to 19, `i128` and `u128` up to 38, `i192` and `u192` up to 57, `i256` up to 76, `u256` up to
-/// 77, `i320` and `u320` up to 96, `i384` and `u384` up to 115, `i448` and `u448` up to 134, `i512`
-/// up to 153 and `u512` up to 154. This trait is sealed and cannot be implemented outside this
-/// crate.
+/// to 19, `i128` and `u128` up to 38, `i192` and `u192` up to 57, `i256` up to 76, `u256` up to 77,
+/// `i320` and `u320` up to 96, `i384` and `u384` up to 115, `i448` and `u448` up to 134, `i512` up
+/// to 153, `u512` up to 154, `i576` and `u576` up to 173, `i640` and `u640` up to 192, `i704` and
+/// `u704` up to 211, `i768` up to 230, `u768` up to 231, `i832` and `u832` up to 250, `i896` and
+/// `u896` up to 269, `i960` and `u960` up to 288, `i1024` up to 307 and `u1024` up to 308. This
+/// trait is sealed and cannot be implemented outside this crate.
 // The diagnostic does not print `{Repr}`, which spells the wide storages out as `Uint` or `Int`
 // with `typenum` bits and a limb array.
 #[diagnostic::on_unimplemented(
   message = "the storage `Repr` cannot hold `Integral + Fraction` decimal digits",
   label = "`Integral + Fraction` does not fit in `Repr`",
-  note = "`Integral + Fraction` must be at least 1; `i8` and `u8` hold up to 2 digits, `i16` and `u16` up to 4, `i32` and `u32` up to 9, `i64` up to 18, `u64` up to 19, `i128` and `u128` up to 38, `i192` and `u192` up to 57, `i256` up to 76, `u256` up to 77, `i320` and `u320` up to 96, `i384` and `u384` up to 115, `i448` and `u448` up to 134, `i512` up to 153, and `u512` up to 154",
-  note = "the compiler writes `u192`, `u256`, `u320`, `u384`, `u448` and `u512` as `Uint` with the limbs `[u64; 3]`, `[u64; 4]`, `[u64; 5]`, `[u64; 6]`, `[u64; 7]` and `[u64; 8]`, and `i192`, `i256`, `i320`, `i384`, `i448` and `i512` as `Int` with the same limbs"
+  note = "`Integral + Fraction` must be at least 1; `i8` and `u8` hold up to 2 digits, `i16` and `u16` up to 4, `i32` and `u32` up to 9, `i64` up to 18, `u64` up to 19, `i128` and `u128` up to 38, `i192` and `u192` up to 57, `i256` up to 76, `u256` up to 77, `i320` and `u320` up to 96, `i384` and `u384` up to 115, `i448` and `u448` up to 134, `i512` up to 153, `u512` up to 154, `i576` and `u576` up to 173, `i640` and `u640` up to 192, `i704` and `u704` up to 211, `i768` up to 230, `u768` up to 231, `i832` and `u832` up to 250, `i896` and `u896` up to 269, `i960` and `u960` up to 288, `i1024` up to 307 and `u1024` up to 308",
+  note = "the compiler writes `u192` to `u1024` as `Uint` with the limbs `[u64; 3]` to `[u64; 16]`, one limb for each 64 bits, and `i192` to `i1024` as `Int` with the same limbs"
 )]
 pub trait FitsDigits<Repr>: DigitsOf<Repr> {}
 
@@ -417,10 +435,12 @@ where
 
 /// Picks the smallest storage of one sign for a type-level number of decimal digits.
 ///
-/// Implemented for the `typenum` bits: `B0` picks [`DigitCount::Signed`] and `B1` picks
-/// [`DigitCount::Unsigned`]. [`Decimal::exact_mul`](crate::Decimal::exact_mul) picks with `B1`
-/// when both operands have unsigned storages and with `B0` otherwise. This trait is sealed and
-/// cannot be implemented outside this crate.
+/// Implemented for the `typenum` bits: for `U1` through `U307`, `B0` picks [`DigitCount::Signed`]
+/// and `B1` picks [`DigitCount::Unsigned`], and for `U308` only `B1` picks a storage, a
+/// [`u1024`](crate::u1024). [`Decimal::exact_mul`](crate::Decimal::exact_mul) picks with `B1` when
+/// both operands have unsigned storages and with `B0` otherwise, so a product of 308 digits has a
+/// storage only when both are unsigned. This trait is sealed and cannot be implemented outside this
+/// crate.
 pub trait Pick<Digits>: SignPick<Digits> {
   /// The smallest storage of the picked sign that holds every value with `Digits` decimal digits.
   type Storage: InlineStorage;
@@ -444,14 +464,14 @@ impl<D: DigitCount> Pick<D> for B1 {
 /// `Self` is the number of digits that the scaled dividend and the scaled divisor need, and
 /// `IsUnsigned` is `B1` when both operands have unsigned storages and `B0` otherwise. As with
 /// [`Pick`], `B0` picks [`DigitCount::Signed`] and `B1` picks [`DigitCount::Unsigned`] for `U1`
-/// through `U153`. `U154` has a storage only with `B1`, a [`u512`](crate::u512), so a division
-/// whose intermediate has more than 153 digits fails to compile, unless it has 154 and both
+/// through `U307`. `U308` has a storage only with `B1`, a [`u1024`](crate::u1024), so a division
+/// whose intermediate has more than 307 digits fails to compile, unless it has 308 and both
 /// storages are unsigned. This trait is sealed and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
-  message = "the intermediate of `div_round` has more than 153 digits",
-  label = "`Integral + max(Fraction, F2 + F3)` or `I2 + max(F2 + F3, Fraction) - F3` is greater than 153",
+  message = "the intermediate of `div_round` has more than 307 digits",
+  label = "`Integral + max(Fraction, F2 + F3)` or `I2 + max(F2 + F3, Fraction) - F3` is greater than 307",
   note = "narrow an operand with `try_convert`, or ask for fewer fraction digits",
-  note = "a `u512` intermediate holds up to 154 digits, when both storages are unsigned"
+  note = "a `u1024` intermediate holds up to 308 digits, when both storages are unsigned"
 )]
 pub trait DivIntermediate<IsUnsigned>: HasDivIntermediate<IsUnsigned> {
   /// The smallest storage of the picked sign that holds every value with `Self` decimal digits.
@@ -874,9 +894,11 @@ impl_storage!(
 );
 impl_storage!(
   wide signed: i192 [U58, U3], i256 [U77, U4], i320 [U97, U5], i384 [U116, U6], i448 [U135, U7],
-    i512 [U154, U8];
+    i512 [U154, U8], i576 [U174, U9], i640 [U193, U10], i704 [U212, U11], i768 [U231, U12],
+    i832 [U251, U13], i896 [U270, U14], i960 [U289, U15], i1024 [U308, U16];
   unsigned: u192 [U58, U3], u256 [U78, U4], u320 [U97, U5], u384 [U116, U6], u448 [U135, U7],
-    u512 [U155, U8],
+    u512 [U155, U8], u576 [U174, U9], u640 [U193, U10], u704 [U212, U11], u768 [U232, U12],
+    u832 [U251, U13], u896 [U270, U14], u960 [U289, U15], u1024 [U309, U16],
 );
 
 /// Implements [`ConvertFrom`] for every ordered pair of the listed native storages, each written as
@@ -997,15 +1019,22 @@ where
 
 impl<S, T> WidenRepr<T> for S where S: ReprWidensTo<T> {}
 
-/// Passes the digit-count table to `$callback`.
+/// Passes the digit-count table to `$callback`, in two calls of the form
+/// `[Signed...], [Unsigned...]; rows`.
 ///
 /// Each row is `Digits = value => [Signed, Wider...], [Unsigned, Wider...]`: the `typenum`
-/// constant for a number of digits, its value, and, for each sign, every storage that holds that
-/// many digits, smallest first. The first storage of each list is the `DigitCount` and
-/// `DivIntermediate` mapping; every listed storage gets `FitsDigits`.
+/// constant for a number of digits, its value, and, for each sign, the storages that hold that
+/// many digits, smallest first. The two lists before the rows hold every count of the rows of
+/// their call, so that they are written once: each follows the list of its sign in every row, and
+/// the two make it every storage that holds the digits. The first storage of each list of a row is
+/// the `DigitCount` and `DivIntermediate` mapping; every storage of a row and of the lists before
+/// the rows gets `FitsDigits`.
 macro_rules! digit_table {
   ($callback:ident) => {
+    // The storages above 512 bits hold every count of these rows, and follow each list.
     $callback! {
+      [i576, i640, i704, i768, i832, i896, i960, i1024],
+      [u576, u640, u704, u768, u832, u896, u960, u1024];
       U1 = 1 =>
         [i8, i16, i32, i64, i128, i192, i256, i320, i384, i448, i512],
         [u8, u16, u32, u64, u128, u192, u256, u320, u384, u448, u512],
@@ -1236,11 +1265,247 @@ macro_rules! digit_table {
       U152 = 152 => [i512], [u512],
       U153 = 153 => [i512], [u512],
     }
+    // Each list of these rows is whole.
+    $callback! {
+      [], [];
+      U154 = 154 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u512, u576, u640, u704, u768, u832, u896, u960, u1024],
+      U155 = 155 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U156 = 156 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U157 = 157 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U158 = 158 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U159 = 159 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U160 = 160 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U161 = 161 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U162 = 162 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U163 = 163 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U164 = 164 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U165 = 165 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U166 = 166 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U167 = 167 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U168 = 168 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U169 = 169 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U170 = 170 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U171 = 171 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U172 = 172 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U173 = 173 =>
+        [i576, i640, i704, i768, i832, i896, i960, i1024],
+        [u576, u640, u704, u768, u832, u896, u960, u1024],
+      U174 = 174 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U175 = 175 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U176 = 176 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U177 = 177 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U178 = 178 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U179 = 179 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U180 = 180 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U181 = 181 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U182 = 182 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U183 = 183 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U184 = 184 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U185 = 185 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U186 = 186 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U187 = 187 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U188 = 188 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U189 = 189 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U190 = 190 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U191 = 191 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U192 = 192 =>
+        [i640, i704, i768, i832, i896, i960, i1024],
+        [u640, u704, u768, u832, u896, u960, u1024],
+      U193 = 193 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U194 = 194 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U195 = 195 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U196 = 196 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U197 = 197 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U198 = 198 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U199 = 199 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U200 = 200 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U201 = 201 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U202 = 202 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U203 = 203 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U204 = 204 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U205 = 205 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U206 = 206 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U207 = 207 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U208 = 208 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U209 = 209 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U210 = 210 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U211 = 211 => [i704, i768, i832, i896, i960, i1024], [u704, u768, u832, u896, u960, u1024],
+      U212 = 212 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U213 = 213 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U214 = 214 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U215 = 215 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U216 = 216 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U217 = 217 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U218 = 218 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U219 = 219 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U220 = 220 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U221 = 221 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U222 = 222 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U223 = 223 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U224 = 224 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U225 = 225 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U226 = 226 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U227 = 227 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U228 = 228 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U229 = 229 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U230 = 230 => [i768, i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U231 = 231 => [i832, i896, i960, i1024], [u768, u832, u896, u960, u1024],
+      U232 = 232 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U233 = 233 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U234 = 234 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U235 = 235 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U236 = 236 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U237 = 237 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U238 = 238 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U239 = 239 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U240 = 240 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U241 = 241 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U242 = 242 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U243 = 243 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U244 = 244 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U245 = 245 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U246 = 246 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U247 = 247 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U248 = 248 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U249 = 249 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U250 = 250 => [i832, i896, i960, i1024], [u832, u896, u960, u1024],
+      U251 = 251 => [i896, i960, i1024], [u896, u960, u1024],
+      U252 = 252 => [i896, i960, i1024], [u896, u960, u1024],
+      U253 = 253 => [i896, i960, i1024], [u896, u960, u1024],
+      U254 = 254 => [i896, i960, i1024], [u896, u960, u1024],
+      U255 = 255 => [i896, i960, i1024], [u896, u960, u1024],
+      U256 = 256 => [i896, i960, i1024], [u896, u960, u1024],
+      U257 = 257 => [i896, i960, i1024], [u896, u960, u1024],
+      U258 = 258 => [i896, i960, i1024], [u896, u960, u1024],
+      U259 = 259 => [i896, i960, i1024], [u896, u960, u1024],
+      U260 = 260 => [i896, i960, i1024], [u896, u960, u1024],
+      U261 = 261 => [i896, i960, i1024], [u896, u960, u1024],
+      U262 = 262 => [i896, i960, i1024], [u896, u960, u1024],
+      U263 = 263 => [i896, i960, i1024], [u896, u960, u1024],
+      U264 = 264 => [i896, i960, i1024], [u896, u960, u1024],
+      U265 = 265 => [i896, i960, i1024], [u896, u960, u1024],
+      U266 = 266 => [i896, i960, i1024], [u896, u960, u1024],
+      U267 = 267 => [i896, i960, i1024], [u896, u960, u1024],
+      U268 = 268 => [i896, i960, i1024], [u896, u960, u1024],
+      U269 = 269 => [i896, i960, i1024], [u896, u960, u1024],
+      U270 = 270 => [i960, i1024], [u960, u1024],
+      U271 = 271 => [i960, i1024], [u960, u1024],
+      U272 = 272 => [i960, i1024], [u960, u1024],
+      U273 = 273 => [i960, i1024], [u960, u1024],
+      U274 = 274 => [i960, i1024], [u960, u1024],
+      U275 = 275 => [i960, i1024], [u960, u1024],
+      U276 = 276 => [i960, i1024], [u960, u1024],
+      U277 = 277 => [i960, i1024], [u960, u1024],
+      U278 = 278 => [i960, i1024], [u960, u1024],
+      U279 = 279 => [i960, i1024], [u960, u1024],
+      U280 = 280 => [i960, i1024], [u960, u1024],
+      U281 = 281 => [i960, i1024], [u960, u1024],
+      U282 = 282 => [i960, i1024], [u960, u1024],
+      U283 = 283 => [i960, i1024], [u960, u1024],
+      U284 = 284 => [i960, i1024], [u960, u1024],
+      U285 = 285 => [i960, i1024], [u960, u1024],
+      U286 = 286 => [i960, i1024], [u960, u1024],
+      U287 = 287 => [i960, i1024], [u960, u1024],
+      U288 = 288 => [i960, i1024], [u960, u1024],
+      U289 = 289 => [i1024], [u1024],
+      U290 = 290 => [i1024], [u1024],
+      U291 = 291 => [i1024], [u1024],
+      U292 = 292 => [i1024], [u1024],
+      U293 = 293 => [i1024], [u1024],
+      U294 = 294 => [i1024], [u1024],
+      U295 = 295 => [i1024], [u1024],
+      U296 = 296 => [i1024], [u1024],
+      U297 = 297 => [i1024], [u1024],
+      U298 = 298 => [i1024], [u1024],
+      U299 = 299 => [i1024], [u1024],
+      U300 = 300 => [i1024], [u1024],
+      U301 = 301 => [i1024], [u1024],
+      U302 = 302 => [i1024], [u1024],
+      U303 = 303 => [i1024], [u1024],
+      U304 = 304 => [i1024], [u1024],
+      U305 = 305 => [i1024], [u1024],
+      U306 = 306 => [i1024], [u1024],
+      U307 = 307 => [i1024], [u1024],
+    }
   };
 }
 
 macro_rules! impl_digits {
-  ($(
+  ($common_signed:tt, $common_unsigned:tt; $(
     $digits:ident = $value:literal =>
       [$signed:ident $(, $wider_signed:ident)*],
       [$unsigned:ident $(, $wider_unsigned:ident)*]
@@ -1262,27 +1527,37 @@ macro_rules! impl_digits {
       type Storage = $unsigned;
     }
 
-    impl_digits!(@fits $digits: $signed $(, $wider_signed)*, $unsigned $(, $wider_unsigned)*);
+    impl_digits!(@fits $digits: [$signed $(, $wider_signed)*, $unsigned $(, $wider_unsigned)*]);
+    impl_digits!(@fits $digits: $common_signed);
+    impl_digits!(@fits $digits: $common_unsigned);
   )+};
-  (@fits $digits:ident: $($repr:ident),+) => {$(
+  (@fits $digits:ident: [$($repr:ident),*]) => {$(
     impl DigitsOf<$repr> for typenum::consts::$digits {}
 
     impl FitsDigits<$repr> for typenum::consts::$digits {}
-  )+};
+  )*};
 }
 
 digit_table!(impl_digits);
 
-// Only a `u512` holds 154 digits and no signed storage does, so there is no `DigitCount`, and only
-// a division of two unsigned storages has an intermediate of 154 digits.
-impl DigitsOf<u512> for typenum::consts::U154 {}
+// Only a `u1024` holds 308 digits and no signed storage does, so `U308` has no `DigitCount`, which
+// names a storage of each sign. A decimal of 308 digits names its storage, and only two unsigned
+// operands have a product or a division intermediate of 308 digits: `B1` picks a `u1024` for both,
+// beside the impls of `Pick` over every `DigitCount`.
+impl DigitsOf<u1024> for typenum::consts::U308 {}
 
-impl FitsDigits<u512> for typenum::consts::U154 {}
+impl FitsDigits<u1024> for typenum::consts::U308 {}
 
-impl HasDivIntermediate<B1> for typenum::consts::U154 {}
+impl HasDivIntermediate<B1> for typenum::consts::U308 {}
 
-impl DivIntermediate<B1> for typenum::consts::U154 {
-  type Storage = u512;
+impl DivIntermediate<B1> for typenum::consts::U308 {
+  type Storage = u1024;
+}
+
+impl SignPick<typenum::consts::U308> for B1 {}
+
+impl Pick<typenum::consts::U308> for B1 {
+  type Storage = u1024;
 }
 
 #[cfg(test)]

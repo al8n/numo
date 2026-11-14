@@ -15,16 +15,17 @@ use ::proptest::{
   test_runner::{Config, RngAlgorithm, TestError, TestRng, TestRunner},
 };
 use num_bigint::{BigInt, Sign};
-use typenum::{U0, U8, U10, U18};
+use typenum::{U0, U8, U10, U18, U307, U308};
 
 use super::{DecimalStrategy, DecimalValueTree};
 use crate::{
-  Decimal, RoundingMode,
+  Decimal, RoundingMode, i1024,
   layout::{InlineStorage, Layout, LayoutDigits},
   sample::{
     Chain, MODES,
-    tests::{SAMPLES, big, candidates, check_values, for_each_type},
+    tests::{SAMPLES, big, candidates, check_values, for_each_type, samples},
   },
+  u1024,
 };
 
 /// A runner with a fixed seed that writes no failure to a file.
@@ -42,7 +43,7 @@ macro_rules! check_type {
   ($t:ty) => {{
     let mut runner = runner();
     let strategy = any::<$t>();
-    let values: Vec<$t> = (0..SAMPLES)
+    let values: Vec<$t> = (0..samples(<$t>::DIGITS))
       .map(|_| strategy.new_tree(&mut runner).expect("a tree").current())
       .collect();
     check_values(stringify!($t), &values, <$t>::repr, <$t>::from_repr);
@@ -201,6 +202,65 @@ fn visits(start: i64, fails: fn(i64) -> bool) -> Vec<i64> {
     }
   }
   visited
+}
+
+/// The coefficients that `tree` moves to while `fails` holds, from its start.
+fn visited<I, F, R>(
+  mut tree: DecimalValueTree<I, F, R>,
+  fails: impl Fn(&BigInt) -> bool,
+) -> Vec<BigInt>
+where
+  R: InlineStorage,
+  (I, F): Layout<R>,
+{
+  let mut visited = Vec::new();
+  loop {
+    let value = big(tree.current);
+    visited.push(value.clone());
+    assert!(
+      visited.len() <= max_tests::<I, F, R>(),
+      "{} tests",
+      visited.len()
+    );
+    if fails(&value) {
+      if !tree.simplify() {
+        break;
+      }
+    } else if !tree.complicate() {
+      break;
+    }
+  }
+  visited
+}
+
+/// A coefficient of 308 digits, or of 307 with a sign, has 308 candidates. When only the start
+/// fails, the tree moves to each of them in order, past the 255th, and returns to the start.
+#[test]
+fn the_tree_walks_every_candidate_of_308_digits() {
+  let unsigned = Decimal::<U308, U0, u1024>::MAX.repr();
+  let signed = Decimal::<U0, U307, i1024>::MIN.repr();
+  for (start, visits) in [
+    (
+      big(unsigned),
+      visited(
+        DecimalValueTree::<U308, U0, u1024>::new(unsigned),
+        |value| *value == big(unsigned),
+      ),
+    ),
+    (
+      big(signed),
+      visited(DecimalValueTree::<U0, U307, i1024>::new(signed), |value| {
+        *value == big(signed)
+      }),
+    ),
+  ] {
+    let candidates = candidates(&start);
+    assert_eq!(candidates.len(), 308, "{start}");
+    let mut expected = Vec::from([start.clone()]);
+    expected.extend(candidates);
+    expected.push(start);
+    assert_eq!(visits, expected);
+  }
 }
 
 /// After the first level the tree skips zero, which it has tried, and when every candidate passes

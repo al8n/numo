@@ -35,13 +35,13 @@ use bigdecimal::BigDecimal;
 use num_bigint::{BigInt, Sign};
 use numo::{
   ConvertError, Decimal, DivideError, ParseErrorKind, QuantizeError, RoundingMode, i192, i256,
-  i320, i384, i448, i512,
+  i320, i384, i448, i512, i576, i768, i1024,
   typenum::{
     U0, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U14, U16, U17, U18, U19, U20, U22, U26,
     U28, U30, U36, U37, U38, U39, U49, U58, U59, U60, U61, U69, U70, U76, U78, U79, U90, U96, U97,
-    U98, U116, U117, U135, U153, U154,
+    U98, U116, U117, U135, U153, U154, U155, U173, U212, U231, U289, U307, U308,
   },
-  u192, u256, u320, u384, u448, u512,
+  u192, u256, u320, u384, u448, u512, u576, u768, u1024,
 };
 use proptest::{prelude::*, test_runner::RngSeed};
 
@@ -164,12 +164,18 @@ wide_repr!(
   i384: true, 6,
   i448: true, 7,
   i512: true, 8,
+  i576: true, 9,
+  i768: true, 12,
+  i1024: true, 16,
   u192: false, 3,
   u256: false, 4,
   u320: false, 5,
   u384: false, 6,
   u448: false, 7,
-  u512: false, 8
+  u512: false, 8,
+  u576: false, 9,
+  u768: false, 12,
+  u1024: false, 16
 );
 
 /// The shortest exact text of `coeff / 10^fraction`, padded to at least `precision` fraction
@@ -333,13 +339,14 @@ fn oracle_parse(
   if mantissa.sign() == Sign::NoSign {
     return Ok(BigInt::ZERO);
   }
-  // A nonzero mantissa has at most `input.len()` digits, so scaled by an exponent beyond this
-  // bound it is at least `10^200` or below `10^-200`: out of range, or inexact for every type.
-  let bound = BigInt::from(input.len() + 200);
-  if exponent > bound {
+  // A nonzero mantissa has at most `input.len()` digits, so scaled by an exponent above
+  // `input.len() + integral` it has more than `integral` integral digits, out of range, and by an
+  // exponent below `-(input.len() + fraction)` it is below `10^-fraction`, inexact.
+  let len = BigInt::from(input.len());
+  if exponent > &len + integral {
     return Err(ParseErrorKind::OutOfRange);
   }
-  if exponent < -bound {
+  if exponent < -(len + fraction) {
     return Err(ParseErrorKind::Inexact);
   }
 
@@ -739,8 +746,9 @@ macro_rules! suite {
         /// short are farther apart than the spacing of `f64`: the texts must be equal. The `f64`
         /// is parsed from the decimal's text, which rounds correctly, where `powi` does not. From
         /// 16 digits the digits differ: 9007199254740993 is 2^53 + 1, whose nearest `f64` is 2^53,
-        /// and prints as 9.007199254740992e15. Every exponent of a decimal is within the range of
-        /// the normal `f64`s, and the comparison has no precision, which `f64` rounds.
+        /// and prints as 9.007199254740992e15. Every decimal is a normal `f64` but `1e-308` and
+        /// `2e-308`, the two smallest values of 308 fraction digits, whose one digit the subnormal
+        /// `f64`s keep, and the comparison has no precision, which `f64` rounds.
         #[test]
         fn exp_matches_f64_for_short_values(a in short_value()) {
           let text = a.to_string();
@@ -893,9 +901,22 @@ suite!(uw98x18: Decimal<U98, U18, u448>, u448, unsigned, integral = 98, fraction
 suite!(uw116x18: Decimal<U116, U18, u448>, u448, unsigned, integral = 116, fraction = 18);
 suite!(uw117x18: Decimal<U117, U18, u512>, u512, unsigned, integral = 117, fraction = 18);
 suite!(uw135x18: Decimal<U135, U18, u512>, u512, unsigned, integral = 135, fraction = 18);
-// 154 digits, one more than any signed storage holds.
+// 154 digits, one more than `i512` holds.
 suite!(uw154x0: Decimal<U154, U0, u512>, u512, unsigned, integral = 154, fraction = 0);
 suite!(uw0x154: Decimal<U0, U154, u512>, u512, unsigned, integral = 0, fraction = 154);
+
+// Three of the storages from 576 to 1024 bits, the narrowest, a middle one and the widest, at the
+// most digits that each holds: the limb code is generic over the limb count, so another width runs
+// the same code, and the unit tests check each storage at its own limits.
+suite!(w155x18: Decimal<U155, U18, i576>, i576, signed, integral = 155, fraction = 18);
+suite!(w212x18: Decimal<U212, U18, i768>, i768, signed, integral = 212, fraction = 18);
+suite!(w289x18: Decimal<U289, U18, i1024>, i1024, signed, integral = 289, fraction = 18);
+suite!(w0x307: Decimal<U0, U307, i1024>, i1024, signed, integral = 0, fraction = 307);
+
+suite!(uw173x0: Decimal<U173, U0, u576>, u576, unsigned, integral = 173, fraction = 0);
+suite!(uw231x0: Decimal<U231, U0, u768>, u768, unsigned, integral = 231, fraction = 0);
+suite!(uw308x0: Decimal<U308, U0, u1024>, u1024, unsigned, integral = 308, fraction = 0);
+suite!(uw0x308: Decimal<U0, U308, u1024>, u1024, unsigned, integral = 0, fraction = 308);
 
 // Operands for products and conversions.
 suite!(d10x10: Decimal<U10, U10>, i128, signed, integral = 10, fraction = 10);
@@ -1066,13 +1087,18 @@ exact_mul!(mul_into_u448_start: uw59x18 * uw20x19 = Decimal<U79, U37, u448>);
 exact_mul!(mul_into_u448_limit: uw59x18 * uw39x18 = Decimal<U98, U36, u448>);
 exact_mul!(mul_into_i512_start: w96x0 * w20x19 = Decimal<U116, U19>);
 exact_mul!(mul_into_u512_start: uw96x0 * uw20x19 = Decimal<U116, U19, u512>);
-// 77 digits by 76 digits, the widest product.
+// 77 digits by 76 digits, the widest product of 512 bits.
 exact_mul!(mul_u256_by_i256_into_i512: uw59x18 * w58x18 = Decimal<U117, U36>);
 exact_mul!(mul_u256_by_u256_into_u512: uw59x18 * uw58x18 = Decimal<U117, U36, u512>);
 // A wide operand whose product is in a wider storage, and one whose product is native.
 exact_mul!(mul_i384_by_i8: w97x18 * d1x1 = Decimal<U98, U19>);
 exact_mul!(mul_u384_by_u8: uw97x18 * u1x1 = Decimal<U98, U19, u448>);
 exact_mul!(mul_i512_by_i8: d2x2_in_i512 * d1x1 = Decimal<U3, U3>);
+
+// Products of 307 and 308 digits, the widest, in the storages of 1024 bits: 153 or 154 digits by
+// 154, into an `i1024`, or a `u1024` for two unsigned operands.
+exact_mul!(mul_i512_by_u512_into_i1024: w153x0 * uw154x0 = Decimal<U307, U0>);
+exact_mul!(mul_u512_by_u512_into_u1024: uw154x0 * uw154x0 = Decimal<U308, U0, u1024>);
 
 macro_rules! convert {
   ($name:ident: $source:ident -> $target:ident) => {
@@ -1153,7 +1179,7 @@ convert!(convert_u384_to_u320: uw97x18 -> uw78x18);
 convert!(convert_u256_to_u512: uw59x18 -> uw135x18);
 convert!(convert_i512_to_i192: w135x18 -> w39x18);
 convert!(convert_i192_to_i512: w39x18 -> w135x18);
-// Between signs: the widest unsigned storage holds one digit more than the widest signed one.
+// Between signs: the unsigned storage of 512 bits holds one digit more than the signed one.
 convert!(convert_i512_to_u512: w135x18 -> uw135x18);
 convert!(convert_u512_to_i512: uw135x18 -> w135x18);
 convert!(convert_u512_limit_to_i512: uw154x0 -> w153x0);
@@ -1174,6 +1200,11 @@ convert!(convert_u512_to_u64: uw135x18 -> u10x9);
 convert!(convert_u128_to_u512_fraction: u19x19 -> uw0x154);
 convert!(convert_i8_fraction_to_i512_fraction: d0x2 -> w0x153);
 convert!(convert_i512_fraction_to_i8_fraction: w0x153 -> d0x2);
+
+// At 1024 bits, between signs: the 308 digits of a `u1024` into the 307 of an `i1024`, and fraction
+// digits into fraction digits.
+convert!(convert_u1024_limit_to_i1024: uw308x0 -> w289x18);
+convert!(convert_i1024_fraction_to_u1024_fraction: w0x307 -> uw0x308);
 
 macro_rules! widen {
   ($name:ident: $source:ident -> $target:ident) => {
@@ -1239,6 +1270,10 @@ widen!(widen_u384_to_i448: uw97x18 -> w116x18);
 widen!(widen_u512_to_i512: uw135x18 -> w135x18);
 widen!(widen_u128_to_i512: u38x0 -> w153x0);
 widen!(widen_i8_fraction_to_i512: d0x2 -> w0x153);
+
+// From 512 to 1024 bits, of either sign.
+widen!(widen_i512_to_i1024: w135x18 -> w289x18);
+widen!(widen_u512_to_u1024: uw154x0 -> uw308x0);
 
 /// uint256 amounts of every magnitude, as four limbs, least significant first.
 fn uint256_limbs() -> impl Strategy<Value = [u64; 4]> {
@@ -1766,6 +1801,8 @@ round!(round_i512_one_hundred_fifty_three_digits: w0x153 -> w153x0);
 round!(round_i512_to_more_fraction_digits: w0x153 -> uw0x154);
 round!(round_u512_one_hundred_fifty_three_digits: uw0x154 -> u1x1);
 round!(round_u512_one_hundred_fifty_four_digits: uw0x154 -> uw154x0);
+// And all 308 fraction digits of a `u1024`, the most that a rounding drops.
+round!(round_u1024_three_hundred_eight_digits: uw0x308 -> uw308x0);
 
 /// How a test of `quantize` picks its step.
 #[derive(Clone, Debug)]
@@ -1903,11 +1940,13 @@ quantize!(quantize_i512: w135x18);
 quantize!(quantize_i512_integral: w153x0);
 quantize!(quantize_i512_fraction: w0x153);
 quantize!(quantize_few_digits_in_i512: d2x2_in_i512);
+quantize!(quantize_i1024: w289x18);
 quantize!(quantize_u192: uw39x18);
 quantize!(quantize_uint256: uint256);
 quantize!(quantize_u512: uw135x18);
 quantize!(quantize_u512_integral: uw154x0);
 quantize!(quantize_u512_fraction: uw0x154);
+quantize!(quantize_u1024_integral: uw308x0);
 
 /// The coefficient of the quotient `numerator / denominator` rounded with `mode`, checked against a
 /// target with `digits` digits in total and a signed or an unsigned storage.
@@ -2127,10 +2166,15 @@ div_round!(div_u256_by_i192: uw59x18 / w20x19 -> w58x18);
 div_round!(div_uint256_by_signed_price: uint256 / d10x10 -> uint256);
 div_round!(div_uint256_by_unsigned_price: uint256 / u10x10 -> uint256);
 div_round!(div_scaled_divisor_in_i384: w0x96 / d1x1 -> d2x0);
-// The widest intermediates: 153 digits with the dividend scaled, neither or the divisor scaled, and
-// 154 digits for two unsigned storages.
+// The widest intermediates of 512 bits: 153 digits with the dividend scaled, neither or the divisor
+// scaled, and 154 digits for two unsigned storages.
 div_round!(div_i512_scaled_dividend: w97x18 / d0x38 -> w58x18);
 div_round!(div_i512_without_scaling: w135x18 / d10x8 -> d10x10);
 div_round!(div_i512_scaled_divisor: w0x153 / d1x1 -> d1x1);
 div_round!(div_u512_scaled_dividend: uw135x18 / u10x9 -> u10x10);
 div_round!(div_u512_without_scaling: uw154x0 / u10x0 -> uw154x0);
+// The widest intermediates of 1024 bits: 307 digits with neither or the divisor scaled, and 308
+// digits for two unsigned storages.
+div_round!(div_i1024_without_scaling: w289x18 / d10x8 -> d10x10);
+div_round!(div_i1024_scaled_divisor: w0x307 / d1x1 -> d1x1);
+div_round!(div_u1024_without_scaling: uw308x0 / u10x0 -> uw308x0);

@@ -91,7 +91,7 @@ pub(super) const fn scan(
   }
 
   // The exponent saturates at `u64::MAX`. Inputs have at most `isize::MAX` bytes, so an exponent
-  // of that magnitude moves the point more than 154 places past every digit, to either side, and
+  // of that magnitude moves the point more than 308 places past every digit, to either side, and
   // decides range and exactness as any larger exponent would.
   let mut exponent: u64 = 0;
   let mut exponent_negative = false;

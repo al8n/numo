@@ -12,7 +12,7 @@ use crate::{
   layout::{InlineStorage, Layout, LayoutDigits, Storage},
   sample::{
     MODES,
-    tests::{SAMPLES, SplitMix, big, check_values, for_each_type},
+    tests::{SAMPLES, SplitMix, big, check_values, for_each_type, samples},
   },
 };
 
@@ -23,16 +23,25 @@ fn longest(digits: u32) -> Vec<u8> {
   let several = digits >= 2;
   let mut bytes = vec![1];
   if several {
-    bytes.push((digits - 1) as u8);
+    push_choice(&mut bytes, digits - 1, digits);
   }
   bytes.push(4);
   bytes.extend(core::iter::repeat_n(7, digits as usize - 1));
   bytes.push(0);
   if several {
-    bytes.push(1);
+    push_choice(&mut bytes, 1, digits);
   }
   bytes.extend([1, 0xa5, 0x5a, 0xff]);
   bytes
+}
+
+/// Pushes the bytes that answer `answer` to a choice among `count` values: one byte, or for more
+/// than 256 values two, the higher first, as `int_in_range` reads them.
+fn push_choice(bytes: &mut Vec<u8>, answer: u32, count: u32) {
+  if count > 256 {
+    bytes.push((answer >> 8) as u8);
+  }
+  bytes.push(answer as u8);
 }
 
 /// The value that [`longest`] gives for `digits` digits.
@@ -72,13 +81,15 @@ fn check_bytes<I, F, R>(
   (I, F): Layout<R>,
 {
   let digits = <(I, F) as LayoutDigits<R>>::DIGITS;
-  let several = usize::from(digits >= 2);
+  // The number of digits and the number of zeros are each a choice among the digits: no byte for
+  // one digit, one byte, and two for more than 256 digits.
+  let choice_bytes = usize::from(digits >= 2) + usize::from(digits > 256);
   let (lower, upper) = <Decimal<I, F, R> as Arbitrary<'_>>::size_hint(0);
   let upper = upper.expect("an upper bound");
   assert_eq!(lower, 2, "{name}");
   assert_eq!(
     upper,
-    digits as usize + 2 + 2 * several + usize::from(R::SIGNED),
+    digits as usize + 2 + 2 * choice_bytes + usize::from(R::SIGNED),
     "{name}"
   );
 
@@ -106,12 +117,13 @@ fn check_bytes<I, F, R>(
   assert_eq!((big(repr(value)), count), (BigInt::ZERO, 0), "{name}");
 
   // Enough bytes that every value reads all it needs.
+  let draws = samples(digits);
   let mut source = SplitMix(0xa4b1_0001);
-  let bytes: Vec<u8> = (0..SAMPLES * upper)
+  let bytes: Vec<u8> = (0..draws * upper)
     .map(|_| source.next_u64() as u8)
     .collect();
   let mut data = Unstructured::new(&bytes);
-  let values: Vec<Decimal<I, F, R>> = (0..SAMPLES)
+  let values: Vec<Decimal<I, F, R>> = (0..draws)
     .map(|_| {
       let before = data.len();
       let value =

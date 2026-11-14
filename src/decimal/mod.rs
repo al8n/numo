@@ -51,16 +51,17 @@ mod tests;
 /// type, every value has exactly one coefficient, and equality, ordering and hashing compare
 /// coefficients.
 ///
-/// `Integral` and `Fraction` are [`typenum`] numbers such as `U8` or `U<8>`. `Repr` defaults to
-/// the smallest signed integer that holds `Integral + Fraction` digits (see [`DigitCount`]): a
-/// native integer up to 38 digits, and beyond that the wide integers [`i192`](crate::i192),
-/// [`i256`](crate::i256), [`i320`](crate::i320), [`i384`](crate::i384), [`i448`](crate::i448) and
-/// [`i512`](crate::i512), which hold 57, 76, 96, 115, 134 and 153 digits. Any other storage that
-/// holds the digits can be named explicitly: a wider one, or an unsigned one for values that are
-/// never negative. An unsigned `Repr` holds as many digits as the signed one of the same width,
-/// except that `u64` holds 19 digits and `i64` 18, [`u256`](crate::u256) holds 77 and `i256` 76,
-/// and [`u512`](crate::u512) holds 154 and `i512` 153. Only an explicit `u512` holds 154 digits.
-/// The type has the size, alignment and ABI of `Repr`.
+/// `Integral` and `Fraction` are [`typenum`] numbers such as `U8` or `U<8>`. `Repr` defaults to the
+/// smallest signed integer that holds `Integral + Fraction` digits (see [`DigitCount`]): a native
+/// integer up to 38 digits, and beyond that, up to 307 digits, a wide integer of 192 to 1024 bits,
+/// every 64 bits, from [`i192`](crate::i192), which holds 57 digits, to [`i1024`](crate::i1024),
+/// which holds 307. Any other storage that holds the digits can be named explicitly: a wider one,
+/// or an unsigned one for values that are never negative. An unsigned `Repr` holds as many digits
+/// as the signed one of the same width, except that `u64` holds 19 digits and `i64` 18,
+/// [`u256`](crate::u256) holds 77 and `i256` 76, [`u512`](crate::u512) holds 154 and `i512` 153,
+/// [`u768`](crate::u768) holds 231 and `i768` 230, and [`u1024`](crate::u1024) holds 308 and
+/// `i1024` 307. Only an explicit `u1024` holds 308 digits. The type has the size, alignment and ABI
+/// of `Repr`.
 ///
 /// ```
 /// use numo::{
@@ -82,9 +83,9 @@ mod tests;
 /// assert_eq!(size_of::<TokenAmount>(), 40);
 /// ```
 ///
-/// A combination that does not fit is rejected during type checking: zero digits, more than 154
+/// A combination that does not fit is rejected during type checking: zero digits, more than 308
 /// digits, or a `Repr` too small for `Integral + Fraction` digits. With the default `Repr`, zero
-/// digits or more than 153 digits fail wherever the type is written, because the default storage
+/// digits or more than 307 digits fail wherever the type is written, because the default storage
 /// must be computed. With an explicit `Repr`, a combination that does not fit can be written, but
 /// its constants and constructors fail to compile, so no value of the type can be created.
 ///
@@ -471,8 +472,10 @@ mod tests;
 /// binary value rounds to `2.67` and its text to `2.68`. The shortest text of an `f32` is its own.
 ///
 /// NaN and the infinities are errors, and `-0.0` is zero. A decimal is always within the range of
-/// `f64`; `to_f32` gives an infinity for a magnitude that rounds beyond the largest `f32`, and a
-/// subnormal float or a zero for one that rounds below the smallest normal one.
+/// `f64`, and `to_f64` gives a subnormal float only for the two smallest values above zero of a
+/// type with 308 fraction digits, `10^-308` and `2 * 10^-308`; `to_f32` gives an infinity for a
+/// magnitude that rounds beyond the largest `f32`, and a subnormal float or a zero for one that
+/// rounds below the smallest normal one.
 ///
 /// ```
 /// use numo::{
@@ -552,9 +555,10 @@ where
   ///
   /// The result has `Integral + I2` integral digits and `Fraction + F2` fraction digits, so the
   /// product always fits and is never rounded. It is stored in the smallest unsigned storage for
-  /// its digits if both operands have unsigned storages, and in the smallest signed storage for
-  /// its digits otherwise (see [`DigitCount`] and [`Pick`]). A product type with more than 153
-  /// digits fails to compile, whatever the signs of the operands;
+  /// its digits if both operands have unsigned storages, and in the smallest signed storage for its
+  /// digits otherwise (see [`DigitCount`] and [`Pick`]). A product type has a storage up to 307
+  /// digits, and up to 308 when both operands have unsigned storages, so the product of any two
+  /// decimals of at most 512 bits compiles; a product type with more digits fails to compile, and
   /// [`try_convert`](Self::try_convert) can narrow an operand first.
   ///
   /// ```
@@ -861,7 +865,7 @@ where
   /// `max(Integral + max(Fraction, F2 + F3), I2 + max(F2 + F3, Fraction) - F3)` digits. It is the
   /// [`DivIntermediate`] storage for those digits, unsigned only if both operand storages are, and
   /// it can be wider than both operands, as in the last example below. An intermediate of more than
-  /// 153 digits fails to compile; 154 is allowed only when both storages are unsigned.
+  /// 307 digits fails to compile; 308 is allowed only when both storages are unsigned.
   ///
   /// To round a quotient to a step, such as a quantity to a lot size, [`quantize`](Self::quantize)
   /// it afterwards. `quantize` takes a step of the quotient's type, so

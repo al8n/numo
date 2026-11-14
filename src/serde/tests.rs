@@ -11,12 +11,14 @@ use serde_core::{
 use serde_json::error::Category;
 use serde_test::{Compact, Readable, Token, assert_de_tokens_error};
 use typenum::{
-  U0, U2, U4, U8, U9, U10, U18, U19, U38, U57, U60, U76, U77, U96, U115, U134, U153, U154,
+  U0, U2, U4, U8, U9, U10, U18, U19, U38, U57, U60, U76, U77, U96, U115, U134, U153, U154, U173,
+  U192, U211, U230, U231, U250, U269, U288, U307, U308,
 };
 
 use crate::{
-  ConstFixedDecimal, Decimal, ParseError, Scaled, i192, i256, i320, i384, i448, i512, u192, u256,
-  u320, u384, u448, u512,
+  ConstFixedDecimal, Decimal, ParseError, Scaled, i192, i256, i320, i384, i448, i512, i576, i640,
+  i704, i768, i832, i896, i960, i1024, u192, u256, u320, u384, u448, u512, u576, u640, u704, u768,
+  u832, u896, u960, u1024,
 };
 
 /// The message of every input that is not a string.
@@ -253,6 +255,14 @@ fn the_longest_texts_of_every_storage_read_back() {
   check_longest_texts::<Decimal<U0, U115, i384>>();
   check_longest_texts::<Decimal<U0, U134, i448>>();
   check_longest_texts::<Decimal<U0, U153, i512>>();
+  check_longest_texts::<Decimal<U0, U173, i576>>();
+  check_longest_texts::<Decimal<U0, U192, i640>>();
+  check_longest_texts::<Decimal<U0, U211, i704>>();
+  check_longest_texts::<Decimal<U0, U230, i768>>();
+  check_longest_texts::<Decimal<U0, U250, i832>>();
+  check_longest_texts::<Decimal<U0, U269, i896>>();
+  check_longest_texts::<Decimal<U0, U288, i960>>();
+  check_longest_texts::<Decimal<U0, U307, i1024>>();
   check_longest_texts::<Decimal<U0, U2, u8>>();
   check_longest_texts::<Decimal<U0, U4, u16>>();
   check_longest_texts::<Decimal<U0, U9, u32>>();
@@ -264,4 +274,12 @@ fn the_longest_texts_of_every_storage_read_back() {
   check_longest_texts::<Decimal<U0, U115, u384>>();
   check_longest_texts::<Decimal<U0, U134, u448>>();
   check_longest_texts::<Decimal<U0, U154, u512>>();
+  check_longest_texts::<Decimal<U0, U173, u576>>();
+  check_longest_texts::<Decimal<U0, U192, u640>>();
+  check_longest_texts::<Decimal<U0, U211, u704>>();
+  check_longest_texts::<Decimal<U0, U231, u768>>();
+  check_longest_texts::<Decimal<U0, U250, u832>>();
+  check_longest_texts::<Decimal<U0, U269, u896>>();
+  check_longest_texts::<Decimal<U0, U288, u960>>();
+  check_longest_texts::<Decimal<U0, U308, u1024>>();
 }
