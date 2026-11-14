@@ -220,6 +220,11 @@ jobs:
         os:
           - ubuntu-latest
     runs-on: ${{ matrix.os }}
+    # Keeps the builds of the tests smaller, as ci/sanitizer.sh does.
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
     - uses: actions/checkout@v7
     - name: Cache cargo build and registry
@@ -241,15 +246,28 @@ jobs:
       with:
         path: ~/.cargo
         key: ${{ runner.os }}-coverage-dotcargo
+    # A build that exhausts the memory of the runner stops the runner without a message, so the
+    # runner gets more swap space, and the next step keeps a record of the memory in use.
+    - name: Add swap space
+      run: |
+        free -h
+        df -h / /mnt
+        sudo fallocate -l 16G /mnt/numo-swap
+        sudo chmod 600 /mnt/numo-swap
+        sudo mkswap /mnt/numo-swap
+        sudo swapon /mnt/numo-swap
+        free -h
     - name: Run test
-      run: cargo hack test --each-feature
+      run: |
+        (while sleep 30; do free -m | awk '/^Mem:/ { used = $3 } /^Swap:/ { print "memory in use: " used " MiB, swap in use: " $3 " MiB" }'; done) &
+        cargo hack test --each-feature
     - name: Run the arithmetic tests without overflow checks and the Full tier of the integer serde and triomphe tests
       run: cargo test --release --lib --features serde,triomphe integer::arithmetic
     # A process of its own, with the features of the step before, so that nothing is built again:
     # the tests of the integers and those of the decimals each capture panics with a hook that they
     # install, and a panic that fell while the other hook was being installed would not be captured.
-    - name: Run the decimal operators without overflow checks and the Full tier of the decimal float conversions
-      run: cargo test --release --lib --features serde,triomphe -- decimal::tests::operators decimal::tests::floats
+    - name: Run the decimal operators without overflow checks and the Full tier of the decimal float conversions and of the heap decimals
+      run: cargo test --release --lib --features serde,triomphe -- decimal::tests::operators decimal::tests::floats decimal::tests::heap
   
   sanitizer:
     name: sanitizer-${{ matrix.sanitizer }}

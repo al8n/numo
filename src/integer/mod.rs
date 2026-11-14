@@ -863,8 +863,10 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
   // on it. It is a logical invariant, not a safety invariant: no `unsafe` code may rely on it. The
   // `unchecked_*` methods assume only their caller's guarantee, which is stated through
   // `checked_*`, so they do not rely on it either. The field and `wrap` are visible to the crate,
-  // so the invariant binds the crate: only `integer` and `lend_nonzero` of the storage cores write
-  // the field.
+  // so the invariant binds the crate: only `integer`, `lend_nonzero` of the storage cores and the
+  // storage protocol of the decimals in `layout::heap` write the field, the last with `wrap` and
+  // with `set_inline` through `&mut repr`, each time with the array of a value of the same `Bits`,
+  // moved between an integer whose limbs are in a pointer and the integer over the array itself.
   pub(crate) repr: Repr,
   bits: PhantomData<Bits>,
 }
@@ -1204,8 +1206,11 @@ pub struct Int<Bits, Repr = <Bits as BitWidth>::Signed> {
   // formatting and the arithmetic rely on it. It is a logical invariant, not a safety invariant: no
   // `unsafe` code may rely on it. The `unchecked_*` methods assume only their caller's guarantee,
   // which is stated through `checked_*`, so they do not rely on it either. As for `Uint`, the field
-  // and `wrap` are visible to the crate, so the invariant binds the crate: only `integer` and
-  // `lend_nonzero` of the storage cores write the field.
+  // and `wrap` are visible to the crate, so the invariant binds the crate: only `integer`,
+  // `lend_nonzero` of the storage cores and the storage protocol of the decimals in `layout::heap`
+  // write the field, the last with `wrap` and with `set_inline` through `&mut repr`, each time with
+  // the array of a value of the same `Bits`, moved between an integer whose limbs are in a pointer
+  // and the integer over the array itself.
   pub(crate) repr: Repr,
   bits: PhantomData<Bits>,
 }
