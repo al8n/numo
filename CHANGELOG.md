@@ -104,10 +104,8 @@ FEATURES
   - `Display` writes at least as many fraction digits as the scale, or the precision where it is
     larger, never rounded and without allocation; with scale 0 it writes what the decimal writes.
     `Debug` shows the scale, while equality, ordering and hashing compare the value only.
-  - `const fn` `new`, `value` and `scale`, and `into_value` and `into_parts`. `From` and `Default`
-    give scale 0.
-  - The scale is a `u16`: a scale above 65535 is `ScaleTooLarge`, and an exact product takes the
-    sum of the scales, saturating at 65535.
+  - `const fn` `new`, `value` and `scale`, and `into_value` and `into_parts`; the scale is a `u16`.
+    `From` and `Default` give scale 0.
   - The operators `+`, `-`, `+=` and `-=` and `Sum`, as for `Decimal`: their result takes the
     larger scale of its operands, and a sum over an iterator the largest scale of its items.
   - Every decimal trait, implemented once for every decimal that implements it, so that generic
@@ -234,9 +232,10 @@ FEATURES
     `i0`, which hold only 0 and take no space, the smallest native integer that holds 1 to 127 bits,
     and `[u64; ceil(N / 64)]` for 129 to 1024 bits, such as `u144` for `Uint<U144, [u64; 3]>`; and
     `u2048`, `u4096`, `i2048` and `i4096`.
-  - `ArraySize` maps a `typenum` number of limbs, from 0 to 1024, to an array. `LimbArray` and
-    `Limbs<Bits, L = u64>` name the array of limbs `L` that holds `Bits` bits, such as
-    `Limbs<U200>` for `[u64; 4]` or `Limbs<U24, u8>` for `[u8; 3]`.
+  - `ArraySize` maps a `typenum` number of limbs, from 0 to 1024, to an array, its `ArrayType<T>`,
+    which implements `AsRef<[T]>` and `AsMut<[T]>`. `LimbArray` and `Limbs<Bits, L = u64>` name the
+    array of limbs `L` that holds `Bits` bits, such as `Limbs<U200>` for `[u64; 4]` or
+    `Limbs<U24, u8>` for `[u8; 3]`.
   - `const` items and methods: `BITS`, `ZERO`, `MIN` and `MAX`; for a native integer, `new`, which
     panics if the value does not fit in `Bits` bits, so that such a value fails to compile in a
     constant, `try_new`, which returns the new `TryNewError` instead, and `value`; for an array,

@@ -111,8 +111,8 @@ mod sealed {
 
     /// The limbs in which the conversions of the storage with the floats compute: the fewest that
     /// hold the limbs of a coefficient, two for a native storage, and `bits(5^d) + 55` bits for the
-    /// `d` digits that the storage holds, the bits of the largest power of five that divides a
-    /// magnitude, the 53 bits of an `f64` and two more. Only the code of one storage builds the
+    /// `d` digits that the storage holds, the bits of the largest power of five that a magnitude is
+    /// divided by, the 53 bits of an `f64` and two more. Only the code of one storage builds the
     /// array, by resizing the limbs of a coefficient.
     type FloatLen: ArraySize;
 
@@ -279,8 +279,10 @@ pub trait Storage: StorageCore<Twin = <Self as Storage>::Inline> + Clone + Ord +
 /// A [`Storage`] that holds the coefficient inline, so that the decimal is `Copy`.
 ///
 /// Implemented for every storage of `Storage`: the native integers and the wide integers. It
-/// implies [`MutableStorage`], so that generic code that bounds `R: InlineStorage` has the
-/// assignments too. This trait is sealed and cannot be implemented outside this crate.
+/// implies [`MutableStorage`], so that generic code that bounds `R: InlineStorage` needs no second
+/// bound on the storage for the assignments `+=` and `-=`; it still needs the bound
+/// `Decimal<I, F, R>: FixedDecimal`, as for the other items of the decimal. This trait is sealed
+/// and cannot be implemented outside this crate.
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not an inline storage of `Decimal`",
   note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `u192`, `u256`, `u320`, `u384`, `u448` or `u512`"
