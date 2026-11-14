@@ -12,8 +12,8 @@ error[E0599]: the associated function or constant `parse` exists for struct `Sca
 note: if you're trying to build a new `Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i32>>`, consider using `Scaled::<D>::new` which returns `Scaled<_>`
  --> src/decimal/scaled/mod.rs
   |
-  |   pub const fn new(value: D, scale: u8) -> Self {
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   pub const fn new(value: D, scale: u16) -> Self {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   = note: the following trait bounds were not satisfied:
           `UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B1>, B0>: FitsDigits<i32>`
           which is required by `(UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>): numo::Layout<i32>`
@@ -45,13 +45,14 @@ error[E0277]: the storage `Repr` cannot hold `Integral + Fraction` decimal digit
              FitsDigits<u128>
              FitsDigits<u64>
    = note: required for `(UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>)` to implement `numo::Layout<i32>`
-   = note: required for `Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i32>>` to implement `FromStr`
+   = note: required for `Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i32>` to implement `FixedDecimal`
+   = note: 1 redundant requirement hidden
    = note: required for `Scaled<Decimal<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B1>, B0>, UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, i32>>` to implement `FixedDecimal`
 note: required by a bound in `numo::ConstFixedDecimal::ZERO`
   --> src/decimal/traits/mod.rs
    |
-   | pub trait ConstFixedDecimal: FixedDecimal + Copy + AddAssign + SubAssign {
-   |                              ^^^^^^^^^^^^ required by this bound in `ConstFixedDecimal::ZERO`
+   | pub trait ConstFixedDecimal: DecimalAssign + FixedDecimal<Inline = Self> + Copy {
+   |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `ConstFixedDecimal::ZERO`
    |   /// Zero.
    |   const ZERO: Self;
    |

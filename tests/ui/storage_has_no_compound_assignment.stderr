@@ -1,0 +1,12 @@
+error[E0368]: binary assignment operation `+=` cannot be applied to type `Decimal<I, F, R>`
+  --> tests/ui/storage_has_no_compound_assignment.rs:11:3
+   |
+11 |   total += value;
+   |   -----^^^^^^^^^
+   |   |
+   |   cannot use `+=` on type `Decimal<I, F, R>`
+   |
+help: consider further restricting type parameter `R` with trait `MutableStorage`
+   |
+ 8 |   R: Storage + numo::MutableStorage,
+   |              ++++++++++++++++++++++

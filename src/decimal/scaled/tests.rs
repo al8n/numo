@@ -1,4 +1,5 @@
 use core::{
+  any::TypeId,
   cmp::Ordering,
   fmt::{self, Write as _},
   hash::BuildHasher,
@@ -15,10 +16,10 @@ use typenum::{U0, U1, U2, U4, U8, U10, U11, U12, U16, U18, U20, U22, U36, U40, U
 
 use super::Scaled;
 use crate::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalFloat, DecimalOne,
-  DivRound, DivideError, ExactMul, FixedDecimal, FromFloatError, ParseError, ParseErrorKind,
-  QuantizeError, RoundingMode, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo, bigint::MODES,
-  dec, i256, i512, u256, u512,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalAssign,
+  DecimalFloat, DecimalOne, DivRound, DivideError, ExactMul, FixedDecimal, FromFloatError,
+  ParseError, ParseErrorKind, QuantizeError, RoundingMode, SignedFixedDecimal,
+  UnsignedFixedDecimal, WidenTo, bigint::MODES, dec, i256, i512, u256, u512,
 };
 
 /// 20 integral and 18 fraction digits in an `i128`.
@@ -43,13 +44,13 @@ fn kind<T: FromStr<Err = ParseError>>(text: &str) -> Result<T, ParseErrorKind> {
 }
 
 /// Asserts that `scaled` writes `text` and has the scale `scale`.
-fn assert_text<D: FixedDecimal>(scaled: &Scaled<D>, text: &str, scale: u8) {
+fn assert_text<D: FixedDecimal>(scaled: &Scaled<D>, text: &str, scale: u16) {
   assert_eq!(scaled.to_string(), text, "text of {scaled:?}");
   assert_eq!(scaled.scale(), scale, "scale of {text}");
 }
 
 /// Texts with as many fraction digits as their writer chose, each with its scale.
-const EXAMPLES: [(&str, u8); 24] = [
+const EXAMPLES: [(&str, u16); 24] = [
   ("0.00100000", 8),
   ("4.00000100", 8),
   ("48.000012", 6),
@@ -149,25 +150,25 @@ fn exponents_and_lenient_forms() {
 
 #[test]
 fn scale_limits() {
-  let largest = format!("0.{}", "0".repeat(255));
-  assert_text(&value::<WideS>(&largest), &largest, 255);
-  assert_text(&value::<NarrowS>(&largest), &largest, 255);
-  assert_text(&value::<WideS>("0e-255"), &largest, 255);
-  let unit = format!("0.{}1{}", "0".repeat(17), "0".repeat(237));
-  assert_text(&value::<WideS>(&unit), &unit, 255);
-  let one = format!("1.{}", "0".repeat(255));
-  assert_text(&value::<NarrowS>(&one), &one, 255);
+  let largest = format!("0.{}", "0".repeat(65535));
+  assert_text(&value::<WideS>(&largest), &largest, 65535);
+  assert_text(&value::<NarrowS>(&largest), &largest, 65535);
+  assert_text(&value::<WideS>("0e-65535"), &largest, 65535);
+  let unit = format!("0.{}1{}", "0".repeat(17), "0".repeat(65517));
+  assert_text(&value::<WideS>(&unit), &unit, 65535);
+  let one = format!("1.{}", "0".repeat(65535));
+  assert_text(&value::<NarrowS>(&one), &one, 65535);
 
-  // 256 fraction digits or more, however the text writes them, once the value fits.
-  let too_many = format!("0.{}", "0".repeat(256));
-  let padded_one = format!("1.{}", "0".repeat(256));
-  let exact_ten = format!("1{}e-256", "0".repeat(257));
+  // 65536 fraction digits or more, however the text writes them, once the value fits.
+  let too_many = format!("0.{}", "0".repeat(65536));
+  let padded_one = format!("1.{}", "0".repeat(65536));
+  let exact_ten = format!("1{}e-65536", "0".repeat(65537));
   for text in [
     too_many.as_str(),
     padded_one.as_str(),
     exact_ten.as_str(),
-    "0e-256",
-    "0.0e-255",
+    "0e-65536",
+    "0.0e-65535",
     "0e-99999999999999999999",
     "0e-99999999999999999999999999999999999999",
     "0.000e-18446744073709551615",
@@ -189,9 +190,12 @@ fn scale_limits() {
   for (text, expected) in [
     ("1e-99999999999999999999", ParseErrorKind::Inexact),
     ("1e99999999999999999999", ParseErrorKind::OutOfRange),
-    (&format!("1.{}1", "0".repeat(300)), ParseErrorKind::Inexact),
     (
-      &format!("1{}.{}", "0".repeat(30), "0".repeat(300)),
+      &format!("1.{}1", "0".repeat(65536)),
+      ParseErrorKind::Inexact,
+    ),
+    (
+      &format!("1{}.{}", "0".repeat(30), "0".repeat(65536)),
       ParseErrorKind::OutOfRange,
     ),
   ] {
@@ -200,33 +204,33 @@ fn scale_limits() {
   }
   // The sign of a negative text for an unsigned storage is decided before the scale, and the
   // syntax before everything.
-  let negative = format!("-0.{}", "0".repeat(256));
+  let negative = format!("-0.{}", "0".repeat(65536));
   assert_eq!(kind::<NarrowS>(&negative), Err(ParseErrorKind::Negative));
   assert_eq!(kind::<WideS>(&negative), Err(ParseErrorKind::ScaleTooLarge));
-  let garbled = format!("0.{}x", "0".repeat(256));
+  let garbled = format!("0.{}x", "0".repeat(65536));
   assert_eq!(kind::<WideS>(&garbled), Err(ParseErrorKind::InvalidSyntax));
   assert_eq!(
     kind::<NarrowS>(&garbled),
     Err(ParseErrorKind::InvalidSyntax)
   );
   assert_eq!(
-    kind::<WideS>(&format!("-inf{}", "0".repeat(256))),
+    kind::<WideS>(&format!("-inf{}", "0".repeat(65536))),
     Err(ParseErrorKind::InvalidSyntax)
   );
 }
 
 #[test]
 fn decimal_parse_never_reports_scale_too_large() {
-  let long = format!("0.{}", "0".repeat(300));
+  let long = format!("0.{}", "0".repeat(65536));
   assert_eq!(Wide::parse(&long), Ok(Wide::ZERO));
   assert_eq!(Narrow::parse(&long), Ok(Narrow::ZERO));
   assert_eq!(Wide::parse("0e-99999999999999999999"), Ok(Wide::ZERO));
   assert_eq!(
-    Wide::parse(&format!("1.{}", "0".repeat(300))),
+    Wide::parse(&format!("1.{}", "0".repeat(65536))),
     Ok(Wide::ONE)
   );
   assert_eq!(
-    Narrow::parse(&format!("1{}e-256", "0".repeat(257))).map(Narrow::repr),
+    Narrow::parse(&format!("1{}e-65536", "0".repeat(65537))).map(Narrow::repr),
     Ok(1_000_000_000)
   );
 }
@@ -279,11 +283,11 @@ fn parse_kinds_are_those_of_the_decimal() {
   let negative = "-7351946".parse::<NarrowS>().unwrap_err();
   assert!(negative.kind().is_negative());
   assert!(!negative.to_string().contains("7351946"));
-  let too_large = "0e-999".parse::<WideS>().unwrap_err();
+  let too_large = "0e-65536".parse::<WideS>().unwrap_err();
   assert!(too_large.kind().is_scale_too_large());
   assert_eq!(
     too_large.to_string(),
-    "decimal has more than 255 fraction digits"
+    "decimal has more than 65535 fraction digits"
   );
 }
 
@@ -291,16 +295,48 @@ fn parse_kinds_are_those_of_the_decimal() {
 fn parse_at_the_storage_limits() {
   type D154u512 = Scaled<Decimal<U154, U0, u512>>;
   type D0x153i512 = Scaled<Decimal<U0, U153, i512>>;
-  let max = format!("{}.{}", "9".repeat(154), "0".repeat(255));
+  let max = format!("{}.{}", "9".repeat(154), "0".repeat(65535));
   let widest: D154u512 = value(&max);
-  assert_text(&widest, &max, 255);
+  assert_text(&widest, &max, 65535);
   assert_eq!(*widest.value(), Decimal::<U154, U0, u512>::MAX);
-  let min = format!("-0.{}{}", "9".repeat(153), "0".repeat(102));
-  assert_text(&value::<D0x153i512>(&min), &min, 255);
+  let min = format!("-0.{}{}", "9".repeat(153), "0".repeat(65382));
+  assert_text(&value::<D0x153i512>(&min), &min, 65535);
   let small: Scaled<Decimal<U1, U1, u8>> = value("9.90");
   assert_text(&small, "9.90", 2);
   let fraction_only: Scaled<Decimal<U0, U2>> = value("-0.50");
   assert_text(&fraction_only, "-0.50", 2);
+}
+
+/// Checks that each limit of `D` with the scale `scale`, which is above the fraction digits of
+/// `D`, writes `scale` fraction digits and parses back to its value and scale.
+#[inline(never)]
+fn check_scale_above_the_fraction<D>(scale: u16)
+where
+  D: ConstFixedDecimal,
+  Scaled<D>: FixedDecimal,
+{
+  for decimal in [D::MIN, D::MAX] {
+    let text = Scaled::new(decimal, scale).to_string();
+    let fraction = text.split_once('.').map_or(0, |(_, digits)| digits.len());
+    assert_eq!(fraction, usize::from(scale), "{decimal} with scale {scale}");
+    let read: Scaled<D> = value(&text);
+    assert_eq!(
+      read.into_parts(),
+      (decimal, scale),
+      "{decimal} with scale {scale}"
+    );
+  }
+}
+
+/// Scales that a byte does not count, up to the largest, write their text and parse back, for a
+/// narrow type and for the widest.
+#[test]
+fn scales_above_255_parse_back() {
+  for scale in [256, 300, 65535] {
+    check_scale_above_the_fraction::<Decimal<U1, U1, i8>>(scale);
+    check_scale_above_the_fraction::<Decimal<U154, U0, u512>>(scale);
+    check_scale_above_the_fraction::<Decimal<U0, U153, i512>>(scale);
+  }
 }
 
 #[test]
@@ -407,10 +443,10 @@ fn display_streams_a_precision_beyond_any_scale() {
   let mut sink = Limited { remaining: 70_000 };
   assert_eq!(write!(sink, "{positive:.huge$}"), Ok(()));
   assert_eq!(sink.remaining, 70_000 - (2 + huge));
-  let padded = Scaled::new(*positive.value(), u8::MAX);
-  let mut sink = Limited { remaining: 300 };
+  let padded = Scaled::new(*positive.value(), u16::MAX);
+  let mut sink = Limited { remaining: 70_000 };
   assert_eq!(write!(sink, "{padded}"), Ok(()));
-  assert_eq!(sink.remaining, 300 - (2 + 255));
+  assert_eq!(sink.remaining, 70_000 - (2 + huge));
 }
 
 #[test]
@@ -450,6 +486,67 @@ fn construction_and_accessors() {
   assert_text(&NarrowS::default(), "0", 0);
 }
 
+/// The twin of a `Scaled` is the `Scaled` over the twin of its decimal, which is the type itself
+/// over an inline storage, and `to_inline` and `from_inline` keep the scale.
+#[test]
+fn the_twin_keeps_the_scale() {
+  fn twin<T: FixedDecimal>(value: &T) -> T::Inline {
+    value.to_inline()
+  }
+  assert_eq!(
+    TypeId::of::<<WideS as FixedDecimal>::Inline>(),
+    TypeId::of::<WideS>()
+  );
+  assert_eq!(
+    TypeId::of::<<NarrowS as FixedDecimal>::Inline>(),
+    TypeId::of::<NarrowS>()
+  );
+  let padded: WideS = value("0.00100000");
+  let inline = padded.to_inline();
+  assert_text(&inline, "0.00100000", 8);
+  assert_text(&WideS::from_inline(inline), "0.00100000", 8);
+  let fee: NarrowS = value("2.5000");
+  assert_text(&twin(&fee), "2.5000", 4);
+  assert_text(&<NarrowS as FixedDecimal>::from_inline(fee), "2.5000", 4);
+}
+
+/// Through the bounds of generic code, a `Scaled` assigns in place, computes in its twin, and
+/// clones, also with `clone_from`, which gives the value and the scale of the source.
+#[test]
+fn generic_assignment_twin_and_clone_keep_the_scale() {
+  fn assigned<T: DecimalAssign>(mut a: T, b: T) -> T {
+    a += b;
+    a
+  }
+  fn doubled<T: FixedDecimal>(value: &T) -> Option<T> {
+    let twin = value.to_inline();
+    twin.checked_add(&twin).map(T::from_inline)
+  }
+  fn cloned<T: Clone>(value: &T) -> T {
+    value.clone()
+  }
+  fn cloned_into<T: Clone>(target: &mut T, source: &T) {
+    target.clone_from(source);
+  }
+  assert_text(&assigned::<WideS>(value("1.5"), value("0.250")), "1.750", 3);
+  assert_text(
+    &assigned::<NarrowS>(value("2.50"), value("0.0010")),
+    "2.5010",
+    4,
+  );
+  assert_text(&doubled::<WideS>(&value("1.50")).unwrap(), "3.00", 2);
+  assert_eq!(doubled(&WideS::from(Wide::MAX)), None);
+
+  let source: WideS = value("1.50");
+  assert_text(&cloned(&source), "1.50", 2);
+  let mut target: WideS = value("-0.001");
+  cloned_into(&mut target, &source);
+  assert_text(&target, "1.50", 2);
+  let mut narrow: NarrowS = value("0.25000");
+  cloned_into(&mut narrow, &value("3"));
+  assert_text(&narrow, "3", 0);
+}
+
 #[test]
 fn debug_shows_the_scale() {
   assert_eq!(
@@ -473,8 +570,8 @@ fn parse_and_accessors_in_const_context() {
     Err(_) => panic!("valid"),
   };
   const NEGATIVE: Result<NarrowS, ParseError> = NarrowS::parse("-1");
-  const TOO_LARGE: Result<WideS, ParseError> = WideS::parse("0e-256");
-  const SCALE: u8 = PADDED.scale();
+  const TOO_LARGE: Result<WideS, ParseError> = WideS::parse("0e-65536");
+  const SCALE: u16 = PADDED.scale();
   const DECIMAL: Wide = *PADDED.value();
   const MADE: Scaled<Decimal<U2, U4>> = Scaled::new(Decimal::<U2, U4>::ONE, 4);
   assert_text(&PADDED, "0.00100000", 8);
@@ -503,30 +600,30 @@ fn a_literal_keeps_its_scale() {
   const EXPONENT: WideS = dec!(250e-2);
   const WHOLE: WideS = dec!(1E+2);
   const NEGATIVE: WideS = dec!(-1.50);
-  const ZERO: WideS = dec!(0e-255);
+  const ZERO: WideS = dec!(0e-65535);
   const FINE: Tenths = dec!(2.5000);
   const NAMED: [WideS; 5] = [
     dec!(1.50 as WideS),
     dec!(250e-2 as WideS),
     dec!(1E+2 as WideS),
     dec!(-1.50 as WideS),
-    dec!(0e-255 as WideS),
+    dec!(0e-65535 as WideS),
   ];
   const NAMED_FINE: Tenths = dec!(2.5000 as Tenths);
   const _: () = assert!(PADDED.scale() == 2 && EXPONENT.scale() == 2 && WHOLE.scale() == 0);
-  const _: () = assert!(NEGATIVE.scale() == 2 && ZERO.scale() == 255 && FINE.scale() == 4);
+  const _: () = assert!(NEGATIVE.scale() == 2 && ZERO.scale() == 65535 && FINE.scale() == 4);
   const _: () = assert!(NAMED[0].scale() == 2 && NAMED[1].scale() == 2 && NAMED[2].scale() == 0);
-  const _: () = assert!(NAMED[3].scale() == 2 && NAMED[4].scale() == 255);
+  const _: () = assert!(NAMED[3].scale() == 2 && NAMED[4].scale() == 65535);
   const _: () = assert!(NAMED_FINE.scale() == 4);
 
-  let zeros = format!("0.{}", "0".repeat(255));
+  let zeros = format!("0.{}", "0".repeat(65535));
   let inferred = [PADDED, EXPONENT, WHOLE, NEGATIVE, ZERO];
   let expected = [
     ("1.50", 2),
     ("2.50", 2),
     ("100", 0),
     ("-1.50", 2),
-    (zeros.as_str(), 255),
+    (zeros.as_str(), 65535),
   ];
   for ((value, named), (text, scale)) in inferred.iter().zip(&NAMED).zip(expected) {
     assert_text(value, text, scale);
@@ -541,11 +638,13 @@ fn a_literal_keeps_its_scale() {
 #[test]
 fn layout() {
   type Bare = Decimal<U10, U8>;
-  assert_eq!(size_of::<Scaled<Decimal<U1, U1, u8>>>(), 2);
-  // The scale takes the padding to the alignment of the decimal.
+  // A one-byte decimal and its `u16` scale, padded to the alignment of the `u16`, which is two
+  // bytes on every target that runs the tests.
+  assert_eq!(size_of::<Scaled<Decimal<U1, U1, u8>>>(), 4);
+  // Over a wider storage, the scale takes the padding to the alignment of the decimal.
   assert_eq!(size_of::<Price>(), size_of::<Bare>() + align_of::<Bare>());
   assert_eq!(size_of::<WideS>(), size_of::<Wide>() + align_of::<Wide>());
-  // The scale is a plain `u8`, so an `Option` has no niche.
+  // The scale is a plain `u16`, so an `Option` has no niche.
   assert_eq!(
     size_of::<Option<WideS>>(),
     size_of::<WideS>() + align_of::<WideS>()
@@ -564,16 +663,20 @@ fn scale_rules_of_derived_values() {
   assert_eq!(WideS::MAX.checked_add(&short), None);
   assert_eq!(NarrowS::ZERO.checked_sub(&value("0.001")), None);
 
-  // An exact product takes the sum of the scales, saturating at 255; the value is never rounded.
+  // An exact product takes the sum of the scales, saturating at 65535; the value is never
+  // rounded.
   let price: Price = value("64250.5");
   let quantity: Quantity = value("0.0015000");
   let notional: Notional = price.exact_mul(&quantity);
   assert_text(&notional, "96.37575000", 8);
-  let saturated =
+  let long =
     Scaled::new(price.into_value(), 200).exact_mul(&Scaled::new(quantity.into_value(), 100));
-  assert_eq!(saturated.scale(), 255);
+  assert_eq!(long.scale(), 300);
+  let saturated =
+    Scaled::new(price.into_value(), 40_000).exact_mul(&Scaled::new(quantity.into_value(), 30_000));
+  assert_eq!(saturated.scale(), 65535);
   assert_eq!(*saturated.value(), *notional.value());
-  assert_eq!(saturated.to_string().len(), "96".len() + 1 + 255);
+  assert_eq!(saturated.to_string().len(), "96".len() + 1 + 65535);
 
   // Quantizing takes the scale of the step.
   let tick: Price = value("0.10");
@@ -737,7 +840,7 @@ where
   let decimals: [D; 5] = [D::ZERO, D::MIN, D::MAX, value("1.5"), value("0.25")];
   for a in decimals {
     for b in decimals {
-      for (left, right) in [(0u8, 0u8), (1, 5), (5, 1), (255, 3)] {
+      for (left, right) in [(0u16, 0u16), (1, 5), (5, 1), (255, 3)] {
         let (x, y) = (Scaled::new(a, left), Scaled::new(b, right));
         let scale = left.max(right);
         assert_eq!(
@@ -799,7 +902,7 @@ where
 {
   let decimals: [D; 5] = [D::ZERO, D::MIN, D::MAX, value("1.5"), value("0.25")];
   for a in decimals {
-    for scale in [0u8, 3, 255] {
+    for scale in [0u16, 3, 255] {
       let x = Scaled::new(a, scale);
       assert_eq!(x.trunc().into_parts(), (a.trunc(), 0), "trunc of {a}");
       assert_eq!(x.fract().into_parts(), (a.fract(), scale), "fract of {a}");
@@ -851,7 +954,7 @@ where
   let decimals: [D; 5] = [D::ZERO, D::MIN, D::MAX, value("1.5"), value("0.25")];
   let counts = [1, 2, D::DIGITS, u32::MAX].map(|count| NonZero::new(count).expect("not zero"));
   for a in decimals {
-    for scale in [0u8, 3, 255] {
+    for scale in [0u16, 3, 255] {
       let x = Scaled::new(a, scale);
       assert_eq!(x.order_of_magnitude(), a.order_of_magnitude(), "{a}");
       assert_eq!(x.significant_digits(), a.significant_digits(), "{a}");
@@ -864,7 +967,10 @@ where
             } else {
               i64::from(digits.get()) - 1 - i64::from(rounded.order_of_magnitude())
             };
-            (rounded, u8::try_from(scale.clamp(0, 255)).expect("a scale"))
+            (
+              rounded,
+              u16::try_from(scale.clamp(0, i64::from(u16::MAX))).expect("a scale"),
+            )
           });
           assert_eq!(
             x.round_significant(digits, mode).map(Scaled::into_parts),
@@ -916,9 +1022,11 @@ fn digits_are_the_values_and_rounding_takes_the_scale_of_its_digits() {
   assert_text(&round("1.5000", 1), "2", 0);
   assert_text(&round("1.5000", 3), "1.50", 2);
   assert_text(&round("0.000", 3), "0", 0);
-  let long = format!("1.5{}", "0".repeat(254));
-  assert_text(&round("1.5", 300), &long, 255);
-  assert_text(&round("1.5", u32::MAX), &long, 255);
+  assert_text(&round("1.5", 300), &format!("1.5{}", "0".repeat(298)), 299);
+  // More digits than a `u16` scale counts: the scale saturates.
+  let long = format!("1.5{}", "0".repeat(65534));
+  assert_text(&round("1.5", 65_537), &long, 65535);
+  assert_text(&round("1.5", u32::MAX), &long, 65535);
 
   check_digits::<Decimal<U2, U2>>();
   check_digits::<Narrow>();
@@ -938,11 +1046,11 @@ where
   D: ConstFixedDecimal + DecimalFloat,
   Scaled<D>: DecimalFloat,
 {
-  let fraction = u8::try_from(D::FRACTION).expect("a scale");
+  let fraction = u16::try_from(D::FRACTION).expect("a scale");
   // The fraction digits of the text that `Display` writes, at most those of `D`.
   let text_scale = |text: String| {
     let digits = text.split_once('.').map_or(0, |(_, digits)| digits.len());
-    u8::try_from(digits.min(D::FRACTION as usize)).expect("a scale")
+    u16::try_from(digits.min(D::FRACTION as usize)).expect("a scale")
   };
   for x in [0.5, -2.5, 0.1, 1e-3, 123.456, 1e21, -0.0, 5e-324] {
     let narrow = x as f32;
@@ -971,7 +1079,7 @@ where
   }
   let decimals: [D; 4] = [D::ZERO, D::MIN, D::MAX, value("1.5")];
   for decimal in decimals {
-    for scale in [0u8, 3, 255] {
+    for scale in [0u16, 3, 255] {
       let scaled = Scaled::new(decimal, scale);
       assert_eq!(
         (scaled.to_f64().to_bits(), scaled.to_f32().to_bits()),
@@ -1265,14 +1373,24 @@ fn widening_between_storages_keeps_the_scale() {
 
 #[cfg(feature = "serde")]
 mod with_serde {
+  use core::fmt::{self, Display};
+
   use serde_core::{
-    Deserialize,
+    Deserialize, Serialize,
     de::{self, IntoDeserializer},
+    ser,
   };
   use serde_test::{Configure, Token, assert_de_tokens_error, assert_tokens};
-  use std::{format, string::String, vec::Vec};
+  use std::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+  };
 
-  use super::{Decimal, NarrowS, Scaled, U0, U153, U154, WideS, assert_text, i512, u512, value};
+  use super::{
+    ConstFixedDecimal, Decimal, FixedDecimal, Narrow, NarrowS, Scaled, U0, U1, U153, U154, WideS,
+    assert_text, i512, u512, value,
+  };
 
   #[test]
   fn a_value_is_its_scaled_text_in_every_format() {
@@ -1316,7 +1434,7 @@ mod with_serde {
 
   #[test]
   fn the_widest_texts_serialize() {
-    // 154 integral digits, or a sign and 153, and 255 fraction digits: 410 bytes.
+    // 154 integral digits, or a sign and 153, and 255 fraction digits, above those of the type.
     let text = format!("{}.{}", "9".repeat(154), "0".repeat(255));
     let widest = Scaled::new(Decimal::<U154, U0, u512>::MAX, 255);
     assert_eq!(
@@ -1337,6 +1455,186 @@ mod with_serde {
     assert_text(&read, &text, 255);
   }
 
+  /// Asserts that JSON and postcard write each limit of `D` with the scale `scale` as they write
+  /// the text of its `Display`, and read the value and the scale back.
+  #[inline(never)]
+  fn check_formats<D>(scale: u16)
+  where
+    D: ConstFixedDecimal,
+    Scaled<D>: FixedDecimal,
+  {
+    for decimal in [D::MIN, D::MAX] {
+      let scaled = Scaled::new(decimal, scale);
+      let text = scaled.to_string();
+      let json = serde_json::to_string(&scaled).unwrap();
+      assert_eq!(json, serde_json::to_string(&text).unwrap(), "{text}");
+      let read: Scaled<D> = serde_json::from_str(&json).unwrap();
+      assert_eq!(read.into_parts(), (decimal, scale), "{text}");
+      let bytes = postcard::to_stdvec(&scaled).unwrap();
+      assert_eq!(bytes, postcard::to_stdvec(&text).unwrap(), "{text}");
+      let read: Scaled<D> = postcard::from_bytes(&bytes).unwrap();
+      assert_eq!(read.into_parts(), (decimal, scale), "{text}");
+    }
+  }
+
+  /// The method of a serializer through which a value wrote its text.
+  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+  enum Path {
+    /// `serialize_str`, with the text that the value wrote into a buffer.
+    Str,
+    /// `collect_str`, with the value itself.
+    Collect,
+  }
+
+  /// A serializer that takes a string, and returns the method that wrote it and the text. Every
+  /// other value is [`NotAString`].
+  struct Recorder;
+
+  /// The error of [`Recorder`] for a value that is not a string.
+  #[derive(Debug, PartialEq, Eq)]
+  struct NotAString;
+
+  impl Display for NotAString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      f.write_str("not a string")
+    }
+  }
+
+  impl core::error::Error for NotAString {}
+
+  impl ser::Error for NotAString {
+    fn custom<T: Display>(_: T) -> Self {
+      Self
+    }
+  }
+
+  /// What [`Recorder`] returns for a compound value, which it refuses.
+  type Refused = ser::Impossible<(Path, String), NotAString>;
+
+  /// Writes the methods of [`Recorder`] that refuse their value, each with its parameters and the
+  /// type that it would return.
+  macro_rules! refuse {
+    ($($method:ident($($parameter:ty),*) -> $ok:ty;)+) => {$(
+      fn $method(self, $(_: $parameter),*) -> Result<$ok, NotAString> {
+        Err(NotAString)
+      }
+    )+};
+  }
+
+  impl ser::Serializer for Recorder {
+    type Ok = (Path, String);
+    type Error = NotAString;
+    type SerializeSeq = Refused;
+    type SerializeTuple = Refused;
+    type SerializeTupleStruct = Refused;
+    type SerializeTupleVariant = Refused;
+    type SerializeMap = Refused;
+    type SerializeStruct = Refused;
+    type SerializeStructVariant = Refused;
+
+    fn serialize_str(self, text: &str) -> Result<Self::Ok, NotAString> {
+      Ok((Path::Str, text.to_string()))
+    }
+
+    fn collect_str<T: Display + ?Sized>(self, value: &T) -> Result<Self::Ok, NotAString> {
+      Ok((Path::Collect, value.to_string()))
+    }
+
+    fn serialize_some<T: Serialize + ?Sized>(self, _: &T) -> Result<Self::Ok, NotAString> {
+      Err(NotAString)
+    }
+
+    fn serialize_newtype_struct<T: Serialize + ?Sized>(
+      self,
+      _: &'static str,
+      _: &T,
+    ) -> Result<Self::Ok, NotAString> {
+      Err(NotAString)
+    }
+
+    fn serialize_newtype_variant<T: Serialize + ?Sized>(
+      self,
+      _: &'static str,
+      _: u32,
+      _: &'static str,
+      _: &T,
+    ) -> Result<Self::Ok, NotAString> {
+      Err(NotAString)
+    }
+
+    refuse! {
+      serialize_bool(bool) -> Self::Ok;
+      serialize_i8(i8) -> Self::Ok;
+      serialize_i16(i16) -> Self::Ok;
+      serialize_i32(i32) -> Self::Ok;
+      serialize_i64(i64) -> Self::Ok;
+      serialize_u8(u8) -> Self::Ok;
+      serialize_u16(u16) -> Self::Ok;
+      serialize_u32(u32) -> Self::Ok;
+      serialize_u64(u64) -> Self::Ok;
+      serialize_f32(f32) -> Self::Ok;
+      serialize_f64(f64) -> Self::Ok;
+      serialize_char(char) -> Self::Ok;
+      serialize_bytes(&[u8]) -> Self::Ok;
+      serialize_none() -> Self::Ok;
+      serialize_unit() -> Self::Ok;
+      serialize_unit_struct(&'static str) -> Self::Ok;
+      serialize_unit_variant(&'static str, u32, &'static str) -> Self::Ok;
+      serialize_seq(Option<usize>) -> Refused;
+      serialize_tuple(usize) -> Refused;
+      serialize_tuple_struct(&'static str, usize) -> Refused;
+      serialize_tuple_variant(&'static str, u32, &'static str, usize) -> Refused;
+      serialize_map(Option<usize>) -> Refused;
+      serialize_struct(&'static str, usize) -> Refused;
+      serialize_struct_variant(&'static str, u32, &'static str, usize) -> Refused;
+    }
+  }
+
+  /// Checks [`check_formats`] at the scale `Fraction`, the last that the buffer of a decimal
+  /// writes, and at `Fraction + 1`, the first that `collect_str` writes, and that a [`Recorder`]
+  /// sees each limit of `D` written through the method of its scale, with the text of `Display`.
+  #[inline(never)]
+  fn check_both_paths<D>()
+  where
+    D: ConstFixedDecimal,
+    Scaled<D>: FixedDecimal,
+  {
+    let fraction = u16::try_from(D::FRACTION).expect("a scale");
+    check_formats::<D>(fraction);
+    check_formats::<D>(fraction + 1);
+    for (scale, path) in [(fraction, Path::Str), (fraction + 1, Path::Collect)] {
+      for decimal in [D::MIN, D::MAX] {
+        let scaled = Scaled::new(decimal, scale);
+        assert_eq!(
+          scaled.serialize(Recorder),
+          Ok((path, scaled.to_string())),
+          "{scaled:?}"
+        );
+      }
+    }
+  }
+
+  /// A scale of at most the fraction digits of the type is written through a buffer, with
+  /// `serialize_str`, and a larger one through `collect_str`, and JSON and postcard write the same
+  /// bytes for both as for the text itself: for a native and for two wide storages. The two widest
+  /// types write their longest texts through the buffer.
+  #[test]
+  fn both_paths_write_the_text() {
+    check_both_paths::<Narrow>();
+    check_both_paths::<Decimal<U0, U153, i512>>();
+    check_both_paths::<Decimal<U0, U154, u512>>();
+  }
+
+  /// Scales that a byte does not count, up to the largest, through JSON and postcard, for a narrow
+  /// type and for the widest.
+  #[test]
+  fn scales_above_255_through_json_and_postcard() {
+    for scale in [256, 300, 65535] {
+      check_formats::<Decimal<U1, U1, i8>>(scale);
+      check_formats::<Decimal<U154, U0, u512>>(scale);
+    }
+  }
+
   #[test]
   fn a_string_that_does_not_parse_reports_why() {
     assert_de_tokens_error::<WideS>(&[Token::Str("1.5x")], "invalid decimal syntax");
@@ -1345,8 +1643,8 @@ mod with_serde {
       "decimal is negative, and the target type is unsigned",
     );
     assert_de_tokens_error::<WideS>(
-      &[Token::Str("0e-999")],
-      "decimal has more than 255 fraction digits",
+      &[Token::Str("0e-65536")],
+      "decimal has more than 65535 fraction digits",
     );
     assert_de_tokens_error::<NarrowS>(
       &[Token::Str("0.000000001")],

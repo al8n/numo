@@ -48,7 +48,7 @@ pub(super) const fn reject(kind: ParseErrorKind) -> ! {
     ParseErrorKind::OutOfRange => panic!("the decimal literal is out of range of the type"),
     ParseErrorKind::Inexact => panic!("the decimal literal has more fraction digits than the type"),
     ParseErrorKind::ScaleTooLarge => {
-      panic!("the decimal literal has more than 255 fraction digits")
+      panic!("the decimal literal has more than 65535 fraction digits")
     }
   }
 }
@@ -178,8 +178,8 @@ pub(super) const fn reject(kind: ParseErrorKind) -> ! {
 /// - `the decimal literal is negative, and the type is unsigned`;
 /// - `the decimal literal is out of range of the type`, for too many integral digits;
 /// - `the decimal literal has more fraction digits than the type`;
-/// - `the decimal literal has more than 255 fraction digits`, for a `Scaled`, whose scale is at
-///   most 255.
+/// - `the decimal literal has more than 65535 fraction digits`, for a `Scaled`, whose scale is at
+///   most 65535.
 ///
 /// When the error is reported depends on where the literal stands:
 ///

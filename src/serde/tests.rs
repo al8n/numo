@@ -10,9 +10,14 @@ use serde_core::{
 };
 use serde_json::error::Category;
 use serde_test::{Compact, Readable, Token, assert_de_tokens_error};
-use typenum::{U8, U10, U18, U60};
+use typenum::{
+  U0, U2, U4, U8, U9, U10, U18, U19, U38, U57, U60, U76, U77, U96, U115, U134, U153, U154,
+};
 
-use crate::{Decimal, ParseError, Scaled, u320};
+use crate::{
+  ConstFixedDecimal, Decimal, ParseError, Scaled, i192, i256, i320, i384, i448, i512, u192, u256,
+  u320, u384, u448, u512,
+};
 
 /// The message of every input that is not a string.
 const EXPECTED: &str = "expected a decimal value as a string";
@@ -214,4 +219,49 @@ fn a_value_reads_back_through_a_format_that_infers_numbers() {
     let price = Scaled::<Price>::deserialize(InferringField(text)).unwrap();
     assert_eq!(price.to_string(), text);
   }
+}
+
+/// Checks that `MIN` and `MAX` of `T`, whose digits are all after the point, write the longest
+/// texts of its storage in JSON and postcard, and read back.
+#[inline(never)]
+fn check_longest_texts<T>()
+where
+  T: ConstFixedDecimal + Serialize + DeserializeOwned,
+{
+  for value in [T::MIN, T::MAX] {
+    let text = value.to_string();
+    let json = serde_json::to_string(&value).unwrap();
+    assert_eq!(json, format!("\"{text}\""));
+    assert_eq!(serde_json::from_str::<T>(&json).unwrap(), value);
+    let bytes = postcard::to_stdvec(&value).unwrap();
+    assert_eq!(bytes, postcard::to_stdvec(&text).unwrap(), "{text}");
+    assert_eq!(postcard::from_bytes::<T>(&bytes).unwrap(), value);
+  }
+}
+
+/// The text buffer of each storage holds the longest texts of a decimal over it.
+#[test]
+fn the_longest_texts_of_every_storage_read_back() {
+  check_longest_texts::<Decimal<U0, U2, i8>>();
+  check_longest_texts::<Decimal<U0, U4, i16>>();
+  check_longest_texts::<Decimal<U0, U9, i32>>();
+  check_longest_texts::<Decimal<U0, U18, i64>>();
+  check_longest_texts::<Decimal<U0, U38, i128>>();
+  check_longest_texts::<Decimal<U0, U57, i192>>();
+  check_longest_texts::<Decimal<U0, U76, i256>>();
+  check_longest_texts::<Decimal<U0, U96, i320>>();
+  check_longest_texts::<Decimal<U0, U115, i384>>();
+  check_longest_texts::<Decimal<U0, U134, i448>>();
+  check_longest_texts::<Decimal<U0, U153, i512>>();
+  check_longest_texts::<Decimal<U0, U2, u8>>();
+  check_longest_texts::<Decimal<U0, U4, u16>>();
+  check_longest_texts::<Decimal<U0, U9, u32>>();
+  check_longest_texts::<Decimal<U0, U19, u64>>();
+  check_longest_texts::<Decimal<U0, U38, u128>>();
+  check_longest_texts::<Decimal<U0, U57, u192>>();
+  check_longest_texts::<Decimal<U0, U77, u256>>();
+  check_longest_texts::<Decimal<U0, U96, u320>>();
+  check_longest_texts::<Decimal<U0, U115, u384>>();
+  check_longest_texts::<Decimal<U0, U134, u448>>();
+  check_longest_texts::<Decimal<U0, U154, u512>>();
 }

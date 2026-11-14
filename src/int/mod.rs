@@ -36,14 +36,6 @@
 //! crate: native arithmetic then overflows as native arithmetic does, multi-limb arithmetic wraps
 //! and fails a debug assertion, and narrowing truncates.
 
-/// Length of a buffer that holds the decimal digits of any magnitude: `u512::MAX` has 155 and
-/// `|i512::MIN|` has 154.
-pub(crate) const DIGIT_BUF_LEN: usize = 155;
-
-/// Decimal digits of a magnitude, written right-aligned by `write_digits`.
-// The modules below shadow the primitive type names in this module.
-pub(crate) type DigitBuf = [core::primitive::u8; DIGIT_BUF_LEN];
-
 mod half_limbs;
 mod limb_layer;
 
@@ -61,7 +53,6 @@ macro_rules! native {
       use core::{cmp::Ordering, num::ParseIntError};
 
       use super::{
-        DIGIT_BUF_LEN, DigitBuf,
         float::{self, FloatFormat, Rounded},
         order, parse_errors, slice,
       };
@@ -73,9 +64,10 @@ macro_rules! native {
       native!(@shared $uint);
 
       /// Writes the decimal digits of `value` to the end of `buf`, without leading zeros (zero is
-      /// a single `0`), and returns the index of the first digit.
-      pub(crate) const fn write_digits(mut value: $uint, buf: &mut DigitBuf) -> usize {
-        let mut start = DIGIT_BUF_LEN;
+      /// a single `0`), and returns the index of the first digit. Requires `buf` to hold the digits
+      /// of `value`.
+      pub(crate) const fn write_digits(mut value: $uint, buf: &mut [u8]) -> usize {
+        let mut start = buf.len();
         loop {
           start -= 1;
           buf[start] = b'0' + (value % 10) as u8;
@@ -833,7 +825,6 @@ macro_rules! native {
       use core::{cmp::Ordering, num::ParseIntError};
 
       use super::{
-        DigitBuf,
         float::{self, FloatFormat, Rounded},
         order, parse_errors, slice,
       };
@@ -871,9 +862,10 @@ macro_rules! native {
       }
 
       /// Writes the decimal digits of `|value|` to the end of `buf`, without leading zeros (zero
-      /// is a single `0`), and returns the index of the first digit.
+      /// is a single `0`), and returns the index of the first digit. Requires `buf` to hold the
+      /// digits of `|value|`.
       #[inline]
-      pub(crate) const fn write_digits(value: $int, buf: &mut DigitBuf) -> usize {
+      pub(crate) const fn write_digits(value: $int, buf: &mut [u8]) -> usize {
         super::$uint::write_digits(value.unsigned_abs(), buf)
       }
 
@@ -1776,7 +1768,7 @@ macro_rules! wide {
       "]`."
     )]
     pub(crate) mod $uint {
-      use super::{DigitBuf, unsigned::b64};
+      use super::unsigned::b64;
       use crate::{$uint, rounding::RoundingMode};
 
       wide!(@shared $uint, b64, $limbs);
@@ -1791,7 +1783,7 @@ macro_rules! wide {
       "]` in two's complement."
     )]
     pub(crate) mod $int {
-      use super::{DigitBuf, signed::b64};
+      use super::signed::b64;
       use crate::{$int, rounding::RoundingMode};
 
       wide!(@shared $int, b64, $limbs);
@@ -1891,10 +1883,11 @@ macro_rules! wide {
     }
 
     /// Writes the decimal digits of `|value|` to the end of `buf`, without leading zeros (zero
-    /// is a single `0`), and returns the index of the first digit.
+    /// is a single `0`), and returns the index of the first digit. Requires `buf` to hold the
+    /// digits of `|value|`.
     #[inline]
-    pub(crate) const fn write_digits(value: &$ty, buf: &mut DigitBuf) -> usize {
-      $layer::write_digits(value.as_limbs(), buf)
+    pub(crate) const fn write_digits(value: &$ty, buf: &mut [u8]) -> usize {
+      $layer::write_digits_into(value.as_limbs(), buf)
     }
 
     /// Appends the ASCII digits in `bytes[start..end]` to `value`, computing `value * 10 + d` for

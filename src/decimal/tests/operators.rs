@@ -622,3 +622,35 @@ fn a_partial_sum_outside_the_range_panics_in_the_fold() {
     );
   }
 }
+
+/// Checks that the sum of no item of `T` is `zero` and the sum of the one item `item` is `item`,
+/// over values and over references, comparing what `parts` gives: the value, and for a `Scaled`
+/// the scale too.
+#[inline(never)]
+fn check_sums_of_none_and_one<T, P>(item: T, zero: P, parts: fn(T) -> P)
+where
+  T: FixedDecimal + for<'a> Sum<&'a T>,
+  P: PartialEq + core::fmt::Debug,
+{
+  assert_eq!(parts(core::iter::empty::<T>().sum::<T>()), zero);
+  assert_eq!(parts(core::iter::empty::<&T>().sum::<T>()), zero);
+  let expected = parts(item.clone());
+  assert_eq!(parts(core::iter::once(item.clone()).sum::<T>()), expected);
+  assert_eq!(parts(core::iter::once(&item).sum::<T>()), expected);
+}
+
+/// A sum of no item is zero, with scale 0 for a `Scaled`, and a sum of one item is that item, with
+/// its scale, over values and over references: for a decimal in a native and in a wide storage,
+/// and for a `Scaled` over each.
+#[test]
+fn sums_of_no_item_and_of_one() {
+  let (signed, unsigned): (Di64, Du320) = ("-1.5".parse().unwrap(), "0.25".parse().unwrap());
+  check_sums_of_none_and_one(signed, Di64::ZERO, |value| value);
+  check_sums_of_none_and_one(unsigned, Du320::ZERO, |value| value);
+  check_sums_of_none_and_one(Scaled::new(signed, 3), (Di64::ZERO, 0), Scaled::into_parts);
+  check_sums_of_none_and_one(
+    Scaled::new(unsigned, 5),
+    (Du320::ZERO, 0),
+    Scaled::into_parts,
+  );
+}

@@ -8,7 +8,9 @@ use super::{
   SignedFixedDecimal, UnsignedFixedDecimal, float, literal, parse,
 };
 use crate::{
-  FromFloatError, i192, i256, i320, i384, i448, i512, int, layout::Layout, rounding::RoundingMode,
+  FromFloatError, i192, i256, i320, i384, i448, i512, int,
+  layout::{FloatScratch, InlineCore, Layout},
+  rounding::RoundingMode,
   u192, u256, u320, u384, u448, u512,
 };
 
@@ -70,9 +72,9 @@ macro_rules! storage_decimal {
       /// # Errors
       ///
       /// The kinds that `Decimal::parse` reports, in its order, and then
-      /// [`ScaleTooLarge`](crate::ParseErrorKind::ScaleTooLarge) if the scale is above 255. The
-      /// value is decided first, so a text with more than 255 fraction digits that the type cannot
-      /// hold reports why it cannot.
+      /// [`ScaleTooLarge`](crate::ParseErrorKind::ScaleTooLarge) if the scale is above 65535. The
+      /// value is decided first, so a text with more than 65535 fraction digits that the type
+      /// cannot hold reports why it cannot.
       ///
       /// # Examples
       ///
@@ -89,8 +91,8 @@ macro_rules! storage_decimal {
       ///
       /// let kind = |text: &str| S::parse(text).map_err(|err| err.kind());
       /// assert_eq!(kind("1e1"), Err(ParseErrorKind::OutOfRange));
-      /// assert_eq!(kind(&format!("0.{}", "0".repeat(255))).map(|zero| zero.scale()), Ok(255));
-      /// assert_eq!(kind(&format!("0.{}", "0".repeat(256))), Err(ParseErrorKind::ScaleTooLarge));
+      /// assert_eq!(kind(&format!("0.{}", "0".repeat(65535))).map(|zero| zero.scale()), Ok(65535));
+      /// assert_eq!(kind(&format!("0.{}", "0".repeat(65536))), Err(ParseErrorKind::ScaleTooLarge));
       /// # Ok::<(), numo::ParseError>(())
       /// ```
       pub const fn parse(s: &str) -> Result<Self, ParseError> {
@@ -129,7 +131,8 @@ macro_rules! storage_decimal {
     }
 
     // The constants and methods are the inherent ones, which `Self::` names first, and the
-    // functions without an inherent counterpart return the inherent constants.
+    // functions without an inherent counterpart return the inherent constants. The storage is
+    // inline, so the decimal is its own twin.
     impl<I, F> FixedDecimal for Decimal<I, F, $repr>
     where
       (I, F): Layout<$repr>,
@@ -140,6 +143,18 @@ macro_rules! storage_decimal {
       const SIGNED: bool = Self::SIGNED;
 
       type Repr = $repr;
+
+      type Inline = Self;
+
+      #[inline]
+      fn to_inline(&self) -> Self {
+        *self
+      }
+
+      #[inline]
+      fn from_inline(value: Self) -> Self {
+        value
+      }
 
       #[inline]
       fn repr(self) -> $repr {
@@ -677,12 +692,16 @@ macro_rules! storage_decimal {
       }
 
       /// The bits of the float of `format` nearest to the value, which the float module computes
-      /// from the magnitude and the sign of the coefficient, lent as limbs.
+      /// from the magnitude and the sign of the coefficient, in the float scratch of the storage.
       const fn float_bits(&self, format: int::float::FloatFormat) -> u64 {
         // The limbs are in two's complement: a native coefficient is extended by its sign.
         let limbs = storage_decimal!(@limbs $kind $repr self.repr);
+        // The magnitude is widened to the scratch, which also holds the power of five and the
+        // shifted magnitude of every fraction count of a type over the storage.
+        let magnitude: FloatScratch<$repr> =
+          int::unsigned::b64::resize(&int::signed::b64::unsigned_abs(limbs));
         float::float_bits(
-          &int::signed::b64::unsigned_abs(limbs),
+          &magnitude,
           Self::FRACTION,
           int::signed::b64::is_negative(limbs),
           format,
@@ -691,9 +710,9 @@ macro_rules! storage_decimal {
 
       /// The value whose coefficient has the magnitude `magnitude`, negated for a negative float,
       /// or the error of a magnitude outside the range of the type, on the side of the sign:
-      /// `None` is a magnitude beyond 512 bits.
+      /// `None` is a magnitude beyond the float scratch of the storage.
       const fn place_magnitude(
-        magnitude: Option<[u64; 8]>,
+        magnitude: Option<FloatScratch<$repr>>,
         negative: bool,
       ) -> Result<Self, FromFloatError> {
         let overflow = if negative {
@@ -709,11 +728,11 @@ macro_rules! storage_decimal {
         if int::unsigned::b64::is_zero(&magnitude) {
           return Ok(Self::ZERO);
         }
-        // Compared in eight limbs, before the narrowing to the storage, which truncates.
+        // Compared in the scratch, before the narrowing to the storage, which truncates.
         if !int::unsigned::b64::le(&magnitude, &int::unsigned::b64::max_magnitude(Self::DIGITS)) {
           return Err(overflow);
         }
-        // The magnitude is unsigned in eight limbs, so the unsigned layer narrows it, and only
+        // The magnitude is unsigned in the scratch, so the unsigned layer narrows it, and only
         // its negation is in two's complement, in the limbs of the storage.
         let limbs = int::unsigned::b64::resize(&magnitude);
         let limbs = if negative {
@@ -1021,24 +1040,22 @@ macro_rules! storage_decimal {
       }
 
       /// The bits of the float of `format` nearest to the value, which the float module computes
-      /// from the coefficient, lent as limbs.
+      /// from the coefficient, in the float scratch of the storage.
       const fn float_bits(&self, format: int::float::FloatFormat) -> u64 {
         // The coefficient is its own magnitude. Read in two's complement, the 154 digits of a
-        // `u512` could set the top bit.
-        float::float_bits(
-          storage_decimal!(@limbs $kind $repr self.repr),
-          Self::FRACTION,
-          false,
-          format,
-        )
+        // `u512` could set the top bit. It is widened to the scratch, which also holds the power
+        // of five and the shifted magnitude of every fraction count of a type over the storage.
+        let magnitude: FloatScratch<$repr> =
+          int::unsigned::b64::resize(storage_decimal!(@limbs $kind $repr self.repr));
+        float::float_bits(&magnitude, Self::FRACTION, false, format)
       }
 
       /// The value whose coefficient is `magnitude`, or the error of a magnitude outside the
       /// range of the type: the overflow of the sign of the float for `None`, a magnitude beyond
-      /// 512 bits, `NegOverflow` for a negative float that does not round to zero, and
-      /// `PosOverflow` above `MAX`.
+      /// the float scratch of the storage, `NegOverflow` for a negative float that does not round
+      /// to zero, and `PosOverflow` above `MAX`.
       const fn place_magnitude(
-        magnitude: Option<[u64; 8]>,
+        magnitude: Option<FloatScratch<$repr>>,
         negative: bool,
       ) -> Result<Self, FromFloatError> {
         let magnitude = match magnitude {
@@ -1053,7 +1070,7 @@ macro_rules! storage_decimal {
         if negative {
           return Err(FromFloatError::NegOverflow);
         }
-        // Compared in eight limbs, before the narrowing to the storage, which truncates.
+        // Compared in the scratch, before the narrowing to the storage, which truncates.
         if !int::unsigned::b64::le(&magnitude, &int::unsigned::b64::max_magnitude(Self::DIGITS)) {
           return Err(FromFloatError::PosOverflow);
         }
@@ -1204,14 +1221,17 @@ macro_rules! storage_decimal {
       /// The number of digits of the magnitude of the coefficient, and the number of zeros that
       /// end them. Zero is the one digit `0`, which no zero ends.
       const fn coefficient_digits(&self) -> (u32, u32) {
-        let mut buf = [0; int::DIGIT_BUF_LEN];
+        // The digit length of the storage, as a constant of its own: a nested item takes no
+        // parameter of the impl around it.
+        const LEN: usize = <<$repr as InlineCore>::DigitLen as typenum::Unsigned>::USIZE;
+        let mut buf = [0; LEN];
         let start = int::$repr::write_digits($($by)* self.repr, &mut buf);
-        let mut end = int::DIGIT_BUF_LEN;
+        let mut end = buf.len();
         while end - start > 1 && buf[end - 1] == b'0' {
           end -= 1;
         }
-        // At most 155 digits, so both counts fit.
-        ((int::DIGIT_BUF_LEN - start) as u32, (int::DIGIT_BUF_LEN - end) as u32)
+        // Both counts are at most the length of the buffer, so both fit.
+        ((buf.len() - start) as u32, (buf.len() - end) as u32)
       }
 
       /// Returns the exponent of the first significant digit, the exponent that `{:e}` writes:

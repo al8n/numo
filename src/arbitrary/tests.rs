@@ -9,7 +9,7 @@ use typenum::{U0, U1};
 
 use crate::{
   Decimal, RoundingMode,
-  layout::{Layout, LayoutDigits, Storage},
+  layout::{InlineStorage, Layout, LayoutDigits, Storage},
   sample::{
     MODES,
     tests::{SAMPLES, SplitMix, big, check_values, for_each_type},
@@ -68,7 +68,7 @@ fn check_bytes<I, F, R>(
   repr: fn(Decimal<I, F, R>) -> R,
   from_repr: fn(R) -> Option<Decimal<I, F, R>>,
 ) where
-  R: Storage,
+  R: InlineStorage,
   (I, F): Layout<R>,
 {
   let digits = <(I, F) as LayoutDigits<R>>::DIGITS;

@@ -87,33 +87,40 @@ FEATURES
     which implements `FixedDecimal`. Because the implementations are per storage, code generic over
     `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`. The trait methods are not
     `const`; constant contexts use the inherent `const fn`s.
+  - `Storage` is an integer type that stores a coefficient, and gives `Clone`, the comparisons and
+    the hash. `MutableStorage` is a storage that holds it in place, so that the decimal has `+=`
+    and `-=`, and `InlineStorage` one that holds it inline, so that the decimal is `Copy` too.
+    `Storage::Inline` is the inline storage of the same width and sign, and `FixedDecimal::Inline`
+    the decimal over it: `to_inline` copies a value into it and `from_inline` stores one, so that
+    generic code computes in a `Copy` type and stores once. `DecimalAssign` has the assignments,
+    and `ConstFixedDecimal` requires it.
 - `Scaled<D>`: a decimal with the scale of its text, the number of fraction digits that the text
   showed, for code that must write a text back as it came.
   - A `const fn` `parse` for each storage and `FromStr` read the grammar of `Decimal::parse` and
     keep the scale: the fraction digits written, not counting `_`, minus the exponent, and at least
-    0, which may exceed the fraction digits of the decimal. A scale above 255 is the new
+    0, which may exceed the fraction digits of the decimal. A scale above 65535 is the new
     `ParseErrorKind::ScaleTooLarge`, which only a text that `Decimal::parse` accepts can give, and
     which `Decimal::parse` never reports. `dec!` reads a literal of a `Scaled` and keeps its scale.
   - `Display` writes at least as many fraction digits as the scale, or the precision where it is
     larger, never rounded and without allocation; with scale 0 it writes what the decimal writes.
     `Debug` shows the scale, while equality, ordering and hashing compare the value only.
-  - `const fn` `new`, `value` and `scale`, and `into_value` and `into_parts`. `From` and `Default`
-    give scale 0.
+  - `const fn` `new`, `value` and `scale`, and `into_value` and `into_parts`; the scale is a `u16`.
+    `From` and `Default` give scale 0.
   - The operators `+`, `-`, `+=` and `-=` and `Sum`, as for `Decimal`: their result takes the
     larger scale of its operands, and a sum over an iterator the largest scale of its items.
   - Every decimal trait, implemented once for every decimal that implements it, so that generic
-    code takes a `Scaled` and a bare decimal alike: `FixedDecimal`, `ConstFixedDecimal`, the sign
-    traits, `DecimalOne`, `ConstDecimalOne` and `DecimalFloat`, and `ExactMul`, `WidenTo`,
-    `ConvertTo` and `DivRound` between `Scaled` types, with no mixed implementations. Sums,
-    differences and remainders take the larger scale, also where they saturate to a limit, exact
-    products the sum of the scales, saturating at 255, quantized values the scale of the step,
-    widened and exactly converted values their own, values of `round_to` and quotients the fraction
-    digits of their target type, and zero, the limits, one and a value made from a coefficient
-    scale 0. `trunc`, `floor` and `ceil` give scale 0, `fract` keeps the scale, `round_significant`
-    gives the scale that the significant digits of its result need, at most 255, and `is_integer`
-    and the digits of a value are those of the value, whatever the scale. A value read from the
-    binary value of a float takes the fraction digits of the type, and one read from its shortest
-    text the fraction digits of that text, at most those of the type. A concrete
+    code takes a `Scaled` and a bare decimal alike: `FixedDecimal`, `DecimalAssign`,
+    `ConstFixedDecimal`, the sign traits, `DecimalOne`, `ConstDecimalOne` and `DecimalFloat`, and
+    `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound` between `Scaled` types, with no mixed
+    implementations. Sums, differences and remainders take the larger scale, also where they
+    saturate to a limit, exact products the sum of the scales, saturating at 65535, quantized values
+    the scale of the step, widened and exactly converted values their own, values of `round_to` and
+    quotients the fraction digits of their target type, and zero, the limits, one and a value made
+    from a coefficient scale 0. `trunc`, `floor` and `ceil` give scale 0, `fract` keeps the scale,
+    `round_significant` gives the scale that the significant digits of its result need, at most
+    65535, and `is_integer` and the digits of a value are those of the value, whatever the scale. A
+    value read from the binary value of a float takes the fraction digits of the type, and one read
+    from its shortest text the fraction digits of that text, at most those of the type. A concrete
     `Scaled<Decimal<I, F, R>>` needs no bound; code generic over the decimal `D` adds the bound
     `Scaled<D>: FixedDecimal`.
 - `RoundingMode`, with the modes `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`,
@@ -141,12 +148,14 @@ FEATURES
     of the truncated result is 0 or 5. Its name is `up05` and its predicate `is_up05`.
 - The `serde` feature: `Decimal` is written as its text and read from a string, never from a number,
   in every format, `Scaled` likewise with the scale of its text, and `RoundingMode` as its lowercase
-  name, read leniently, without allocation. No error that numo builds names the input: every input
-  but a string gets the fixed message `expected a decimal value as a string`, which also replaces a
-  format error built from numo's description of the expected input; an error that a format builds
-  without numo's description of the expected input passes through as the format wrote it, and every
-  other format error keeps its category. The impls use `serde_core`, so they need `serde` 1.0.220 or
-  later in the build; the feature enables no feature of any other crate.
+  name, read leniently, without allocation in numo. A `Scaled` whose scale is above the fraction
+  digits of its decimal is written through `collect_str`, as an integer above 128 bits is, and any
+  other through a buffer on the stack, as a `Decimal` is. No error that numo builds names the input:
+  every input but a string gets the fixed message `expected a decimal value as a string`, which also
+  replaces a format error built from numo's description of the expected input; an error that a
+  format builds without numo's description of the expected input passes through as the format wrote
+  it, and every other format error keeps its category. The impls use `serde_core`, so they need
+  `serde` 1.0.220 or later in the build; the feature enables no feature of any other crate.
 - The `serde` feature implements `Serialize` and `Deserialize` for `Uint`, `Int`, `NonZeroUint` and
   `NonZeroInt`, at every width and in every storage, without allocation in numo. A value of up to
   128 bits is written as a number through the method of the smallest native integer of its sign
@@ -223,9 +232,10 @@ FEATURES
     `i0`, which hold only 0 and take no space, the smallest native integer that holds 1 to 127 bits,
     and `[u64; ceil(N / 64)]` for 129 to 1024 bits, such as `u144` for `Uint<U144, [u64; 3]>`; and
     `u2048`, `u4096`, `i2048` and `i4096`.
-  - `ArraySize` maps a `typenum` number of limbs, from 0 to 1024, to an array. `LimbArray` and
-    `Limbs<Bits, L = u64>` name the array of limbs `L` that holds `Bits` bits, such as
-    `Limbs<U200>` for `[u64; 4]` or `Limbs<U24, u8>` for `[u8; 3]`.
+  - `ArraySize` maps a `typenum` number of limbs, from 0 to 1024, to an array, its `ArrayType<T>`,
+    which implements `AsRef<[T]>` and `AsMut<[T]>`. `LimbArray` and `Limbs<Bits, L = u64>` name the
+    array of limbs `L` that holds `Bits` bits, such as `Limbs<U200>` for `[u64; 4]` or
+    `Limbs<U24, u8>` for `[u8; 3]`.
   - `const` items and methods: `BITS`, `ZERO`, `MIN` and `MAX`; for a native integer, `new`, which
     panics if the value does not fit in `Bits` bits, so that such a value fails to compile in a
     constant, `try_new`, which returns the new `TryNewError` instead, and `value`; for an array,
@@ -631,5 +641,6 @@ FEATURES
   wide value, while the operators keep the signatures of their standard traits. The casts, between
   any widths and signs, and the bitwise `const fn`s take their operands by value, as the native
   casts and the methods of the operator traits do; a shift amount or a bit index is a `u32`.
-- `Storage`, `DigitCount`, `FitsDigits`, `Layout`, `Widen`, `WidenRepr` and `Pick`: the type-level
-  capacity and sign checks, with compile-time diagnostics for invalid digit counts and storages.
+- `Storage`, `InlineStorage`, `MutableStorage`, `DigitCount`, `FitsDigits`, `Layout`, `Widen`,
+  `WidenRepr` and `Pick`: the type-level capacity and sign checks, with compile-time diagnostics for
+  invalid digit counts and storages.

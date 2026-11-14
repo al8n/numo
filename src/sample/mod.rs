@@ -16,15 +16,14 @@ use core::marker::PhantomData;
 #[cfg(any(feature = "proptest", feature = "quickcheck"))]
 use crate::Decimal;
 use crate::{
-  int::{DIGIT_BUF_LEN, DigitBuf},
-  layout::{Layout, LayoutDigits, Storage, StorageCore, Token},
+  layout::{DigitBuf, InlineCore, InlineStorage, Layout, LayoutDigits, Storage, Token},
   rounding::RoundingMode,
 };
 
 /// A source of random choices: the bytes of `arbitrary`, or the random number generator of
 /// `proptest` or `quickcheck`.
 pub(crate) trait Source {
-  /// Returns a value in `0..n`. Requires `1 <= n <= 256`.
+  /// Returns a value in `0..n`. Requires `1 <= n <= 512`.
   fn below(&mut self, n: u32) -> u32;
 }
 
@@ -47,8 +46,9 @@ pub(crate) fn mode(source: &mut impl Source) -> RoundingMode {
   MODES[source.below(MODES.len() as u32) as usize]
 }
 
-/// Returns a coefficient in the range of `Decimal<I, F, R>`, drawn as the module describes.
-pub(crate) fn coefficient<I, F, R>(source: &mut impl Source) -> R
+/// Returns a coefficient in the range of `Decimal<I, F, R>`, drawn as the module describes, in the
+/// inline storage of `R`, in which the generator computes.
+pub(crate) fn coefficient<I, F, R>(source: &mut impl Source) -> R::Inline
 where
   R: Storage,
   (I, F): Layout<R>,
@@ -62,7 +62,7 @@ where
 
 /// Returns a coefficient of at most `digits` digits, `fraction` of them fraction digits. Requires
 /// `fraction <= digits` and `R` to hold `10^digits`, as the storage of a layout does.
-fn generate<R: Storage>(source: &mut impl Source, digits: u32, fraction: u32) -> R {
+fn generate<R: InlineStorage>(source: &mut impl Source, digits: u32, fraction: u32) -> R {
   let magnitude: R = if source.below(8) == 0 {
     edge(source, digits, fraction)
   } else {
@@ -125,7 +125,7 @@ impl Edge {
 
 /// Returns an edge magnitude: a kind chosen uniformly among those that apply, then its exponent
 /// chosen uniformly.
-fn edge<R: Storage>(source: &mut impl Source, digits: u32, fraction: u32) -> R {
+fn edge<R: InlineStorage>(source: &mut impl Source, digits: u32, fraction: u32) -> R {
   let mut kinds = [Edge::Zero; Edge::ALL.len()];
   let mut count = 0;
   for kind in Edge::ALL {
@@ -149,9 +149,10 @@ fn edge<R: Storage>(source: &mut impl Source, digits: u32, fraction: u32) -> R {
 /// Returns a magnitude whose number of digits is uniform in `1..=digits` and which is uniform among
 /// the numbers with that many digits, with a uniform number of its trailing digits, fewer than
 /// all, set to zero with probability 1/4.
-fn digit_wise<R: Storage>(source: &mut impl Source, digits: u32) -> R {
+fn digit_wise<R: InlineStorage>(source: &mut impl Source, digits: u32) -> R {
   let len = 1 + source.below(digits) as usize;
-  let mut buf: DigitBuf = [b'0'; DIGIT_BUF_LEN];
+  // The bytes from `len` on are not digits: only the first `len` are written and read.
+  let mut buf = DigitBuf::<R>::default();
   // A first digit of zero would leave a longer number fewer digits.
   let first = if len >= 2 {
     1 + source.below(9)
@@ -171,14 +172,17 @@ fn digit_wise<R: Storage>(source: &mut impl Source, digits: u32) -> R {
 }
 
 /// `value` in the storage `R`.
-fn small<R: Storage>(value: u8) -> R {
+fn small<R: InlineStorage>(value: u8) -> R {
   value.convert(Token::new())
 }
 
-/// `10^count - 1`, which is `count` nines. Requires `count <= DIGIT_BUF_LEN` and `R` to hold it.
-fn nines<R: Storage>(count: u32) -> R {
-  const NINES: DigitBuf = [b'9'; DIGIT_BUF_LEN];
-  small::<R>(0).push_digits(&NINES, 0, count as usize, Token::new())
+/// `10^count - 1`, which is `count` nines. Requires `R` to hold it, so that its digit buffer holds
+/// the nines.
+fn nines<R: InlineStorage>(count: u32) -> R {
+  let count = count as usize;
+  let mut buf = DigitBuf::<R>::default();
+  buf[..count].fill(b'9');
+  small::<R>(0).push_digits(&buf, 0, count, Token::new())
 }
 
 /// Marks a type that produces `Decimal<I, F, R>` values without holding one. The marker of a
@@ -190,33 +194,38 @@ pub(crate) type DecimalMarker<I, F, R> = PhantomData<fn() -> Decimal<I, F, R>>;
 /// strictly simpler by `(nonzero, negative, digits)`: zero, then `m` if `v` is negative, then `v`
 /// truncated toward zero to its first digit, its first two digits, and so on up to `d - 1` digits.
 /// Zero has none. As an iterator, it yields the candidates as decimals.
+///
+/// It holds the coefficient in its twin `V`, the inline storage of `R`, and computes the candidates
+/// there, so that nothing is built in the storage `R` but a candidate that the iterator yields.
 #[cfg(any(feature = "proptest", feature = "quickcheck"))]
-pub(crate) struct Chain<I, F, R> {
-  value: R,
+pub(crate) struct Chain<I, F, R, V> {
+  value: V,
   digits: u32,
   next: u32,
   decimal: DecimalMarker<I, F, R>,
 }
 
 #[cfg(any(feature = "proptest", feature = "quickcheck"))]
-impl<I, F, R> Chain<I, F, R>
+impl<I, F, R, V> Chain<I, F, R, V>
 where
-  R: Storage,
+  R: Storage<Inline = V>,
+  V: InlineStorage,
 {
-  /// Returns the candidates for `value`, a coefficient in the range of `Decimal<I, F, R>`.
-  pub(crate) fn new(value: R) -> Self {
-    let mut buf = [0; DIGIT_BUF_LEN];
+  /// Returns the candidates for `value`, the twin of a coefficient in the range of
+  /// `Decimal<I, F, R>`.
+  pub(crate) fn new(value: V) -> Self {
+    let mut buf = DigitBuf::<V>::default();
     let start = value.write_digits(&mut buf, Token::new());
     Self {
       value,
-      digits: (DIGIT_BUF_LEN - start) as u32,
+      digits: (buf.len() - start) as u32,
       next: 0,
       decimal: PhantomData,
     }
   }
 
-  /// Returns the candidate at `index`, or `None` past the last one.
-  pub(crate) fn get(&self, index: u32) -> Option<R> {
+  /// Returns the candidate at `index`, in the inline storage, or `None` past the last one.
+  pub(crate) fn get(&self, index: u32) -> Option<V> {
     if self.value.is_zero(Token::new()) {
       return None;
     }
@@ -245,9 +254,9 @@ where
 }
 
 #[cfg(any(feature = "proptest", feature = "quickcheck"))]
-impl<I, F, R> Clone for Chain<I, F, R>
+impl<I, F, R, V> Clone for Chain<I, F, R, V>
 where
-  R: Copy,
+  V: Copy,
 {
   fn clone(&self) -> Self {
     *self
@@ -255,12 +264,13 @@ where
 }
 
 #[cfg(any(feature = "proptest", feature = "quickcheck"))]
-impl<I, F, R> Copy for Chain<I, F, R> where R: Copy {}
+impl<I, F, R, V> Copy for Chain<I, F, R, V> where V: Copy {}
 
 #[cfg(any(feature = "proptest", feature = "quickcheck"))]
-impl<I, F, R> Iterator for Chain<I, F, R>
+impl<I, F, R, V> Iterator for Chain<I, F, R, V>
 where
-  R: Storage,
+  R: Storage<Inline = V>,
+  V: InlineStorage,
 {
   type Item = Decimal<I, F, R>;
 
@@ -268,7 +278,7 @@ where
     let candidate = self.get(self.next)?;
     self.next += 1;
     // A candidate has at most the digits of the value, so it is in the range of the type.
-    Some(Decimal::from_coeff(candidate))
+    Some(Decimal::from_coeff(R::from_twin(candidate, Token::new())))
   }
 }
 

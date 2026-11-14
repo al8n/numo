@@ -9,7 +9,7 @@ use typenum::{U0, U18};
 
 use crate::{
   Decimal, RoundingMode,
-  layout::{Layout, LayoutDigits, Storage},
+  layout::{InlineStorage, Layout, LayoutDigits},
   sample::{
     MODES,
     tests::{SAMPLES, big, candidates, check_values, for_each_type},
@@ -24,7 +24,7 @@ fn seeded() -> Gen {
 /// `shrink` yields the candidates of the value, a finite number of them, and never the value.
 fn check_shrink<I, F, R>(value: Decimal<I, F, R>)
 where
-  R: Storage + 'static,
+  R: InlineStorage + 'static,
   I: 'static,
   F: 'static,
   (I, F): Layout<R>,
@@ -35,9 +35,9 @@ where
   assert!(!shrunk.contains(&value), "{value:?}");
   let shrunk: Vec<BigInt> = shrunk
     .into_iter()
-    .map(|candidate| big(candidate.coeff()))
+    .map(|candidate| big(candidate.repr))
     .collect();
-  assert_eq!(shrunk, candidates(&big(value.coeff())), "{value:?}");
+  assert_eq!(shrunk, candidates(&big(value.repr)), "{value:?}");
 }
 
 macro_rules! check_type {

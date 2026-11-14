@@ -19,3 +19,19 @@ error[E0277]: the trait bound `numo::layout::sealed::Token: Default` is not sati
    |
 11 |   let _product = lhs.mul(&rhs, Default::default());
    |                                ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `numo::layout::sealed::Token`
+
+error[E0061]: this method takes 1 argument but 0 arguments were supplied
+  --> tests/ui/sealed_storage_method.rs:17:21
+   |
+17 |   let _twin = value.twin();
+   |                     ^^^^-- argument #1 of type `numo::layout::sealed::Token` is missing
+   |
+note: method defined here
+  --> src/layout/mod.rs
+   |
+   |     fn twin(&self, token: Token) -> Self::Twin;
+   |        ^^^^
+help: provide the argument
+   |
+17 |   let _twin = value.twin(/* Token */);
+   |                          +++++++++++

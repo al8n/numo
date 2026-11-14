@@ -13,7 +13,9 @@
 //! is never written alone, as read back into a type with another number of fraction digits it
 //! would be off by a power of ten. A [`Scaled`] is written as its text with its scale and read with
 //! the scale of the text, in the same way, and a [`RoundingMode`] as its lowercase name, read from
-//! a name of any case.
+//! a name of any case. A decimal, and a `Scaled` whose scale is at most the fraction digits of its
+//! decimal, is written through a buffer on the stack of the length of its storage, and a `Scaled`
+//! with a larger scale through `collect_str`.
 //!
 //! An integer, a [`Uint`](crate::Uint) or an [`Int`](crate::Int), is written in a form that depends
 //! only on its width, its sign and its value, in every format and every storage: up to 128 bits as
@@ -25,9 +27,10 @@
 //! [`NonZeroInt`](crate::NonZeroInt) is written and read as its integer, and zero does not read.
 //! The table of the classes and the details are in [`serde`](crate::Uint#serde).
 //!
-//! A text is written through `collect_str`, which numo streams with no buffer and no allocation. A
-//! format that keeps serde's default `collect_str`, such as bincode, ciborium, rmp-serde or toml,
-//! collects the text in a `String` of its own.
+//! The text of an integer above 128 bits, and of a `Scaled` whose scale is above the fraction
+//! digits of its decimal, is written through `collect_str`, which numo streams with no buffer and
+//! no allocation. A format that keeps serde's default `collect_str`, such as bincode, ciborium,
+//! rmp-serde or toml, collects the text in a `String` of its own.
 //!
 //! # Errors
 //!
@@ -162,8 +165,9 @@ use serde_core::{
 };
 
 use crate::{
-  Decimal, FixedDecimal, ParseError, RoundingMode, Scaled, int,
-  layout::{Layout, Storage},
+  Decimal, FixedDecimal, ParseError, RoundingMode, Scaled,
+  layout::{InlineCore, Layout, Storage},
+  width::{Array, ArrayLength, ArraySize},
 };
 
 pub(crate) use sealed::{
@@ -238,26 +242,16 @@ mod sealed {
   }
 }
 
-/// Length of a buffer that holds the text of any decimal. The widest texts are those of
-/// `Decimal<U0, U154, u512>::MAX`, `0.` and 154 digits, and `Decimal<U0, U153, i512>::MIN`, `-0.`
-/// and 153 digits: 156 bytes each.
-const TEXT_LEN: usize = int::DIGIT_BUF_LEN + 2;
-
-/// Length of a buffer that holds the text of any [`Scaled`]: a sign, 154 integral digits, the
-/// point and 255 fraction digits, the largest scale, which is more than any decimal has. The widest
-/// texts take one byte less, because no signed storage holds 154 digits.
-const SCALED_TEXT_LEN: usize = 1 + 154 + 1 + u8::MAX as usize;
-
 /// A fixed buffer of `N` bytes that `Display` writes into, failing once it is full.
-struct Text<const N: usize> {
-  buf: [u8; N],
+struct Text<N: ArraySize> {
+  buf: Array<u8, N>,
   len: usize,
 }
 
-impl<const N: usize> fmt::Write for Text<N> {
+impl<N: ArraySize> fmt::Write for Text<N> {
   fn write_str(&mut self, s: &str) -> fmt::Result {
     let end = match self.len.checked_add(s.len()) {
-      Some(end) if end <= N => end,
+      Some(end) if end <= self.buf.len() => end,
       _ => return Err(fmt::Error),
     };
     self.buf[self.len..end].copy_from_slice(s.as_bytes());
@@ -268,13 +262,14 @@ impl<const N: usize> fmt::Write for Text<N> {
 
 /// Serializes the text that `value` writes with [`Display`](fmt::Display) as a string, through a
 /// buffer of `N` bytes.
-fn serialize_text<const N: usize, T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_text<N, T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
 where
+  N: ArrayLength,
   T: fmt::Display,
   S: Serializer,
 {
   let mut text = Text::<N> {
-    buf: [0; N],
+    buf: Array::default(),
     len: 0,
   };
   // `Display` fails only when the buffer is full, which no value fills; the error is reported
@@ -296,7 +291,7 @@ where
   where
     S: Serializer,
   {
-    serialize_text::<TEXT_LEN, _, _>(self, serializer)
+    serialize_text::<<R::Inline as InlineCore>::TextLen, _, _>(self, serializer)
   }
 }
 
@@ -306,12 +301,22 @@ where
   D: FixedDecimal,
 {
   /// Writes the value as a string, the text that [`Display`](fmt::Display) writes with the scale,
-  /// in every format.
+  /// in every format. A value whose scale is above the fraction digits of `D` is written through
+  /// `collect_str`.
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
     S: Serializer,
   {
-    serialize_text::<SCALED_TEXT_LEN, _, _>(self, serializer)
+    // A scale of at most the fraction digits of `D` gives a text with no more fraction digits than
+    // a text of `D`, which the text buffer of its storage holds. A larger scale asks for up to
+    // 65535 fraction digits, which `collect_str` streams with no buffer.
+    if u32::from(self.scale()) <= D::FRACTION {
+      serialize_text::<<<D::Repr as Storage>::Inline as InlineCore>::TextLen, _, _>(
+        self, serializer,
+      )
+    } else {
+      serializer.collect_str(self)
+    }
   }
 }
 

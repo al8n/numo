@@ -22,7 +22,7 @@ macro_rules! limb_layer_tests {
     use num_bigint::BigInt;
 
     use super::*;
-    use crate::{bigint, int::DIGIT_BUF_LEN};
+    use crate::bigint;
 
     /// The number of bits of a limb.
     const B: u32 = Limb::BITS;
@@ -285,13 +285,7 @@ macro_rules! limb_layer_tests {
     fn digits_of_the_limits<const N: usize>() {
       for value in [[0; N], [Limb::MAX; N], boundary::<N>(N - 1)] {
         let expected = bigint::from_limbs(&value, false).to_string();
-        // `write_digits` requires at most 512 bits, whose digits fit `DIGIT_BUF_LEN` bytes, and
         // `DIGITS_PER_LIMB * N` bytes hold the digits of any `N` limbs.
-        if B as usize * N <= 512 {
-          let mut buf = [0xff; DIGIT_BUF_LEN];
-          let start = write_digits(&value, &mut buf);
-          assert_eq!(&buf[start..], expected.as_bytes());
-        }
         let mut buf = vec![0xff; DIGITS_PER_LIMB * N];
         let start = write_digits_into(&value, &mut buf);
         assert_eq!(&buf[start..], expected.as_bytes());
@@ -315,12 +309,12 @@ macro_rules! limb_layer_tests {
       digits_of_the_limits::<6>();
       digits_of_the_limits::<7>();
       digits_of_the_limits::<8>();
-      let mut buf = [0; DIGIT_BUF_LEN];
-      assert_eq!(
-        write_digits(&[Limb::MAX; 512 / B as usize], &mut buf),
-        0,
-        "u512::MAX fills the buffer"
-      );
+      // The 155 digits of the largest value of 512 bits fill 155 bytes.
+      let largest = [Limb::MAX; 512 / B as usize];
+      let mut buf = [0; 155];
+      assert_eq!(write_digits_into(&largest, &mut buf), 0);
+      let expected = bigint::from_limbs(&largest, false).to_string();
+      assert_eq!(&buf[..], expected.as_bytes());
     }
 
     #[test]
@@ -1378,7 +1372,7 @@ macro_rules! limb_layer_tests {
     use num_bigint::BigInt;
 
     use super::*;
-    use crate::{bigint, int::DIGIT_BUF_LEN};
+    use crate::bigint;
 
     /// The number of bits of a limb.
     const B: u32 = Limb::BITS;
@@ -1484,13 +1478,10 @@ macro_rules! limb_layer_tests {
     fn digits_of_min_and_max<const N: usize>() {
       for value in [min::<N>(), max::<N>(), [Limb::MAX; N], [0; N]] {
         let expected = bigint::from_limbs(&value, true).magnitude().to_string();
-        // `write_digits` requires at most 512 bits, whose digits fit `DIGIT_BUF_LEN` bytes, and
-        // `DIGITS_PER_LIMB * N` bytes hold the digits of any `N` limbs.
-        if B as usize * N <= 512 {
-          let mut buf = [0xff; DIGIT_BUF_LEN];
-          let start = write_digits(&value, &mut buf);
-          assert_eq!(&buf[start..], expected.as_bytes());
-        }
+        // `DIGITS_PER_LIMB * N` bytes of the lower layer hold the digits of any `N` limbs.
+        let mut buf = vec![0xff; crate::int::unsigned::$unsigned::DIGITS_PER_LIMB * N];
+        let start = write_digits_into(&value, &mut buf);
+        assert_eq!(&buf[start..], expected.as_bytes());
         let mut buf = vec![0xff; crate::int::unsigned::$unsigned::DIGITS_PER_LIMB * N];
         let start =
           crate::int::unsigned::$unsigned::write_digits_into(&unsigned_abs(&value), &mut buf);
@@ -1506,12 +1497,12 @@ macro_rules! limb_layer_tests {
       digits_of_min_and_max::<6>();
       digits_of_min_and_max::<7>();
       digits_of_min_and_max::<8>();
-      let mut buf = [0; DIGIT_BUF_LEN];
-      assert_eq!(
-        write_digits(&min::<{ 512 / B as usize }>(), &mut buf),
-        1,
-        "|i512::MIN| has one digit fewer than the buffer"
-      );
+      // The 154 digits of `|MIN|` of 512 bits leave the first of 155 bytes.
+      let smallest = min::<{ 512 / B as usize }>();
+      let mut buf = [0; 155];
+      assert_eq!(write_digits_into(&smallest, &mut buf), 1);
+      let expected = bigint::from_limbs(&smallest, true).magnitude().to_string();
+      assert_eq!(&buf[1..], expected.as_bytes());
     }
 
     /// Every conversion between two and three limbs of either sign, against `num-bigint`.
@@ -3420,8 +3411,9 @@ macro_rules! native_oracle {
           }
         }
 
-        let mut buf = [0xff; DIGIT_BUF_LEN];
-        let start = write_digits(&limbs_a, &mut buf);
+        // The buffer of the digits of the native type.
+        let mut buf = vec![0xff; $native::MAX.to_string().len()];
+        let start = write_digits_into(&limbs_a, &mut buf);
         assert_eq!(&buf[start..], a.to_string().as_bytes());
       }
       for exp in 0..=max_exp {
@@ -3512,8 +3504,9 @@ macro_rules! native_oracle {
           );
         }
 
-        let mut buf = [0xff; DIGIT_BUF_LEN];
-        let start = write_digits(&limbs_a, &mut buf);
+        // The buffer of the digits of the native type: `MAX` has as many as `|MIN|`.
+        let mut buf = vec![0xff; $native::MAX.to_string().len()];
+        let start = write_digits_into(&limbs_a, &mut buf);
         assert_eq!(&buf[start..], a.unsigned_abs().to_string().as_bytes());
         if a >= 0 {
           let digits = a.to_string();

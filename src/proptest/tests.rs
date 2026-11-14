@@ -20,7 +20,7 @@ use typenum::{U0, U8, U10, U18};
 use super::{DecimalStrategy, DecimalValueTree};
 use crate::{
   Decimal, RoundingMode,
-  layout::{Layout, LayoutDigits, Storage},
+  layout::{InlineStorage, Layout, LayoutDigits},
   sample::{
     Chain, MODES,
     tests::{SAMPLES, big, candidates, check_values, for_each_type},
@@ -74,7 +74,7 @@ fn shrink_tree<I, F, R>(
   fails: fn(&BigInt) -> bool,
 ) -> (R, usize)
 where
-  R: Storage,
+  R: InlineStorage,
   (I, F): Layout<R>,
 {
   let mut tests = 0;
@@ -97,13 +97,13 @@ where
 /// the first that fails, starting over from its candidates.
 fn shrink_greedy<I, F, R>(start: R, fails: fn(&BigInt) -> bool) -> R
 where
-  R: Storage,
+  R: InlineStorage,
   (I, F): Layout<R>,
 {
   let mut value = start;
   let mut index = 0;
   let mut tests = 0;
-  while let Some(candidate) = Chain::<I, F, R>::new(value).get(index) {
+  while let Some(candidate) = Chain::<I, F, R, R>::new(value).get(index) {
     tests += 1;
     assert!(tests <= max_tests::<I, F, R>(), "{tests} tests");
     if fails(&big(candidate)) {
@@ -121,7 +121,7 @@ where
 /// `quickcheck`.
 fn check_shrinking<I, F, R>(tree: DecimalValueTree<I, F, R>, fails: fn(&BigInt) -> bool)
 where
-  R: Storage,
+  R: InlineStorage,
   (I, F): Layout<R>,
 {
   let start = tree.current;

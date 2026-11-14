@@ -21,7 +21,7 @@ use super::Chain;
 use super::{MODES, Source, coefficient, generate};
 use crate::{
   Decimal, RoundingMode, bigint, i256, i512,
-  layout::{Layout, LayoutDigits, Storage, Token},
+  layout::{InlineStorage, Layout, LayoutDigits, Storage, Token},
   u256, u512,
 };
 
@@ -97,7 +97,7 @@ impl Source for Script<'_> {
 
 /// The coefficient that `answers` give for `digits` digits, `fraction` of them fraction digits.
 /// Every answer must be drawn.
-fn scripted<R: Storage>(digits: u32, fraction: u32, answers: &[u32]) -> BigInt {
+fn scripted<R: InlineStorage>(digits: u32, fraction: u32, answers: &[u32]) -> BigInt {
   let mut script = Script { answers, next: 0 };
   let coeff: R = generate(&mut script, digits, fraction);
   assert_eq!(script.next, answers.len(), "every answer is drawn");
@@ -113,7 +113,7 @@ struct Odometer<'p> {
 
 impl Source for Odometer<'_> {
   fn below(&mut self, n: u32) -> u32 {
-    assert!((1..=256).contains(&n), "a choice among {n} values");
+    assert!((1..=512).contains(&n), "a choice among {n} values");
     let answer = match self.path.get_mut(self.next) {
       Some((answer, bound)) => {
         // The same answers lead to the same choices; a prefix records its bounds on the first
@@ -136,7 +136,7 @@ impl Source for Odometer<'_> {
 /// Calls `visit` with every path of choices, as `(answer, bound)` pairs, that starts with the
 /// answers `prefix`, and with the coefficient that the path gives for `digits` digits, `fraction`
 /// of them fraction digits.
-fn leaves<R: Storage>(
+fn leaves<R: InlineStorage>(
   digits: u32,
   fraction: u32,
   prefix: &[u32],
@@ -169,7 +169,7 @@ fn leaves<R: Storage>(
 }
 
 /// `coeff` as a big integer, read through the widest storage of its sign.
-pub(crate) fn big<R: Storage>(coeff: R) -> BigInt {
+pub(crate) fn big<R: InlineStorage>(coeff: R) -> BigInt {
   if R::SIGNED {
     bigint::from_limbs(&coeff.convert::<i512>(Token::new()).to_limbs(), true)
   } else {
@@ -188,7 +188,7 @@ where
   R: Storage,
   (I, F): Layout<R>,
 {
-  Decimal::from_coeff(coefficient::<I, F, R>(source))
+  Decimal::from_coeff(R::from_twin(coefficient::<I, F, R>(source), Token::new()))
 }
 
 /// The magnitudes of each edge kind that applies to `digits` digits, `fraction` of them fraction
@@ -220,7 +220,7 @@ pub(crate) fn check_values<I, F, R>(
   repr: fn(Decimal<I, F, R>) -> R,
   from_repr: fn(R) -> Option<Decimal<I, F, R>>,
 ) where
-  R: Storage,
+  R: InlineStorage,
   (I, F): Layout<R>,
 {
   let digits = <(I, F) as LayoutDigits<R>>::DIGITS;
@@ -298,7 +298,7 @@ fn longest_path(digits: u32, signed: bool) -> usize {
 /// that apply are equally likely, and so are the magnitudes of a kind; every edge value, with
 /// either sign for a signed storage, is reached. Returns the most choices among two or more
 /// values on a path.
-fn check_edges<R: Storage>(digits: u32, fraction: u32) -> usize {
+fn check_edges<R: InlineStorage>(digits: u32, fraction: u32) -> usize {
   let kinds = edge_kinds(digits, fraction);
   // A multiple of the product of the bounds on every path after the branch: the kind, an
   // exponent below `digits` or `digits - 1`, and a sign.
@@ -354,7 +354,7 @@ fn gcd(a: u128, b: u128) -> u128 {
 /// probability 1/4 its last `t` digits are zeroed for `t` uniform in `0..d`, and a nonzero value
 /// takes either sign for a signed storage. Every value in range is reached. Returns the most
 /// choices among two or more values on a path.
-fn check_digit_wise<R: Storage>(digits: u32, fraction: u32) -> usize {
+fn check_digit_wise<R: InlineStorage>(digits: u32, fraction: u32) -> usize {
   // A multiple of the product of the bounds on every path after the branch: the number of digits,
   // the first digit among 9 or 10, the other digits, whether to zero trailing digits, how many,
   // and the sign.
@@ -500,10 +500,10 @@ fn drawn_values_cover_digits_signs_and_edges() {
 #[cfg(any(feature = "proptest", feature = "quickcheck"))]
 fn check_chain<I, F, R>(coeff: R, repr: fn(Decimal<I, F, R>) -> R)
 where
-  R: Storage,
+  R: InlineStorage,
 {
   let value = big(coeff);
-  let chain = Chain::<I, F, R>::new(coeff);
+  let chain = Chain::<I, F, R, R>::new(coeff);
   let indexed: Vec<BigInt> = (0..).map_while(|index| chain.get(index)).map(big).collect();
   assert_eq!(indexed, candidates(&value), "the candidates for {value}");
   let iterated: Vec<BigInt> = chain.map(|candidate| big(repr(candidate))).collect();
@@ -548,7 +548,7 @@ fn chain_examples() {
   use typenum::{U0, U18};
 
   let chain = |coeff: i64| -> Vec<i64> {
-    let chain = Chain::<U18, U0, i64>::new(coeff);
+    let chain = Chain::<U18, U0, i64, i64>::new(coeff);
     (0..).map_while(|index| chain.get(index)).collect()
   };
   assert_eq!(chain(-123), [0, 123, -1, -12]);

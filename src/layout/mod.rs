@@ -1,33 +1,43 @@
 //! Type-level digit counts and the storage types that hold them.
 
-use core::{hash::Hash, ops::Add};
+use core::{
+  hash::Hash,
+  ops::{Add, BitOr, Not},
+};
 
-use typenum::{B0, B1, IsLessOrEqual, LeEq, Sum, Unsigned};
+use typenum::{B0, B1, IsLessOrEqual, LeEq, Or, Sum, Unsigned};
 
 use sealed::{
-  ConvertFrom, DigitsOf, FractionNotReduced, HasDivIntermediate, IntegralNotReduced, ReprWidensTo,
-  SignPick, WidensTo,
+  ConvertFrom, DigitsOf, FractionNotReduced, HasDivIntermediate, InPlace, IntegralNotReduced,
+  ReprWidensTo, SignKept, SignPick, WidensTo,
 };
-pub(crate) use sealed::{LayoutDigits, StorageCore, Token};
+pub(crate) use sealed::{InlineCore, LayoutDigits, StorageCore, Token};
 
 use crate::{
-  i192, i256, i320, i384, i448, i512,
-  int::{self, DigitBuf},
+  Int, Uint, i192, i256, i320, i384, i448, i512, int,
   rounding::RoundingMode,
   u192, u256, u320, u384, u448, u512,
-  width::TypenumNumber,
+  width::{Array, ArraySize, FillsRepr, TypenumNumber},
 };
+
+/// The digit buffer of the storage `R`, of the length of the digits of its widest magnitude: the
+/// buffer that its row `write_digits` takes.
+pub(crate) type DigitBuf<R> = Array<u8, <R as InlineCore>::DigitLen>;
+
+/// The float scratch of the storage `R`: the limbs in which its conversions with the floats
+/// compute.
+pub(crate) type FloatScratch<R> = <<R as InlineCore>::FloatLen as ArraySize>::ArrayType<u64>;
 
 mod sealed {
   use crate::{
-    i192, i256, i320, i384, i448, i512, int::DigitBuf, rounding::RoundingMode, u192, u256, u320,
-    u384, u448, u512,
+    rounding::RoundingMode,
+    width::{Array, ArrayLength, ArraySize},
   };
 
-  /// Taken by every method of [`StorageCore`] and [`ConvertFrom`]. A bound `R: Storage` makes the
-  /// methods of its supertrait callable from any crate, although the trait cannot be named, and
-  /// several have preconditions. Only this crate can make a `Token`, which implements no trait that
-  /// could make one, such as `Default`.
+  /// Taken by every method of [`StorageCore`], [`InlineCore`] and [`ConvertFrom`]. A bound
+  /// `R: Storage` or `R: InlineStorage` makes the methods of their sealed supertraits callable from
+  /// any crate, although the traits cannot be named, and several have preconditions. Only this
+  /// crate can make a `Token`, which implements no trait that could make one, such as `Default`.
   pub struct Token(());
 
   impl Token {
@@ -36,42 +46,75 @@ mod sealed {
     }
   }
 
-  /// Seals [`Storage`](super::Storage) and gives storage-generic code access to the integer core.
-  ///
-  /// Every storage converts to every storage: `convert` and `checked_convert`, implemented for
-  /// each source storage, call the `ConvertFrom` implementation of the target, which this trait
-  /// requires for every source. Storage-generic code is not `const`, because trait methods cannot
-  /// be.
-  pub trait StorageCore:
-    Copy
-    + ConvertFrom<i8>
-    + ConvertFrom<i16>
-    + ConvertFrom<i32>
-    + ConvertFrom<i64>
-    + ConvertFrom<i128>
-    + ConvertFrom<i192>
-    + ConvertFrom<i256>
-    + ConvertFrom<i320>
-    + ConvertFrom<i384>
-    + ConvertFrom<i448>
-    + ConvertFrom<i512>
-    + ConvertFrom<u8>
-    + ConvertFrom<u16>
-    + ConvertFrom<u32>
-    + ConvertFrom<u64>
-    + ConvertFrom<u128>
-    + ConvertFrom<u192>
-    + ConvertFrom<u256>
-    + ConvertFrom<u320>
-    + ConvertFrom<u384>
-    + ConvertFrom<u448>
-    + ConvertFrom<u512>
-  {
+  /// Seals [`Storage`](super::Storage) and gives every storage its twin: the inline storage of the
+  /// same width and sign, which computes the coefficients of the storage and holds one.
+  pub trait StorageCore: Sized {
     /// `B1` for an unsigned storage, `B0` for a signed one.
     type IsUnsigned: typenum::Bit;
 
     /// `true` for a signed storage.
     const SIGNED: bool = !<Self::IsUnsigned as typenum::Bit>::BOOL;
+
+    /// The inline storage that computes the coefficients of this storage and holds one: the storage
+    /// itself for an inline storage.
+    type Twin: InlineCore<IsUnsigned = Self::IsUnsigned>;
+
+    /// The coefficient, copied into the inline storage.
+    ///
+    /// A copy, where the integers lend their inline storage: a storage that holds its limbs behind
+    /// a pointer could lend the limbs, but an integer over them only through a cast between
+    /// references. A coefficient is at most 64 bytes, and for an inline storage, its own twin, the
+    /// copy is the one that passing the coefficient by value made before.
+    fn twin(&self, token: Token) -> Self::Twin;
+
+    /// A storage of the coefficient `value`: `value` itself for an inline storage.
+    fn from_twin(value: Self::Twin, token: Token) -> Self;
+
+    /// Stores the coefficient `value`, in place for a storage that holds its coefficient in
+    /// place.
+    fn set_twin(&mut self, value: Self::Twin, token: Token);
+  }
+
+  /// The integer core of the decimals, which the inline storages implement: the lengths of their
+  /// buffers, the rows that compute with coefficients, and the conversions between storages.
+  ///
+  /// The rows are on the inline layer alone. Each takes and returns inline storages, so that
+  /// storage-generic code computes in the twins and builds the storage of a decimal once, for the
+  /// value that it returns, after every check.
+  ///
+  /// Every storage converts to every storage. A native source calls the `ConvertFrom`
+  /// implementation of the target, which this trait requires for every native source, and a wide
+  /// source lends its limbs to the rows `read_limbs` and `checked_read_limbs` of the target, so
+  /// that no conversion is written for a pair of wide storages. Storage-generic code is not
+  /// `const`, because trait methods cannot be.
+  pub trait InlineCore:
+    StorageCore<Twin = Self>
+    + Copy
+    + ConvertFrom<i8>
+    + ConvertFrom<i16>
+    + ConvertFrom<i32>
+    + ConvertFrom<i64>
+    + ConvertFrom<i128>
+    + ConvertFrom<u8>
+    + ConvertFrom<u16>
+    + ConvertFrom<u32>
+    + ConvertFrom<u64>
+    + ConvertFrom<u128>
+  {
+    /// The decimal digits of the widest magnitude of the storage, `|MIN|` for a signed storage and
+    /// `MAX` for an unsigned one: the bytes of its digit buffer.
+    type DigitLen: ArrayLength;
+
+    /// The bytes of the longest text of a decimal over the storage: its digits, a sign or a zero
+    /// before the point, and the point.
+    type TextLen: ArrayLength;
+
+    /// The limbs in which the conversions of the storage with the floats compute: the fewest that
+    /// hold the limbs of a coefficient, two for a native storage, and `bits(5^d) + 55` bits for the
+    /// `d` digits that the storage holds, the bits of the largest power of five that a magnitude is
+    /// divided by, the 53 bits of an `f64` and two more. Only the code of one storage builds the
+    /// array, by resizing the limbs of a coefficient.
+    type FloatLen: ArraySize;
 
     /// Returns `true` if the value is negative, which an unsigned value never is.
     fn is_negative(&self, token: Token) -> bool;
@@ -104,8 +147,8 @@ mod sealed {
     fn round_div(&self, divisor: &Self, mode: RoundingMode, token: Token) -> Self;
 
     /// Writes the decimal digits of the magnitude to the end of `buf` and returns the index of
-    /// the first digit.
-    fn write_digits(&self, buf: &mut DigitBuf, token: Token) -> usize;
+    /// the first digit. The buffer of the storage holds the digits of every value.
+    fn write_digits(&self, buf: &mut Array<u8, Self::DigitLen>, token: Token) -> usize;
 
     /// Appends the ASCII digits in `bytes[start..end]` to `self`, computing `self * 10 + d` for
     /// each digit `d` and skipping every other byte. Requires `self` not to be negative and a
@@ -118,14 +161,27 @@ mod sealed {
 
     /// Converts the value to `Target`. Requires it to be representable there, so not negative for
     /// an unsigned `Target`.
-    fn convert<Target: StorageCore>(&self, token: Token) -> Target;
+    fn convert<Target: InlineCore>(&self, token: Token) -> Target;
 
     /// Converts the value to `Target`, or returns `None` if it is not representable there.
-    fn checked_convert<Target: StorageCore>(&self, token: Token) -> Option<Target>;
+    fn checked_convert<Target: InlineCore>(&self, token: Token) -> Option<Target>;
+
+    /// The integer in `limbs`, least significant first, in two's complement if `signed`, as a
+    /// value of this storage. Requires it to be representable here.
+    fn read_limbs<const N: usize>(limbs: &[u64; N], signed: bool, token: Token) -> Self;
+
+    /// The integer in `limbs`, least significant first, in two's complement if `signed`, as a
+    /// value of this storage, or `None` if it is not representable here.
+    fn checked_read_limbs<const N: usize>(
+      limbs: &[u64; N],
+      signed: bool,
+      token: Token,
+    ) -> Option<Self>;
   }
 
-  /// Converts values of the storage `Source` to this storage. Implemented for every ordered pair
-  /// of storages.
+  /// Converts values of the native storage `Source` to this storage. Implemented between every
+  /// two native storages, and from every native storage to every array storage of either sign
+  /// whose width fills its array.
   pub trait ConvertFrom<Source>: Sized {
     /// Converts `value`. Requires it to be representable in this storage, so not negative for an
     /// unsigned one.
@@ -134,6 +190,10 @@ mod sealed {
     /// Converts `value`, or returns `None` if it is not representable in this storage.
     fn checked_convert_from(value: &Source, token: Token) -> Option<Self>;
   }
+
+  /// Seals [`MutableStorage`](super::MutableStorage): the storages that hold the coefficient in
+  /// place, which every inline storage does.
+  pub trait InPlace {}
 
   /// Seals [`FitsDigits`](super::FitsDigits).
   pub trait DigitsOf<Repr> {}
@@ -179,6 +239,18 @@ mod sealed {
   pub trait FractionNotReduced {}
 
   impl FractionNotReduced for typenum::B1 {}
+
+  /// Implemented only for `B1`, the result of "the source storage is unsigned, or the target
+  /// storage is signed" when widening keeps the sign of every value.
+  #[diagnostic::on_unimplemented(
+    message = "`widen` cannot convert from a signed storage to an unsigned storage",
+    label = "the source storage is signed and the target storage is unsigned",
+    note = "use `try_convert` for a conversion that can fail",
+    note = "the compiler writes `u192`, `u256`, `u320`, `u384`, `u448` and `u512` as `Uint` with the limbs `[u64; 3]`, `[u64; 4]`, `[u64; 5]`, `[u64; 6]`, `[u64; 7]` and `[u64; 8]`, and `i192`, `i256`, `i320`, `i384`, `i448` and `i512` as `Int` with the same limbs"
+  )]
+  pub trait SignKept {}
+
+  impl SignKept for typenum::B1 {}
 }
 
 /// An integer type that can store the coefficient of a [`Decimal`](crate::Decimal).
@@ -188,9 +260,41 @@ mod sealed {
 /// [`i192`](crate::i192), [`i256`](crate::i256), [`i320`](crate::i320), [`i384`](crate::i384),
 /// [`i448`](crate::i448), [`i512`](crate::i512), [`u192`](crate::u192), [`u256`](crate::u256),
 /// [`u320`](crate::u320), [`u384`](crate::u384), [`u448`](crate::u448) and [`u512`](crate::u512).
-/// A decimal with an unsigned storage is never negative. This trait is sealed and cannot be
-/// implemented outside this crate.
-pub trait Storage: StorageCore + Copy + Ord + Hash {}
+/// A decimal with an unsigned storage is never negative.
+///
+/// `R: Storage` gives generic code `Clone`, the comparisons and the hash of `Decimal<I, F, R>`.
+/// Each of these storages holds the coefficient inline and in place, and is its own
+/// [`Inline`](Self::Inline) storage: it implements [`InlineStorage`], which gives `Copy` too, and
+/// [`MutableStorage`]. This trait is sealed and cannot be implemented outside this crate.
+#[diagnostic::on_unimplemented(
+  message = "`{Self}` is not a storage of `Decimal`",
+  note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `u192`, `u256`, `u320`, `u384`, `u448` or `u512`"
+)]
+pub trait Storage: StorageCore<Twin = <Self as Storage>::Inline> + Clone + Ord + Hash {
+  /// The inline storage of the same width and sign, in which the coefficients of this storage are
+  /// computed: the storage itself for an inline storage.
+  type Inline: InlineStorage;
+}
+
+/// A [`Storage`] that holds the coefficient inline, so that the decimal is `Copy`.
+///
+/// Implemented for every storage of `Storage`: the native integers and the wide integers. It
+/// implies [`MutableStorage`], so that generic code that bounds `R: InlineStorage` needs no second
+/// bound on the storage for the assignments `+=` and `-=`; it still needs the bound
+/// `Decimal<I, F, R>: FixedDecimal`, as for the other items of the decimal. This trait is sealed
+/// and cannot be implemented outside this crate.
+#[diagnostic::on_unimplemented(
+  message = "`{Self}` is not an inline storage of `Decimal`",
+  note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `u192`, `u256`, `u320`, `u384`, `u448` or `u512`"
+)]
+pub trait InlineStorage: MutableStorage + Storage<Inline = Self> + InlineCore + Copy {}
+
+/// A [`Storage`] that holds the coefficient in place, so that the decimal has `+=` and `-=`.
+///
+/// Implemented for every storage of `Storage`, each of which holds its coefficient inline. With
+/// it, the decimal implements [`DecimalAssign`](crate::DecimalAssign), the assignments of generic
+/// code. This trait is sealed and cannot be implemented outside this crate.
+pub trait MutableStorage: Storage + InPlace {}
 
 /// Maps a type-level number of decimal digits to the smallest signed and the smallest unsigned
 /// integer types that hold every value with that many digits.
@@ -224,10 +328,10 @@ pub trait Storage: StorageCore + Copy + Ord + Hash {}
 )]
 pub trait DigitCount: TypenumNumber {
   /// The smallest signed integer type that holds every value with `Self` decimal digits.
-  type Signed: Storage;
+  type Signed: InlineStorage;
 
   /// The smallest unsigned integer type that holds every value with `Self` decimal digits.
-  type Unsigned: Storage;
+  type Unsigned: InlineStorage;
 }
 
 /// Marks that `Repr` holds every value with `Self` decimal digits.
@@ -253,8 +357,9 @@ pub trait FitsDigits<Repr>: DigitsOf<Repr> {}
 ///
 /// [`Decimal`](crate::Decimal) requires `(Integral, Fraction): Layout<Repr>` on its constants,
 /// constructors, `const fn` methods, formatting and conversions, not on the type itself. Generic
-/// code needs no bounds to store and pass `Decimal<I, F, R>` values and only `R: Storage` to copy,
-/// compare and hash them; it adds `(I, F): Layout<R>` where it uses the other items:
+/// code needs no bounds to store and pass `Decimal<I, F, R>` values, only `R: Storage` to clone,
+/// compare and hash them and `R: InlineStorage` to copy them, and adds `(I, F): Layout<R>` where it
+/// uses the other items:
 ///
 /// ```
 /// use numo::{
@@ -318,7 +423,7 @@ where
 /// cannot be implemented outside this crate.
 pub trait Pick<Digits>: SignPick<Digits> {
   /// The smallest storage of the picked sign that holds every value with `Digits` decimal digits.
-  type Storage: Storage;
+  type Storage: InlineStorage;
 }
 
 impl<D: DigitCount> SignPick<D> for B0 {}
@@ -350,7 +455,7 @@ impl<D: DigitCount> Pick<D> for B1 {
 )]
 pub trait DivIntermediate<IsUnsigned>: HasDivIntermediate<IsUnsigned> {
   /// The smallest storage of the picked sign that holds every value with `Self` decimal digits.
-  type Storage: Storage;
+  type Storage: InlineStorage;
 }
 
 /// Requires that a decimal with the digit counts `Self = (Integral, Fraction)` converts to one with
@@ -387,23 +492,24 @@ where
 /// [`Decimal::try_convert`](crate::Decimal::try_convert). This trait covers only the sign;
 /// [`Layout`] checks that `Target` holds the digits. This trait is sealed and cannot be implemented
 /// outside this crate.
-// As for `FitsDigits`, the diagnostic does not print the storages.
-#[diagnostic::on_unimplemented(
-  message = "`widen` cannot convert from a signed storage to an unsigned storage",
-  note = "use `try_convert` for a conversion that can fail",
-  note = "the compiler writes `u192`, `u256`, `u320`, `u384`, `u448` and `u512` as `Uint` with the limbs `[u64; 3]`, `[u64; 4]`, `[u64; 5]`, `[u64; 6]`, `[u64; 7]` and `[u64; 8]`, and `i192`, `i256`, `i320`, `i384`, `i448` and `i512` as `Int` with the same limbs"
-)]
 pub trait WidenRepr<Target>: ReprWidensTo<Target> {}
 
-/// Implements [`StorageCore`] and [`Storage`] for the native storages, written `native`, whose
-/// methods copy the value to the storage's module in `int`, and for the wide storages, written
-/// `wide`, whose methods lend their limbs to the limb layer, `int::signed::b64` or
-/// `int::unsigned::b64`.
+/// Implements the storage traits for the native storages, written `native`, whose rows copy the
+/// value to the storage's module in `int`, and for the wide storages, written `wide`, whose rows
+/// lend their limbs to the limb layer, `int::signed::b64` or `int::unsigned::b64`. Each storage is
+/// written with the `typenum` constants of the length of its digits and of its float scratch, as
+/// `i64 [U19, U2]`. Each is an inline storage, its own twin, and implements [`StorageCore`] by
+/// copies, the rows of [`InlineCore`], [`Storage`], [`InlineStorage`] and [`MutableStorage`].
 macro_rules! impl_storage {
-  (native signed: $($int:ident),+; unsigned: $($uint:ident),+ $(,)?) => {
+  (
+    native signed: $($int:ident [$int_digits:ident, $int_float:ident]),+;
+    unsigned: $($uint:ident [$uint_digits:ident, $uint_float:ident]),+ $(,)?
+  ) => {
     $(
-      impl StorageCore for $int {
-        type IsUnsigned = B0;
+      impl_storage!(@inline $int B0);
+
+      impl InlineCore for $int {
+        impl_storage!(@lengths $int_digits, $int_float);
 
         #[inline]
         fn is_negative(&self, _: Token) -> bool {
@@ -433,14 +539,14 @@ macro_rules! impl_storage {
           Some(int::$int::neg(*self))
         }
 
-        impl_storage!(@native $int);
+        impl_storage!(@native signed $int);
       }
-
-      impl Storage for $int {}
     )+
     $(
-      impl StorageCore for $uint {
-        type IsUnsigned = B1;
+      impl_storage!(@inline $uint B1);
+
+      impl InlineCore for $uint {
+        impl_storage!(@lengths $uint_digits, $uint_float);
 
         #[inline]
         fn is_negative(&self, _: Token) -> bool {
@@ -466,16 +572,19 @@ macro_rules! impl_storage {
           }
         }
 
-        impl_storage!(@native $uint);
+        impl_storage!(@native unsigned $uint);
       }
-
-      impl Storage for $uint {}
     )+
   };
-  (wide signed: $($int:ident),+; unsigned: $($uint:ident),+ $(,)?) => {
+  (
+    wide signed: $($int:ident [$int_digits:ident, $int_float:ident]),+;
+    unsigned: $($uint:ident [$uint_digits:ident, $uint_float:ident]),+ $(,)?
+  ) => {
     $(
-      impl StorageCore for $int {
-        type IsUnsigned = B0;
+      impl_storage!(@inline $int B0);
+
+      impl InlineCore for $int {
+        impl_storage!(@lengths $int_digits, $int_float);
 
         #[inline]
         fn is_negative(&self, _: Token) -> bool {
@@ -509,12 +618,12 @@ macro_rules! impl_storage {
 
         impl_storage!(@wide signed $int);
       }
-
-      impl Storage for $int {}
     )+
     $(
-      impl StorageCore for $uint {
-        type IsUnsigned = B1;
+      impl_storage!(@inline $uint B1);
+
+      impl InlineCore for $uint {
+        impl_storage!(@lengths $uint_digits, $uint_float);
 
         #[inline]
         fn is_negative(&self, _: Token) -> bool {
@@ -544,11 +653,49 @@ macro_rules! impl_storage {
 
         impl_storage!(@wide unsigned $uint);
       }
-
-      impl Storage for $uint {}
     )+
   };
-  (@native $repr:ident) => {
+  // An inline storage is its own twin: the protocol is the identity, and the storage holds its
+  // coefficient inline and in place.
+  (@inline $repr:ident $is_unsigned:ident) => {
+    impl StorageCore for $repr {
+      type IsUnsigned = $is_unsigned;
+      type Twin = Self;
+
+      #[inline(always)]
+      fn twin(&self, _: Token) -> Self {
+        *self
+      }
+
+      #[inline(always)]
+      fn from_twin(value: Self, _: Token) -> Self {
+        value
+      }
+
+      #[inline(always)]
+      fn set_twin(&mut self, value: Self, _: Token) {
+        *self = value;
+      }
+    }
+
+    impl InPlace for $repr {}
+
+    impl Storage for $repr {
+      type Inline = Self;
+    }
+
+    impl InlineStorage for $repr {}
+
+    impl MutableStorage for $repr {}
+  };
+  // The lengths of the buffers of a storage: its digits, its text, which has two bytes more, and
+  // its float scratch.
+  (@lengths $digits:ident, $float:ident) => {
+    type DigitLen = typenum::consts::$digits;
+    type TextLen = typenum::Sum<typenum::consts::$digits, typenum::consts::U2>;
+    type FloatLen = typenum::consts::$float;
+  };
+  (@native $sign:ident $repr:ident) => {
     #[inline]
     fn is_zero(&self, _: Token) -> bool {
       int::$repr::is_zero(*self)
@@ -581,7 +728,7 @@ macro_rules! impl_storage {
     }
 
     #[inline]
-    fn write_digits(&self, buf: &mut DigitBuf, _: Token) -> usize {
+    fn write_digits(&self, buf: &mut Array<u8, Self::DigitLen>, _: Token) -> usize {
       int::$repr::write_digits(*self, buf)
     }
 
@@ -590,7 +737,8 @@ macro_rules! impl_storage {
       int::$repr::push_digits(*self, bytes, start, end)
     }
 
-    impl_storage!(@convert $repr);
+    impl_storage!(@convert native $repr);
+    impl_storage!(@read $sign $repr);
   };
   (@wide $sign:ident $repr:ident) => {
     #[inline]
@@ -628,8 +776,8 @@ macro_rules! impl_storage {
     }
 
     #[inline]
-    fn write_digits(&self, buf: &mut DigitBuf, _: Token) -> usize {
-      int::$sign::b64::write_digits(self.as_limbs(), buf)
+    fn write_digits(&self, buf: &mut Array<u8, Self::DigitLen>, _: Token) -> usize {
+      int::$sign::b64::write_digits_into(self.as_limbs(), buf)
     }
 
     #[inline]
@@ -637,41 +785,113 @@ macro_rules! impl_storage {
       Self::from_limbs(int::$sign::b64::push_digits(self.as_limbs(), bytes, start, end))
     }
 
-    impl_storage!(@convert $repr);
+    impl_storage!(@convert wide $sign);
+    impl_storage!(@read $sign $repr);
   };
-  (@convert $repr:ident) => {
+  // A native source converts through the `ConvertFrom` of the target. A wide source lends its limbs
+  // to the rows of the target, which read them as signed for a signed source.
+  (@convert native $repr:ident) => {
     #[inline]
-    fn convert<Target: StorageCore>(&self, token: Token) -> Target {
+    fn convert<Target: InlineCore>(&self, token: Token) -> Target {
       <Target as ConvertFrom<$repr>>::convert_from(self, token)
     }
 
     #[inline]
-    fn checked_convert<Target: StorageCore>(&self, token: Token) -> Option<Target> {
+    fn checked_convert<Target: InlineCore>(&self, token: Token) -> Option<Target> {
       <Target as ConvertFrom<$repr>>::checked_convert_from(self, token)
     }
+  };
+  (@convert wide signed) => {
+    #[inline]
+    fn convert<Target: InlineCore>(&self, token: Token) -> Target {
+      Target::read_limbs(self.as_limbs(), true, token)
+    }
+
+    #[inline]
+    fn checked_convert<Target: InlineCore>(&self, token: Token) -> Option<Target> {
+      Target::checked_read_limbs(self.as_limbs(), true, token)
+    }
+  };
+  (@convert wide unsigned) => {
+    #[inline]
+    fn convert<Target: InlineCore>(&self, token: Token) -> Target {
+      Target::read_limbs(self.as_limbs(), false, token)
+    }
+
+    #[inline]
+    fn checked_convert<Target: InlineCore>(&self, token: Token) -> Option<Target> {
+      Target::checked_read_limbs(self.as_limbs(), false, token)
+    }
+  };
+  // The rows that read limbs of either sign into a storage of the sign `$sign`. The limbs are
+  // extended by their sign, or truncated, to the limbs of the storage, two for a native one. The
+  // checked row fails where that changes the value or, between signs, where the value is negative
+  // or reaches the sign bit of a signed storage; the storage then checks its own range, which a
+  // native storage narrower than two limbs needs.
+  (@read $sign:ident $repr:ident) => {
+    #[inline]
+    fn read_limbs<const N: usize>(limbs: &[u64; N], signed: bool, _: Token) -> Self {
+      let limbs = if signed {
+        int::signed::b64::resize(limbs)
+      } else {
+        int::unsigned::b64::resize(limbs)
+      };
+      int::$repr::from_limbs(limbs)
+    }
+
+    #[inline]
+    fn checked_read_limbs<const N: usize>(
+      limbs: &[u64; N],
+      signed: bool,
+      _: Token,
+    ) -> Option<Self> {
+      let limbs = if signed {
+        impl_storage!(@checked_resize signed $sign limbs)
+      } else {
+        impl_storage!(@checked_resize unsigned $sign limbs)
+      };
+      limbs.and_then(int::$repr::checked_from_limbs)
+    }
+  };
+  // The checked resize of limbs of the first sign into a storage of the second sign.
+  (@checked_resize unsigned unsigned $limbs:ident) => {
+    int::unsigned::b64::checked_resize($limbs)
+  };
+  (@checked_resize signed signed $limbs:ident) => {
+    int::signed::b64::checked_resize($limbs)
+  };
+  (@checked_resize signed unsigned $limbs:ident) => {
+    int::signed::b64::checked_to_unsigned($limbs)
+  };
+  (@checked_resize unsigned signed $limbs:ident) => {
+    int::signed::b64::checked_from_unsigned($limbs)
   };
 }
 
 impl_storage!(
-  native signed: i8, i16, i32, i64, i128;
-  unsigned: u8, u16, u32, u64, u128,
+  native signed: i8 [U3, U2], i16 [U5, U2], i32 [U10, U2], i64 [U19, U2], i128 [U39, U3];
+  unsigned: u8 [U3, U2], u16 [U5, U2], u32 [U10, U2], u64 [U20, U2], u128 [U39, U3],
 );
 impl_storage!(
-  wide signed: i192, i256, i320, i384, i448, i512;
-  unsigned: u192, u256, u320, u384, u448, u512,
+  wide signed: i192 [U58, U3], i256 [U77, U4], i320 [U97, U5], i384 [U116, U6], i448 [U135, U7],
+    i512 [U154, U8];
+  unsigned: u192 [U58, U3], u256 [U78, U4], u320 [U97, U5], u384 [U116, U6], u448 [U135, U7],
+    u512 [U155, U8],
 );
 
-/// Implements [`ConvertFrom`] for every ordered pair of the listed storages, each written as
-/// `(name sign kind)` with the sign `signed` or `unsigned` and the kind `native` or `wide`.
+/// Implements [`ConvertFrom`] for every ordered pair of the listed native storages, each written as
+/// `(name sign)` with the sign `signed` or `unsigned`, and from each of them to the arrays of both
+/// signs.
 ///
-/// Between native storages, a conversion is a cast or a native `TryFrom`. Any other conversion
-/// goes through limbs: the source's limbs are extended by the source's sign, or truncated, to the
-/// target's limb count. The checked conversion fails when that changes the value or, between signs,
-/// when the value is negative or reaches the sign bit of a signed target; the target then checks
-/// its own range, which a native storage narrower than two limbs needs.
+/// Between native storages, a conversion is a cast or a native `TryFrom`. Into an array, the two
+/// limbs of the native value are extended by its sign, or truncated, to the limbs of the array. The
+/// checked conversion fails when that changes the value or, between signs, when the value is
+/// negative or reaches the sign bit of a signed target. A wide source converts through the rows
+/// `read_limbs` and `checked_read_limbs` of the target, so no pair names a wide storage.
 macro_rules! impl_convert {
   ([$($storage:tt),+ $(,)?]) => {
     impl_convert!(@sources [$($storage),+] to [$($storage),+]);
+    $(impl_convert!(@arrays $storage);)+
   };
   (@sources [$($source:tt),+] to $targets:tt) => {
     $(impl_convert!(@pairs $source to $targets);)+
@@ -679,9 +899,7 @@ macro_rules! impl_convert {
   (@pairs $source:tt to [$($target:tt),+]) => {
     $(impl_convert!(@pair $source to $target);)+
   };
-  (@pair
-    ($source:ident $source_sign:ident native) to ($target:ident $target_sign:ident native)
-  ) => {
+  (@pair ($source:ident $source_sign:ident) to ($target:ident $target_sign:ident)) => {
     impl ConvertFrom<$source> for $target {
       #[inline]
       fn convert_from(value: &$source, _: Token) -> Self {
@@ -694,33 +912,40 @@ macro_rules! impl_convert {
       }
     }
   };
-  (@pair
-    ($source:ident $source_sign:ident $source_kind:ident)
-    to ($target:ident $target_sign:ident $target_kind:ident)
-  ) => {
-    impl ConvertFrom<$source> for $target {
+  // These hold for every width that fills its array, a storage of a decimal or not, which is
+  // harmless: the trait is sealed. Filling the array is the bound of `from_limbs`.
+  (@arrays ($source:ident $sign:ident)) => {
+    impl<B, const N: usize> ConvertFrom<$source> for Uint<B, [u64; N]>
+    where
+      B: FillsRepr<[u64; N]>,
+    {
       #[inline]
       fn convert_from(value: &$source, _: Token) -> Self {
-        let limbs = impl_convert!(@limbs $source_kind $source value);
-        int::$target::from_limbs(impl_convert!(@resize $source_sign limbs))
+        Self::from_limbs(impl_convert!(@resize $sign &int::$source::to_limbs(*value)))
       }
 
       #[inline]
       fn checked_convert_from(value: &$source, _: Token) -> Option<Self> {
-        let limbs = impl_convert!(@limbs $source_kind $source value);
-        match impl_convert!(@checked_resize $source_sign $target_sign limbs) {
-          Some(limbs) => int::$target::checked_from_limbs(limbs),
-          None => None,
-        }
+        impl_convert!(@checked_resize $sign unsigned &int::$source::to_limbs(*value))
+          .map(Self::from_limbs)
       }
     }
-  };
-  // The limbs of the source: a native value converts to two limbs, and a wide value lends its own.
-  (@limbs native $source:ident $value:ident) => {
-    &int::$source::to_limbs(*$value)
-  };
-  (@limbs wide $source:ident $value:ident) => {
-    $value.as_limbs()
+
+    impl<B, const N: usize> ConvertFrom<$source> for Int<B, [u64; N]>
+    where
+      B: FillsRepr<[u64; N]>,
+    {
+      #[inline]
+      fn convert_from(value: &$source, _: Token) -> Self {
+        Self::from_limbs(impl_convert!(@resize $sign &int::$source::to_limbs(*value)))
+      }
+
+      #[inline]
+      fn checked_convert_from(value: &$source, _: Token) -> Option<Self> {
+        impl_convert!(@checked_resize $sign signed &int::$source::to_limbs(*value))
+          .map(Self::from_limbs)
+      }
+    }
   };
   (@resize unsigned $limbs:expr) => {
     int::unsigned::b64::resize($limbs)
@@ -743,53 +968,34 @@ macro_rules! impl_convert {
 }
 
 impl_convert!([
-  (i8 signed native),
-  (i16 signed native),
-  (i32 signed native),
-  (i64 signed native),
-  (i128 signed native),
-  (u8 unsigned native),
-  (u16 unsigned native),
-  (u32 unsigned native),
-  (u64 unsigned native),
-  (u128 unsigned native),
-  (i192 signed wide),
-  (i256 signed wide),
-  (i320 signed wide),
-  (i384 signed wide),
-  (i448 signed wide),
-  (i512 signed wide),
-  (u192 unsigned wide),
-  (u256 unsigned wide),
-  (u320 unsigned wide),
-  (u384 unsigned wide),
-  (u448 unsigned wide),
-  (u512 unsigned wide),
+  (i8 signed),
+  (i16 signed),
+  (i32 signed),
+  (i64 signed),
+  (i128 signed),
+  (u8 unsigned),
+  (u16 unsigned),
+  (u32 unsigned),
+  (u64 unsigned),
+  (u128 unsigned),
 ]);
 
-/// Implements [`WidenRepr`] from every unsigned storage to every storage, and from every signed
-/// storage to every signed storage.
-macro_rules! impl_widen_repr {
-  (signed: [$($int:ident),+], unsigned: [$($uint:ident),+] $(,)?) => {
-    impl_widen_repr!(@from [$($uint),+] to [$($int,)+ $($uint),+]);
-    impl_widen_repr!(@from [$($int),+] to [$($int),+]);
-  };
-  (@from [$($source:ident),+] to $targets:tt) => {
-    $(impl_widen_repr!(@pairs $source to $targets);)+
-  };
-  (@pairs $source:ident to [$($target:ident),+]) => {
-    $(
-      impl ReprWidensTo<$target> for $source {}
-
-      impl WidenRepr<$target> for $source {}
-    )+
-  };
+// The rule holds from every unsigned storage to every storage, and from every signed storage to
+// every signed storage. It is computed as a bit, "the source is unsigned or the target is signed",
+// which a marker implemented for `B1` alone requires, as `Widen` requires its comparisons: a bound
+// on the bits of the parameters themselves would report the bit that it expected and the one that
+// it found, where the marker reports its message.
+impl<S, T> ReprWidensTo<T> for S
+where
+  S: StorageCore,
+  T: StorageCore,
+  T::IsUnsigned: Not,
+  S::IsUnsigned: BitOr<<T::IsUnsigned as Not>::Output>,
+  Or<S::IsUnsigned, <T::IsUnsigned as Not>::Output>: SignKept,
+{
 }
 
-impl_widen_repr!(
-  signed: [i8, i16, i32, i64, i128, i192, i256, i320, i384, i448, i512],
-  unsigned: [u8, u16, u32, u64, u128, u192, u256, u320, u384, u448, u512],
-);
+impl<S, T> WidenRepr<T> for S where S: ReprWidensTo<T> {}
 
 /// Passes the digit-count table to `$callback`.
 ///

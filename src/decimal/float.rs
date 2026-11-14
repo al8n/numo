@@ -1,8 +1,8 @@
 //! The conversions of a decimal with the floats, computed in integers alone, as `int::float`
 //! computes those of the integers. A decimal is `c / 10^Fraction`, which is
 //! `c / 5^Fraction * 2^-Fraction`: `float_bits` divides the magnitude of the coefficient by the
-//! power of five in eight limbs, which hold every coefficient, and rounds the quotient once, to
-//! the bits of the nearest float. `round_coefficient` reads a float the other way: its value times
+//! power of five in the limbs that it is given, and rounds the quotient once, to the bits of the
+//! nearest float. `round_coefficient` reads a float the other way: its value times
 //! `10^Fraction` is `significand * 5^Fraction * 2^(exponent + Fraction)`, a product shifted by a
 //! power of two, which it rounds once to the magnitude of a coefficient. `shortest` reads the
 //! digits of the shortest text of a float, which the formatter of the standard library writes, so
@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// The number of bits of `value`, the index of its highest one plus one, or zero for zero.
-const fn bit_length(value: &[u64; 8]) -> u32 {
+const fn bit_length<const N: usize>(value: &[u64; N]) -> u32 {
   match b64::checked_ilog2(value) {
     Some(log) => log + 1,
     None => 0,
@@ -32,7 +32,9 @@ const fn bit_length(value: &[u64; 8]) -> u32 {
 /// The bits of the float of `format` nearest to `magnitude / 10^fraction`, ties to even, with the
 /// sign bit set if `negative`: those of an infinity if the value rounds beyond the largest float,
 /// of a subnormal float or of a zero if it rounds below the smallest normal one, and of `+0.0` for
-/// a magnitude of zero, whatever `negative`. Requires `magnitude < 10^154` and `fraction <= 154`.
+/// a magnitude of zero, whatever `negative`. Computes in the limbs of `magnitude`. Requires
+/// `bits(5^fraction) + precision + 2 <= 64 * N`, which the float scratch of a storage gives for
+/// every fraction count of a type over it.
 pub(super) const fn float_bits<const N: usize>(
   magnitude: &[u64; N],
   fraction: u32,
@@ -47,28 +49,27 @@ pub(super) const fn float_bits<const N: usize>(
   // Above the exponent and the fraction: bit 63 of an `f64` and bit 31 of an `f32`.
   let sign = (negative as u64) << (precision - 1 + exponent_bits);
 
-  // `10^154 < 2^512`, so eight limbs hold every magnitude.
-  let magnitude: [u64; 8] = b64::resize(magnitude);
-  let length = bit_length(&magnitude);
+  let length = bit_length(magnitude);
   // A decimal has one zero, and zero has no highest bit to place.
   if length == 0 {
     return 0;
   }
-  // `5^fraction` has at most 358 bits: `5^154 < 2^358`. Zero fraction digits give one.
-  let (power, _) = b64::overflowing_pow(&b64::from_u64(5), fraction);
+  // `5^fraction`, which the requirement keeps inside the limbs. Zero fraction digits give one.
+  let (power, overflow) = b64::overflowing_pow(&b64::from_u64(5), fraction);
+  debug_assert!(!overflow, "the power of five passes the limbs");
   let power_length = bit_length(&power);
   // The magnitude is shifted so that the quotient has at least `precision + 2` bits: the kept
   // bits, the guard and one more. A magnitude of `wanted` bits or more needs no shift, so the
   // shift saturates at zero.
   let wanted = power_length + precision + 2;
   let shift = wanted.saturating_sub(length);
-  // At most `max(length, 358 + precision + 2) <= 512` bits, and a shift that passed the limbs
-  // would cut the magnitude without a word.
+  // At most `max(length, power_length + precision + 2) <= 64 * N` bits by the requirement, and a
+  // shift that passed the limbs would cut the magnitude without a word.
   debug_assert!(
-    length + shift <= 512,
-    "the shifted magnitude passes eight limbs"
+    length + shift <= 64 * N as u32,
+    "the shifted magnitude passes the limbs"
   );
-  let (quotient, remainder) = b64::div_rem(&b64::shift_left(&magnitude, shift), &power);
+  let (quotient, remainder) = b64::div_rem(&b64::shift_left(magnitude, shift), &power);
   let quotient_length = bit_length(&quotient);
   // The shifted magnitude is at least `2^(length + shift - 1)` and the power below
   // `2^power_length`, so the quotient is at least `2^(precision + 1)`.
@@ -98,7 +99,7 @@ pub(super) const fn float_bits<const N: usize>(
   }
   // `quotient_length >= precision + 2 > kept_bits`, so at least two bits are dropped and the
   // guard is a bit of the quotient. With nothing kept, the guard is its highest bit, and a shift
-  // by its whole length gives zero, also at 512 bits.
+  // by its whole length gives zero, also at the full length of the limbs.
   let dropped = quotient_length - kept_bits as u32;
   let kept = b64::word(&b64::shift_right(&quotient, dropped), 0);
   let guard = dropped - 1;
@@ -125,12 +126,13 @@ pub(super) const fn float_bits<const N: usize>(
 }
 
 /// The magnitude of the value of `parts` times `10^fraction`, rounded to an integer with `mode` as
-/// `rounding::increments` rounds a quotient, or `None` if it has more than 512 bits.
-pub(super) const fn round_coefficient(
+/// `rounding::increments` rounds a quotient, or `None` if it has more than `64 * N` bits. Requires
+/// `bits(5^fraction) + precision + 2 <= 64 * N`.
+pub(super) const fn round_coefficient<const N: usize>(
   parts: FloatParts,
   fraction: u32,
   mode: RoundingMode,
-) -> Option<[u64; 8]> {
+) -> Option<[u64; N]> {
   let FloatParts {
     negative,
     significand,
@@ -138,13 +140,15 @@ pub(super) const fn round_coefficient(
     precision,
   } = parts;
   // The value times `10^fraction` is `significand * 5^fraction * 2^(exponent + fraction)`.
-  let (power, _) = b64::overflowing_pow(&b64::from_u64(5), fraction);
+  let (power, overflow) = b64::overflowing_pow(&b64::from_u64(5), fraction);
+  debug_assert!(!overflow, "the power of five passes the limbs");
   let product = b64::mul(&b64::from_u64(significand), &power);
   let length = bit_length(&product);
-  // The significand is below `2^precision` and `5^154` below `2^358`: below `2^411` for an `f64`
-  // and `2^382` for an `f32`.
+  // The significand is below `2^precision`, so the product has at most `precision` bits more than
+  // the power, which the requirement keeps two bits short of the limbs: the product is exact, and
+  // the rounding up below does not carry out of the limbs.
   debug_assert!(
-    length <= precision + 358,
+    length <= precision + bit_length(&power),
     "the product of the significand and the power of five passes its bound"
   );
   // The exponent reaches -1074 below zero, so the shift is signed.
@@ -153,7 +157,7 @@ pub(super) const fn round_coefficient(
     // An integer, and exact. It is checked before the shift, which would cut a longer one without
     // a word, and then find a small magnitude in range.
     let shift = shift as u32;
-    if length + shift > 512 {
+    if length + shift > 64 * N as u32 {
       return None;
     }
     return Some(b64::shift_left(&product, shift));
@@ -162,10 +166,10 @@ pub(super) const fn round_coefficient(
   let (quotient, remainder_is_zero, half) = if dropped > length {
     // The product is below `2^length <= 2^(dropped - 1)`, half of the divisor, so the quotient is
     // zero and the remainder, the product itself, is below half. The bit below the quotient would
-    // lie above the product, beyond the limbs from 513 dropped bits on.
-    ([0; 8], b64::is_zero(&product), Ordering::Less)
+    // lie above the product, beyond the limbs once more bits are dropped than the limbs have.
+    ([0; N], b64::is_zero(&product), Ordering::Less)
   } else {
-    // `dropped <= length <= 411`, so every bit that is read is inside the limbs.
+    // `dropped <= length`, so every bit that is read is inside the limbs.
     let guard = dropped - 1;
     let guard_set = (b64::word(&product, (guard / 64) as usize) >> (guard % 64)) & 1 == 1;
     let lower_set = match b64::lowest_one(&product) {
@@ -192,7 +196,8 @@ pub(super) const fn round_coefficient(
     // Only `Up05` reads the last decimal digit, which a quotient of zero has: zero ends in 0.
     matches!(mode, RoundingMode::Up05) && b64::div_rem_limb(&quotient, 5).1 == 0,
   );
-  // The quotient is below `2^411`, so one more does not carry out of the limbs.
+  // The quotient has at most the bits of the product, two fewer than the limbs, so one more does
+  // not carry out of them.
   if away {
     Some(b64::overflowing_add(&quotient, &b64::one()).0)
   } else {

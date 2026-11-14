@@ -103,11 +103,11 @@ fn every_one_limb_value_matches_i8() {
         "{a} from {bits} bits"
       );
     }
-    let mut buf = [0xff; DIGIT_BUF_LEN];
-    let start = write_digits(&limbs_a, &mut buf);
+    let mut buf = [0xff; crate::int::unsigned::b8::DIGITS_PER_LIMB];
+    let start = write_digits_into(&limbs_a, &mut buf);
     assert_eq!(&buf[start..], a.unsigned_abs().to_string().as_bytes());
     if a >= 0 {
-      assert_eq!(push_digits(&[0], &buf, start, DIGIT_BUF_LEN), limbs_a);
+      assert_eq!(push_digits(&[0], &buf, start, buf.len()), limbs_a);
     }
   }
   for bits in 1..=8 {

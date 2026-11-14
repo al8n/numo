@@ -142,10 +142,10 @@ fn main() -> Result<(), ParseError> {
   values, `Sum` and `zero()`, `max_value()` and `min_value()`, `SignedFixedDecimal` and
   `UnsignedFixedDecimal` for each sign, and `DecimalOne`, with `one()`; these functions return the
   constants `ZERO`, `MAX`, `MIN` and `ONE`. The const layer, `ConstFixedDecimal` and
-  `ConstDecimalOne`, adds `Copy`, the assignments `+=` and `-=` and the constants themselves,
-  which a generic `const fn` can read. `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound` have the
-  methods between decimal types, and `DecimalFloat` the conversions with the floats. Code generic
-  over `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`.
+  `ConstDecimalOne`, adds `Copy`, the assignments `+=` and `-=` of `DecimalAssign` and the constants
+  themselves, which a generic `const fn` can read. `ExactMul`, `WidenTo`, `ConvertTo` and `DivRound`
+  have the methods between decimal types, and `DecimalFloat` the conversions with the floats. Code
+  generic over `Decimal<I, F, R>` adds the bound `Decimal<I, F, R>: FixedDecimal`.
 - `parse` accepts ASCII text with an optional sign, point and exponent, and `_` separators as in
   Rust literals: the numeric strings of the General Decimal Arithmetic specification and every
   form that `f64` parses, such as `-1.5`, `+.5`, `5.`, `2.5E-3` and `1_000`. Infinity and NaN are
@@ -191,8 +191,8 @@ implemented for it over any decimal, so generic code takes a `Scaled` and a bare
 sum takes the larger scale, an exact product the sum of the scales, a value of `round_to` or a
 quotient the fraction digits of its target type, and a value read from a float those of the type or,
 by its shortest text, those of the text. The operators `+`, `-`, `+=` and `-=` and `Sum` work as for
-a decimal, and their result takes the larger scale. A scale above 255 is `ScaleTooLarge`, which only
-the `parse` of `Scaled` reports. A literal of `dec!` keeps its scale too: `dec!(1.50)` writes
+a decimal, and their result takes the larger scale. A scale above 65535 is `ScaleTooLarge`, which
+only the `parse` of `Scaled` reports. A literal of `dec!` keeps its scale too: `dec!(1.50)` writes
 `1.50`.
 
 ```rust

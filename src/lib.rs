@@ -59,11 +59,11 @@
 //! and [`UnsignedFixedDecimal`], for each sign, and [`DecimalOne`], with `one`, requires `Clone`
 //! but not `Copy`; its functions return the inherent constants `ZERO`, `MAX`, `MIN` and `ONE`. The
 //! const layer, [`ConstFixedDecimal`] and [`ConstDecimalOne`], adds `Copy`, the assignments `+=`
-//! and `-=` and these constants, which a generic `const fn` can read. [`ExactMul`], [`WidenTo`],
-//! [`ConvertTo`] and [`DivRound`] have the methods between decimal types, and [`DecimalFloat`] the
-//! conversions with the floats. Code generic over the storage adds the bound
-//! `Decimal<I, F, R>: FixedDecimal`. The trait methods are not `const`, so constant contexts call
-//! the inherent `const fn`s.
+//! and `-=` of [`DecimalAssign`] and these constants, which a generic `const fn` can read.
+//! [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`] have the methods between decimal
+//! types, and [`DecimalFloat`] the conversions with the floats. Code generic over the storage adds
+//! the bound `Decimal<I, F, R>: FixedDecimal`. The trait methods are not `const`, so constant
+//! contexts call the inherent `const fn`s.
 //!
 //! # The scale of a text
 //!
@@ -392,7 +392,7 @@
 //! impls are written against `serde_core`, whose traits `serde` re-exports from version 1.0.220 on,
 //! so they need a build whose `serde` is 1.0.220 or later; an older `serde` defines traits of its
 //! own. The feature enables `serde_core` without its default features and nothing else, so it turns
-//! on no feature in any other crate of a build, and it needs no allocation.
+//! on no feature in any other crate of a build, and it needs no allocation in numo.
 //!
 //! A decimal is written as a string, the text that `Display` writes, and read from a string in the
 //! syntax of [`parse`](Decimal::parse), in every format, human-readable or binary. Reading
@@ -533,9 +533,9 @@ pub use typenum;
 
 pub use aliases::*;
 pub use decimal::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalFloat, DecimalOne,
-  DivRound, DivideError, ExactMul, FixedDecimal, ParseError, ParseErrorKind, QuantizeError, Scaled,
-  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, Decimal, DecimalAssign,
+  DecimalFloat, DecimalOne, DivRound, DivideError, ExactMul, FixedDecimal, ParseError,
+  ParseErrorKind, QuantizeError, Scaled, SignedFixedDecimal, UnsignedFixedDecimal, WidenTo,
 };
 pub use integer::{
   ArrayInteger, BoundedCastFrom, ByteArray, CheckedCastFrom, CheckedOps, ConstFixedInteger,
@@ -547,7 +547,8 @@ pub use integer::{
   UnsignedDigits, UnsignedFixedInteger, UnsignedMath, UnsignedNonZero, WidenFrom, WrappingOps,
 };
 pub use layout::{
-  DigitCount, DivIntermediate, FitsDigits, Layout, Pick, Storage, Widen, WidenRepr,
+  DigitCount, DivIntermediate, FitsDigits, InlineStorage, Layout, MutableStorage, Pick, Storage,
+  Widen, WidenRepr,
 };
 pub use rounding::RoundingMode;
 pub use width::{

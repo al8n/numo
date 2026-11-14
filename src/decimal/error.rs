@@ -30,7 +30,7 @@ impl fmt::Display for ParseError {
       ParseErrorKind::Negative => "decimal is negative, and the target type is unsigned",
       ParseErrorKind::OutOfRange => "decimal out of range of the target type",
       ParseErrorKind::Inexact => "decimal cannot be represented exactly in the target type",
-      ParseErrorKind::ScaleTooLarge => "decimal has more than 255 fraction digits",
+      ParseErrorKind::ScaleTooLarge => "decimal has more than 65535 fraction digits",
     })
   }
 }
@@ -67,8 +67,8 @@ pub enum ParseErrorKind {
   /// zero.
   Inexact,
   /// The scale of the text, the number of fraction digits written minus the exponent, is above
-  /// 255, the largest that a [`Scaled`](crate::Scaled) keeps, as in `0.` followed by 256 zeros or
-  /// in `0e-256`.
+  /// 65535, the largest that a [`Scaled`](crate::Scaled) keeps, as in `0.` followed by 65536 zeros
+  /// or in `0e-65536`.
   ScaleTooLarge,
 }
 

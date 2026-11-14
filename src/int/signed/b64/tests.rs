@@ -192,8 +192,8 @@ fn two_limbs_match_i128() {
       );
     }
 
-    let mut buf = [0xff; DIGIT_BUF_LEN];
-    let start = write_digits(&limbs_a, &mut buf);
+    let mut buf = [0xff; crate::int::unsigned::b64::DIGITS_PER_LIMB * 2];
+    let start = write_digits_into(&limbs_a, &mut buf);
     assert_eq!(&buf[start..], a.unsigned_abs().to_string().as_bytes());
     if a >= 0 {
       let digits = a.to_string();

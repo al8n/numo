@@ -10,13 +10,13 @@ use core::{
 };
 
 use super::{
-  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, DecimalFloat, DecimalOne, DivRound,
-  DivideError, ExactMul, FixedDecimal, ParseError, QuantizeError, SignedFixedDecimal,
-  UnsignedFixedDecimal, WidenTo, float, format, ops::overflow,
+  ConstDecimalOne, ConstFixedDecimal, ConvertError, ConvertTo, DecimalAssign, DecimalFloat,
+  DecimalOne, DivRound, DivideError, ExactMul, FixedDecimal, ParseError, QuantizeError,
+  SignedFixedDecimal, UnsignedFixedDecimal, WidenTo, float, format, ops::overflow,
 };
 use crate::{
-  FromFloatError, int,
-  layout::{StorageCore, Token},
+  FromFloatError,
+  layout::{DigitBuf, InlineCore, Storage, StorageCore, Token},
   rounding::RoundingMode,
 };
 
@@ -68,7 +68,7 @@ mod tests;
 /// take its scale: the number of fraction digits written, not counting `_`, minus the exponent,
 /// and at least 0. So `2.50` and `250e-2` have scale 2, and `1E+2` has scale 0. The scale may
 /// exceed the fraction digits of `D`: a type with 8 fraction digits keeps
-/// `9999999999.0000000000000000` with scale 16 and writes it back. A scale above 255 is
+/// `9999999999.0000000000000000` with scale 16 and writes it back. A scale above 65535 is
 /// [`ScaleTooLarge`](crate::ParseErrorKind::ScaleTooLarge), which only a text that
 /// `Decimal::parse` accepts can give. [`dec!`](crate::dec) reads a literal in the same way and
 /// keeps its scale, so `dec!(1.50)` writes `1.50`.
@@ -94,14 +94,14 @@ mod tests;
 /// # Arithmetic
 ///
 /// Every decimal trait of this crate is implemented for `Scaled<D>` once, for every decimal `D`
-/// that implements it: [`FixedDecimal`], [`ConstFixedDecimal`], [`SignedFixedDecimal`],
-/// [`UnsignedFixedDecimal`], [`DecimalOne`], [`ConstDecimalOne`] and [`DecimalFloat`], and between
-/// `Scaled` types [`ExactMul`], [`WidenTo`], [`ConvertTo`] and [`DivRound`]. Generic code bounded
-/// by them takes a `Scaled` and a bare decimal alike. The operators `+`, `-`, `+=` and `-=` and
-/// [`Sum`](core::iter::Sum) are implemented as for a decimal, and panic where `checked_add` and
-/// `checked_sub` return `None`; the methods of a `Scaled` are reached through the traits, with the
-/// trait in scope. A `Scaled` relates only to a `Scaled`: no trait converts a bare decimal into a
-/// `Scaled`, or multiplies one by the other.
+/// that implements it: [`FixedDecimal`], [`DecimalAssign`], [`ConstFixedDecimal`],
+/// [`SignedFixedDecimal`], [`UnsignedFixedDecimal`], [`DecimalOne`], [`ConstDecimalOne`] and
+/// [`DecimalFloat`], and between `Scaled` types [`ExactMul`], [`WidenTo`], [`ConvertTo`] and
+/// [`DivRound`]. Generic code bounded by them takes a `Scaled` and a bare decimal alike. The
+/// operators `+`, `-`, `+=` and `-=` and [`Sum`](core::iter::Sum) are implemented as for a decimal,
+/// and panic where `checked_add` and `checked_sub` return `None`; the methods of a `Scaled` are
+/// reached through the traits, with the trait in scope. A `Scaled` relates only to a `Scaled`: no
+/// trait converts a bare decimal into a `Scaled`, or multiplies one by the other.
 ///
 /// A result has the value that the decimal's own operation gives, and the scale of the operation:
 ///
@@ -109,7 +109,7 @@ mod tests;
 ///   operator, a checked or a saturating method gives it, also where the result saturates to a
 ///   limit;
 /// - a sum over an iterator takes the largest scale of its items, and scale 0 without an item;
-/// - an exact product takes the sum of the scales, saturating at 255, which only limits the text:
+/// - an exact product takes the sum of the scales, saturating at 65535, which only limits the text:
 ///   the product is never rounded;
 /// - [`quantize`](FixedDecimal::quantize) takes the scale of the step;
 /// - [`widen`](WidenTo::widen) and [`try_convert`](ConvertTo::try_convert) keep the scale;
@@ -119,8 +119,8 @@ mod tests;
 /// - [`trunc`](FixedDecimal::trunc), [`floor`](FixedDecimal::floor) and
 ///   [`ceil`](FixedDecimal::ceil) take scale 0, and [`fract`](FixedDecimal::fract) keeps the scale;
 /// - [`round_significant`](FixedDecimal::round_significant) takes the scale that the significant
-///   digits of its result need, between 0 and 255, so `305.459` to four digits is `305.5`, to seven
-///   `305.4590`, and `999.96` to four digits `1000`;
+///   digits of its result need, between 0 and 65535, so `305.459` to four digits is `305.5`, to
+///   seven `305.4590`, and `999.96` to four digits `1000`;
 /// - [`order_of_magnitude`](FixedDecimal::order_of_magnitude),
 ///   [`significant_digits`](FixedDecimal::significant_digits),
 ///   [`fraction_digits`](FixedDecimal::fraction_digits) and
@@ -163,7 +163,7 @@ mod tests;
 /// assert_eq!(prices[0].exact_mul(&quantity).to_string(), "96.37575");
 ///
 /// // Code generic over the decimal names the bound of the `Scaled`.
-/// fn doubled<D>(value: D, scale: u8) -> Option<Scaled<D>>
+/// fn doubled<D>(value: D, scale: u16) -> Option<Scaled<D>>
 /// where
 ///   D: FixedDecimal,
 ///   Scaled<D>: FixedDecimal,
@@ -177,13 +177,15 @@ mod tests;
 ///
 /// # Layout
 ///
-/// The scale is a plain `u8` beside the decimal, so a `Scaled` takes the size of its decimal plus
-/// the padding to its alignment, and `Option<Scaled<D>>` has no niche: where an `i128` is aligned
-/// to 16 bytes, `Scaled<Decimal<U20, U18>>` takes 32 bytes and its `Option` 48.
-#[derive(Clone, Copy, Debug)]
+/// The scale is a plain `u16` beside the decimal, so a `Scaled` over a storage of at least 16 bits
+/// takes the size of its decimal plus the padding to its alignment, and `Option<Scaled<D>>` has no
+/// niche: where an `i128` is aligned to 16 bytes, `Scaled<Decimal<U20, U18>>` takes 32 bytes and
+/// its `Option` 48. Over an `i8` or a `u8` storage a `Scaled` takes 4 bytes, on a target that
+/// aligns a `u16` to two bytes.
+#[derive(Debug)]
 pub struct Scaled<D> {
   value: D,
-  scale: u8,
+  scale: u16,
 }
 
 impl<D> Scaled<D> {
@@ -191,7 +193,7 @@ impl<D> Scaled<D> {
   /// scale is allowed, also one beyond the fraction digits of `D`.
   #[must_use]
   #[inline]
-  pub const fn new(value: D, scale: u8) -> Self {
+  pub const fn new(value: D, scale: u16) -> Self {
     Self { value, scale }
   }
 
@@ -205,7 +207,7 @@ impl<D> Scaled<D> {
   /// Returns the scale: the minimum number of fraction digits of the text.
   #[must_use]
   #[inline]
-  pub const fn scale(&self) -> u8 {
+  pub const fn scale(&self) -> u16 {
     self.scale
   }
 }
@@ -223,10 +225,30 @@ impl<D> Scaled<D> {
   /// Splits the value into the decimal and its scale.
   #[must_use]
   #[inline]
-  pub fn into_parts(self) -> (D, u8) {
+  pub fn into_parts(self) -> (D, u16) {
     (self.value, self.scale)
   }
 }
+
+// By hand, for `clone_from`, which forwards to that of the decimal: the derived one would clone the
+// decimal whole.
+impl<D> Clone for Scaled<D>
+where
+  D: Clone,
+{
+  #[inline]
+  fn clone(&self) -> Self {
+    Self::new(self.value.clone(), self.scale)
+  }
+
+  #[inline]
+  fn clone_from(&mut self, source: &Self) {
+    self.value.clone_from(&source.value);
+    self.scale = source.scale;
+  }
+}
+
+impl<D> Copy for Scaled<D> where D: Copy {}
 
 impl<D> From<D> for Scaled<D> {
   /// Wraps `value` with scale 0, so that its text is the shortest exact text of the decimal.
@@ -299,16 +321,17 @@ where
   /// larger, honoring width, fill, alignment, `+` and `0` as described on [`Scaled`]. Nothing is
   /// rounded or truncated.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let repr = self.value.clone().repr();
-    let mut buf = [0; int::DIGIT_BUF_LEN];
-    let start = repr.write_digits(&mut buf, Token::new());
+    // The coefficient of the inline twin, which is a copy: the decimal is not cloned.
+    let coeff = self.value.to_inline().repr().twin(Token::new());
+    let mut buf = DigitBuf::<<<D::Inline as FixedDecimal>::Repr as Storage>::Inline>::default();
+    let start = coeff.write_digits(&mut buf, Token::new());
     let scale = usize::from(self.scale);
     let min_fraction = f
       .precision()
       .map_or(scale, |precision| precision.max(scale));
     format::write(
       f,
-      repr.is_negative(Token::new()),
+      coeff.is_negative(Token::new()),
       &buf[start..],
       D::FRACTION as usize,
       min_fraction,
@@ -316,28 +339,31 @@ where
   }
 }
 
-/// The scale of a value rounded or divided into `T`: the fraction digits of `T`, of which a decimal
-/// has at most 154.
-fn fraction_scale<T: FixedDecimal>() -> u8 {
-  u8::try_from(T::FRACTION).unwrap_or(u8::MAX)
+/// The scale of a value rounded or divided into `T`: the fraction digits of `T`, which a `u16`
+/// always holds.
+fn fraction_scale<T: FixedDecimal>() -> u16 {
+  u16::try_from(T::FRACTION).unwrap_or(u16::MAX)
 }
 
 /// The scale of a value read from the shortest text of a float into `T`: the fraction digits of
 /// the text, whose last digit has the exponent `exponent`, at most those of `T`.
-fn text_scale<T: FixedDecimal>(exponent: i32) -> u8 {
+fn text_scale<T: FixedDecimal>(exponent: i32) -> u16 {
   // A text whose last digit is at the point or above it has no fraction digit.
   let digits = u32::try_from(-i64::from(exponent))
     .unwrap_or(0)
     .min(T::FRACTION);
-  u8::try_from(digits).unwrap_or(u8::MAX)
+  u16::try_from(digits).unwrap_or(u16::MAX)
 }
 
 // `parse` and `FromStr` are per storage, emitted by `storage_decimal!` beside `Decimal::parse`, so
-// the implementations over a generic decimal require the `FromStr` that `FixedDecimal` needs.
+// the implementations over a generic decimal require the `FromStr` that `FixedDecimal` needs. The
+// twin of a `Scaled` is the `Scaled` over the twin of its decimal, which has to be a decimal of the
+// const layer, as the twin of every decimal is.
 impl<D> FixedDecimal for Scaled<D>
 where
   D: FixedDecimal,
   Self: FromStr<Err = ParseError>,
+  Scaled<D::Inline>: ConstFixedDecimal,
 {
   const INTEGRAL: u32 = D::INTEGRAL;
   const FRACTION: u32 = D::FRACTION;
@@ -345,6 +371,20 @@ where
   const SIGNED: bool = D::SIGNED;
 
   type Repr = D::Repr;
+
+  type Inline = Scaled<D::Inline>;
+
+  /// Returns the value in its inline storage, with the same scale.
+  #[inline]
+  fn to_inline(&self) -> Scaled<D::Inline> {
+    Scaled::new(self.value.to_inline(), self.scale)
+  }
+
+  /// Returns `value` in the storage of `D`, with the scale of `value`.
+  #[inline]
+  fn from_inline(value: Scaled<D::Inline>) -> Self {
+    Self::new(D::from_inline(value.value), value.scale)
+  }
 
   /// Returns the coefficient of the decimal, which does not depend on the scale.
   #[inline]
@@ -491,7 +531,7 @@ where
   /// Rounds to `digits` significant digits with `mode`, or returns
   /// [`ConvertError::OutOfRange`] if the result is outside the range of `D`. The result takes the
   /// scale that `digits` significant digits of it need, `digits - 1 - order_of_magnitude` with
-  /// the order of magnitude of the result, at least 0 and at most 255, and 0 for zero:
+  /// the order of magnitude of the result, at least 0 and at most 65535, and 0 for zero:
   /// `305.459` to four digits is `305.5` and to seven `305.4590`, and `999.96` to four digits is
   /// `1000`. The scale of `self` plays no part.
   fn round_significant(
@@ -508,7 +548,7 @@ where
     let scale = i64::from(digits.get()) - 1 - i64::from(rounded.order_of_magnitude());
     Ok(Self::new(
       rounded,
-      u8::try_from(scale.max(0)).unwrap_or(u8::MAX),
+      u16::try_from(scale.max(0)).unwrap_or(u16::MAX),
     ))
   }
 }
@@ -528,11 +568,20 @@ where
   const MIN: Self = Self::new(D::MIN, 0);
 }
 
+impl<D> DecimalAssign for Scaled<D>
+where
+  D: DecimalAssign,
+  Self: FixedDecimal,
+{
+}
+
 // The operators exist where the `Scaled` is a `FixedDecimal`, the bound of its other traits, and
-// call its own checked methods, which take the larger scale. A bound on `D` alone would hold one
-// level further out too, and give the operators to a `Scaled<Scaled<D>>`, which is not a decimal.
+// take the larger scale: each form on values is the same form of the decimal, and each form on
+// references calls the checked method of the `Scaled`. A bound on `D` alone would hold one level
+// further out too, and give the operators to a `Scaled<Scaled<D>>`, which is not a decimal.
 impl<D> Add for Scaled<D>
 where
+  D: Add<Output = D>,
   Self: FixedDecimal,
 {
   type Output = Self;
@@ -546,10 +595,7 @@ where
   #[inline]
   #[track_caller]
   fn add(self, rhs: Self) -> Self {
-    match FixedDecimal::checked_add(&self, &rhs) {
-      Some(sum) => sum,
-      None => overflow::add(),
-    }
+    Self::new(self.value + rhs.value, self.scale.max(rhs.scale))
   }
 }
 
@@ -577,6 +623,7 @@ where
 
 impl<D> AddAssign for Scaled<D>
 where
+  D: AddAssign,
   Self: FixedDecimal,
 {
   /// Adds `rhs` to `self`, which takes the larger of the two scales.
@@ -589,15 +636,14 @@ where
   #[inline]
   #[track_caller]
   fn add_assign(&mut self, rhs: Self) {
-    match FixedDecimal::checked_add(self, &rhs) {
-      Some(sum) => *self = sum,
-      None => overflow::add(),
-    }
+    self.value += rhs.value;
+    self.scale = self.scale.max(rhs.scale);
   }
 }
 
 impl<D> Sub for Scaled<D>
 where
+  D: Sub<Output = D>,
   Self: FixedDecimal,
 {
   type Output = Self;
@@ -612,10 +658,7 @@ where
   #[inline]
   #[track_caller]
   fn sub(self, rhs: Self) -> Self {
-    match FixedDecimal::checked_sub(&self, &rhs) {
-      Some(difference) => difference,
-      None => overflow::sub(),
-    }
+    Self::new(self.value - rhs.value, self.scale.max(rhs.scale))
   }
 }
 
@@ -645,6 +688,7 @@ where
 
 impl<D> SubAssign for Scaled<D>
 where
+  D: SubAssign,
   Self: FixedDecimal,
 {
   /// Subtracts `rhs` from `self`, which takes the larger of the two scales.
@@ -657,10 +701,8 @@ where
   #[inline]
   #[track_caller]
   fn sub_assign(&mut self, rhs: Self) {
-    match FixedDecimal::checked_sub(self, &rhs) {
-      Some(difference) => *self = difference,
-      None => overflow::sub(),
-    }
+    self.value -= rhs.value;
+    self.scale = self.scale.max(rhs.scale);
   }
 }
 
@@ -676,7 +718,9 @@ where
   /// `overflow-checks` is, also where the whole sum would be in range. A fold with
   /// [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
   fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-    iter.fold(Self::zero(), |sum, value| sum + value)
+    // The running sum is a twin, from the zero of the twin, and the total is stored once.
+    let zero = <<Self as FixedDecimal>::Inline as ConstFixedDecimal>::ZERO;
+    Self::from_inline(iter.fold(zero, |sum, value| sum + value.to_inline()))
   }
 }
 
@@ -692,7 +736,9 @@ where
   /// `overflow-checks` is, also where the whole sum would be in range. A fold with
   /// [`checked_add`](FixedDecimal::checked_add) returns `None` instead.
   fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-    iter.fold(Self::zero(), |sum, value| &sum + value)
+    // The running sum is a twin, from the zero of the twin, and the total is stored once.
+    let zero = <<Self as FixedDecimal>::Inline as ConstFixedDecimal>::ZERO;
+    Self::from_inline(iter.fold(zero, |sum, value| sum + value.to_inline()))
   }
 }
 
@@ -702,6 +748,7 @@ where
 // `Scaled<Scaled<D>>` or a `Scaled<i32>`, which are not decimals.
 impl<D> Neg for Scaled<D>
 where
+  D: Neg<Output = D>,
   Self: SignedFixedDecimal,
 {
   type Output = Self;
@@ -709,14 +756,14 @@ where
   /// Returns `-self`, with the same scale.
   #[inline]
   fn neg(self) -> Self {
-    SignedFixedDecimal::neg(&self)
+    Self::new(-self.value, self.scale)
   }
 }
 
 impl<D> SignedFixedDecimal for Scaled<D>
 where
   D: SignedFixedDecimal,
-  Self: FromStr<Err = ParseError>,
+  Self: FixedDecimal,
 {
   #[inline]
   fn is_negative(&self) -> bool {
@@ -739,14 +786,14 @@ where
 impl<D> UnsignedFixedDecimal for Scaled<D>
 where
   D: UnsignedFixedDecimal,
-  Self: FromStr<Err = ParseError>,
+  Self: FixedDecimal,
 {
 }
 
 impl<D> DecimalOne for Scaled<D>
 where
   D: DecimalOne,
-  Self: FromStr<Err = ParseError>,
+  Self: FixedDecimal,
 {
   /// Returns one with scale 0.
   #[inline]
@@ -843,8 +890,8 @@ where
 {
   type Output = Scaled<<D as ExactMul<D2>>::Output>;
 
-  /// Multiplies exactly. The product takes the sum of the two scales, saturating at 255; its value
-  /// is never rounded.
+  /// Multiplies exactly. The product takes the sum of the two scales, saturating at 65535; its
+  /// value is never rounded.
   #[inline]
   fn exact_mul(&self, rhs: &Scaled<D2>) -> Self::Output {
     Scaled::new(

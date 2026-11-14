@@ -1,13 +1,13 @@
 error[E0277]: the trait bound `Local: numo::decimal::traits::sealed::Sealed` is not satisfied
-  --> tests/ui/fixed_decimal_is_sealed.rs:50:23
+  --> tests/ui/fixed_decimal_is_sealed.rs:53:23
    |
-50 | impl FixedDecimal for Local {
+53 | impl FixedDecimal for Local {
    |                       ^^^^^ unsatisfied trait bound
    |
 help: the trait `numo::decimal::traits::sealed::Sealed` is not implemented for `Local`
-  --> tests/ui/fixed_decimal_is_sealed.rs:12:1
+  --> tests/ui/fixed_decimal_is_sealed.rs:15:1
    |
-12 | struct Local;
+15 | struct Local;
    | ^^^^^^^^^^^^
 help: the following other types implement trait `numo::decimal::traits::sealed::Sealed`
   --> src/decimal/traits/mod.rs
