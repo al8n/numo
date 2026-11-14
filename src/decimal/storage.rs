@@ -708,7 +708,7 @@ macro_rules! storage_decimal {
           int::unsigned::b64::resize(&int::signed::b64::unsigned_abs(limbs));
         float::float_bits(
           &magnitude,
-          Self::FRACTION,
+          &Self::POWER_OF_FIVE,
           int::signed::b64::is_negative(limbs),
           format,
         )
@@ -1059,7 +1059,7 @@ macro_rules! storage_decimal {
         // over the storage.
         let magnitude: FloatScratch<$repr> =
           int::unsigned::b64::resize(storage_decimal!(@limbs $kind $repr self.repr));
-        float::float_bits(&magnitude, Self::FRACTION, false, format)
+        float::float_bits(&magnitude, &Self::POWER_OF_FIVE, false, format)
       }
 
       /// The value whose coefficient is `magnitude`, or the error of a magnitude outside the
@@ -1097,8 +1097,8 @@ macro_rules! storage_decimal {
     impl<I, F> UnsignedFixedDecimal for Decimal<I, F, $repr> where (I, F): Layout<$repr> {}
   };
 
-  // The methods whose body is the same for both signs: the arm of each sign emits them with its
-  // `$($by)*`.
+  // `POWER_OF_FIVE` and the methods whose body is the same for both signs: the arm of each sign
+  // emits them with its `$($by)*`.
   (@shared $repr:ident [$($by:tt)*]) => {
     impl<I, F> Decimal<I, F, $repr>
     where
@@ -1333,6 +1333,11 @@ macro_rules! storage_decimal {
         }
       }
 
+      /// `5^Fraction` in the float scratch of the storage, with its bit length: what the
+      /// conversions with the floats divide or multiply by.
+      const POWER_OF_FIVE: float::PowerOfFive<FloatScratch<$repr>> =
+        float::PowerOfFive::new(Self::FRACTION);
+
       /// Converts the value to the nearest `f64`, ties to even, rounded once: the float that
       /// parsing the text of the decimal gives. Zero gives `+0.0`. A decimal other than zero is
       /// between `10^-308` and `10^308` in magnitude, so the result is never an infinity. It is a
@@ -1380,7 +1385,7 @@ macro_rules! storage_decimal {
       pub const fn round_from_f64(value: f64, mode: RoundingMode) -> Result<Self, FromFloatError> {
         match int::float::float_parts_f64(value) {
           Ok(parts) => Self::place_magnitude(
-            float::round_coefficient(parts, Self::FRACTION, mode),
+            float::round_coefficient(parts, &Self::POWER_OF_FIVE, mode),
             parts.negative,
           ),
           Err(error) => Err(error),
@@ -1401,7 +1406,7 @@ macro_rules! storage_decimal {
         // significand.
         match int::float::float_parts_f32(value) {
           Ok(parts) => Self::place_magnitude(
-            float::round_coefficient(parts, Self::FRACTION, mode),
+            float::round_coefficient(parts, &Self::POWER_OF_FIVE, mode),
             parts.negative,
           ),
           Err(error) => Err(error),
