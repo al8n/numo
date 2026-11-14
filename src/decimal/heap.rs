@@ -40,7 +40,7 @@ use super::{
 };
 use crate::{
   FromFloatError, Int, Uint,
-  layout::{InlineCore, InlineStorage, Layout, StorageCore, Token},
+  layout::{InlineStorage, Layout, StorageCore, Token},
   rounding::RoundingMode,
   width::FillsRepr,
 };
@@ -182,14 +182,16 @@ macro_rules! heap_decimals {
         self.repr
       }
 
-      // The range is checked on the twin of the storage with the row with which `try_convert`
-      // checks its target: the `Repr` of the twin decimal, and so its `from_repr`, is not known
-      // here. The storage that the caller gave is wrapped, or dropped.
+      // The `Repr` of the twin decimal, and so its `from_repr`, is not known here, so the twin of
+      // the storage is compared with the coefficients of the twin's constants `MIN` and `MAX`, as
+      // the twin's `from_repr` compares its coefficient with its limits. The storage that the
+      // caller gave is wrapped, or dropped.
       #[inline]
       fn from_repr(repr: Self::Repr) -> Option<Self> {
         let coefficient = StorageCore::twin(&repr, Token::new());
-        let digits = <Decimal<I, F, $integer<B, [u64; N]>> as FixedDecimal>::DIGITS;
-        if InlineCore::within_digits(&coefficient, digits, Token::new()) {
+        let min = <Decimal<I, F, $integer<B, [u64; N]>> as ConstFixedDecimal>::MIN.repr;
+        let max = <Decimal<I, F, $integer<B, [u64; N]>> as ConstFixedDecimal>::MAX.repr;
+        if min <= coefficient && coefficient <= max {
           Some(Self::from_coeff(repr))
         } else {
           None
