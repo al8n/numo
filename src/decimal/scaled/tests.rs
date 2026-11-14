@@ -1373,9 +1373,12 @@ fn widening_between_storages_keeps_the_scale() {
 
 #[cfg(feature = "serde")]
 mod with_serde {
+  use core::fmt::{self, Display};
+
   use serde_core::{
-    Deserialize,
+    Deserialize, Serialize,
     de::{self, IntoDeserializer},
+    ser,
   };
   use serde_test::{Configure, Token, assert_de_tokens_error, assert_tokens};
   use std::{
@@ -1474,8 +1477,122 @@ mod with_serde {
     }
   }
 
+  /// The method of a serializer through which a value wrote its text.
+  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+  enum Path {
+    /// `serialize_str`, with the text that the value wrote into a buffer.
+    Str,
+    /// `collect_str`, with the value itself.
+    Collect,
+  }
+
+  /// A serializer that takes a string, and returns the method that wrote it and the text. Every
+  /// other value is [`NotAString`].
+  struct Recorder;
+
+  /// The error of [`Recorder`] for a value that is not a string.
+  #[derive(Debug, PartialEq, Eq)]
+  struct NotAString;
+
+  impl Display for NotAString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      f.write_str("not a string")
+    }
+  }
+
+  impl core::error::Error for NotAString {}
+
+  impl ser::Error for NotAString {
+    fn custom<T: Display>(_: T) -> Self {
+      Self
+    }
+  }
+
+  /// What [`Recorder`] returns for a compound value, which it refuses.
+  type Refused = ser::Impossible<(Path, String), NotAString>;
+
+  /// Writes the methods of [`Recorder`] that refuse their value, each with its parameters and the
+  /// type that it would return.
+  macro_rules! refuse {
+    ($($method:ident($($parameter:ty),*) -> $ok:ty;)+) => {$(
+      fn $method(self, $(_: $parameter),*) -> Result<$ok, NotAString> {
+        Err(NotAString)
+      }
+    )+};
+  }
+
+  impl ser::Serializer for Recorder {
+    type Ok = (Path, String);
+    type Error = NotAString;
+    type SerializeSeq = Refused;
+    type SerializeTuple = Refused;
+    type SerializeTupleStruct = Refused;
+    type SerializeTupleVariant = Refused;
+    type SerializeMap = Refused;
+    type SerializeStruct = Refused;
+    type SerializeStructVariant = Refused;
+
+    fn serialize_str(self, text: &str) -> Result<Self::Ok, NotAString> {
+      Ok((Path::Str, text.to_string()))
+    }
+
+    fn collect_str<T: Display + ?Sized>(self, value: &T) -> Result<Self::Ok, NotAString> {
+      Ok((Path::Collect, value.to_string()))
+    }
+
+    fn serialize_some<T: Serialize + ?Sized>(self, _: &T) -> Result<Self::Ok, NotAString> {
+      Err(NotAString)
+    }
+
+    fn serialize_newtype_struct<T: Serialize + ?Sized>(
+      self,
+      _: &'static str,
+      _: &T,
+    ) -> Result<Self::Ok, NotAString> {
+      Err(NotAString)
+    }
+
+    fn serialize_newtype_variant<T: Serialize + ?Sized>(
+      self,
+      _: &'static str,
+      _: u32,
+      _: &'static str,
+      _: &T,
+    ) -> Result<Self::Ok, NotAString> {
+      Err(NotAString)
+    }
+
+    refuse! {
+      serialize_bool(bool) -> Self::Ok;
+      serialize_i8(i8) -> Self::Ok;
+      serialize_i16(i16) -> Self::Ok;
+      serialize_i32(i32) -> Self::Ok;
+      serialize_i64(i64) -> Self::Ok;
+      serialize_u8(u8) -> Self::Ok;
+      serialize_u16(u16) -> Self::Ok;
+      serialize_u32(u32) -> Self::Ok;
+      serialize_u64(u64) -> Self::Ok;
+      serialize_f32(f32) -> Self::Ok;
+      serialize_f64(f64) -> Self::Ok;
+      serialize_char(char) -> Self::Ok;
+      serialize_bytes(&[u8]) -> Self::Ok;
+      serialize_none() -> Self::Ok;
+      serialize_unit() -> Self::Ok;
+      serialize_unit_struct(&'static str) -> Self::Ok;
+      serialize_unit_variant(&'static str, u32, &'static str) -> Self::Ok;
+      serialize_seq(Option<usize>) -> Refused;
+      serialize_tuple(usize) -> Refused;
+      serialize_tuple_struct(&'static str, usize) -> Refused;
+      serialize_tuple_variant(&'static str, u32, &'static str, usize) -> Refused;
+      serialize_map(Option<usize>) -> Refused;
+      serialize_struct(&'static str, usize) -> Refused;
+      serialize_struct_variant(&'static str, u32, &'static str, usize) -> Refused;
+    }
+  }
+
   /// Checks [`check_formats`] at the scale `Fraction`, the last that the buffer of a decimal
-  /// writes, and at `Fraction + 1`, the first that `collect_str` writes.
+  /// writes, and at `Fraction + 1`, the first that `collect_str` writes, and that a [`Recorder`]
+  /// sees each limit of `D` written through the method of its scale, with the text of `Display`.
   #[inline(never)]
   fn check_both_paths<D>()
   where
@@ -1485,11 +1602,22 @@ mod with_serde {
     let fraction = u16::try_from(D::FRACTION).expect("a scale");
     check_formats::<D>(fraction);
     check_formats::<D>(fraction + 1);
+    for (scale, path) in [(fraction, Path::Str), (fraction + 1, Path::Collect)] {
+      for decimal in [D::MIN, D::MAX] {
+        let scaled = Scaled::new(decimal, scale);
+        assert_eq!(
+          scaled.serialize(Recorder),
+          Ok((path, scaled.to_string())),
+          "{scaled:?}"
+        );
+      }
+    }
   }
 
-  /// A scale of at most the fraction digits of the type is written through a buffer and a larger
-  /// one through `collect_str`, and JSON and postcard write the same bytes for both as for the text
-  /// itself. The two widest types write their longest texts through the buffer.
+  /// A scale of at most the fraction digits of the type is written through a buffer, with
+  /// `serialize_str`, and a larger one through `collect_str`, and JSON and postcard write the same
+  /// bytes for both as for the text itself: for a native and for two wide storages. The two widest
+  /// types write their longest texts through the buffer.
   #[test]
   fn both_paths_write_the_text() {
     check_both_paths::<Narrow>();
