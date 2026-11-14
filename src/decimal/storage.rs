@@ -401,6 +401,11 @@ macro_rules! storage_decimal {
       /// The largest coefficient, `10^(Integral + Fraction) - 1`.
       const MAX_COEFF: $repr = int::$repr::max_magnitude(Self::DIGITS);
 
+      /// The largest coefficient, `10^(Integral + Fraction) - 1`, in the float scratch of the
+      /// storage.
+      const SCRATCH_MAX_COEFF: FloatScratch<$repr> =
+        int::unsigned::b64::max_magnitude(Self::DIGITS);
+
       /// The smallest coefficient, `-MAX_COEFF`.
       const MIN_COEFF: $repr = int::$repr::neg($($by)* Self::MAX_COEFF);
 
@@ -730,7 +735,7 @@ macro_rules! storage_decimal {
           return Ok(Self::ZERO);
         }
         // Compared in the scratch, before the narrowing to the storage, which truncates.
-        if !int::unsigned::b64::le(&magnitude, &int::unsigned::b64::max_magnitude(Self::DIGITS)) {
+        if !int::unsigned::b64::le(&magnitude, &Self::SCRATCH_MAX_COEFF) {
           return Err(overflow);
         }
         // The magnitude is unsigned in the scratch, so the unsigned layer narrows it, and only
@@ -788,6 +793,11 @@ macro_rules! storage_decimal {
     {
       /// The largest coefficient, `10^(Integral + Fraction) - 1`.
       const MAX_COEFF: $repr = int::$repr::max_magnitude(Self::DIGITS);
+
+      /// The largest coefficient, `10^(Integral + Fraction) - 1`, in the float scratch of the
+      /// storage.
+      const SCRATCH_MAX_COEFF: FloatScratch<$repr> =
+        int::unsigned::b64::max_magnitude(Self::DIGITS);
 
       /// The coefficient of one, `10^Fraction`.
       const SCALE: $repr = int::$repr::pow10(Self::FRACTION);
@@ -1073,7 +1083,7 @@ macro_rules! storage_decimal {
           return Err(FromFloatError::NegOverflow);
         }
         // Compared in the scratch, before the narrowing to the storage, which truncates.
-        if !int::unsigned::b64::le(&magnitude, &int::unsigned::b64::max_magnitude(Self::DIGITS)) {
+        if !int::unsigned::b64::le(&magnitude, &Self::SCRATCH_MAX_COEFF) {
           return Err(FromFloatError::PosOverflow);
         }
         Ok(Self::from_coeff(int::$repr::from_limbs(

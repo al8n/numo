@@ -237,17 +237,18 @@ pub(crate) fn check_values<I, F, R>(
   let digits = <(I, F) as LayoutDigits<R>>::DIGITS;
   let fraction = <(I, F) as LayoutDigits<R>>::FRACTION;
   assert_eq!(values.len(), samples(digits), "{name}");
+  let limit = bigint::pow10(digits);
   let mut lengths = vec![0usize; digits as usize + 1];
   let mut seen = BTreeSet::new();
   let (mut negative, mut positive) = (false, false);
   for &value in values {
-    let coeff = repr(value);
+    let stored = repr(value);
+    let coeff = big(stored);
     assert!(
-      coeff.within_digits(digits, Token::new()),
+      coeff.magnitude() < limit.magnitude(),
       "{name}: {value:?} is out of range"
     );
-    assert_eq!(from_repr(coeff), Some(value), "{name}");
-    let coeff = big(coeff);
+    assert_eq!(from_repr(stored), Some(value), "{name}");
     negative |= coeff.sign() == Sign::Minus;
     positive |= coeff.sign() == Sign::Plus;
     lengths[digits_of(&coeff) as usize] += 1;

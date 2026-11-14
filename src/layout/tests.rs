@@ -6,9 +6,9 @@ use std::{string::ToString, vec, vec::Vec};
 
 use num_bigint::{BigInt, BigUint};
 use typenum::{
-  B0, B1, U0, U1, U2, U3, U8, U9, U10, U18, U19, U20, U38, U39, U57, U58, U76, U77, U78, U79, U96,
-  U97, U98, U115, U116, U117, U134, U135, U153, U154, U155, U173, U174, U230, U231, U232, U289,
-  U307, U308, Unsigned,
+  B0, B1, U0, U1, U2, U3, U4, U8, U9, U10, U18, U19, U20, U38, U39, U57, U58, U76, U77, U78, U79,
+  U96, U97, U98, U115, U116, U117, U134, U135, U153, U154, U155, U173, U174, U192, U211, U230,
+  U231, U232, U250, U269, U288, U289, U307, U308, Unsigned,
 };
 
 use super::{
@@ -744,4 +744,111 @@ fn float_lengths_of_every_storage() {
   check_float_length::<u896>(896, 14);
   check_float_length::<u960>(960, 15);
   check_float_length::<u1024>(1024, 16);
+}
+
+/// Checks the row `within_layout` of `R`, a storage of `bits` bits, at the layout `L`, whose
+/// `digits` digits are written as a literal rather than read from `L`: zero and `10^digits - 1`
+/// are in range, and `10^digits` and the largest value of `R` are not, and for a signed storage,
+/// `-(10^digits - 1)` is in range, and `-10^digits` and the smallest value are not.
+fn check_range_limits<L, R>(bits: u32, digits: u32)
+where
+  L: LayoutDigits<R>,
+  R: Value,
+{
+  let power = bigint::pow10(digits);
+  let mut limits = vec![
+    (BigInt::ZERO, true),
+    (&power - 1u8, true),
+    (power.clone(), false),
+    (bigint::max(bits, R::SIGNED), false),
+  ];
+  if R::SIGNED {
+    limits.extend([
+      (-(&power - 1u8), true),
+      (-&power, false),
+      (bigint::min(bits, true), false),
+    ]);
+  }
+  for (value, within) in limits {
+    let coeff = R::from_big(&value).expect("the storage holds the value");
+    assert_eq!(
+      coeff.within_layout::<L, R>(Token::new()),
+      within,
+      "{value} for {digits} digits in {bits} bits, signed {}",
+      R::SIGNED
+    );
+  }
+}
+
+/// Checks [`check_range_limits`] for `R`, a storage of `bits` bits that holds `widest` digits,
+/// which `D` gives as a type: at the widest layout `(D, 0)`, at `(1, 0)` and `(1, 1)`, and at the
+/// asymmetric layout `A`, of `asymmetric` digits. `widest` is checked against `num-bigint`:
+/// `10^widest` is the largest power of ten that `R` holds.
+#[inline(never)]
+fn range_limits_of<R, D, A>(bits: u32, widest: u32, asymmetric: u32)
+where
+  R: Value,
+  (D, U0): LayoutDigits<R>,
+  (U1, U0): LayoutDigits<R>,
+  (U1, U1): LayoutDigits<R>,
+  A: LayoutDigits<R>,
+{
+  assert_eq!(
+    bigint::max_exp(&bigint::max(bits, R::SIGNED)),
+    widest,
+    "{bits} bits, signed {}",
+    R::SIGNED
+  );
+  check_range_limits::<(D, U0), R>(bits, widest);
+  check_range_limits::<(U1, U0), R>(bits, 1);
+  check_range_limits::<(U1, U1), R>(bits, 2);
+  check_range_limits::<A, R>(bits, asymmetric);
+}
+
+#[test]
+#[cfg_attr(
+  all(miri, target_pointer_width = "32"),
+  ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+)]
+fn range_limits_of_every_storage() {
+  // In `(1, 2)`, `Integral + Fraction` differs from either count and from twice either, so a row
+  // that read another count fails. An `i8` and a `u8` hold only two digits, and take `(0, 2)`.
+  range_limits_of::<i8, U2, (U0, U2)>(8, 2, 2);
+  range_limits_of::<i16, U4, (U1, U2)>(16, 4, 3);
+  range_limits_of::<i32, U9, (U1, U2)>(32, 9, 3);
+  range_limits_of::<i64, U18, (U1, U2)>(64, 18, 3);
+  range_limits_of::<i128, U38, (U1, U2)>(128, 38, 3);
+  range_limits_of::<i192, U57, (U1, U2)>(192, 57, 3);
+  range_limits_of::<i256, U76, (U1, U2)>(256, 76, 3);
+  range_limits_of::<i320, U96, (U1, U2)>(320, 96, 3);
+  range_limits_of::<i384, U115, (U1, U2)>(384, 115, 3);
+  range_limits_of::<i448, U134, (U1, U2)>(448, 134, 3);
+  range_limits_of::<i512, U153, (U1, U2)>(512, 153, 3);
+  range_limits_of::<i576, U173, (U1, U2)>(576, 173, 3);
+  range_limits_of::<i640, U192, (U1, U2)>(640, 192, 3);
+  range_limits_of::<i704, U211, (U1, U2)>(704, 211, 3);
+  range_limits_of::<i768, U230, (U1, U2)>(768, 230, 3);
+  range_limits_of::<i832, U250, (U1, U2)>(832, 250, 3);
+  range_limits_of::<i896, U269, (U1, U2)>(896, 269, 3);
+  range_limits_of::<i960, U288, (U1, U2)>(960, 288, 3);
+  range_limits_of::<i1024, U307, (U1, U2)>(1024, 307, 3);
+  range_limits_of::<u8, U2, (U0, U2)>(8, 2, 2);
+  range_limits_of::<u16, U4, (U1, U2)>(16, 4, 3);
+  range_limits_of::<u32, U9, (U1, U2)>(32, 9, 3);
+  range_limits_of::<u64, U19, (U1, U2)>(64, 19, 3);
+  range_limits_of::<u128, U38, (U1, U2)>(128, 38, 3);
+  range_limits_of::<u192, U57, (U1, U2)>(192, 57, 3);
+  range_limits_of::<u256, U77, (U1, U2)>(256, 77, 3);
+  range_limits_of::<u320, U96, (U1, U2)>(320, 96, 3);
+  range_limits_of::<u384, U115, (U1, U2)>(384, 115, 3);
+  range_limits_of::<u448, U134, (U1, U2)>(448, 134, 3);
+  range_limits_of::<u512, U154, (U1, U2)>(512, 154, 3);
+  range_limits_of::<u576, U173, (U1, U2)>(576, 173, 3);
+  range_limits_of::<u640, U192, (U1, U2)>(640, 192, 3);
+  range_limits_of::<u704, U211, (U1, U2)>(704, 211, 3);
+  range_limits_of::<u768, U231, (U1, U2)>(768, 231, 3);
+  range_limits_of::<u832, U250, (U1, U2)>(832, 250, 3);
+  range_limits_of::<u896, U269, (U1, U2)>(896, 269, 3);
+  range_limits_of::<u960, U288, (U1, U2)>(960, 288, 3);
+  range_limits_of::<u1024, U308, (U1, U2)>(1024, 308, 3);
 }
