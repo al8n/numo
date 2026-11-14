@@ -310,7 +310,7 @@ pub trait Storage: StorageCore<Twin = <Self as Storage>::Inline> + Clone + Ord +
 #[diagnostic::on_unimplemented(
   message = "`{Self}` is not an inline storage of `Decimal`",
   note = "`Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `i576`, `i640`, `i704`, `i768`, `i832`, `i896`, `i960`, `i1024`, `u192`, `u256`, `u320`, `u384`, `u448`, `u512`, `u576`, `u640`, `u704`, `u768`, `u832`, `u896`, `u960` or `u1024`",
-  note = "a wide integer whose limbs are in a `Box`, an `Rc` or an `Arc` is a storage that is not inline: it computes in its inline storage, `Storage::Inline`"
+  note = "with the `std` or the `alloc` feature, a wide integer whose limbs are in a `Box`, an `Rc` or an `Arc`, and with the `triomphe` feature one whose limbs are in a `triomphe::Arc`, is a storage that is not inline: it computes in its inline storage, `Storage::Inline`"
 )]
 pub trait InlineStorage: MutableStorage + Storage<Inline = Self> + InlineCore + Copy {}
 
