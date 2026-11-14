@@ -1110,6 +1110,7 @@ macro_rules! native {
       /// `2^bits`, unsigned, and the sum divided by `2^bits`, rounded down, within the range of
       /// `bits` bits. Requires `bits <= BITS` and the four values within that range, so that the
       /// sum is within the range of `2 * bits` bits.
+      #[inline]
       pub(crate) const fn carrying_mul_add_bits(
         lhs: $int,
         rhs: $int,
