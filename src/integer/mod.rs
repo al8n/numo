@@ -161,9 +161,12 @@ mod traits;
 /// between the signs and [`from_be`](crate::IntegerByteOrder::from_be) do, stores its result in
 /// that allocation. The casts, such as `checked_cast` and `widen`, are the exception: they build
 /// their target from the words of the source, so a cast into a heap storage allocates its target,
-/// also from a source of the same type, and frees a source given by value. `Sum` and `Product` of
-/// values store their result in the allocation of the first item, and of no item a new allocation,
-/// and those of references allocate it. A compound assignment, as in `total += &a`,
+/// also from a source of the same type, and frees a source given by value.
+/// [`carrying_mul`](crate::UnsignedFixedInteger::carrying_mul) builds the two integers that it
+/// returns, and [`widening_mul`](Self::widening_mul) allocates nothing, since its product is in the
+/// default storage of its width, which is inline. `Sum` and `Product` of values store their result
+/// in the allocation of the first item, and of no item a new allocation, and those of references
+/// allocate it. A compound assignment, as in `total += &a`,
 /// [`set_bit`](crate::IntegerBits::set_bit) and `clone_from` store in the allocation of their
 /// target, `clone` allocates, and the casts between the signs keep the allocation. `From` moves a
 /// `Box<[L; N]>` out of an integer, and into one whose width fills the array, without a copy, and
@@ -250,8 +253,11 @@ mod traits;
 /// exponentiation in the `checked_*`, `wrapping_*`, `overflowing_*` and `strict_*` forms, the
 /// Euclidean division and remainder in the same four forms, the saturating addition, subtraction,
 /// multiplication, division and exponentiation, [`carrying_add`](Self::carrying_add) and
-/// [`borrowing_sub`](Self::borrowing_sub), and from one bit the constant `ONE`. The functions
-/// without an overflow prefix are [`pow`](Self::pow), [`div_euclid`](Self::div_euclid) and
+/// [`borrowing_sub`](Self::borrowing_sub), the multiplication with a carry
+/// [`carrying_mul`](Self::carrying_mul) and with a carry and an addend
+/// [`carrying_mul_add`](Self::carrying_mul_add), which return the low and the high half of the
+/// product, and from one bit the constant `ONE`. The functions without an overflow prefix are
+/// [`pow`](Self::pow), [`div_euclid`](Self::div_euclid) and
 /// [`rem_euclid`](Self::rem_euclid), [`div_floor`](Self::div_floor) and
 /// [`div_ceil`](Self::div_ceil), [`next_multiple_of`](Self::next_multiple_of),
 /// [`is_multiple_of`](Self::is_multiple_of), [`div_exact`](Self::div_exact),
@@ -266,10 +272,13 @@ mod traits;
 /// `checked_*` method would return `Some`, and the behavior is undefined otherwise. The operators
 /// `+`, `-`, `*`, `/` and `%`, their compound assignments, `Sum` and `Product` work for every
 /// storage, and so do the traits that give generic code the methods, such as
-/// [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). A method of a storage
-/// is called with method syntax or with a path that names the storage, such as
-/// `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the storage to inference, such as
-/// `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
+/// [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). Every storage also
+/// has [`widening_mul`](Self::widening_mul), the exact product of two integers of any widths and
+/// storages whose widths sum to at most 65536 bits, in the integer of the sum of the widths, in its
+/// default storage: the product of two `u256` is a `u512`. A method of a storage is called with
+/// method syntax or with a path that names the storage, such as `Uint::<U7>::checked_add(&a, &b)`:
+/// a path that leaves the storage to inference, such as `Uint::checked_add(&a, &b)`, is ambiguous
+/// (E0034).
 ///
 /// Each inline storage also has the bit operations of the native unsigned integers at the width
 /// `Bits`, as `const fn`s: the counts [`count_ones`](Self::count_ones),
@@ -937,8 +946,12 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// Euclidean division and remainder in the same four forms, the saturating addition, subtraction,
 /// multiplication, negation, division and exponentiation, the absolute value in every form,
 /// [`abs`](Self::abs) and [`unsigned_abs`](Self::unsigned_abs), which returns the [`Uint`] of the
-/// same width and storage size, [`signum`](Self::signum), and from two bits the constant `ONE`,
-/// since one bit holds only -1 and 0. The functions without an overflow prefix are those of
+/// same width and storage size, [`signum`](Self::signum), [`carrying_add`](Self::carrying_add) and
+/// [`borrowing_sub`](Self::borrowing_sub), whose flag is an overflow of the range, as for the
+/// native signed integers, the multiplication with a carry [`carrying_mul`](Self::carrying_mul)
+/// and with a carry and an addend [`carrying_mul_add`](Self::carrying_mul_add), whose low half is
+/// the [`Uint`] of the same width and storage size, and from two bits the constant `ONE`, since
+/// one bit holds only -1 and 0. The functions without an overflow prefix are those of
 /// [`Uint`], rounded toward zero where `Uint` rounds down, but for `is_multiple_of` and the next
 /// power of two, and with [`checked_isqrt`](Self::checked_isqrt):
 /// [`abs_diff`](Self::abs_diff) returns the [`Uint`] of the same width and storage size, and
@@ -950,8 +963,9 @@ pub struct Uint<Bits, Repr = <Bits as BitWidth>::Unsigned> {
 /// `rhs` is not zero and divides `self`, and that `self` is not `MIN` with `rhs` -1. The operators
 /// `+`, `-`, `*`, `/` and `%`, their compound assignments, the negation `-`, `Sum` and `Product`
 /// work for every storage, and so do the traits that give generic code the methods, such as
-/// [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). As for [`Uint`], a
-/// path to a method names the storage.
+/// [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath), and
+/// [`widening_mul`](Self::widening_mul), the exact product in the `Int` of the sum of the widths.
+/// As for [`Uint`], a path to a method names the storage.
 ///
 /// The bit operations are those of [`Uint`] but for `bit_width` and `is_power_of_two`, on the
 /// `Bits` bits of the two's complement: the counts leave out the copies of the sign that the
@@ -1785,6 +1799,7 @@ macro_rules! array_integers {
       saturating_table!(Uint, inherent_items![unsigned, $lower, &]);
       strict_table!(inherent_items![unsigned, $lower, &]);
       uint_sign_table!(inherent_items![unsigned, $lower, &]);
+      uint_wide_table!(inherent_items![unsigned, $lower, &]);
       integer_math_table!(inherent_items![unsigned, $lower, &, Uint<B, [$limb; N]>]);
       uint_math_table!(inherent_items![unsigned, $lower, &]);
       integer_bits_table!(inherent_items![unsigned, $lower, &]);
@@ -2066,6 +2081,7 @@ macro_rules! array_integers {
       saturating_table!(Int, inherent_items![signed, $upper, &]);
       strict_table!(inherent_items![signed, $upper, &]);
       int_sign_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
+      int_wide_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
       integer_math_table!(inherent_items![signed, $upper, &, Uint<B, [$limb; N]>]);
       int_math_table!(inherent_items![signed, $upper, &]);
       integer_bits_table!(inherent_items![signed, $upper, &]);
@@ -2507,6 +2523,7 @@ macro_rules! native_integers {
       saturating_table!(Uint, inherent_items![$uint]);
       strict_table!(inherent_items![$uint]);
       uint_sign_table!(inherent_items![$uint]);
+      uint_wide_table!(inherent_items![$uint]);
       integer_math_table!(inherent_items![$uint, Uint<B, $uint>]);
       uint_math_table!(inherent_items![$uint]);
       integer_bits_table!(inherent_items![$uint]);
@@ -2777,6 +2794,7 @@ macro_rules! native_integers {
       saturating_table!(Int, inherent_items![$int]);
       strict_table!(inherent_items![$int]);
       int_sign_table!(inherent_items![$int, Uint<B, $uint>]);
+      int_wide_table!(inherent_items![$int, Uint<B, $uint>]);
       integer_math_table!(inherent_items![$int, Uint<B, $uint>]);
       int_math_table!(inherent_items![$int]);
       integer_bits_table!(inherent_items![$int]);

@@ -930,6 +930,303 @@ mod arithmetic_bits {
     check_native_carries!(u128, [0, 1, 2, 64, 65, 127, 128], 0);
   }
 
+  /// Checks `carrying_mul_bits` and `carrying_mul_add_bits` of each width of `$widths`, at most 64
+  /// bits, in the unsigned layer `$uint` and the signed layer `$int`, against `u128` and `i128`
+  /// arithmetic, each pattern read unsigned and in two's complement: every value of up to 4 bits
+  /// as each operand, the carry and the addend, and at a wider width the structured operands
+  /// against each other, each pair with the carry and the addend zero, all ones, the smallest and
+  /// the largest value of two's complement, and the operands exchanged. Under Miri, every value
+  /// of up to 2 bits, and every 61st left operand with the patterns of the ends.
+  macro_rules! check_native_products {
+    ($uint:ident, $int:ident, $widths:expr) => {{
+      let (every, step) = if cfg!(miri) { (2, 61) } else { (4, 1) };
+      for bits in $widths {
+        let mask = (1u128 << bits) - 1;
+        // The products of the patterns `a` and `b` with the carry `c` and the addend `d`, against
+        // the exact values split at bit `bits`: the remainder, and the quotient rounded down.
+        let check = |a: u128, b: u128, c: u128, d: u128| {
+          let (x, y, z, w) = (a as $uint, b as $uint, c as $uint, d as $uint);
+          // At most `2^(2 * bits) - 1`, which a `u128` holds.
+          let exact = a * b + c;
+          assert_eq!(
+            int::$uint::carrying_mul_bits(x, y, z, bits),
+            ((exact & mask) as $uint, (exact >> bits) as $uint),
+            "{a} * {b} + {c} in {bits} bits"
+          );
+          let exact = exact + d;
+          assert_eq!(
+            int::$uint::carrying_mul_add_bits(x, y, z, w, bits),
+            ((exact & mask) as $uint, (exact >> bits) as $uint),
+            "{a} * {b} + {c} + {d} in {bits} bits"
+          );
+          let [a, b, c, d] = [a, b, c, d].map(|pattern| bigint::to_signed(pattern, bits));
+          let (x, y, z, w) = (a as $int, b as $int, c as $int, d as $int);
+          let modulus = 1i128 << bits;
+          let exact = a * b + c;
+          assert_eq!(
+            int::$int::carrying_mul_bits(x, y, z, bits),
+            (
+              exact.rem_euclid(modulus) as $uint,
+              exact.div_euclid(modulus) as $int
+            ),
+            "{a} * {b} + {c} in {bits} bits"
+          );
+          let exact = exact + d;
+          assert_eq!(
+            int::$int::carrying_mul_add_bits(x, y, z, w, bits),
+            (
+              exact.rem_euclid(modulus) as $uint,
+              exact.div_euclid(modulus) as $int
+            ),
+            "{a} * {b} + {c} + {d} in {bits} bits"
+          );
+        };
+        if bits <= every {
+          for a in 0..=mask {
+            for b in 0..=mask {
+              for c in 0..=mask {
+                for d in 0..=mask {
+                  check(a, b, c, d);
+                }
+              }
+            }
+          }
+        } else {
+          let patterns = bigint::structured_patterns(bits);
+          let lefts = bigint::with_ends(patterns.iter().copied().step_by(step), end_patterns(bits));
+          // The smallest value of two's complement; the largest is the pattern below it.
+          let min = 1u128 << (bits - 1);
+          for &a in &lefts {
+            for &b in &patterns {
+              for (c, d) in [(0, 0), (mask, mask), (min, min), (min - 1, min - 1), (b, a)] {
+                check(a, b, c, d);
+              }
+            }
+          }
+        }
+      }
+    }};
+  }
+
+  /// `carrying_mul_bits` and `carrying_mul_add_bits` of every native layer up to 64 bits, at the
+  /// widths of the tests above, zero bits and one bit among them.
+  #[test]
+  fn products_match_wider_integers() {
+    check_native_products!(u8, i8, 0..=8);
+    let widths: Vec<u32> = if cfg!(miri) {
+      vec![0, 1, 7, 8, 9, 16]
+    } else {
+      (0..=16).collect()
+    };
+    check_native_products!(u16, i16, widths);
+    check_native_products!(u32, i32, [0, 1, 2, 16, 31, 32]);
+    check_native_products!(u64, i64, [0, 1, 2, 32, 63, 64]);
+  }
+
+  /// Checks, at the full width of `$uint`, `carrying_mul_add` and `carrying_mul_add_bits` against
+  /// the native `carrying_mul_add`, and `carrying_mul_bits` against the native `carrying_mul`, at
+  /// the structured operands, each pair with the carry and the addend zero, all ones, and the
+  /// operands exchanged. Above 64 bits, every 3rd right operand; under Miri, every 61st left
+  /// operand and every 7th right one, with zero and all ones.
+  macro_rules! check_native_full_products {
+    ($uint:ident) => {{
+      let bits = $uint::BITS;
+      let (left_step, right_step) = match (cfg!(miri), bits > 64) {
+        (true, _) => (61, 7),
+        (false, true) => (1, 3),
+        (false, false) => (1, 1),
+      };
+      let patterns = bigint::structured_patterns(bits);
+      let ends = [0, $uint::MAX as u128];
+      let lefts = bigint::with_ends(patterns.iter().copied().step_by(left_step), ends);
+      let rights = bigint::with_ends(patterns.iter().copied().step_by(right_step), ends);
+      for &a in &lefts {
+        for &b in &rights {
+          let (a, b) = (a as $uint, b as $uint);
+          for (c, d) in [(0, 0), ($uint::MAX, $uint::MAX), (b, a)] {
+            let native = a.carrying_mul_add(b, c, d);
+            assert_eq!(
+              int::$uint::carrying_mul_add(a, b, c, d),
+              native,
+              "{a} * {b} + {c} + {d}"
+            );
+            assert_eq!(
+              int::$uint::carrying_mul_add_bits(a, b, c, d, bits),
+              native,
+              "{a} * {b} + {c} + {d}"
+            );
+            assert_eq!(
+              int::$uint::carrying_mul_bits(a, b, c, bits),
+              a.carrying_mul(b, c),
+              "{a} * {b} + {c}"
+            );
+          }
+        }
+      }
+    }};
+  }
+
+  /// At the full width of every unsigned native layer, the products with a carry and an addend
+  /// against the native methods.
+  #[test]
+  fn full_width_products_match_the_native_methods() {
+    check_native_full_products!(u8);
+    check_native_full_products!(u16);
+    check_native_full_products!(u32);
+    check_native_full_products!(u64);
+    check_native_full_products!(u128);
+  }
+
+  /// Checks `carrying_add_bits` and `borrowing_sub_bits` of each width of `$widths`, at most 64
+  /// bits, in the signed layer `$int`, without and with a carry or a borrow, against `i128`
+  /// arithmetic: the exact sum or difference wrapped to the width, and whether it is outside the
+  /// range of the width. Every pair of values of up to `$every` bits, and otherwise the structured
+  /// operands of the width against each other. Under Miri, every 61st left operand and every 7th
+  /// right one, with the patterns of the ends.
+  macro_rules! check_native_signed_carries {
+    ($int:ident, $widths:expr, $every:expr) => {{
+      let (left_step, right_step) = if cfg!(miri) { (61, 7) } else { (1, 1) };
+      for bits in $widths {
+        // Every value, or the structured operands.
+        let operands: Vec<u128> = if bits <= $every {
+          (0..1u128 << bits).collect()
+        } else {
+          bigint::structured_patterns(bits)
+        };
+        let lefts = bigint::with_ends(
+          operands.iter().copied().step_by(left_step),
+          end_patterns(bits),
+        );
+        let rights = bigint::with_ends(
+          operands.iter().copied().step_by(right_step),
+          end_patterns(bits),
+        );
+        for &a in &lefts {
+          for &b in &rights {
+            let (a, b) = (bigint::to_signed(a, bits), bigint::to_signed(b, bits));
+            let (x, y) = (a as $int, b as $int);
+            for flag in [false, true] {
+              let one = i128::from(flag);
+              let (value, overflow) = wrapped(a + b + one, bits, true);
+              assert_eq!(
+                int::$int::carrying_add_bits(x, y, flag, bits),
+                (value as $int, overflow),
+                "{a} + {b} + {one} in {bits} bits"
+              );
+              let (value, overflow) = wrapped(a - b - one, bits, true);
+              assert_eq!(
+                int::$int::borrowing_sub_bits(x, y, flag, bits),
+                (value as $int, overflow),
+                "{a} - {b} - {one} in {bits} bits"
+              );
+            }
+          }
+        }
+      }
+    }};
+  }
+
+  /// `carrying_add_bits` and `borrowing_sub_bits` of every signed native layer up to 64 bits: every
+  /// pair of values of up to 8 bits, zero bits and one bit among them, and the structured operands
+  /// of the wider widths of the tests above.
+  #[test]
+  fn signed_carries_and_borrows_match_wider_integers() {
+    check_native_signed_carries!(i8, 0..=8, 8);
+    let widths: Vec<u32> = if cfg!(miri) {
+      vec![0, 1, 7, 8, 9, 16]
+    } else {
+      (0..=16).collect()
+    };
+    check_native_signed_carries!(i16, widths, 8);
+    check_native_signed_carries!(i32, [0, 1, 2, 16, 31, 32], 0);
+    check_native_signed_carries!(i64, [0, 1, 2, 32, 63, 64], 0);
+  }
+
+  /// The products of `u128` and `i128` with a carry and an addend, and the carries and the borrows
+  /// of `i128`, at 128 bits and at a few narrower widths, against `num-bigint`, at the samples of
+  /// the arithmetic of a width: each pair with the carry and the addend the smallest value twice,
+  /// the largest value twice, and the operands exchanged, and with each carry and borrow.
+  #[test]
+  #[cfg_attr(
+    all(miri, target_pointer_width = "32"),
+    ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+  )]
+  fn u128_and_i128_products_match_big_integers() {
+    for bits in [0, 1, 2, 64, 65, 127, 128] {
+      for signed in [false, true] {
+        let (min, max) = (bigint::min(bits, signed), bigint::max(bits, signed));
+        let mut patterns = bigint::structured_patterns(bits).into_iter().cycle();
+        let samples = bigint::arithmetic_samples(bits, 64, &min, &max, || {
+          BigInt::from(patterns.next().expect("a pattern"))
+        });
+        // `exact` split at bit `bits`: the remainder, and the quotient rounded down.
+        let halves = |exact: &BigInt| {
+          let quotient = exact >> bits;
+          (exact - (&quotient << bits), quotient)
+        };
+        for a in &samples {
+          for b in &samples {
+            let product = a * b;
+            for (c, d) in [(&min, &min), (&max, &max), (b, a)] {
+              let (carried, added) = (&product + c, &product + c + d);
+              if signed {
+                let [x, y, z, w] = [a, b, c, d].map(|v| i128::try_from(v).expect("in range"));
+                let big = |(low, high): (u128, i128)| (BigInt::from(low), BigInt::from(high));
+                assert_eq!(
+                  big(int::i128::carrying_mul_bits(x, y, z, bits)),
+                  halves(&carried),
+                  "{a} * {b} + {c} in {bits} bits"
+                );
+                assert_eq!(
+                  big(int::i128::carrying_mul_add_bits(x, y, z, w, bits)),
+                  halves(&added),
+                  "{a} * {b} + {c} + {d} in {bits} bits"
+                );
+              } else {
+                let [x, y, z, w] = [a, b, c, d].map(|v| u128::try_from(v).expect("in range"));
+                let big = |(low, high): (u128, u128)| (BigInt::from(low), BigInt::from(high));
+                assert_eq!(
+                  big(int::u128::carrying_mul_bits(x, y, z, bits)),
+                  halves(&carried),
+                  "{a} * {b} + {c} in {bits} bits"
+                );
+                assert_eq!(
+                  big(int::u128::carrying_mul_add_bits(x, y, z, w, bits)),
+                  halves(&added),
+                  "{a} * {b} + {c} + {d} in {bits} bits"
+                );
+              }
+            }
+            if signed {
+              let (x, y) = (
+                i128::try_from(a).expect("in range"),
+                i128::try_from(b).expect("in range"),
+              );
+              for flag in [false, true] {
+                let one = u8::from(flag);
+                let expected = |exact: BigInt| {
+                  let outside = exact < min || max < exact;
+                  (bigint::wrap(&exact, bits, &min), outside)
+                };
+                let big = |(value, overflow): (i128, bool)| (BigInt::from(value), overflow);
+                assert_eq!(
+                  big(int::i128::carrying_add_bits(x, y, flag, bits)),
+                  expected(a + b + one),
+                  "{a} + {b} + {one} in {bits} bits"
+                );
+                assert_eq!(
+                  big(int::i128::borrowing_sub_bits(x, y, flag, bits)),
+                  expected(a - b - one),
+                  "{a} - {b} - {one} in {bits} bits"
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   /// Checks the division functions of `bits` bits, at most 64, in the unsigned layer `$uint` and
   /// the signed layer `$int`, on the bit patterns `$a` and `$b` read with each sign, against
   /// `i128`: the division rounded toward zero, the Euclidean division, the quotient rounded down

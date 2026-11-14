@@ -313,8 +313,11 @@ pub trait ConstFixedInteger: IntegerAssign + Copy {
 
 /// An unsigned integer of a fixed number of bits: [`Uint`].
 ///
-/// The carrying addition and the borrowing subtraction are the inherent methods of the same names,
-/// which a concrete type reaches without this trait, also in constant contexts.
+/// The carrying addition and the borrowing subtraction, and the multiplication with a carry and
+/// with a carry and an addend, which return the low and the high half of the product, are the
+/// inherent methods of the same names, which a concrete type reaches without this trait, also in
+/// constant contexts. They compute numbers of several digits of `Bits` bits, the least significant
+/// digit first, as below.
 ///
 /// ```
 /// use numo::{
@@ -344,25 +347,42 @@ pub trait ConstFixedInteger: IntegerAssign + Copy {
 ///
 /// let (digits, overflow) = sum([u7::MAX, u7::new(5)], [u7::new(1), u7::new(2)]);
 /// assert_eq!((digits, overflow), ([u7::ZERO, u7::new(8)], false));
+///
+/// // A number of two digits multiplied by one digit, with the digit that it carries out.
+/// fn scale<B: BitWidth>(a: [Uint<B>; 2], factor: Uint<B>) -> ([Uint<B>; 2], Uint<B>) {
+///   let (low, carry) = a[0].carrying_mul(&factor, &Uint::<B>::ZERO);
+///   let (high, carry) = a[1].carrying_mul(&factor, &carry);
+///   ([low, high], carry)
+/// }
+///
+/// // 767 times 3 is 2301, which is 125 + 17 * 128 in digits of 7 bits.
+/// let (digits, carry) = scale([u7::MAX, u7::new(5)], u7::new(3));
+/// assert_eq!((digits, carry), ([u7::new(125), u7::new(17)], u7::ZERO));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
 pub trait UnsignedFixedInteger: Sealed + Sized {
   uint_sign_table!(trait_items![]);
+  uint_wide_table!(trait_items![]);
 }
 
 /// A signed integer of a fixed number of bits, in two's complement: [`Int`].
 ///
-/// The sign queries, the absolute value in its forms, `saturating_neg`, `signum`, `unsigned_abs`
-/// and the unsafe `unchecked_neg` are the inherent methods of the same names, which a concrete type
-/// reaches without this trait, also in constant contexts. The supertrait `Neg` gives generic code
-/// the operator `-`, which on overflow panics or wraps as `overflow-checks` decides, as for the
-/// native integers.
+/// The sign queries, the absolute value in its forms, `saturating_neg`, `signum`, `unsigned_abs`,
+/// the carrying addition and the borrowing subtraction, the multiplication with a carry and with a
+/// carry and an addend, and the unsafe `unchecked_neg` are the inherent methods of the same names,
+/// which a concrete type reaches without this trait, also in constant contexts. The flag of the
+/// carrying addition and of the borrowing subtraction is an overflow of the range, as for the
+/// native signed integers, for the most significant digit of a number of several digits whose
+/// lower digits are `Uint`s, and the low half of a product is the [`Uint`] of the same width, its
+/// [`Unsigned`](Self::Unsigned). The supertrait `Neg` gives generic code the operator `-`, which on
+/// overflow panics or wraps as `overflow-checks` decides, as for the native integers.
 ///
 /// ```
 /// use numo::{
-///   BitWidth, Int, SignedFixedInteger, Uint, i256,
+///   BitWidth, Int, SignedFixedInteger, Uint, i7, i256,
 ///   typenum::U7,
+///   u7,
 /// };
 ///
 /// fn negatives<T: SignedFixedInteger>(values: &[T]) -> usize {
@@ -382,6 +402,14 @@ pub trait UnsignedFixedInteger: Sealed + Sized {
 /// assert_eq!(negatives(&[i256::MIN, i256::ZERO, i256::MAX]), 1);
 /// assert_eq!(unsigned_max(Int::<U7>::MIN), Uint::<U7>::MAX);
 /// assert_eq!(distance(Int::<U7>::MIN), Uint::<U7>::new(64));
+///
+/// // -64 * -64 + 63 is 4159, which is 63 + 32 * 128, and -1 * 1 + 0 is -1, which is
+/// // 127 + -1 * 128: the low half is unsigned, and the high half has the sign.
+/// assert_eq!(i7::MIN.carrying_mul(&i7::MIN, &i7::MAX), (u7::new(63), i7::new(32)));
+/// assert_eq!(i7::new(-1).carrying_mul(&i7::new(1), &i7::ZERO), (u7::MAX, i7::new(-1)));
+///
+/// // 63 + 0 + 1 is 64, outside the range of 7 bits.
+/// assert_eq!(i7::MAX.carrying_add(&i7::ZERO, true), (i7::MIN, true));
 /// ```
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
@@ -392,6 +420,7 @@ pub trait SignedFixedInteger: Sealed + Sized + Neg<Output = Self> {
 
   signed_query_table!(trait_items![]);
   int_sign_table!(trait_items![]);
+  int_wide_table!(trait_items![]);
   signed_unchecked_table!(trait_items![]);
 }
 
@@ -1368,6 +1397,7 @@ impl<B: FitsBits<R>, R: InlineIntRepr> ConstFixedInteger for Int<B, R> {
 
 impl<B: FitsBits<R>, R: UintRepr> UnsignedFixedInteger for Uint<B, R> {
   uint_sign_table!(generic_items![]);
+  uint_wide_table!(generic_items![]);
 }
 
 // The absolute value of a value that is not negative is the value itself, and the wrapped one of
@@ -1377,6 +1407,7 @@ impl<B: FitsBits<R>, R: IntRepr + Clone> SignedFixedInteger for Int<B, R> {
 
   signed_query_table!(generic_items![]);
   int_sign_table!(generic_items![]);
+  int_wide_table!(generic_items![]);
   signed_unchecked_table!(generic_items![]);
 }
 

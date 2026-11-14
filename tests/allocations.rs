@@ -630,6 +630,64 @@ mod boxed {
     assert!(borrow);
   }
 
+  /// The carrying addition and the borrowing subtraction of `Int` build their result alone, with a
+  /// carry or a borrow to take in or without, whether the exact value overflows the range or not.
+  #[test]
+  fn signed_carries_and_borrows_build_one_integer() {
+    let (a, b) = (boxed_int(-1_000_000), boxed_int(7));
+    let least = smallest();
+    let greatest = black_box(<BoxedInt as FixedInteger>::max_value());
+    let (_, overflow) = allocates!(1, 0; a.carrying_add(&b, true));
+    assert!(!overflow);
+    let (_, overflow) = allocates!(1, 0; greatest.carrying_add(&b, true));
+    assert!(overflow);
+    let (_, overflow) = allocates!(1, 0; a.carrying_add(&b, false));
+    assert!(!overflow);
+    let (_, overflow) = allocates!(1, 0; least.carrying_add(&a, false));
+    assert!(overflow);
+    let (_, overflow) = allocates!(1, 0; a.borrowing_sub(&b, true));
+    assert!(!overflow);
+    let (_, overflow) = allocates!(1, 0; least.borrowing_sub(&b, true));
+    assert!(overflow);
+    let (_, overflow) = allocates!(1, 0; a.borrowing_sub(&b, false));
+    assert!(!overflow);
+    let (_, overflow) = allocates!(1, 0; greatest.borrowing_sub(&a, false));
+    assert!(overflow);
+  }
+
+  /// The products with a carry build the two halves that they return, of both signs: the low half
+  /// of a signed product is the unsigned integer in a box.
+  #[test]
+  fn carrying_products_build_both_halves() {
+    let (a, b) = pair();
+    let halves = allocates!(2, 0; a.carrying_mul(&b, &b));
+    assert_eq!(halves, (boxed(7_000_007), boxed(0)));
+    let halves = allocates!(2, 0; a.carrying_mul_add(&b, &b, &a));
+    assert_eq!(halves, (boxed(8_000_007), boxed(0)));
+    let (c, d, e) = (boxed_int(-1_000_000), boxed_int(7), boxed_int(-3));
+    let (_, high) = allocates!(2, 0; c.carrying_mul(&d, &e));
+    assert_eq!(high, boxed_int(-1));
+    let (_, high) = allocates!(2, 0; c.carrying_mul_add(&d, &e, &d));
+    assert_eq!(high, boxed_int(-1));
+  }
+
+  /// The widening product is in the default storage of its width, which is inline, so it allocates
+  /// nothing, of two boxed operands, of a boxed operand by an inline one and the reverse, of both
+  /// signs.
+  #[test]
+  fn widening_products_allocate_nothing() {
+    let (a, b) = pair();
+    let twin = black_box(Inline::from(5u64));
+    allocates!(0, 0; a.widening_mul(&b));
+    allocates!(0, 0; a.widening_mul(&twin));
+    allocates!(0, 0; twin.widening_mul(&a));
+    let (c, d) = (boxed_int(-1_000_000), boxed_int(7));
+    let signed_twin = black_box(Int::<U256, [u64; 4]>::from(-5i64));
+    allocates!(0, 0; c.widening_mul(&d));
+    allocates!(0, 0; c.widening_mul(&signed_twin));
+    allocates!(0, 0; signed_twin.widening_mul(&c));
+  }
+
   /// The exact division builds its quotient, and nothing for a division that leaves a remainder.
   #[test]
   fn exact_division_builds_only_a_quotient() {
@@ -1066,6 +1124,66 @@ macro_rules! shared_storage {
         assert!(!borrow);
         let (_, borrow) = allocates!(1, 0; b.borrowing_sub(&a, true));
         assert!(borrow);
+      }
+
+      /// The carrying addition and the borrowing subtraction of `Int` build their result alone,
+      /// with a carry or a borrow to take in or without, whether the exact value overflows the
+      /// range or not. No result is the value of an operand, which it would share.
+      #[test]
+      fn signed_carries_and_borrows_build_one_integer() {
+        let (a, b) = (shared_int(-1_000_000), shared_int(7));
+        let least = smallest();
+        let greatest = black_box(<SharedInt as FixedInteger>::max_value());
+        let (_, overflow) = allocates!(1, 0; a.carrying_add(&b, true));
+        assert!(!overflow);
+        let (_, overflow) = allocates!(1, 0; greatest.carrying_add(&b, true));
+        assert!(overflow);
+        let (_, overflow) = allocates!(1, 0; a.carrying_add(&b, false));
+        assert!(!overflow);
+        let (_, overflow) = allocates!(1, 0; least.carrying_add(&a, false));
+        assert!(overflow);
+        let (_, overflow) = allocates!(1, 0; a.borrowing_sub(&b, true));
+        assert!(!overflow);
+        let (_, overflow) = allocates!(1, 0; least.borrowing_sub(&b, true));
+        assert!(overflow);
+        let (_, overflow) = allocates!(1, 0; a.borrowing_sub(&b, false));
+        assert!(!overflow);
+        let (_, overflow) = allocates!(1, 0; greatest.borrowing_sub(&a, false));
+        assert!(overflow);
+      }
+
+      /// The products with a carry build the two halves that they return, of both signs, and no
+      /// half is the value of an operand, which it would share: the low half of a signed product
+      /// is the unsigned integer in a pointer of the same kind.
+      #[test]
+      fn carrying_products_build_both_halves() {
+        let (a, b) = pair();
+        let halves = allocates!(2, 0; a.carrying_mul(&b, &b));
+        assert_eq!(halves, (shared(7_000_007), shared(0)));
+        let halves = allocates!(2, 0; a.carrying_mul_add(&b, &b, &a));
+        assert_eq!(halves, (shared(8_000_007), shared(0)));
+        let (c, d, e) = (shared_int(-1_000_000), shared_int(7), shared_int(-3));
+        let (_, high) = allocates!(2, 0; c.carrying_mul(&d, &e));
+        assert_eq!(high, shared_int(-1));
+        let (_, high) = allocates!(2, 0; c.carrying_mul_add(&d, &e, &d));
+        assert_eq!(high, shared_int(-1));
+      }
+
+      /// The widening product is in the default storage of its width, which is inline, so it
+      /// allocates nothing, of two shared operands, of a shared operand by an inline one and the
+      /// reverse, of both signs.
+      #[test]
+      fn widening_products_allocate_nothing() {
+        let (a, b) = pair();
+        let twin = black_box(Inline::from(5u64));
+        allocates!(0, 0; a.widening_mul(&b));
+        allocates!(0, 0; a.widening_mul(&twin));
+        allocates!(0, 0; twin.widening_mul(&a));
+        let (c, d) = (shared_int(-1_000_000), shared_int(7));
+        let signed_twin = black_box(Int::<U256, [u64; 4]>::from(-5i64));
+        allocates!(0, 0; c.widening_mul(&d));
+        allocates!(0, 0; c.widening_mul(&signed_twin));
+        allocates!(0, 0; signed_twin.widening_mul(&c));
       }
 
       /// The exact division builds its quotient, and nothing for a division that leaves a

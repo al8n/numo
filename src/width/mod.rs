@@ -469,6 +469,24 @@ mod sealed {
     fn borrowing_sub_bits(&self, rhs: &Self, borrow: bool, bits: u32, token: Token)
     -> (Self, bool);
 
+    /// `self * rhs + carry` as two values of `bits` bits, the low one first: the sum modulo
+    /// `2^bits`, and the sum divided by `2^bits`. A row of its own, so that the multiplication
+    /// without an addend builds no zero. Requires `bits` to be at most the bits of the storage and
+    /// the three values to have `bits` bits.
+    fn carrying_mul_bits(&self, rhs: &Self, carry: &Self, bits: u32, token: Token) -> (Self, Self);
+
+    /// `self * rhs + carry + add` as two values of `bits` bits, as
+    /// [`carrying_mul_bits`](Self::carrying_mul_bits) gives `self * rhs + carry`. Requires `bits`
+    /// to be at most the bits of the storage and the four values to have `bits` bits.
+    fn carrying_mul_add_bits(
+      &self,
+      rhs: &Self,
+      carry: &Self,
+      add: &Self,
+      bits: u32,
+      token: Token,
+    ) -> (Self, Self);
+
     /// Returns `true` if the value is one.
     fn is_one(&self, token: Token) -> bool;
 
@@ -856,6 +874,42 @@ mod sealed {
     /// bits, as it is only for the smallest value. Requires `bits` to be at most the bits of the
     /// storage and the value to have `bits` bits.
     fn overflowing_neg_bits(&self, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self + rhs + carry` wrapped to `bits` bits, and whether the exact sum is outside the range
+    /// of `bits` bits: a row of its own, as [`UintCore::carrying_add_bits`] is. Requires `bits` to
+    /// be at most the bits of the storage and both values to have `bits` bits.
+    fn carrying_add_bits(&self, rhs: &Self, carry: bool, bits: u32, token: Token) -> (Self, bool);
+
+    /// `self - rhs - borrow` wrapped to `bits` bits, and whether the exact difference is outside
+    /// the range of `bits` bits: a row of its own, as [`UintCore::borrowing_sub_bits`] is.
+    /// Requires `bits` to be at most the bits of the storage and both values to have `bits` bits.
+    fn borrowing_sub_bits(&self, rhs: &Self, borrow: bool, bits: u32, token: Token)
+    -> (Self, bool);
+
+    /// `self * rhs + carry` as two values of `bits` bits, the low one first: the unsigned value of
+    /// its low `bits` bits, the sum modulo `2^bits`, in the storage of the magnitude, and the sum
+    /// divided by `2^bits`, rounded down, in the inline storage, which the integer of the row
+    /// wraps. A row of its own, as [`UintCore::carrying_mul_bits`] is. Requires `bits` to be at
+    /// most the bits of the storage and the three values to have `bits` bits.
+    fn carrying_mul_bits(
+      &self,
+      rhs: &Self,
+      carry: &Self,
+      bits: u32,
+      token: Token,
+    ) -> (Self::Magnitude, Self::Inline);
+
+    /// `self * rhs + carry + add` as two values of `bits` bits, as
+    /// [`carrying_mul_bits`](Self::carrying_mul_bits) gives `self * rhs + carry`. Requires `bits`
+    /// to be at most the bits of the storage and the four values to have `bits` bits.
+    fn carrying_mul_add_bits(
+      &self,
+      rhs: &Self,
+      carry: &Self,
+      add: &Self,
+      bits: u32,
+      token: Token,
+    ) -> (Self::Magnitude, Self::Inline);
 
     /// Returns `true` if the value is one.
     fn is_one(&self, token: Token) -> bool;
@@ -1607,6 +1661,23 @@ macro_rules! array_storage {
       }
 
       #[inline]
+      fn carrying_mul_bits(&self, rhs: &Self, carry: &Self, bits: u32, _: Token) -> (Self, Self) {
+        unsigned::$lower::carrying_mul_bits(self, rhs, carry, bits)
+      }
+
+      #[inline]
+      fn carrying_mul_add_bits(
+        &self,
+        rhs: &Self,
+        carry: &Self,
+        add: &Self,
+        bits: u32,
+        _: Token,
+      ) -> (Self, Self) {
+        unsigned::$lower::carrying_mul_add_bits(self, rhs, carry, add, bits)
+      }
+
+      #[inline]
       fn is_one(&self, _: Token) -> bool {
         unsigned::$lower::is_one(self)
       }
@@ -2068,6 +2139,39 @@ macro_rules! array_storage {
       #[inline]
       fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
         signed::$upper::overflowing_neg_bits(self, bits)
+      }
+
+      #[inline]
+      fn carrying_add_bits(&self, rhs: &Self, carry: bool, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::carrying_add_bits(self, rhs, carry, bits)
+      }
+
+      #[inline]
+      fn borrowing_sub_bits(&self, rhs: &Self, borrow: bool, bits: u32, _: Token) -> (Self, bool) {
+        signed::$upper::borrowing_sub_bits(self, rhs, borrow, bits)
+      }
+
+      #[inline]
+      fn carrying_mul_bits(
+        &self,
+        rhs: &Self,
+        carry: &Self,
+        bits: u32,
+        _: Token,
+      ) -> (Self::Magnitude, Self::Inline) {
+        signed::$upper::carrying_mul_bits(self, rhs, carry, bits)
+      }
+
+      #[inline]
+      fn carrying_mul_add_bits(
+        &self,
+        rhs: &Self,
+        carry: &Self,
+        add: &Self,
+        bits: u32,
+        _: Token,
+      ) -> (Self::Magnitude, Self::Inline) {
+        signed::$upper::carrying_mul_add_bits(self, rhs, carry, add, bits)
       }
 
       #[inline]
@@ -2619,6 +2723,23 @@ macro_rules! native_storage {
       }
 
       #[inline]
+      fn carrying_mul_bits(&self, rhs: &Self, carry: &Self, bits: u32, _: Token) -> (Self, Self) {
+        int::$uint::carrying_mul_bits(*self, *rhs, *carry, bits)
+      }
+
+      #[inline]
+      fn carrying_mul_add_bits(
+        &self,
+        rhs: &Self,
+        carry: &Self,
+        add: &Self,
+        bits: u32,
+        _: Token,
+      ) -> (Self, Self) {
+        int::$uint::carrying_mul_add_bits(*self, *rhs, *carry, *add, bits)
+      }
+
+      #[inline]
       fn is_one(&self, _: Token) -> bool {
         int::$uint::is_one(*self)
       }
@@ -3075,6 +3196,39 @@ macro_rules! native_storage {
       #[inline]
       fn overflowing_neg_bits(&self, bits: u32, _: Token) -> (Self, bool) {
         int::$int::overflowing_neg_bits(*self, bits)
+      }
+
+      #[inline]
+      fn carrying_add_bits(&self, rhs: &Self, carry: bool, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::carrying_add_bits(*self, *rhs, carry, bits)
+      }
+
+      #[inline]
+      fn borrowing_sub_bits(&self, rhs: &Self, borrow: bool, bits: u32, _: Token) -> (Self, bool) {
+        int::$int::borrowing_sub_bits(*self, *rhs, borrow, bits)
+      }
+
+      #[inline]
+      fn carrying_mul_bits(
+        &self,
+        rhs: &Self,
+        carry: &Self,
+        bits: u32,
+        _: Token,
+      ) -> (Self::Magnitude, Self::Inline) {
+        int::$int::carrying_mul_bits(*self, *rhs, *carry, bits)
+      }
+
+      #[inline]
+      fn carrying_mul_add_bits(
+        &self,
+        rhs: &Self,
+        carry: &Self,
+        add: &Self,
+        bits: u32,
+        _: Token,
+      ) -> (Self::Magnitude, Self::Inline) {
+        int::$int::carrying_mul_add_bits(*self, *rhs, *carry, *add, bits)
       }
 
       #[inline]

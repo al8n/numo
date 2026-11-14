@@ -253,6 +253,138 @@ macro_rules! limb_layer_tests {
       assert_eq!(overflowing_mul::<0>(&[], &[]), ([], false));
     }
 
+    /// Checks `widening_mul` at the full width of `N` limbs against `num-bigint`, with the operands
+    /// of `overflowing_products`: the low half is the product modulo `2^(B * N)` and the high half
+    /// the product divided by it; the low half is the product of `overflowing_mul`, and the high
+    /// half is zero exactly when `overflowing_mul` reports no overflow; and `split_bits` at the
+    /// full width returns the halves as they are.
+    fn widening_products<const N: usize>() {
+      let max = bigint::from_limbs(&[Limb::MAX; N], false);
+      let root = max.sqrt();
+      let mut operands = vec![
+        BigInt::ZERO,
+        BigInt::from(1u8),
+        root.clone(),
+        &root + 1u8,
+        max.clone(),
+        BigInt::from(Limb::MAX),
+        bigint::from_limbs(&ones_below::<N>(N - 1), false),
+        bigint::from_limbs(&boundary::<N>(N - 1), false),
+      ];
+      let mut rng = Rng(0x71de_2b0d ^ N as u64);
+      let count = if cfg!(miri) { 4 } else { 64 };
+      operands.extend((0..count).map(|_| bigint::from_limbs(&rng.limbs::<N>(), false)));
+      let modulus = &max + 1u8;
+      for a in &operands {
+        for b in &operands {
+          let product = a * b;
+          let (Some(limbs_a), Some(limbs_b)) = (
+            bigint::to_limbs_of::<Limb, N>(a, false),
+            bigint::to_limbs_of(b, false),
+          ) else {
+            panic!("operands fit");
+          };
+          let (low, high) = widening_mul(&limbs_a, &limbs_b);
+          assert_eq!(
+            bigint::from_limbs(&low, false),
+            &product % &modulus,
+            "{a} * {b}"
+          );
+          assert_eq!(
+            bigint::from_limbs(&high, false),
+            &product / &modulus,
+            "{a} * {b}"
+          );
+          let (wrapped, overflow) = overflowing_mul(&limbs_a, &limbs_b);
+          assert_eq!((low, high != [0; N]), (wrapped, overflow), "{a} * {b}");
+          assert_eq!(
+            split_bits(&low, &high, B * N as u32),
+            (low, high),
+            "{a} * {b}"
+          );
+        }
+      }
+    }
+
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn widening_mul_matches_big_integers() {
+      widening_products::<1>();
+      widening_products::<2>();
+      widening_products::<3>();
+      widening_products::<4>();
+      widening_products::<5>();
+      widening_products::<6>();
+      widening_products::<7>();
+      widening_products::<8>();
+      // No limbs hold only zero, whose product is two empty halves.
+      assert_eq!(widening_mul::<0>(&[], &[]), ([], []));
+      // Zero bits hold only zero, which splits into two zeros.
+      assert_eq!(split_bits::<0>(&[], &[], 0), ([], []));
+      assert_eq!(split_bits(&[0; 1], &[0; 1], 0), ([0; 1], [0; 1]));
+      assert_eq!(split_bits(&[0; 3], &[0; 3], 0), ([0; 3], [0; 3]));
+    }
+
+    /// Checks `widening_mul` against `num-bigint` at operands of every pair of significant lengths
+    /// in `N` limbs, from zero, which has none, to `N`: the lowest limbs all ones, the top limb
+    /// alone one, and random limbs below a nonzero top limb, with every limb above the top one
+    /// zero. So either operand ends below the other, or below the array, by any number of limbs.
+    fn significant_products<const N: usize>() {
+      let mut rng = Rng(0x5191_f1ca ^ N as u64);
+      let count = if cfg!(miri) { 1 } else { 4 };
+      // The operands of `length` significant limbs.
+      let mut operands = |length: usize| {
+        let mut values = vec![ones_below::<N>(length)];
+        if length > 0 {
+          values.push(boundary::<N>(length - 1));
+          values.extend((0..count).map(|_| rng.significant::<N>(length)));
+        }
+        values
+      };
+      let modulus = bigint::from_limbs(&[Limb::MAX; N], false) + 1u8;
+      let half = |value: BigInt| bigint::to_limbs_of::<Limb, N>(&value, false).expect("fits");
+      for left in 0..=N {
+        let lefts = operands(left);
+        for right in 0..=N {
+          let rights = operands(right);
+          for x in &lefts {
+            for y in &rights {
+              let product = bigint::from_limbs(x, false) * bigint::from_limbs(y, false);
+              assert_eq!(
+                widening_mul(x, y),
+                (half(&product % &modulus), half(&product / &modulus)),
+                "{x:?} * {y:?}"
+              );
+            }
+          }
+        }
+      }
+    }
+
+    /// `widening_mul` against `num-bigint` at every pair of significant lengths of its operands, in
+    /// one limb to eight and in sixteen, or under Miri in one to four.
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn widening_mul_over_every_significant_length() {
+      significant_products::<1>();
+      significant_products::<2>();
+      significant_products::<3>();
+      significant_products::<4>();
+      if !cfg!(miri) {
+        significant_products::<5>();
+        significant_products::<6>();
+        significant_products::<7>();
+        significant_products::<8>();
+        significant_products::<16>();
+      }
+    }
+
     fn division_by_every_power<const N: usize>() {
       let max = bigint::from_limbs(&[Limb::MAX; N], false);
       for value in [
@@ -368,6 +500,23 @@ macro_rules! limb_layer_tests {
           };
         }
         value[count - 1] = (value[count - 1] >> (self.next() % u64::from(B))).max(1);
+        value
+      }
+
+      /// A value of `length` significant limbs: each random, zero or all ones, the top one nonzero,
+      /// and every limb above it zero. Zero has no significant limbs.
+      fn significant<const N: usize>(&mut self, length: usize) -> [Limb; N] {
+        let mut value = [0; N];
+        for limb in &mut value[..length] {
+          *limb = match self.next() % 4 {
+            0 => 0,
+            1 => Limb::MAX,
+            _ => self.limb(),
+          };
+        }
+        if let Some(top) = value[..length].last_mut() {
+          *top = (*top).max(1);
+        }
         value
       }
     }
@@ -793,6 +942,117 @@ macro_rules! limb_layer_tests {
       carries_bits_against_big_integers::<1>();
       carries_bits_against_big_integers::<2>();
       carries_bits_against_big_integers::<3>();
+    }
+
+    /// Asserts that `halves`, the low and the high half that the layer gives for `exact` at `bits`
+    /// bits, are the remainder and the quotient of `exact` divided by `2^bits`, rounded down, and
+    /// that both have `bits` bits.
+    fn check_halves<const N: usize>(exact: &BigInt, halves: ([Limb; N], [Limb; N]), bits: u32) {
+      let quotient = exact >> bits;
+      let remainder = exact - (&quotient << bits);
+      let (low, high) = halves;
+      assert_eq!(
+        (bigint::from_limbs(&low, false), bigint::from_limbs(&high, false)),
+        (remainder, quotient),
+        "{exact} in {bits} bits"
+      );
+      assert!(
+        fits_bits(&low, bits) && fits_bits(&high, bits),
+        "{exact} in {bits} bits"
+      );
+    }
+
+    /// Checks `carrying_mul_bits` and `carrying_mul_add_bits` of each width of `N` limbs against
+    /// `num-bigint`, at the operands of the arithmetic of a width: each pair `a` and `b` with the
+    /// carry and the addend 0 and 0, the largest value twice, and `b` and `a`.
+    fn carrying_products_against_big_integers<const N: usize>() {
+      let mut rng = Rng(0xc0de_5eed ^ N as u64);
+      for bits in bigint::arithmetic_widths(B, N) {
+        let (min, max) = (bigint::min(bits, false), bigint::max(bits, false));
+        // No limbs hold only zero, from which nothing random is drawn.
+        let samples = bigint::arithmetic_samples(bits, B, &min, &max, || match N {
+          0 => BigInt::ZERO,
+          _ => bigint::from_limbs(&rng.limbs::<N>(), false),
+        });
+        let limbs: Vec<[Limb; N]> = samples
+          .iter()
+          .map(|value| bigint::to_limbs_of(value, false).expect("in range"))
+          .collect();
+        let (zero, top) = ([0; N], max_of_bits::<N>(bits));
+        for (a, x) in samples.iter().zip(&limbs) {
+          for (b, y) in samples.iter().zip(&limbs) {
+            for (c, z, d, w) in [
+              (&min, &zero, &min, &zero),
+              (&max, &top, &max, &top),
+              (b, y, a, x),
+            ] {
+              check_halves(&(a * b + c), carrying_mul_bits(x, y, z, bits), bits);
+              check_halves(
+                &(a * b + c + d),
+                carrying_mul_add_bits(x, y, z, w, bits),
+                bits,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    /// `carrying_mul_bits` and `carrying_mul_add_bits` against `num-bigint` at the widths and the
+    /// operands of the arithmetic of a width, zero bits and one bit among them, at no limbs to
+    /// three.
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn carrying_products_match_big_integers() {
+      carrying_products_against_big_integers::<0>();
+      carrying_products_against_big_integers::<1>();
+      carrying_products_against_big_integers::<2>();
+      carrying_products_against_big_integers::<3>();
+    }
+
+    /// Every value of 0 to 3 bits, or under Miri of 0 to 2, as each operand, the carry and the
+    /// addend of `carrying_mul_bits` and `carrying_mul_add_bits` in `N` limbs, against `u128`
+    /// arithmetic. Requires `N >= 1`.
+    fn every_carrying_product<const N: usize>() {
+      let widest = if cfg!(miri) { 2 } else { 3 };
+      // A value of at most 3 bits, in limb 0.
+      let limbs = |value: u128| {
+        let mut array = [0; N];
+        array[0] = value as Limb;
+        array
+      };
+      for bits in 0..=widest {
+        let mask = (1u128 << bits) - 1;
+        let halves = |exact: u128| (limbs(exact & mask), limbs(exact >> bits));
+        for a in 0..=mask {
+          for b in 0..=mask {
+            for c in 0..=mask {
+              let (x, y, z) = (limbs(a), limbs(b), limbs(c));
+              assert_eq!(
+                carrying_mul_bits(&x, &y, &z, bits),
+                halves(a * b + c),
+                "{a} * {b} + {c} in {bits} bits"
+              );
+              for d in 0..=mask {
+                assert_eq!(
+                  carrying_mul_add_bits(&x, &y, &z, &limbs(d), bits),
+                  halves(a * b + c + d),
+                  "{a} * {b} + {c} + {d} in {bits} bits"
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
+    #[test]
+    fn every_carrying_product_of_three_bits() {
+      every_carrying_product::<1>();
+      every_carrying_product::<2>();
     }
 
     fn digits_into_a_slice<const N: usize>() {
@@ -1833,6 +2093,269 @@ macro_rules! limb_layer_tests {
       arithmetic_bits_against_big_integers::<1>();
       arithmetic_bits_against_big_integers::<2>();
       arithmetic_bits_against_big_integers::<3>();
+    }
+
+    /// Asserts that `halves`, the low and the high half that the layer gives for `exact` at `bits`
+    /// bits, are the remainder and the quotient of `exact` divided by `2^bits`, rounded down: the
+    /// low half unsigned, of `bits` bits, and the high half in two's complement, within the range
+    /// of `bits` bits.
+    fn check_halves<const N: usize>(exact: &BigInt, halves: ([Limb; N], [Limb; N]), bits: u32) {
+      let quotient = exact >> bits;
+      let remainder = exact - (&quotient << bits);
+      let (low, high) = halves;
+      assert_eq!(
+        (bigint::from_limbs(&low, false), bigint::from_limbs(&high, true)),
+        (remainder, quotient),
+        "{exact} in {bits} bits"
+      );
+      assert!(
+        super::$unsigned::fits_bits(&low, bits) && fits_bits(&high, bits),
+        "{exact} in {bits} bits"
+      );
+    }
+
+    /// Checks `carrying_mul_bits` and `carrying_mul_add_bits` of each width of `N` limbs against
+    /// `num-bigint`, at the signed operands of the arithmetic of a width: each pair `a` and `b`
+    /// with the carry and the addend 0 and 0, the smallest value twice, the largest value twice,
+    /// and `b` and `a`.
+    fn carrying_products_against_big_integers<const N: usize>() {
+      let mut rng = Rng(0x5167_c0de ^ N as u64);
+      for bits in bigint::arithmetic_widths(B, N) {
+        let (min, max) = (bigint::min(bits, true), bigint::max(bits, true));
+        // No limbs hold only zero, from which nothing random is drawn.
+        let samples = bigint::arithmetic_samples(bits, B, &min, &max, || match N {
+          0 => BigInt::ZERO,
+          _ => bigint::from_limbs(&rng.signed::<N>(), true),
+        });
+        let limbs: Vec<[Limb; N]> = samples
+          .iter()
+          .map(|value| bigint::to_limbs_of(value, true).expect("in range"))
+          .collect();
+        let zero = BigInt::ZERO;
+        let (zeros, bottom, top) = ([0; N], min_of_bits::<N>(bits), max_of_bits::<N>(bits));
+        for (a, x) in samples.iter().zip(&limbs) {
+          for (b, y) in samples.iter().zip(&limbs) {
+            for (c, z, d, w) in [
+              (&zero, &zeros, &zero, &zeros),
+              (&min, &bottom, &min, &bottom),
+              (&max, &top, &max, &top),
+              (b, y, a, x),
+            ] {
+              check_halves(&(a * b + c), carrying_mul_bits(x, y, z, bits), bits);
+              check_halves(
+                &(a * b + c + d),
+                carrying_mul_add_bits(x, y, z, w, bits),
+                bits,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    /// `carrying_mul_bits` and `carrying_mul_add_bits` against `num-bigint` at the widths and the
+    /// signed operands of the arithmetic of a width, zero bits and one bit among them, at no limbs
+    /// to three.
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn carrying_products_match_big_integers() {
+      carrying_products_against_big_integers::<0>();
+      carrying_products_against_big_integers::<1>();
+      carrying_products_against_big_integers::<2>();
+      carrying_products_against_big_integers::<3>();
+    }
+
+    /// Checks `carrying_add_bits` and `borrowing_sub_bits` of each width of `N` limbs at the signed
+    /// operands of the arithmetic of a width: without a carry or a borrow against
+    /// `overflowing_add_bits` and `overflowing_sub_bits`, and with one against `num-bigint`, the
+    /// result wrapped to the width, the flag of a result outside its range, and that the result
+    /// has the width.
+    fn carries_bits_against_big_integers<const N: usize>() {
+      let mut rng = Rng(0xca22_5167 ^ N as u64);
+      for bits in bigint::arithmetic_widths(B, N) {
+        let (min, max) = (bigint::min(bits, true), bigint::max(bits, true));
+        // No limbs hold only zero, from which nothing random is drawn.
+        let samples = bigint::arithmetic_samples(bits, B, &min, &max, || match N {
+          0 => BigInt::ZERO,
+          _ => bigint::from_limbs(&rng.signed::<N>(), true),
+        });
+        let limbs: Vec<[Limb; N]> = samples
+          .iter()
+          .map(|value| bigint::to_limbs_of(value, true).expect("in range"))
+          .collect();
+        // `exact` is `lhs op rhs op 1`, and `computed` its result in the layer.
+        let check = |exact: BigInt, computed: ([Limb; N], bool), lhs: &BigInt, op, rhs: &BigInt| {
+          let (result, overflow) = computed;
+          assert_eq!(
+            bigint::from_limbs(&result, true),
+            bigint::wrap(&exact, bits, &min),
+            "{lhs} {op} {rhs} {op} 1 in {bits} bits"
+          );
+          assert_eq!(
+            overflow,
+            exact < min || max < exact,
+            "{lhs} {op} {rhs} {op} 1 in {bits} bits"
+          );
+          assert!(
+            fits_bits(&result, bits),
+            "{lhs} {op} {rhs} {op} 1 in {bits} bits"
+          );
+        };
+        for (a, x) in samples.iter().zip(&limbs) {
+          for (b, y) in samples.iter().zip(&limbs) {
+            assert_eq!(
+              carrying_add_bits(x, y, false, bits),
+              overflowing_add_bits(x, y, bits),
+              "{a} + {b} in {bits} bits"
+            );
+            assert_eq!(
+              borrowing_sub_bits(x, y, false, bits),
+              overflowing_sub_bits(x, y, bits),
+              "{a} - {b} in {bits} bits"
+            );
+            check(a + b + 1u8, carrying_add_bits(x, y, true, bits), a, '+', b);
+            check(a - b - 1u8, borrowing_sub_bits(x, y, true, bits), a, '-', b);
+          }
+        }
+      }
+    }
+
+    /// `carrying_add_bits` and `borrowing_sub_bits` against `num-bigint` at the widths and the
+    /// signed operands of the arithmetic of a width, zero bits and one bit among them, at no limbs
+    /// to three.
+    #[test]
+    #[cfg_attr(
+      all(miri, target_pointer_width = "32"),
+      ignore = "Miri on 32-bit targets runs out of addresses in num-bigint allocations"
+    )]
+    fn carrying_add_and_borrowing_sub_match_big_integers() {
+      carries_bits_against_big_integers::<0>();
+      carries_bits_against_big_integers::<1>();
+      carries_bits_against_big_integers::<2>();
+      carries_bits_against_big_integers::<3>();
+    }
+
+    /// Every value of 0 to 3 bits, or under Miri of 0 to 2, as each operand, the carry and the
+    /// addend of `carrying_mul_bits` and `carrying_mul_add_bits` in `N` limbs, and every pair of
+    /// values of 0 to 5 bits, or under Miri of 0 to 3, with each carry and borrow, against `i64`
+    /// arithmetic. Requires `N >= 1`.
+    fn every_signed_product_and_carry<const N: usize>() {
+      // The range of `bits` bits, from `-2^(bits - 1)` to `2^(bits - 1) - 1`, or zero at zero bits.
+      let range = |bits: u32| match bits {
+        0 => (0, 0),
+        _ => (-(1i64 << (bits - 1)), (1i64 << (bits - 1)) - 1),
+      };
+      let widest = if cfg!(miri) { 2 } else { 3 };
+      for bits in 0..=widest {
+        let (min, max) = range(bits);
+        let modulus = 1i64 << bits;
+        // The low half unsigned, and the high half the quotient rounded down.
+        let halves = |exact: i64| {
+          (
+            limbs::<N>(exact.rem_euclid(modulus)),
+            limbs::<N>(exact.div_euclid(modulus)),
+          )
+        };
+        for a in min..=max {
+          let x = limbs::<N>(a);
+          for b in min..=max {
+            let y = limbs::<N>(b);
+            for c in min..=max {
+              let z = limbs::<N>(c);
+              assert_eq!(
+                carrying_mul_bits(&x, &y, &z, bits),
+                halves(a * b + c),
+                "{a} * {b} + {c} in {bits} bits"
+              );
+              for d in min..=max {
+                assert_eq!(
+                  carrying_mul_add_bits(&x, &y, &z, &limbs::<N>(d), bits),
+                  halves(a * b + c + d),
+                  "{a} * {b} + {c} + {d} in {bits} bits"
+                );
+              }
+            }
+          }
+        }
+      }
+      let widest = if cfg!(miri) { 3 } else { 5 };
+      for bits in 0..=widest {
+        let (min, max) = range(bits);
+        // `exact` wrapped to the range, and whether it is outside it.
+        let wrapped = |exact: i64| {
+          let value = (exact - min).rem_euclid(1 << bits) + min;
+          (limbs::<N>(value), exact < min || max < exact)
+        };
+        for a in min..=max {
+          for b in min..=max {
+            let (x, y) = (limbs::<N>(a), limbs::<N>(b));
+            for flag in [false, true] {
+              let one = i64::from(flag);
+              assert_eq!(
+                carrying_add_bits(&x, &y, flag, bits),
+                wrapped(a + b + one),
+                "{a} + {b} + {one} in {bits} bits"
+              );
+              assert_eq!(
+                borrowing_sub_bits(&x, &y, flag, bits),
+                wrapped(a - b - one),
+                "{a} - {b} - {one} in {bits} bits"
+              );
+            }
+          }
+        }
+      }
+    }
+
+    #[test]
+    fn every_product_and_carry_of_a_few_bits() {
+      every_signed_product_and_carry::<1>();
+      every_signed_product_and_carry::<2>();
+    }
+
+    /// The edges of the products and the carries by name, in one limb: at one bit, where the values
+    /// are -1 and 0, `-1 * -1 + 0` and `-1 * 0 + -1 + -1`; at 7 bits, from -64 to 63, the
+    /// extremes `MIN * MIN + MAX + MAX` and `MIN * MAX + MIN + MIN`, `MAX + 0 + 1` and
+    /// `-1 + MIN + 1`, whose two steps both overflow, and the borrows that mirror them; and at zero
+    /// bits a carry and a borrow, which leave the range.
+    #[test]
+    fn products_and_carries_at_the_edges() {
+      let (minus_one, zero) = (limbs::<1>(-1), limbs::<1>(0));
+      // -1 * -1 + 0 is 1, which is 1 + 0 * 2, and -1 * 0 - 1 - 1 is -2, which is 0 + -1 * 2.
+      assert_eq!(
+        carrying_mul_bits(&minus_one, &minus_one, &zero, 1),
+        (limbs::<1>(1), zero)
+      );
+      assert_eq!(
+        carrying_mul_add_bits(&minus_one, &zero, &minus_one, &minus_one, 1),
+        (zero, minus_one)
+      );
+      let (min, max) = (min_of_bits::<1>(7), max_of_bits::<1>(7));
+      // 4096 + 63 + 63 is 4222, which is 126 + 32 * 128, and -4032 - 64 - 64 is -4160, which is
+      // 64 + -33 * 128.
+      assert_eq!(
+        carrying_mul_add_bits(&min, &min, &max, &max, 7),
+        (limbs::<1>(126), limbs::<1>(32))
+      );
+      assert_eq!(
+        carrying_mul_add_bits(&min, &max, &min, &min, 7),
+        (limbs::<1>(64), limbs::<1>(-33))
+      );
+      // 63 + 0 + 1 is 64, which wraps to -64; -1 + -64 wraps to 63, and one more back to -64,
+      // which is in range.
+      assert_eq!(carrying_add_bits(&max, &zero, true, 7), (min, true));
+      assert_eq!(carrying_add_bits(&minus_one, &min, true, 7), (min, false));
+      // -64 - 0 - 1 is -65, which wraps to 63; 0 - -64 wraps to -64, and one less back to 63.
+      assert_eq!(borrowing_sub_bits(&min, &zero, true, 7), (max, true));
+      assert_eq!(borrowing_sub_bits(&zero, &min, true, 7), (max, false));
+      // Zero bits hold only zero, which a carry or a borrow leaves.
+      assert_eq!(carrying_add_bits(&zero, &zero, true, 0), (zero, true));
+      assert_eq!(borrowing_sub_bits(&zero, &zero, true, 0), (zero, true));
+      assert_eq!(carrying_add_bits::<0>(&[], &[], true, 0), ([], true));
+      assert_eq!(borrowing_sub_bits::<0>(&[], &[], true, 0), ([], true));
     }
 
     /// The magnitude of `-2^4095`, the smallest value of 4096 bits, has 1233 digits, and that of

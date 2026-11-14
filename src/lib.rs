@@ -201,18 +201,24 @@
 //! `checked_*`, `wrapping_*`, `overflowing_*`, `saturating_*` and `strict_*` forms that the native
 //! integers have, the Euclidean, rounded and exact division, the next multiple, the square root
 //! and the root of any degree, the logarithms, the midpoint and the absolute difference,
-//! `carrying_add`, `borrowing_sub`, `is_multiple_of` and the next power of two for `Uint`, `abs`
-//! and its forms, `unsigned_abs`, `signum` and `checked_isqrt` for `Int`, and the operators `+`,
-//! `-`, `*`, `/` and `%`, which panic or wrap on overflow as the native integers do (see
-//! [Overflow](Uint#overflow)): `/` and `%` panic on a zero divisor and on overflow in every build.
-//! Addition, subtraction, multiplication, exact division and the shifts, and negation for `Int`,
-//! also have the `unchecked_*` form, as `const unsafe fn`s whose caller guarantees that the
-//! `checked_*` method would return `Some`. The bit operations of the native integers work at the
-//! width too: the counts of ones and zeros, the highest and the lowest one, the bit reversal, the
-//! rotations, the shifts in every form, the unbounded and the exact shifts, a bit read and written
-//! by its index, and the casts between `Uint` and `Int` of the same width, with the operators `!`,
-//! `&`, `|`, `^`, `<<` and `>>`; a shift amount is bounded by `Bits`, and `bitand`, `bitor`,
-//! `bitxor` and `not` do the bitwise operations as `const fn`s for constant contexts.
+//! `carrying_mul` and `carrying_mul_add`, the low and the high half of `self * rhs + carry + add`,
+//! whose low half for `Int` is the `Uint` of the same width, `carrying_add`, `borrowing_sub`,
+//! `is_multiple_of` and the next power of two for `Uint`, `abs` and its forms, `unsigned_abs`,
+//! `signum`, `checked_isqrt`, and `carrying_add` and `borrowing_sub`, whose flag is an overflow of
+//! the range, for `Int`, and the operators `+`, `-`, `*`, `/` and `%`, which panic or wrap on
+//! overflow as the native integers do (see [Overflow](Uint#overflow)): `/` and `%` panic on a zero
+//! divisor and on overflow in every build. Addition, subtraction, multiplication, exact division
+//! and the shifts, and negation for `Int`, also have the `unchecked_*` form, as `const unsafe fn`s
+//! whose caller guarantees that the `checked_*` method would return `Some`. `widening_mul`, for
+//! every storage, returns the exact product of two integers of any widths and storages whose
+//! widths sum to at most 65536 bits, in the integer of the sum of the widths, in its default
+//! storage: the product of two `u256` is a `u512`. The bit operations of the native integers work
+//! at the width too: the counts of ones and zeros, the highest and the lowest one, the bit
+//! reversal, the rotations, the shifts in every form, the unbounded and the exact shifts, a bit
+//! read and written by its index, and the casts between `Uint` and `Int` of the same width, with
+//! the operators `!`, `&`, `|`, `^`, `<<` and `>>`; a shift amount is bounded by `Bits`, and
+//! `bitand`, `bitor`, `bitxor` and `not` do the bitwise operations as `const fn`s for constant
+//! contexts.
 //!
 //! The integers convert between any widths and signs with the casts of the native integers, still
 //! unstable: `checked_cast`, `wrapping_cast`, `saturating_cast`, `strict_cast` and the `unsafe`

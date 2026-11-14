@@ -20,7 +20,12 @@ macro_rules! half_limbs {
     /// `a * b + carry + add` as two limbs, the low one first. It is at most
     /// `(2^B - 1)^2 + 2 * (2^B - 1) = 2^(2B) - 1`, so it does not overflow.
     #[inline]
-    const fn carrying_mul_add(a: $limb, b: $limb, carry: $limb, add: $limb) -> ($limb, $limb) {
+    pub(crate) const fn carrying_mul_add(
+      a: $limb,
+      b: $limb,
+      carry: $limb,
+      add: $limb,
+    ) -> ($limb, $limb) {
       let (a0, a1) = (a & DIGIT_MAX, a >> HALF);
       let (b0, b1) = (b & DIGIT_MAX, b >> HALF);
       // Each product of two digits is below `2^B`.

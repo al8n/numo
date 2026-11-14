@@ -226,6 +226,14 @@ macro_rules! limb_layer {
       None
     }
 
+    /// The number of limbs up to the most significant nonzero one, which is 0 for zero.
+    const fn significant_limbs<const N: usize>(value: &[Limb; N]) -> usize {
+      match top_limb(value) {
+        Some(i) => i + 1,
+        None => 0,
+      }
+    }
+
     /// `lhs * rhs` modulo `2^(B * N)`, and whether the product is `2^(B * N)` or more.
     pub(crate) const fn overflowing_mul<const N: usize>(
       lhs: &[Limb; N],
@@ -253,6 +261,42 @@ macro_rules! limb_layer {
         i += 1;
       }
       (product, overflow)
+    }
+
+    /// `lhs * rhs` as `2 * N` limbs in two arrays, the low `N` limbs first. It is below
+    /// `2^(2 * B * N)`, so it does not overflow. It takes one limb product for each pair of
+    /// significant limbs, those up to the top nonzero limb of each operand: the limbs above are
+    /// zero and add nothing, and every limb of the product that no row reaches stays zero.
+    pub(crate) const fn widening_mul<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+    ) -> ([Limb; N], [Limb; N]) {
+      let mut low = [0; N];
+      let mut high = [0; N];
+      let (rows, top) = (significant_limbs(lhs), significant_limbs(rhs));
+      let mut i = 0;
+      while i < rows {
+        let mut carry: Limb = 0;
+        let mut j = 0;
+        while j < top {
+          // Limb `i + j` of the product is in `low` below `N`, and in `high` from `N`.
+          if i + j < N {
+            (low[i + j], carry) = $carrying_mul_add(lhs[i], rhs[j], carry, low[i + j]);
+          } else {
+            (high[i + j - N], carry) = $carrying_mul_add(lhs[i], rhs[j], carry, high[i + j - N]);
+          }
+          j += 1;
+        }
+        // The carry of row `i` is limb `i + top`, below `2 * N`, which no row before it has
+        // reached.
+        if i + top < N {
+          low[i + top] = carry;
+        } else {
+          high[i + top - N] = carry;
+        }
+        i += 1;
+      }
+      (low, high)
     }
 
     /// `value * 10^exp`, or `None` if the product is not representable.
@@ -961,6 +1005,105 @@ macro_rules! limb_layer {
       } else {
         (difference, overflow)
       }
+    }
+
+    /// The limb at `index` of the `2 * N` limbs `low` and `high`, the low ones first, or zero
+    /// beyond them.
+    #[inline]
+    const fn pair_limb<const N: usize>(low: &[Limb; N], high: &[Limb; N], index: usize) -> Limb {
+      if index < N {
+        low[index]
+      } else if index - N < N {
+        high[index - N]
+      } else {
+        0
+      }
+    }
+
+    /// The bits of the `2 * N` limbs `low` and `high`, the low ones first, from index `shift` up,
+    /// in `N` limbs. Requires `shift <= B * N`.
+    const fn shift_right_pair<const N: usize>(
+      low: &[Limb; N],
+      high: &[Limb; N],
+      shift: u32,
+    ) -> [Limb; N] {
+      // `shift / B` is at most `N`, which a `usize` holds.
+      let limbs = (shift / Limb::BITS) as usize;
+      let bits = shift % Limb::BITS;
+      let mut shifted = [0; N];
+      let mut i = 0;
+      while i < N {
+        shifted[i] = pair_limb(low, high, i + limbs) >> bits;
+        // The low bits of the limb above, as in `shift_right`.
+        if bits > 0 {
+          shifted[i] |= pair_limb(low, high, i + limbs + 1) << (Limb::BITS - bits);
+        }
+        i += 1;
+      }
+      shifted
+    }
+
+    /// The value of the `2 * N` limbs `low` and `high`, the low ones first, split at bit `bits`:
+    /// the value modulo `2^bits`, and the value divided by `2^bits`, rounded down, each in `N`
+    /// limbs. Requires `bits <= B * N` and the value to be below `2^(2 * bits)`, or to have
+    /// `2 * bits` bits in two's complement, whose quotient the second array then holds in two's
+    /// complement. At the full width the limbs are returned as they are, and at zero bits the only
+    /// such value, zero, is split into two zeros.
+    pub(crate) const fn split_bits<const N: usize>(
+      low: &[Limb; N],
+      high: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], [Limb; N]) {
+      // The quotient is read from the pair limb by limb, rather than as `low >> bits` and
+      // `high << (B * N - bits)`: `B * N` can be more than a `u32` holds.
+      (zero_extend(low, bits), shift_right_pair(low, high, bits))
+    }
+
+    /// The `2 * N` limbs `low` and `high`, the low ones first, with `addend` added to them: the
+    /// carry out of `low` goes into `high`. Requires the sum to be below `2^(2 * B * N)`.
+    const fn add_to_pair<const N: usize>(
+      low: &[Limb; N],
+      high: &[Limb; N],
+      addend: &[Limb; N],
+    ) -> ([Limb; N], [Limb; N]) {
+      let (low, carry) = overflowing_add(low, addend);
+      if carry {
+        // One more is the array of all ones less: that array is `-1` modulo `2^(B * N)`, and it
+        // needs no limb 0 to be written, which no limbs have.
+        (low, overflowing_sub(high, &[Limb::MAX; N]).0)
+      } else {
+        (low, *high)
+      }
+    }
+
+    /// `lhs * rhs + carry` as two values of `bits` bits, the low one first: the sum modulo
+    /// `2^bits`, and the sum divided by `2^bits`. Requires `bits <= B * N` and the three values
+    /// below `2^bits`, so that the sum is below `2^(2 * bits)`.
+    pub(crate) const fn carrying_mul_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      carry: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], [Limb; N]) {
+      let (low, high) = widening_mul(lhs, rhs);
+      let (low, high) = add_to_pair(&low, &high, carry);
+      split_bits(&low, &high, bits)
+    }
+
+    /// `lhs * rhs + carry + add` as two values of `bits` bits, as [`carrying_mul_bits`] gives
+    /// `lhs * rhs + carry`. Requires `bits <= B * N` and the four values below `2^bits`, so that
+    /// the sum is below `2^(2 * bits)`.
+    pub(crate) const fn carrying_mul_add_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      carry: &[Limb; N],
+      add: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], [Limb; N]) {
+      let (low, high) = widening_mul(lhs, rhs);
+      let (low, high) = add_to_pair(&low, &high, carry);
+      let (low, high) = add_to_pair(&low, &high, add);
+      split_bits(&low, &high, bits)
     }
 
     /// `lhs & rhs`.
@@ -2603,6 +2746,128 @@ macro_rules! limb_layer {
       let overflow = !$unsigned::is_zero(value) && is_negative(&raw) == is_negative(value);
       let wrapped = sign_extend(&raw, bits);
       (wrapped, overflow || !$unsigned::eq(&wrapped, &raw))
+    }
+
+    /// `lhs + rhs + carry` wrapped to `bits` bits, and whether the exact sum is outside the range
+    /// of `bits` bits. Requires `bits <= B * N` and both values within that range.
+    pub(crate) const fn carrying_add_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      carry: bool,
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let (sum, overflow) = overflowing_add_bits(lhs, rhs, bits);
+      if !carry {
+        return (sum, overflow);
+      }
+      // Zero bits hold neither one nor minus one, so a carry is outside their range, as in the
+      // lower layer.
+      if bits == 0 {
+        return (sum, true);
+      }
+      // One more is minus one less, and minus one is within the range from one bit.
+      let (sum, stepped) = overflowing_sub_bits(&sum, &[Limb::MAX; N], bits);
+      // The exact sum is outside the range exactly when one of the two steps is: both are only for
+      // a sum of `MIN - 1`, which wraps to `MAX`, and one more is `MIN`.
+      (sum, overflow != stepped)
+    }
+
+    /// `lhs - rhs - borrow` wrapped to `bits` bits, and whether the exact difference is outside
+    /// the range of `bits` bits. Requires `bits <= B * N` and both values within that range.
+    pub(crate) const fn borrowing_sub_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      borrow: bool,
+      bits: u32,
+    ) -> ([Limb; N], bool) {
+      let (difference, overflow) = overflowing_sub_bits(lhs, rhs, bits);
+      if !borrow {
+        return (difference, overflow);
+      }
+      // Zero bits hold neither one nor minus one, so a borrow is outside their range, as in the
+      // lower layer.
+      if bits == 0 {
+        return (difference, true);
+      }
+      // One less is minus one more, and minus one is within the range from one bit.
+      let (difference, stepped) = overflowing_add_bits(&difference, &[Limb::MAX; N], bits);
+      // The exact difference is outside the range exactly when one of the two steps is: both are
+      // only for a difference of `MAX + 1`, which wraps to `MIN`, and one less is `MAX`.
+      (difference, overflow != stepped)
+    }
+
+    /// `lhs * rhs` in the two's complement of `2 * N` limbs, in two arrays, the low `N` limbs
+    /// first. It is within the range of `2 * B * N` bits, so it does not overflow.
+    pub(crate) const fn widening_mul<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+    ) -> ([Limb; N], [Limb; N]) {
+      let (low, mut high) = $unsigned::widening_mul(lhs, rhs);
+      // An array read without a sign is its value plus `2^(B * N)` if it is negative, so the
+      // product of the arrays is that of the values plus `2^(B * N)` times the array of an operand
+      // for each negative other operand, modulo `2^(2 * B * N)`: each correction subtracts the
+      // other operand, as it is, from the high half.
+      if is_negative(lhs) {
+        high = $unsigned::overflowing_sub(&high, rhs).0;
+      }
+      if is_negative(rhs) {
+        high = $unsigned::overflowing_sub(&high, lhs).0;
+      }
+      (low, high)
+    }
+
+    /// The `2 * N` limbs `low` and `high` of a value in two's complement, the low ones first, with
+    /// `addend` sign-extended to them and added. Requires the sum to be within the range of
+    /// `2 * B * N` bits.
+    const fn add_to_pair<const N: usize>(
+      low: &[Limb; N],
+      high: &[Limb; N],
+      addend: &[Limb; N],
+    ) -> ([Limb; N], [Limb; N]) {
+      let (low, carry) = $unsigned::overflowing_add(low, addend);
+      // The high limbs of a negative addend are all ones, minus one, which a carry out of the low
+      // limbs cancels. One more alone is the array of all ones less, and one less alone is that
+      // array more.
+      let high = match (carry, is_negative(addend)) {
+        (true, false) => $unsigned::overflowing_sub(high, &[Limb::MAX; N]).0,
+        (false, true) => $unsigned::overflowing_add(high, &[Limb::MAX; N]).0,
+        _ => *high,
+      };
+      (low, high)
+    }
+
+    /// `lhs * rhs + carry` as two values of `bits` bits, the low one first: the sum modulo
+    /// `2^bits`, unsigned, and the sum divided by `2^bits`, rounded down, within the range of
+    /// `bits` bits. Requires `bits <= B * N` and the three values within that range, so that the
+    /// sum is within the range of `2 * bits` bits.
+    pub(crate) const fn carrying_mul_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      carry: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], [Limb; N]) {
+      let (low, high) = widening_mul(lhs, rhs);
+      let (low, high) = add_to_pair(&low, &high, carry);
+      // The sum has `2 * bits` bits in two's complement, so the bits that the split takes from
+      // index `bits` up are the quotient sign-extended.
+      $unsigned::split_bits(&low, &high, bits)
+    }
+
+    /// `lhs * rhs + carry + add` as two values of `bits` bits, as [`carrying_mul_bits`] gives
+    /// `lhs * rhs + carry`. Requires `bits <= B * N` and the four values within the range of
+    /// `bits` bits, so that the sum is within the range of `2 * bits` bits.
+    pub(crate) const fn carrying_mul_add_bits<const N: usize>(
+      lhs: &[Limb; N],
+      rhs: &[Limb; N],
+      carry: &[Limb; N],
+      add: &[Limb; N],
+      bits: u32,
+    ) -> ([Limb; N], [Limb; N]) {
+      let (low, high) = widening_mul(lhs, rhs);
+      let (low, high) = add_to_pair(&low, &high, carry);
+      let (low, high) = add_to_pair(&low, &high, add);
+      // As in `carrying_mul_bits`, the quotient that the split takes is sign-extended.
+      $unsigned::split_bits(&low, &high, bits)
     }
 
     /// Returns `true` if `value` is -1, which has every bit set. No limbs hold only zero.
