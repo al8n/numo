@@ -1087,13 +1087,18 @@ exact_mul!(mul_into_u448_start: uw59x18 * uw20x19 = Decimal<U79, U37, u448>);
 exact_mul!(mul_into_u448_limit: uw59x18 * uw39x18 = Decimal<U98, U36, u448>);
 exact_mul!(mul_into_i512_start: w96x0 * w20x19 = Decimal<U116, U19>);
 exact_mul!(mul_into_u512_start: uw96x0 * uw20x19 = Decimal<U116, U19, u512>);
-// 77 digits by 76 digits, the widest product.
+// 77 digits by 76 digits, the widest product of 512 bits.
 exact_mul!(mul_u256_by_i256_into_i512: uw59x18 * w58x18 = Decimal<U117, U36>);
 exact_mul!(mul_u256_by_u256_into_u512: uw59x18 * uw58x18 = Decimal<U117, U36, u512>);
 // A wide operand whose product is in a wider storage, and one whose product is native.
 exact_mul!(mul_i384_by_i8: w97x18 * d1x1 = Decimal<U98, U19>);
 exact_mul!(mul_u384_by_u8: uw97x18 * u1x1 = Decimal<U98, U19, u448>);
 exact_mul!(mul_i512_by_i8: d2x2_in_i512 * d1x1 = Decimal<U3, U3>);
+
+// Products of 307 and 308 digits, the widest, in the storages of 1024 bits: 153 or 154 digits by
+// 154, into an `i1024`, or a `u1024` for two unsigned operands.
+exact_mul!(mul_i512_by_u512_into_i1024: w153x0 * uw154x0 = Decimal<U307, U0>);
+exact_mul!(mul_u512_by_u512_into_u1024: uw154x0 * uw154x0 = Decimal<U308, U0, u1024>);
 
 macro_rules! convert {
   ($name:ident: $source:ident -> $target:ident) => {
@@ -1174,7 +1179,7 @@ convert!(convert_u384_to_u320: uw97x18 -> uw78x18);
 convert!(convert_u256_to_u512: uw59x18 -> uw135x18);
 convert!(convert_i512_to_i192: w135x18 -> w39x18);
 convert!(convert_i192_to_i512: w39x18 -> w135x18);
-// Between signs: the widest unsigned storage holds one digit more than the widest signed one.
+// Between signs: the unsigned storage of 512 bits holds one digit more than the signed one.
 convert!(convert_i512_to_u512: w135x18 -> uw135x18);
 convert!(convert_u512_to_i512: uw135x18 -> w135x18);
 convert!(convert_u512_limit_to_i512: uw154x0 -> w153x0);
@@ -1195,6 +1200,11 @@ convert!(convert_u512_to_u64: uw135x18 -> u10x9);
 convert!(convert_u128_to_u512_fraction: u19x19 -> uw0x154);
 convert!(convert_i8_fraction_to_i512_fraction: d0x2 -> w0x153);
 convert!(convert_i512_fraction_to_i8_fraction: w0x153 -> d0x2);
+
+// At 1024 bits, between signs: the 308 digits of a `u1024` into the 307 of an `i1024`, and fraction
+// digits into fraction digits.
+convert!(convert_u1024_limit_to_i1024: uw308x0 -> w289x18);
+convert!(convert_i1024_fraction_to_u1024_fraction: w0x307 -> uw0x308);
 
 macro_rules! widen {
   ($name:ident: $source:ident -> $target:ident) => {
@@ -1260,6 +1270,10 @@ widen!(widen_u384_to_i448: uw97x18 -> w116x18);
 widen!(widen_u512_to_i512: uw135x18 -> w135x18);
 widen!(widen_u128_to_i512: u38x0 -> w153x0);
 widen!(widen_i8_fraction_to_i512: d0x2 -> w0x153);
+
+// From 512 to 1024 bits, of either sign.
+widen!(widen_i512_to_i1024: w135x18 -> w289x18);
+widen!(widen_u512_to_u1024: uw154x0 -> uw308x0);
 
 /// uint256 amounts of every magnitude, as four limbs, least significant first.
 fn uint256_limbs() -> impl Strategy<Value = [u64; 4]> {
@@ -1787,6 +1801,8 @@ round!(round_i512_one_hundred_fifty_three_digits: w0x153 -> w153x0);
 round!(round_i512_to_more_fraction_digits: w0x153 -> uw0x154);
 round!(round_u512_one_hundred_fifty_three_digits: uw0x154 -> u1x1);
 round!(round_u512_one_hundred_fifty_four_digits: uw0x154 -> uw154x0);
+// And all 308 fraction digits of a `u1024`, the most that a rounding drops.
+round!(round_u1024_three_hundred_eight_digits: uw0x308 -> uw308x0);
 
 /// How a test of `quantize` picks its step.
 #[derive(Clone, Debug)]
@@ -1924,11 +1940,13 @@ quantize!(quantize_i512: w135x18);
 quantize!(quantize_i512_integral: w153x0);
 quantize!(quantize_i512_fraction: w0x153);
 quantize!(quantize_few_digits_in_i512: d2x2_in_i512);
+quantize!(quantize_i1024: w289x18);
 quantize!(quantize_u192: uw39x18);
 quantize!(quantize_uint256: uint256);
 quantize!(quantize_u512: uw135x18);
 quantize!(quantize_u512_integral: uw154x0);
 quantize!(quantize_u512_fraction: uw0x154);
+quantize!(quantize_u1024_integral: uw308x0);
 
 /// The coefficient of the quotient `numerator / denominator` rounded with `mode`, checked against a
 /// target with `digits` digits in total and a signed or an unsigned storage.
@@ -2148,10 +2166,15 @@ div_round!(div_u256_by_i192: uw59x18 / w20x19 -> w58x18);
 div_round!(div_uint256_by_signed_price: uint256 / d10x10 -> uint256);
 div_round!(div_uint256_by_unsigned_price: uint256 / u10x10 -> uint256);
 div_round!(div_scaled_divisor_in_i384: w0x96 / d1x1 -> d2x0);
-// The widest intermediates: 153 digits with the dividend scaled, neither or the divisor scaled, and
-// 154 digits for two unsigned storages.
+// The widest intermediates of 512 bits: 153 digits with the dividend scaled, neither or the divisor
+// scaled, and 154 digits for two unsigned storages.
 div_round!(div_i512_scaled_dividend: w97x18 / d0x38 -> w58x18);
 div_round!(div_i512_without_scaling: w135x18 / d10x8 -> d10x10);
 div_round!(div_i512_scaled_divisor: w0x153 / d1x1 -> d1x1);
 div_round!(div_u512_scaled_dividend: uw135x18 / u10x9 -> u10x10);
 div_round!(div_u512_without_scaling: uw154x0 / u10x0 -> uw154x0);
+// The widest intermediates of 1024 bits: 307 digits with neither or the divisor scaled, and 308
+// digits for two unsigned storages.
+div_round!(div_i1024_without_scaling: w289x18 / d10x8 -> d10x10);
+div_round!(div_i1024_scaled_divisor: w0x307 / d1x1 -> d1x1);
+div_round!(div_u1024_without_scaling: uw308x0 / u10x0 -> uw308x0);
