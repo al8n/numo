@@ -389,7 +389,7 @@ fn signed_order_runs_from_min_to_max() {
 }
 
 #[test]
-fn the_widest_values_fill_the_digit_buffer() {
+fn the_widest_512_bit_values_write_155_characters() {
   // `u512::MAX` has 155 digits, and `i512::MIN` has 154 and a sign.
   assert_eq!(u512::from_limbs([u64::MAX; 8]).to_string().len(), 155);
   assert_eq!(
