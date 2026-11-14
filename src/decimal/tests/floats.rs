@@ -305,7 +305,12 @@ fn core_matches_the_parsed_text<F: Float>(base: u64) {
   let float_format = F::FORMAT;
   for negative in [false, true] {
     assert_eq!(
-      float::float_bits(&[0u64; 8], 154, negative, float_format),
+      float::float_bits(
+        &[0u64; 8],
+        &float::PowerOfFive::new(154),
+        negative,
+        float_format
+      ),
       0,
       "zero, negative {negative}, {float_format:?}"
     );
@@ -318,7 +323,12 @@ fn core_matches_the_parsed_text<F: Float>(base: u64) {
         let text = format!("{sign}{magnitude}e-{fraction}");
         let parsed: F = text.parse().expect("a float");
         assert_eq!(
-          float::float_bits(&limbs, fraction, sign == "-", float_format),
+          float::float_bits(
+            &limbs,
+            &float::PowerOfFive::new(fraction),
+            sign == "-",
+            float_format
+          ),
           parsed.to_raw(),
           "{text}, {float_format:?}"
         );
@@ -895,7 +905,7 @@ fn core_rounds_the_exact_value<F: TestFloat>() {
       for &mode in chosen {
         let exact = BigInt::from(exact_coefficient(parts, fraction, mode).magnitude().clone());
         assert_eq!(
-          float::round_coefficient(parts, fraction, mode),
+          float::round_coefficient(parts, &float::PowerOfFive::new(fraction), mode),
           bigint::to_limbs::<8>(&exact, false),
           "{:#x} at {fraction} fraction digits, {mode}",
           x.to_raw()
@@ -953,7 +963,12 @@ fn scratch_matches_the_parsed_text<F: Float, const N: usize>(digits: u32) {
         let text = format!("{sign}{magnitude}e-{fraction}");
         let parsed: F = text.parse().expect("a float");
         assert_eq!(
-          float::float_bits(&limbs, fraction, sign == "-", float_format),
+          float::float_bits(
+            &limbs,
+            &float::PowerOfFive::new(fraction),
+            sign == "-",
+            float_format
+          ),
           parsed.to_raw(),
           "{text} in {N} limbs, {float_format:?}"
         );
@@ -976,7 +991,7 @@ fn scratch_rounds_the_exact_value<F: TestFloat, const N: usize>(digits: u32) {
       for &mode in chosen {
         let exact = BigInt::from(exact_coefficient(parts, fraction, mode).magnitude().clone());
         assert_eq!(
-          float::round_coefficient::<N>(parts, fraction, mode),
+          float::round_coefficient::<N>(parts, &float::PowerOfFive::new(fraction), mode),
           bigint::to_limbs::<N>(&exact, false),
           "{:#x} at {fraction} fraction digits in {N} limbs, {mode}",
           x.to_raw()
@@ -1001,13 +1016,13 @@ fn scratch_edge<F: Float, const N: usize>(fraction: u32) {
   let limbs = bigint::to_limbs::<N>(&coefficient, false);
   for mode in MODES {
     assert_eq!(
-      float::round_coefficient::<N>(at, fraction, mode),
+      float::round_coefficient::<N>(at, &float::PowerOfFive::new(fraction), mode),
       limbs,
       "2^{exponent} at {fraction} fraction digits in {N} limbs, {mode}, {}",
       type_name::<F>()
     );
     assert_eq!(
-      float::round_coefficient::<N>(past, fraction, mode),
+      float::round_coefficient::<N>(past, &float::PowerOfFive::new(fraction), mode),
       None,
       "2^{} at {fraction} fraction digits in {N} limbs, {mode}, {}",
       exponent + 1,
@@ -1220,13 +1235,13 @@ fn the_edge_of_the_limbs<F: Float>(fraction: u32, exponent: i32) {
   let limbs = bigint::to_limbs::<8>(&coefficient, false);
   for mode in MODES {
     assert_eq!(
-      float::round_coefficient(at, fraction, mode),
+      float::round_coefficient(at, &float::PowerOfFive::new(fraction), mode),
       limbs,
       "2^{exponent} at {fraction} fraction digits, {mode}, {}",
       type_name::<F>()
     );
     assert_eq!(
-      float::round_coefficient::<8>(past, fraction, mode),
+      float::round_coefficient::<8>(past, &float::PowerOfFive::new(fraction), mode),
       None,
       "2^{} at {fraction} fraction digits, {mode}, {}",
       exponent + 1,

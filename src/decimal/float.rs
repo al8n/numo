@@ -29,18 +29,51 @@ const fn bit_length<const N: usize>(value: &[u64; N]) -> u32 {
   }
 }
 
-/// The bits of the float of `format` nearest to `magnitude / 10^fraction`, ties to even, with the
-/// sign bit set if `negative`: those of an infinity if the value rounds beyond the largest float,
-/// of a subnormal float or of a zero if it rounds below the smallest normal one, and of `+0.0` for
-/// a magnitude of zero, whatever `negative`. Computes in the limbs of `magnitude`. Requires
-/// `bits(5^fraction) + precision + 2 <= 64 * N`, which the float scratch of a storage gives for
-/// every fraction count of a type over it.
+/// `5^fraction` in the limbs of a float scratch, with `fraction` and the bit length of the power:
+/// what the conversions of a decimal of `fraction` fraction digits divide or multiply by. Built
+/// only by `new`, so that the power is always that of its fraction count and meets the
+/// requirement of the conversions.
+pub(super) struct PowerOfFive<Limbs> {
+  fraction: u32,
+  power: Limbs,
+  bits: u32,
+}
+
+impl<const N: usize> PowerOfFive<[u64; N]> {
+  /// `5^fraction` in `N` limbs; zero fraction digits give one. Panics unless
+  /// `bits(5^fraction) + 53 + 2 <= 64 * N`, the requirement of `float_bits` and
+  /// `round_coefficient` at the precision of an `f64`, the wider of the two formats. In a
+  /// constant, that is an error of compilation.
+  pub(super) const fn new(fraction: u32) -> Self {
+    let (power, overflow) = b64::overflowing_pow(&b64::from_u64(5), fraction);
+    let bits = bit_length(&power);
+    // A power beyond the limbs is cut to its low bits, whose length alone could meet the bound.
+    assert!(
+      !overflow && bits + FloatFormat::F64.precision() + 2 <= 64 * N as u32,
+      "the power of five and the precision of an f64 pass the float scratch"
+    );
+    Self {
+      fraction,
+      power,
+      bits,
+    }
+  }
+}
+
+/// The bits of the float of `format` nearest to `magnitude / 10^fraction`, where `five` is
+/// `5^fraction`, ties to even, with the sign bit set if `negative`: those of an infinity if the
+/// value rounds beyond the largest float, of a subnormal float or of a zero if it rounds below the
+/// smallest normal one, and of `+0.0` for a magnitude of zero, whatever `negative`. Computes in the
+/// limbs of `magnitude`. Requires `bits(5^fraction) + precision + 2 <= 64 * N`, which `five` meets,
+/// as `PowerOfFive::new` checks it at the precision of an `f64`.
 pub(super) const fn float_bits<const N: usize>(
   magnitude: &[u64; N],
-  fraction: u32,
+  five: &PowerOfFive<[u64; N]>,
   negative: bool,
   format: FloatFormat,
 ) -> u64 {
+  let fraction = five.fraction;
+  let power_length = five.bits;
   let precision = format.precision();
   let exponent_bits = format.exponent_bits();
   // The exponents of the largest and of the smallest normal floats.
@@ -54,10 +87,6 @@ pub(super) const fn float_bits<const N: usize>(
   if length == 0 {
     return 0;
   }
-  // `5^fraction`, which the requirement keeps inside the limbs. Zero fraction digits give one.
-  let (power, overflow) = b64::overflowing_pow(&b64::from_u64(5), fraction);
-  debug_assert!(!overflow, "the power of five passes the limbs");
-  let power_length = bit_length(&power);
   // The magnitude is shifted so that the quotient has at least `precision + 2` bits: the kept
   // bits, the guard and one more. A magnitude of `wanted` bits or more needs no shift, so the
   // shift saturates at zero.
@@ -69,7 +98,7 @@ pub(super) const fn float_bits<const N: usize>(
     length + shift <= 64 * N as u32,
     "the shifted magnitude passes the limbs"
   );
-  let (quotient, remainder) = b64::div_rem(&b64::shift_left(magnitude, shift), &power);
+  let (quotient, remainder) = b64::div_rem(&b64::shift_left(magnitude, shift), &five.power);
   let quotient_length = bit_length(&quotient);
   // The shifted magnitude is at least `2^(length + shift - 1)` and the power below
   // `2^power_length`, so the quotient is at least `2^(precision + 1)`.
@@ -125,14 +154,16 @@ pub(super) const fn float_bits<const N: usize>(
   sign | ((biased << (precision - 1)) + kept + up as u64)
 }
 
-/// The magnitude of the value of `parts` times `10^fraction`, rounded to an integer with `mode` as
-/// `rounding::increments` rounds a quotient, or `None` if it has more than `64 * N` bits. Requires
-/// `bits(5^fraction) + precision + 2 <= 64 * N`.
+/// The magnitude of the value of `parts` times `10^fraction`, where `five` is `5^fraction`,
+/// rounded to an integer with `mode` as `rounding::increments` rounds a quotient, or `None` if it
+/// has more than `64 * N` bits. Requires `bits(5^fraction) + precision + 2 <= 64 * N`, which `five`
+/// meets, as `PowerOfFive::new` checks it at the precision of an `f64`.
 pub(super) const fn round_coefficient<const N: usize>(
   parts: FloatParts,
-  fraction: u32,
+  five: &PowerOfFive<[u64; N]>,
   mode: RoundingMode,
 ) -> Option<[u64; N]> {
+  let fraction = five.fraction;
   let FloatParts {
     negative,
     significand,
@@ -140,15 +171,13 @@ pub(super) const fn round_coefficient<const N: usize>(
     precision,
   } = parts;
   // The value times `10^fraction` is `significand * 5^fraction * 2^(exponent + fraction)`.
-  let (power, overflow) = b64::overflowing_pow(&b64::from_u64(5), fraction);
-  debug_assert!(!overflow, "the power of five passes the limbs");
-  let product = b64::mul(&b64::from_u64(significand), &power);
+  let product = b64::mul(&b64::from_u64(significand), &five.power);
   let length = bit_length(&product);
   // The significand is below `2^precision`, so the product has at most `precision` bits more than
   // the power, which the requirement keeps two bits short of the limbs: the product is exact, and
   // the rounding up below does not carry out of the limbs.
   debug_assert!(
-    length <= precision + bit_length(&power),
+    length <= precision + five.bits,
     "the product of the significand and the power of five passes its bound"
   );
   // The exponent reaches -1074 below zero, so the shift is signed.
