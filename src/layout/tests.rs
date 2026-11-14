@@ -553,13 +553,15 @@ fn check_read_limbs<R: Value, const M: usize>(bits: u32, refused: &mut [[usize; 
   }
 }
 
-/// Checks [`check_read_limbs`] for `R` with 1, 2, 3 and 8 limbs.
+/// Checks [`check_read_limbs`] for `R` with 1, 2, 3, 8, 9 and 16 limbs.
 #[inline(never)]
 fn read_limbs_of<R: Value>(bits: u32, refused: &mut [[usize; 2]; 2]) {
   check_read_limbs::<R, 1>(bits, refused);
   check_read_limbs::<R, 2>(bits, refused);
   check_read_limbs::<R, 3>(bits, refused);
   check_read_limbs::<R, 8>(bits, refused);
+  check_read_limbs::<R, 9>(bits, refused);
+  check_read_limbs::<R, 16>(bits, refused);
 }
 
 /// The rows that read the limbs of a wide source give every value that the target holds, from

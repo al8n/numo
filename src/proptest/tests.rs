@@ -23,7 +23,7 @@ use crate::{
   layout::{InlineStorage, Layout, LayoutDigits},
   sample::{
     Chain, MODES,
-    tests::{SAMPLES, big, candidates, check_values, for_each_type},
+    tests::{SAMPLES, big, candidates, check_values, for_each_type, samples},
   },
   u1024,
 };
@@ -43,7 +43,7 @@ macro_rules! check_type {
   ($t:ty) => {{
     let mut runner = runner();
     let strategy = any::<$t>();
-    let values: Vec<$t> = (0..SAMPLES)
+    let values: Vec<$t> = (0..samples(<$t>::DIGITS))
       .map(|_| strategy.new_tree(&mut runner).expect("a tree").current())
       .collect();
     check_values(stringify!($t), &values, <$t>::repr, <$t>::from_repr);

@@ -25,8 +25,17 @@ use crate::{
   u256, u512, u1024,
 };
 
-/// The number of values that each test draws for each type.
+/// The number of values that each test draws for each type, which [`samples`] doubles for the
+/// checks of [`check_values`] above 256 digits.
 pub(crate) const SAMPLES: usize = 4096;
+
+/// The number of values that a test draws for a type of `digits` digits to check them with
+/// [`check_values`]: [`SAMPLES`], or twice as many above 256 digits. In [`SAMPLES`] values, a type
+/// of 308 digits draws each number of digits about 12 times and misses one with a chance of about
+/// `1e-3`; in twice as many, about `4e-9`.
+pub(crate) const fn samples(digits: u32) -> usize {
+  if digits > 256 { 2 * SAMPLES } else { SAMPLES }
+}
 
 /// Calls `$check!(Type)` for each decimal type that the tests of every feature draw: native and
 /// wide storages, signed and unsigned, of 2, 18, 19, 38, 76, 77, 153, 154, 307 and 308 digits,
@@ -215,7 +224,7 @@ fn edge_kinds(digits: u32, fraction: u32) -> Vec<Vec<BigInt>> {
 /// Checks the values drawn for `Decimal<I, F, R>`: each is in range and a valid coefficient,
 /// every number of digits from one to `Integral + Fraction` occurs, negative values occur exactly
 /// for a signed storage, and every kind of edge value occurs, with every exponent for up to nine
-/// digits.
+/// digits. Their number is [`samples`] for the digits of the type.
 pub(crate) fn check_values<I, F, R>(
   name: &str,
   values: &[Decimal<I, F, R>],
@@ -227,7 +236,7 @@ pub(crate) fn check_values<I, F, R>(
 {
   let digits = <(I, F) as LayoutDigits<R>>::DIGITS;
   let fraction = <(I, F) as LayoutDigits<R>>::FRACTION;
-  assert_eq!(values.len(), SAMPLES, "{name}");
+  assert_eq!(values.len(), samples(digits), "{name}");
   let mut lengths = vec![0usize; digits as usize + 1];
   let mut seen = BTreeSet::new();
   let (mut negative, mut positive) = (false, false);
@@ -524,7 +533,9 @@ fn trailing_zeros_keep_the_number_of_digits() {
 macro_rules! check_draws {
   ($t:ty) => {{
     let mut source = SplitMix(0x5eed_0001);
-    let values: Vec<$t> = (0..SAMPLES).map(|_| draw(&mut source)).collect();
+    let values: Vec<$t> = (0..samples(<$t>::DIGITS))
+      .map(|_| draw(&mut source))
+      .collect();
     check_values(stringify!($t), &values, <$t>::repr, <$t>::from_repr);
   }};
 }

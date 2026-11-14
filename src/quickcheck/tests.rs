@@ -12,7 +12,7 @@ use crate::{
   layout::{InlineStorage, Layout, LayoutDigits},
   sample::{
     MODES,
-    tests::{SAMPLES, big, candidates, check_values, for_each_type},
+    tests::{SAMPLES, big, candidates, check_values, for_each_type, samples},
   },
   u1024,
 };
@@ -44,11 +44,13 @@ where
 macro_rules! check_type {
   ($t:ty) => {{
     let mut g = seeded();
-    let values: Vec<$t> = (0..SAMPLES)
+    let values: Vec<$t> = (0..samples(<$t>::DIGITS))
       .map(|_| <$t as Arbitrary>::arbitrary(&mut g))
       .collect();
     check_values(stringify!($t), &values, <$t>::repr, <$t>::from_repr);
-    for &value in &values {
+    // The values that `samples` adds above 256 digits are for the digit counts alone: shrinking
+    // takes the first `SAMPLES`, as for every type.
+    for &value in values.iter().take(SAMPLES) {
       check_shrink(value);
     }
   }};

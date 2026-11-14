@@ -12,7 +12,7 @@ use crate::{
   layout::{InlineStorage, Layout, LayoutDigits, Storage},
   sample::{
     MODES,
-    tests::{SAMPLES, SplitMix, big, check_values, for_each_type},
+    tests::{SAMPLES, SplitMix, big, check_values, for_each_type, samples},
   },
 };
 
@@ -117,12 +117,13 @@ fn check_bytes<I, F, R>(
   assert_eq!((big(repr(value)), count), (BigInt::ZERO, 0), "{name}");
 
   // Enough bytes that every value reads all it needs.
+  let draws = samples(digits);
   let mut source = SplitMix(0xa4b1_0001);
-  let bytes: Vec<u8> = (0..SAMPLES * upper)
+  let bytes: Vec<u8> = (0..draws * upper)
     .map(|_| source.next_u64() as u8)
     .collect();
   let mut data = Unstructured::new(&bytes);
-  let values: Vec<Decimal<I, F, R>> = (0..SAMPLES)
+  let values: Vec<Decimal<I, F, R>> = (0..draws)
     .map(|_| {
       let before = data.len();
       let value =
