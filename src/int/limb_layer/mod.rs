@@ -226,6 +226,14 @@ macro_rules! limb_layer {
       None
     }
 
+    /// The number of limbs up to the most significant nonzero one, which is 0 for zero.
+    const fn significant_limbs<const N: usize>(value: &[Limb; N]) -> usize {
+      match top_limb(value) {
+        Some(i) => i + 1,
+        None => 0,
+      }
+    }
+
     /// `lhs * rhs` modulo `2^(B * N)`, and whether the product is `2^(B * N)` or more.
     pub(crate) const fn overflowing_mul<const N: usize>(
       lhs: &[Limb; N],
@@ -256,18 +264,21 @@ macro_rules! limb_layer {
     }
 
     /// `lhs * rhs` as `2 * N` limbs in two arrays, the low `N` limbs first. It is below
-    /// `2^(2 * B * N)`, so it does not overflow.
+    /// `2^(2 * B * N)`, so it does not overflow. It takes one limb product for each pair of
+    /// significant limbs, those up to the top nonzero limb of each operand: the limbs above are
+    /// zero and add nothing, and every limb of the product that no row reaches stays zero.
     pub(crate) const fn widening_mul<const N: usize>(
       lhs: &[Limb; N],
       rhs: &[Limb; N],
     ) -> ([Limb; N], [Limb; N]) {
       let mut low = [0; N];
       let mut high = [0; N];
+      let (rows, top) = (significant_limbs(lhs), significant_limbs(rhs));
       let mut i = 0;
-      while i < N {
+      while i < rows {
         let mut carry: Limb = 0;
         let mut j = 0;
-        while j < N {
+        while j < top {
           // Limb `i + j` of the product is in `low` below `N`, and in `high` from `N`.
           if i + j < N {
             (low[i + j], carry) = $carrying_mul_add(lhs[i], rhs[j], carry, low[i + j]);
@@ -276,8 +287,13 @@ macro_rules! limb_layer {
           }
           j += 1;
         }
-        // The carry of row `i` is limb `i + N`, which no row before it has reached.
-        high[i] = carry;
+        // The carry of row `i` is limb `i + top`, below `2 * N`, which no row before it has
+        // reached.
+        if i + top < N {
+          low[i + top] = carry;
+        } else {
+          high[i + top - N] = carry;
+        }
         i += 1;
       }
       (low, high)
