@@ -805,7 +805,6 @@ where
     }
     let from = Self::FRACTION;
     let to = Decimal::<I2, F2, R2>::FRACTION;
-    let digits = Decimal::<I2, F2, R2>::DIGITS;
     // The range is checked in `R2`: `10^(I2 + F2) - 1` may not fit `R`, as for a 6-digit `i32`
     // source and a 40-digit `i192` target. The powers of ten that the scaling uses fit their
     // storages, because a storage that holds `d` digits also holds `10^d`, which is not a power
@@ -815,7 +814,7 @@ where
       // `R2` cannot hold is out of range even before scaling.
       match coeff.checked_convert::<R2::Inline>(Token::new()) {
         Some(coeff) => match coeff.checked_mul_pow10(to - from, Token::new()) {
-          Some(scaled) if scaled.within_digits(digits, Token::new()) => scaled,
+          Some(scaled) if scaled.within_layout::<(I2, F2), R2>(Token::new()) => scaled,
           _ => return Err(ConvertError::OutOfRange),
         },
         None => return Err(ConvertError::OutOfRange),
@@ -826,7 +825,7 @@ where
       // exactness.
       let (quotient, remainder) = coeff.div_rem_pow10(from - to, Token::new());
       match quotient.checked_convert::<R2::Inline>(Token::new()) {
-        Some(quotient) if quotient.within_digits(digits, Token::new()) => {
+        Some(quotient) if quotient.within_layout::<(I2, F2), R2>(Token::new()) => {
           if !remainder.is_zero(Token::new()) {
             return Err(ConvertError::Inexact);
           }
@@ -910,7 +909,7 @@ where
       .twin(Token::new())
       .round_div_pow10(from - to, mode, Token::new());
     match rounded.checked_convert::<R2::Inline>(Token::new()) {
-      Some(coeff) if coeff.within_digits(Decimal::<I2, F2, R2>::DIGITS, Token::new()) => {
+      Some(coeff) if coeff.within_layout::<(I2, F2), R2>(Token::new()) => {
         Ok(Decimal::from_coeff(R2::from_twin(coeff, Token::new())))
       }
       _ => Err(ConvertError::OutOfRange),
@@ -1052,7 +1051,7 @@ where
     // rounded quotient is at most `|N|`: rounding away from zero needs a remainder, so `|D| >= 2`.
     let quotient = numerator.round_div(&denominator, mode, Token::new());
     match quotient.checked_convert::<R3::Inline>(Token::new()) {
-      Some(coeff) if coeff.within_digits(Decimal::<I3, F3, R3>::DIGITS, Token::new()) => {
+      Some(coeff) if coeff.within_layout::<(I3, F3), R3>(Token::new()) => {
         Ok(Decimal::from_coeff(R3::from_twin(coeff, Token::new())))
       }
       _ => Err(DivideError::OutOfRange),
@@ -1107,7 +1106,7 @@ where
         _ => rounding::increments(mode, negative, false, Ordering::Less, false, true) as u64,
       };
       match rounded.checked_convert::<R::Inline>(Token::new()) {
-        Some(coeff) if coeff.within_digits(Self::DIGITS, Token::new()) => coeff,
+        Some(coeff) if coeff.within_layout::<(I, F), R>(Token::new()) => coeff,
         _ => return Err(overflow),
       }
     };

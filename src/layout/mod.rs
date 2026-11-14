@@ -130,8 +130,14 @@ mod sealed {
     /// Returns `true` if the value is zero.
     fn is_zero(&self, token: Token) -> bool;
 
-    /// Returns `true` if `|self| <= 10^digits - 1`. Requires `10^digits` to be representable.
-    fn within_digits(&self, digits: u32, token: Token) -> bool;
+    /// Returns `true` if `|self| <= 10^D - 1` for the `D` digits of the layout `L` over the storage
+    /// `R`: the range of a coefficient of `Decimal<I, F, R>`, for `L = (I, F)`, in `Self`, the
+    /// inline storage that computes it. Each limit is computed once for each layout and storage, at
+    /// compile time.
+    fn within_layout<L, R>(&self, token: Token) -> bool
+    where
+      L: LayoutDigits<R>,
+      R: StorageCore<Twin = Self>;
 
     /// `self * rhs`. Requires the product to be representable.
     fn mul(&self, rhs: &Self, token: Token) -> Self;
@@ -560,9 +566,15 @@ macro_rules! impl_storage {
         }
 
         #[inline]
-        fn within_digits(&self, digits: u32, _: Token) -> bool {
-          let max = int::$int::max_magnitude(digits);
-          int::$int::le(int::$int::neg(max), *self) && int::$int::le(*self, max)
+        fn within_layout<L, R>(&self, _: Token) -> bool
+        where
+          L: LayoutDigits<R>,
+          R: StorageCore<Twin = Self>,
+        {
+          let max = const { int::$int::max_magnitude(<L as LayoutDigits<R>>::DIGITS) };
+          let min =
+            const { int::$int::neg(int::$int::max_magnitude(<L as LayoutDigits<R>>::DIGITS)) };
+          int::$int::le(min, *self) && int::$int::le(*self, max)
         }
 
         #[inline]
@@ -597,8 +609,13 @@ macro_rules! impl_storage {
         }
 
         #[inline]
-        fn within_digits(&self, digits: u32, _: Token) -> bool {
-          int::$uint::le(*self, int::$uint::max_magnitude(digits))
+        fn within_layout<L, R>(&self, _: Token) -> bool
+        where
+          L: LayoutDigits<R>,
+          R: StorageCore<Twin = Self>,
+        {
+          let max = const { int::$uint::max_magnitude(<L as LayoutDigits<R>>::DIGITS) };
+          int::$uint::le(*self, max)
         }
 
         #[inline]
@@ -635,10 +652,18 @@ macro_rules! impl_storage {
         }
 
         #[inline]
-        fn within_digits(&self, digits: u32, _: Token) -> bool {
-          let max = int::signed::b64::max_magnitude(digits);
-          int::signed::b64::le(&int::signed::b64::neg(&max), self.as_limbs())
-            && int::signed::b64::le(self.as_limbs(), &max)
+        fn within_layout<L, R>(&self, _: Token) -> bool
+        where
+          L: LayoutDigits<R>,
+          R: StorageCore<Twin = Self>,
+        {
+          let max = const { int::signed::b64::max_magnitude(<L as LayoutDigits<R>>::DIGITS) };
+          let min = const {
+            int::signed::b64::neg(&int::signed::b64::max_magnitude(
+              <L as LayoutDigits<R>>::DIGITS,
+            ))
+          };
+          int::signed::b64::le(&min, self.as_limbs()) && int::signed::b64::le(self.as_limbs(), &max)
         }
 
         #[inline]
@@ -674,8 +699,13 @@ macro_rules! impl_storage {
         }
 
         #[inline]
-        fn within_digits(&self, digits: u32, _: Token) -> bool {
-          int::unsigned::b64::le(self.as_limbs(), &int::unsigned::b64::max_magnitude(digits))
+        fn within_layout<L, R>(&self, _: Token) -> bool
+        where
+          L: LayoutDigits<R>,
+          R: StorageCore<Twin = Self>,
+        {
+          let max = const { int::unsigned::b64::max_magnitude(<L as LayoutDigits<R>>::DIGITS) };
+          int::unsigned::b64::le(self.as_limbs(), &max)
         }
 
         #[inline]
