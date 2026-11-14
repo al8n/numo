@@ -110,13 +110,12 @@ fn main() -> Result<(), ParseError> {
 - Every operation is exact or fails, unless it is asked to round or to saturate. `checked_add` and
   `checked_sub` return `None` outside the range, `exact_mul` returns a wider type that always holds
   the product, up to 307 digits, or 308 for two unsigned operands, `widen` converts to a type with
-  at least as many digits, and
-  `try_convert` reports `OutOfRange` or `Inexact` instead of rounding. Rounding happens only where
-  it is asked for: `trunc`, `floor` and `ceil` round to an integer in their own direction, `to_f64`
-  and `to_f32` round to the nearest float, and every other rounding takes an explicit
-  `RoundingMode`: `round_to` converts to fewer fraction digits, `quantize` rounds to a multiple of a
-  step, `div_round` divides into any decimal type, and `round_significant` rounds to a number of
-  significant digits.
+  at least as many digits, and `try_convert` reports `OutOfRange` or `Inexact` instead of rounding.
+  Rounding happens only where it is asked for: `trunc`, `floor` and `ceil` round to an integer in
+  their own direction, `to_f64` and `to_f32` round to the nearest float, and every other rounding
+  takes an explicit `RoundingMode`: `round_to` converts to fewer fraction digits, `quantize` rounds
+  to a multiple of a step, `div_round` divides into any decimal type, and `round_significant` rounds
+  to a number of significant digits.
   The modes are `Up`, `Down`, `Ceiling`, `Floor`, `HalfUp`, `HalfDown`, `HalfEven` and `Up05`.
 - The operators `+`, `-`, `+=` and `-=` take two values of one type, `+` and `-` also two
   references, and `Sum` adds the values or the references of an iterator. They are exact too: a

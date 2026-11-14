@@ -1044,8 +1044,9 @@ macro_rules! storage_decimal {
       /// from the coefficient, in the float scratch of the storage.
       const fn float_bits(&self, format: int::float::FloatFormat) -> u64 {
         // The coefficient is its own magnitude. Read in two's complement, the 154 digits of a
-        // `u512` could set the top bit. It is widened to the scratch, which also holds the power
-        // of five and the shifted magnitude of every fraction count of a type over the storage.
+        // `u512` or the 308 of a `u1024` could set the top bit. It is widened to the scratch, which
+        // also holds the power of five and the shifted magnitude of every fraction count of a type
+        // over the storage.
         let magnitude: FloatScratch<$repr> =
           int::unsigned::b64::resize(storage_decimal!(@limbs $kind $repr self.repr));
         float::float_bits(&magnitude, Self::FRACTION, false, format)

@@ -444,9 +444,11 @@
 //! such as `64250.50`, frequent. A signed storage gives a nonzero value either sign with equal
 //! probability.
 //!
-//! The `arbitrary` feature reads one byte for each choice through `Unstructured::int_in_range`,
-//! which makes the choices only nearly uniform. As for `arbitrary` itself, which bytes give which
-//! value is not stable and may change in any release.
+//! The `arbitrary` feature reads each choice through `Unstructured::int_in_range`: one byte, or two
+//! for a choice among more than 256 values, which only a type of more than 256 digits makes. It
+//! maps the bytes to a choice by their remainder, which makes the choices only nearly uniform. As
+//! for `arbitrary` itself, which bytes give which value is not stable and may change in any
+//! release.
 //!
 //! ```
 //! # #[cfg(feature = "arbitrary")]

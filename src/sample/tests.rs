@@ -288,9 +288,10 @@ pub(crate) fn simplicity(value: &BigInt) -> (bool, bool, u32) {
   )
 }
 
-/// The most choices among two or more values on any path for `digits` digits, which is the
-/// number of bytes that `arbitrary` reads at most: the branch, the number of digits, the digits,
-/// whether to zero trailing digits, how many, and the sign of a signed storage.
+/// The most choices among two or more values on any path for `digits` digits: the branch, the
+/// number of digits, the digits, whether to zero trailing digits, how many, and the sign of a
+/// signed storage. For a type of at most 256 digits, that is the number of bytes that `arbitrary`
+/// reads at most; above, the two choices among the digits take a byte more each.
 fn longest_path(digits: u32, signed: bool) -> usize {
   let several = usize::from(digits >= 2);
   1 + several + digits as usize + 1 + several + usize::from(signed)

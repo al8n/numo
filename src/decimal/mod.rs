@@ -861,8 +861,8 @@ where
   ///
   /// The division is exact up to the rounding. It is computed in an intermediate storage, after
   /// multiplying the dividend by `10^(F3 + F2 - Fraction)` or, when that exponent would be
-  /// negative, the divisor by `10^(Fraction - F2 - F3)`, so the intermediate has `max(Integral +
-  /// max(Fraction, F2 + F3), I2 + max(F2 + F3, Fraction) - F3)` digits. It is the
+  /// negative, the divisor by `10^(Fraction - F2 - F3)`, so the intermediate has
+  /// `max(Integral + max(Fraction, F2 + F3), I2 + max(F2 + F3, Fraction) - F3)` digits. It is the
   /// [`DivIntermediate`] storage for those digits, unsigned only if both operand storages are, and
   /// it can be wider than both operands, as in the last example below. An intermediate of more than
   /// 307 digits fails to compile; 308 is allowed only when both storages are unsigned.
