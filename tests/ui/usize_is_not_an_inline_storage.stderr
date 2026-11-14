@@ -1,0 +1,22 @@
+error[E0277]: `usize` is not an inline storage of `Decimal`
+ --> tests/ui/usize_is_not_an_inline_storage.rs:8:20
+  |
+8 |   inline_storage::<usize>();
+  |                    ^^^^^ the trait `InlineStorage` is not implemented for `usize`
+  |
+  = note: `Decimal` stores a native integer, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64` or `u128`, or a wide integer, `i192`, `i256`, `i320`, `i384`, `i448`, `i512`, `u192`, `u256`, `u320`, `u384`, `u448` or `u512`
+  = help: the following other types implement trait `InlineStorage`:
+            i128
+            i16
+            i32
+            i64
+            i8
+            u128
+            u16
+            u32
+          and $N others
+note: required by a bound in `inline_storage`
+ --> tests/ui/usize_is_not_an_inline_storage.rs:3:22
+  |
+3 | fn inline_storage<R: InlineStorage>() {}
+  |                      ^^^^^^^^^^^^^ required by this bound in `inline_storage`
