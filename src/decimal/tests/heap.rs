@@ -55,8 +55,8 @@ use typenum::{
 
 use crate::{
   ArrayInteger, ConstFixedDecimal, ConvertError, Decimal, DecimalAssign, DecimalFloat, DecimalOne,
-  DivideError, FillsRepr, FixedDecimal, FixedInteger, FromLimbs, InlineStorage, Int, Layout,
-  MutableStorage, ParseError, RoundingMode, Scaled, SignedFixedDecimal, Storage, Uint,
+  DivideError, FillsRepr, FixedDecimal, FixedInteger, FromLimbs, InlineStorage, Int, IntegerOne,
+  Layout, MutableStorage, ParseError, RoundingMode, Scaled, SignedFixedDecimal, Storage, Uint,
   UnsignedFixedDecimal,
   bigint::{MODES, floats::Words, tier},
   dec, i256,
@@ -1049,7 +1049,9 @@ macro_rules! products_agree {
 }
 
 /// Checks `repr` and `from_repr` of `Decimal<Integral, Fraction, Storage>`, written so, over a heap
-/// storage: at each sample, the storage that `repr` moves out makes the value again; and the
+/// storage: at each sample, the storage that `repr` moves out makes the value again; at the largest
+/// coefficient of the type, `10^DIGITS - 1`, at `10^DIGITS` and, for a signed storage, at their
+/// negations, `from_repr` gives what the twin's `from_repr` gives for the same coefficient; and the
 /// largest value of the storage, built from its limbs, which has a digit more than the type holds,
 /// makes none. Each type checks in a function of its own.
 macro_rules! repr_agrees {
@@ -1061,6 +1063,18 @@ macro_rules! repr_agrees {
       for (twin, heap) in pairs::<Twin, Heap>(Heap::from_inline) {
         let value = Heap::from_repr(heap.repr()).expect("in range");
         assert_eq!(value.to_inline(), twin);
+      }
+      let one = <<$repr as Storage>::Inline as IntegerOne>::one();
+      let largest = Twin::MAX.repr();
+      let mut coefficients = Vec::from([largest, largest + one]);
+      if <Twin as FixedDecimal>::SIGNED {
+        let smallest = Twin::MIN.repr();
+        coefficients.extend([smallest, smallest - one]);
+      }
+      for coefficient in coefficients {
+        let storage = <$repr as FromLimbs>::from_limbs(ArrayInteger::into_limbs(coefficient));
+        let value = Heap::from_repr(storage).map(|value| value.to_inline());
+        assert_eq!(value, Twin::from_repr(coefficient), "{coefficient}");
       }
       let max = <<$repr as Storage>::Inline as FixedInteger>::max_value();
       let above = <$repr as FromLimbs>::from_limbs(ArrayInteger::into_limbs(max));
