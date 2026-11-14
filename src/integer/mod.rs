@@ -273,10 +273,11 @@ mod traits;
 /// storage, and so do the traits that give generic code the methods, such as
 /// [`CheckedOps`](crate::CheckedOps) and [`IntegerMath`](crate::IntegerMath). Every storage also
 /// has [`widening_mul`](Self::widening_mul), the exact product of two integers of any widths and
-/// storages in the integer of the sum of the widths, in its default storage: the product of two
-/// `u256` is a `u512`. A method of a storage is called with method syntax or with a path that names
-/// the storage, such as `Uint::<U7>::checked_add(&a, &b)`: a path that leaves the storage to
-/// inference, such as `Uint::checked_add(&a, &b)`, is ambiguous (E0034).
+/// storages whose widths sum to at most 65536 bits, in the integer of the sum of the widths, in its
+/// default storage: the product of two `u256` is a `u512`. A method of a storage is called with
+/// method syntax or with a path that names the storage, such as `Uint::<U7>::checked_add(&a, &b)`:
+/// a path that leaves the storage to inference, such as `Uint::checked_add(&a, &b)`, is ambiguous
+/// (E0034).
 ///
 /// Each inline storage also has the bit operations of the native unsigned integers at the width
 /// `Bits`, as `const fn`s: the counts [`count_ones`](Self::count_ones),

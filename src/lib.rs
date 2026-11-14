@@ -204,14 +204,15 @@
 //! divisor and on overflow in every build. Addition, subtraction, multiplication, exact division
 //! and the shifts, and negation for `Int`, also have the `unchecked_*` form, as `const unsafe fn`s
 //! whose caller guarantees that the `checked_*` method would return `Some`. `widening_mul`, for
-//! every storage, returns the exact product of two integers of any widths and storages in the
-//! integer of the sum of the widths, in its default storage: the product of two `u256` is a
-//! `u512`. The bit operations of the native integers work at the
-//! width too: the counts of ones and zeros, the highest and the lowest one, the bit reversal, the
-//! rotations, the shifts in every form, the unbounded and the exact shifts, a bit read and written
-//! by its index, and the casts between `Uint` and `Int` of the same width, with the operators `!`,
-//! `&`, `|`, `^`, `<<` and `>>`; a shift amount is bounded by `Bits`, and `bitand`, `bitor`,
-//! `bitxor` and `not` do the bitwise operations as `const fn`s for constant contexts.
+//! every storage, returns the exact product of two integers of any widths and storages whose
+//! widths sum to at most 65536 bits, in the integer of the sum of the widths, in its default
+//! storage: the product of two `u256` is a `u512`. The bit operations of the native integers work
+//! at the width too: the counts of ones and zeros, the highest and the lowest one, the bit
+//! reversal, the rotations, the shifts in every form, the unbounded and the exact shifts, a bit
+//! read and written by its index, and the casts between `Uint` and `Int` of the same width, with
+//! the operators `!`, `&`, `|`, `^`, `<<` and `>>`; a shift amount is bounded by `Bits`, and
+//! `bitand`, `bitor`, `bitxor` and `not` do the bitwise operations as `const fn`s for constant
+//! contexts.
 //!
 //! The integers convert between any widths and signs with the casts of the native integers, still
 //! unstable: `checked_cast`, `wrapping_cast`, `saturating_cast`, `strict_cast` and the `unsafe`

@@ -358,8 +358,8 @@ FEATURES
     from one bit for `Uint` and from two bits for `Int`, so that `u0`, `i0` and `i1` have none. The
     strict methods panic on overflow in every build, with the messages of the native integers.
     `widening_mul`, a method of every storage that is not `const`, returns the exact product of two
-    integers of any widths and storages in the integer of both widths, in its default storage:
-    `u256` by `u256` is a `u512`.
+    integers of any widths and storages whose widths sum to at most 65536 bits, in the integer of
+    both widths, in its default storage: `u256` by `u256` is a `u512`.
   - The division and the remainder, rounded toward zero and Euclidean, in the `overflowing_*`,
     `checked_*`, `wrapping_*` and `strict_*` forms, and `saturating_div`, the exponentiation in
     every form, and the integer functions of the native integers without an overflow prefix, as
